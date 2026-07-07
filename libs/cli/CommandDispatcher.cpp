@@ -87,7 +87,8 @@ void print_help() {
         << "  template default        Show default template\n"
         << "  template path           Show template directory\n"
         << "  template validate <name> Validate template\n"
-        << "  template reload         Reload templates from disk\n";
+        << "  template reload         Reload templates from disk\n"
+        << "  auth debug              Show auth user diagnostics\n";
 }
 
 void print_version() {
@@ -296,6 +297,10 @@ int CommandDispatcher::run(int argc, char* argv[]) {
 
     if (argc == 4 && arg1 == "template" && std::string(argv[2]) == "validate") {
         return print_response(send_command("template-validate|" + std::string(argv[3])));
+    }
+
+    if (argc == 3 && arg1 == "auth" && std::string(argv[2]) == "debug") {
+        return print_response(send_command("auth-debug"));
     }
 
     std::cout << "Error: unknown command\n\n";

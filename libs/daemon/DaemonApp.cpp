@@ -511,6 +511,24 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         return Command::success(out.str());
     }
 
+    if (cmd.name == "auth-debug") {
+        auto users = s.auth_users().list();
+        if (users.empty()) {
+            return Command::success("Auth users: none\n");
+        }
+        std::ostringstream out;
+        out << "Auth users: " << users.size() << "\n";
+        for (const auto& u : users) {
+            out << "  username=" << u.username
+                << " enabled=" << (u.enabled ? "1" : "0")
+                << " must_change=" << (u.must_change_password ? "1" : "0")
+                << " hash_present=" << (u.password_hash.empty() ? "no" : "yes")
+                << " role=" << u.role
+                << "\n";
+        }
+        return Command::success(out.str());
+    }
+
     return Command::error("Unknown command: " + cmd.name);
 }
 

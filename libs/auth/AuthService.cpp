@@ -18,11 +18,22 @@ std::string AuthService::hash_password(const std::string& password) {
 }
 
 void AuthService::initialize() {
+    std::string auth_db_path = services_.config().database_dir() + "auth_users.db";
     std::string password_path = services_.config().config_root() + "/ui-password";
 
+    // Diagnose: does the file exist?
+    std::ifstream db_check(auth_db_path);
+    bool db_exists = db_check.is_open();
+    db_check.close();
+
+    services_.logger().info("Auth: db path = " + auth_db_path);
+    services_.logger().info("Auth: db exists = " + std::string(db_exists ? "yes" : "no"));
+
     auto users = services_.auth_users().list();
+    services_.logger().info("Auth: users loaded = " + std::to_string(users.size()));
 
     if (users.empty()) {
+        services_.logger().info("Auth: DECISION: create admin (no users found)");
         std::string chars = "abcdefghijklmnopqrstuvwxyz0123456789";
         std::random_device rd;
         std::mt19937 gen(rd());
@@ -45,7 +56,6 @@ void AuthService::initialize() {
         services_.auth_users().create(admin);
         services_.storage().save_auth_users(services_.auth_users().list());
 
-        // Write plaintext password to file so operator can discover it
         std::string dir = services_.config().config_root();
         ::mkdir(dir.c_str(), 0755);
         std::ofstream of(password_path);
@@ -60,27 +70,36 @@ void AuthService::initialize() {
         return;
     }
 
-    // Subsequent starts: if admin has must_change_password=true and the
-    // password file exists, re-hash the file's content and sync the
-    // stored hash. This prevents desync between the file and the DB.
-    // Log bootstrap state for debugging
+    // Diagnose each loaded user
+    for (const auto& u : users) {
+        services_.logger().info("Auth: user '" + u.username + "'"
+            + " enabled=" + (u.enabled ? "1" : "0")
+            + " must_change=" + (u.must_change_password ? "1" : "0")
+            + " hash_present=" + (u.password_hash.empty() ? "no" : "yes")
+            + " role=" + u.role);
+    }
+
+    // Find admin
     bool admin_found = false;
-    bool admin_must_change = false;
     for (const auto& u : users) {
         if (u.username == "admin") {
             admin_found = true;
-            admin_must_change = u.must_change_password;
-            services_.logger().info("Web UI: Admin loaded from storage (must_change="
-                + std::string(admin_must_change ? "true" : "false") + ")");
             break;
         }
     }
+
     if (!admin_found) {
-        services_.logger().info("Web UI: No admin user found in storage");
+        // Storage has users but no admin — should not happen in normal flow.
+        // Log warning and skip reseeding to avoid overwriting data.
+        services_.logger().info("Auth: WARNING: no admin user in storage, but other users exist. Skipping reseed.");
+        return;
     }
 
+    // Only sync from password file if admin has must_change_password=true
+    bool synced = false;
     for (auto& u : users) {
         if (u.username == "admin" && u.must_change_password) {
+            services_.logger().info("Auth: DECISION: sync hash from password file (must_change=true)");
             std::ifstream f(password_path);
             if (f.is_open()) {
                 std::string file_password;
@@ -93,14 +112,24 @@ void AuthService::initialize() {
 
                 std::string expected_hash = hash_password(file_password);
                 if (u.password_hash != expected_hash) {
+                    services_.logger().info("Auth: hash mismatch, syncing from password file");
                     u.password_hash = expected_hash;
                     services_.auth_users().set_users(users);
                     services_.storage().save_auth_users(users);
                     services_.logger().info("Web UI: Synced password hash from " + password_path);
+                } else {
+                    services_.logger().info("Auth: hash already matches password file, no sync needed");
                 }
+            } else {
+                services_.logger().info("Auth: password file not found at " + password_path + ", cannot sync");
             }
+            synced = true;
             break;
         }
+    }
+
+    if (!synced) {
+        services_.logger().info("Auth: DECISION: skip — admin loaded from storage, must_change=false");
     }
 }
 
@@ -132,10 +161,35 @@ bool AuthService::change_password(const std::string& token, const std::string& o
     auto users = services_.auth_users().list();
     for (auto& u : users) {
         if (u.username == it->second.username && u.password_hash == hash_password(old_password)) {
+            services_.logger().info("Auth: change_password for '" + u.username + "'"
+                + " must_change before=" + (u.must_change_password ? "1" : "0"));
+
             u.password_hash = hash_password(new_password);
             u.must_change_password = false;
+
             services_.auth_users().set_users(users);
             services_.storage().save_auth_users(users);
+
+            // Verify the save worked by reloading
+            auto verify = services_.storage().load_auth_users();
+            bool found = false;
+            bool saved_ok = false;
+            for (const auto& v : verify) {
+                if (v.username == u.username) {
+                    found = true;
+                    saved_ok = !v.must_change_password;
+                    services_.logger().info("Auth: change_password saved to "
+                        + services_.config().database_dir() + "auth_users.db"
+                        + " must_change after=" + (v.must_change_password ? "1" : "0"));
+                    break;
+                }
+            }
+            if (!found) {
+                services_.logger().info("Auth: change_password SAVE FAILED — user not found after reload");
+            } else if (!saved_ok) {
+                services_.logger().info("Auth: change_password SAVE FAILED — must_change still true after reload");
+            }
+
             return true;
         }
     }

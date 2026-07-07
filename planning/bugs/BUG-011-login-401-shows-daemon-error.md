@@ -87,32 +87,67 @@ was 15).
 - 46437ad Fix Web UI bootstrap password consistency (file sync)
 - (this) Fix Web UI password verification (JSON offset)
 
-## Follow-up issue: password reset after restart
+## Follow-up issue: password reset after restart (attempt 2)
 
 After successful password change (must_change_password=false), a
 daemon rebuild and restart caused the password to reset to a new
-temporary password.
+temporary password. Previous fix attempt (46437ad) added file sync
+but did not resolve the issue.
 
-**Investigation:** The code logic correctly persists `auth_users.db`
-after password change. `AuthService::initialize()` only creates a new
-admin when `users.empty()`, and only syncs from the password file
-when `must_change_password=true`. On restart with
-`must_change_password=false`, no changes should occur.
+**Investigation approach (this commit):**
 
-Root cause could not be conclusively identified through code review.
-Possible causes under investigation:
-- The `auth_users.db` file might not be flushed/synced to disk after
-  the password change write
-- A filesystem issue on the validation VM
-- A stale `auth_users.db` from a previous code version with different
-  format
+Instead of guessing, comprehensive diagnostics have been added to
+capture the exact state at every stage of the auth lifecycle:
 
-**Defensive hardening:**
-- Added startup logging to show whether admin was loaded from storage
-  or created fresh, and the value of `must_change_password`
-- Added persistence round-trip regression test that simulates:
-  bootstrap → save → load → change password → save → reload →
-  verify must_change_password=false and new password works
+### Startup diagnostics (AuthService::initialize)
+```
+Auth: db path = /srv/containercp/database/auth_users.db
+Auth: db exists = yes
+Auth: users loaded = 1
+Auth: user 'admin' enabled=1 must_change=0 hash_present=yes role=admin
+Auth: DECISION: skip — admin loaded from storage, must_change=false
+```
+
+### Password change diagnostics (AuthService::change_password)
+```
+Auth: change_password for 'admin' must_change before=1
+Auth: change_password saved to /srv/containercp/database/auth_users.db
+  must_change after=0
+```
+
+### CLI diagnostics
+```
+containercp auth debug
+  Auth users: 1
+    username=admin enabled=1 must_change=0 hash_present=yes role=admin
+```
+
+### Likely root cause that can now be diagnosed
+
+With these diagnostics, the exact failure point can be determined:
+
+1. If **startup log** shows `users loaded = 0` despite the password
+   change having logged a successful save — the file is either not
+   being written to the expected path, or is being overwritten by
+   another code path.
+
+2. If **startup log** shows `users loaded = 1` but `must_change=1`
+   despite the password change logging `must_change after=0` — the
+   save is writing stale data, or a subsequent operation reverts it.
+
+3. If **startup log** shows `db exists = no` — the file is at a
+   different path than expected.
+
+**Added this commit:**
+- Comprehensive startup logging (db path, file existence, user count,
+  each user's enabled/must_change/hash_present fields)
+- Post-change verification (reloads auth_users.db after save to
+  confirm it was written correctly)
+- CLI `containercp auth debug` command for runtime diagnostics
+- Updated startup DECISION logging (create/sync/skip) to clarify
+  exactly which code path was taken
+- `AuthService` now has access to `config().database_dir()` for
+  logging the auth_users.db path
 
 ## Validation
 
