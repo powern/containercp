@@ -288,7 +288,8 @@ void Storage::save_ssl_certificates(const std::vector<ssl::SslCertificate>& cert
     for (const auto& c : certs) {
         file << c.id << "|" << c.domain_id << "|" << c.domain << "|"
              << c.provider << "|" << c.certificate_path << "|" << c.key_path << "|"
-             << c.expires_at << "|" << c.status << "|" << (c.enabled ? "1" : "0") << "\n";
+             << c.expires_at << "|" << c.status << "|" << (c.enabled ? "1" : "0") << "|"
+             << (c.auto_renew ? "1" : "0") << "\n";
     }
 }
 
@@ -313,6 +314,7 @@ std::vector<ssl::SslCertificate> Storage::load_ssl_certificates() {
         if (std::getline(ss, token, '|')) c.expires_at = token;
         if (std::getline(ss, token, '|')) c.status = token;
         if (std::getline(ss, token, '|')) c.enabled = (token == "1");
+        if (std::getline(ss, token, '|')) c.auto_renew = (token == "1");
         c.name = c.domain;
         certs.push_back(std::move(c));
     }

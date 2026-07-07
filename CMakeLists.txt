@@ -46,6 +46,7 @@ add_executable(containercp
     libs/site/SiteManager.cpp
     libs/ssl/SslCertificate.cpp
     libs/ssl/SslCertificateManager.cpp
+    libs/ssl/LetsEncryptProvider.cpp
     libs/storage/Storage.cpp
     libs/template/TemplateEngine.cpp
     libs/user/User.cpp

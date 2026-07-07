@@ -5,6 +5,7 @@
 #include "config/Config.h"
 #include "filesystem/Filesystem.h"
 #include "logger/Logger.h"
+#include "ssl/SslCertificateManager.h"
 
 #include <string>
 
@@ -12,7 +13,8 @@ namespace containercp::proxy {
 
 class NginxProxyProvider : public ProxyProvider {
 public:
-    NginxProxyProvider(filesystem::Filesystem& fs, config::Config& cfg, logger::Logger& logger);
+    NginxProxyProvider(filesystem::Filesystem& fs, config::Config& cfg,
+                       logger::Logger& logger, ssl::SslCertificateManager& ssl_mgr);
 
     core::OperationResult create_proxy(const ReverseProxy& proxy) override;
     core::OperationResult remove_proxy(const std::string& domain) override;
@@ -27,6 +29,7 @@ private:
     filesystem::Filesystem& fs_;
     config::Config& cfg_;
     logger::Logger& logger_;
+    ssl::SslCertificateManager& ssl_mgr_;
 };
 
 } // namespace containercp::proxy

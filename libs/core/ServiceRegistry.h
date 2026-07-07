@@ -15,6 +15,7 @@
 #include "logger/Logger.h"
 #include "mail/MailDomainManager.h"
 #include "php/PhpVersionManager.h"
+#include "ssl/LetsEncryptProvider.h"
 #include "ssl/SslCertificateManager.h"
 #include "provider/DockerComposeProvider.h"
 #include "runtime/DockerRuntime.h"
@@ -41,6 +42,7 @@ public:
     proxy::ReverseProxyManager& reverse_proxies();
     proxy::ProxyProvider& proxy_provider();
     ssl::SslCertificateManager& ssl();
+    ssl::CertificateProvider& cert_provider();
     mail::MailDomainManager& mail();
     filesystem::Filesystem& filesystem();
     runtime::Runtime& runtime();
@@ -66,6 +68,7 @@ private:
     proxy::ReverseProxyManager reverse_proxies_;
     proxy::NginxProxyProvider proxy_provider_;
     ssl::SslCertificateManager ssl_;
+    ssl::LetsEncryptProvider cert_provider_;
     mail::MailDomainManager mail_;
     storage::Storage storage_;
     filesystem::Filesystem filesystem_;

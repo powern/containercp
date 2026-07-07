@@ -16,6 +16,7 @@ struct SslCertificate : core::Resource {
     std::string key_path;
     std::string expires_at = "unknown";
     std::string status = "placeholder";
+    bool auto_renew = true;
     bool enabled = true;
 };
 

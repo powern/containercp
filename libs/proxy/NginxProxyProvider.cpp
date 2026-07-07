@@ -5,10 +5,12 @@
 
 namespace containercp::proxy {
 
-NginxProxyProvider::NginxProxyProvider(filesystem::Filesystem& fs, config::Config& cfg, logger::Logger& logger)
+NginxProxyProvider::NginxProxyProvider(filesystem::Filesystem& fs, config::Config& cfg,
+                                       logger::Logger& logger, ssl::SslCertificateManager& ssl_mgr)
     : fs_(fs)
     , cfg_(cfg)
     , logger_(logger)
+    , ssl_mgr_(ssl_mgr)
 {
 }
 
@@ -26,19 +28,45 @@ core::OperationResult NginxProxyProvider::create_proxy(const ReverseProxy& proxy
         port = proxy.upstream.substr(pos + 1);
     }
 
+    auto* cert = ssl_mgr_.find_by_domain(proxy.domain);
+    bool has_ssl = (cert != nullptr && cert->enabled && cert->status == "active");
+
     std::ostringstream conf;
-    conf << "server {\n"
-         << "    listen 80;\n"
-         << "    server_name " << proxy.domain << ";\n"
-         << "\n"
-         << "    location / {\n"
-         << "        proxy_pass http://127.0.0.1:" << port << ";\n"
-         << "        proxy_set_header Host $host;\n"
-         << "        proxy_set_header X-Real-IP $remote_addr;\n"
-         << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
-         << "        proxy_set_header X-Forwarded-Proto $scheme;\n"
-         << "    }\n"
-         << "}\n";
+    if (has_ssl) {
+        conf << "server {\n"
+             << "    listen 443 ssl;\n"
+             << "    server_name " << proxy.domain << ";\n"
+             << "    ssl_certificate " << cert->certificate_path << ";\n"
+             << "    ssl_certificate_key " << cert->key_path << ";\n"
+             << "\n"
+             << "    location / {\n"
+             << "        proxy_pass http://127.0.0.1:" << port << ";\n"
+             << "        proxy_set_header Host $host;\n"
+             << "        proxy_set_header X-Real-IP $remote_addr;\n"
+             << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+             << "        proxy_set_header X-Forwarded-Proto https;\n"
+             << "    }\n"
+             << "}\n"
+             << "\n"
+             << "server {\n"
+             << "    listen 80;\n"
+             << "    server_name " << proxy.domain << ";\n"
+             << "    return 301 https://$host$request_uri;\n"
+             << "}\n";
+    } else {
+        conf << "server {\n"
+             << "    listen 80;\n"
+             << "    server_name " << proxy.domain << ";\n"
+             << "\n"
+             << "    location / {\n"
+             << "        proxy_pass http://127.0.0.1:" << port << ";\n"
+             << "        proxy_set_header Host $host;\n"
+             << "        proxy_set_header X-Real-IP $remote_addr;\n"
+             << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+             << "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+             << "    }\n"
+             << "}\n";
+    }
 
     fs_.create_file(path, conf.str());
     logger_.info("NginxProxyProvider: Created config for " + proxy.domain);

@@ -83,7 +83,10 @@ void print_help() {
         << "  proxy remove <domain> Remove proxy\n"
         << "  proxy enable <domain> Enable proxy\n"
         << "  proxy disable <domain> Disable proxy\n"
-        << "  proxy reload        Reload proxy\n";
+        << "  proxy reload        Reload proxy\n"
+        << "  ssl request <domain>    Request SSL certificate\n"
+        << "  ssl renew <domain>      Renew SSL certificate\n"
+        << "  ssl revoke <domain>     Revoke SSL certificate\n";
 }
 
 void print_version() {
@@ -481,6 +484,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
                   << "Key: " << c->key_path << "\n"
                   << "Expires: " << c->expires_at << "\n"
                   << "Status: " << c->status << "\n"
+                  << "Auto-renew: " << (c->auto_renew ? "yes" : "no") << "\n"
                   << "Enabled: " << (c->enabled ? "yes" : "no") << "\n";
         return 0;
     }
@@ -507,6 +511,52 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         services.ssl().remove(c->id);
         containercp::core::Application::instance().save();
         std::cout << "SSL disabled:\n" << argv[3] << "\n";
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "ssl" && std::string(argv[2]) == "request") {
+        if (services.ssl().find_by_domain(argv[3]) != nullptr) {
+            std::cout << "Certificate already exists for " << argv[3] << "\n";
+            return 1;
+        }
+        std::string cert = services.config().sites_dir() + argv[3] + "/ssl/fullchain.pem";
+        std::string key = services.config().sites_dir() + argv[3] + "/ssl/privkey.pem";
+        services.ssl().create(0, argv[3], cert, key);
+        auto result = services.cert_provider().request(argv[3]);
+        if (result.success) {
+            auto* c = services.ssl().find_by_domain(argv[3]);
+            if (c != nullptr) c->status = "active";
+        }
+        containercp::core::Application::instance().save();
+        std::cout << "SSL certificate requested:\n" << argv[3] << "\n";
+        return result.success ? 0 : 1;
+    }
+
+    if (argc == 4 && arg1 == "ssl" && std::string(argv[2]) == "renew") {
+        auto* c = services.ssl().find_by_domain(argv[3]);
+        if (c == nullptr) {
+            std::cout << "Certificate not found: " << argv[3] << "\n";
+            return 1;
+        }
+        auto result = services.cert_provider().renew(argv[3]);
+        if (result.success) {
+            c->status = "active";
+        }
+        containercp::core::Application::instance().save();
+        std::cout << "SSL certificate renewed:\n" << argv[3] << "\n";
+        return result.success ? 0 : 1;
+    }
+
+    if (argc == 4 && arg1 == "ssl" && std::string(argv[2]) == "revoke") {
+        auto* c = services.ssl().find_by_domain(argv[3]);
+        if (c == nullptr) {
+            std::cout << "Certificate not found: " << argv[3] << "\n";
+            return 1;
+        }
+        services.cert_provider().revoke(argv[3]);
+        services.ssl().remove(c->id);
+        containercp::core::Application::instance().save();
+        std::cout << "SSL certificate revoked:\n" << argv[3] << "\n";
         return 0;
     }
 

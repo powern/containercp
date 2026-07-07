@@ -6,7 +6,8 @@ ServiceRegistry::ServiceRegistry()
     : config_(config::Config::instance())
     , logger_(logger::Logger::instance())
     , access_provider_(logger_)
-    , proxy_provider_(filesystem_, config_, logger_)
+    , proxy_provider_(filesystem_, config_, logger_, ssl_)
+    , cert_provider_(logger_)
     , storage_(config_.database_dir())
     , runtime_(logger_, config_.sites_dir())
     , hosting_provider_(filesystem_, config_, php_versions_, runtime_)
@@ -151,6 +152,10 @@ proxy::ProxyProvider& ServiceRegistry::proxy_provider() {
 
 ssl::SslCertificateManager& ServiceRegistry::ssl() {
     return ssl_;
+}
+
+ssl::CertificateProvider& ServiceRegistry::cert_provider() {
+    return cert_provider_;
 }
 
 mail::MailDomainManager& ServiceRegistry::mail() {

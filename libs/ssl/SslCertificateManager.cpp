@@ -2,7 +2,8 @@
 
 namespace containercp::ssl {
 
-uint64_t SslCertificateManager::create(uint64_t domain_id, const std::string& domain, const std::string& cert_path, const std::string& key_path) {
+uint64_t SslCertificateManager::create(uint64_t domain_id, const std::string& domain,
+                                        const std::string& cert_path, const std::string& key_path) {
     SslCertificate c;
     c.id = next_id_++;
     c.name = domain;
@@ -12,7 +13,8 @@ uint64_t SslCertificateManager::create(uint64_t domain_id, const std::string& do
     c.key_path = key_path;
     c.provider = "placeholder";
     c.expires_at = "unknown";
-    c.status = "placeholder";
+    c.status = "requested";
+    c.auto_renew = true;
     c.enabled = true;
     certs_.push_back(std::move(c));
     return c.id;
@@ -44,6 +46,16 @@ SslCertificate* SslCertificateManager::find_by_domain(const std::string& domain)
         }
     }
     return nullptr;
+}
+
+std::vector<SslCertificate*> SslCertificateManager::find_expiring() {
+    std::vector<SslCertificate*> result;
+    for (auto& c : certs_) {
+        if (c.status == "active" && c.auto_renew) {
+            result.push_back(&c);
+        }
+    }
+    return result;
 }
 
 const std::vector<SslCertificate>& SslCertificateManager::list() const {
