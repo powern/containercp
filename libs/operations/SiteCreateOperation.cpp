@@ -29,6 +29,9 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
     fs_.create_directory(site_dir);
     fs_.create_file(site_dir + "README.txt", "This site is managed by ContainerCP.\n");
 
+    docker::ComposeGenerator gen(fs_, cfg_.config_root() + "/templates/");
+    gen.generate(domain, owner, site_dir + "docker-compose.yml");
+
     return {true, ""};
 }
 

@@ -4,6 +4,7 @@
 #include "config/Config.h"
 #include "core/OperationResult.h"
 #include "core/ResourceManager.h"
+#include "docker/ComposeGenerator.h"
 #include "filesystem/Filesystem.h"
 #include "node/Node.h"
 #include "site/SiteManager.h"
