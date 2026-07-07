@@ -3,6 +3,7 @@
 #include "domain/DomainManager.h"
 #include "node/Node.h"
 #include "operations/SiteCreateOperation.h"
+#include "operations/SiteRemoveOperation.h"
 #include "utils/Validator.h"
 
 #include <chrono>
@@ -54,6 +55,7 @@ void print_help() {
         << "  database remove <name> Remove database\n"
         << "  site list       List sites\n"
         << "  site create <owner> <domain> Create site\n"
+        << "  site remove <domain>     Remove site\n"
         << "  site start <domain>     Start site stack\n"
         << "  site stop <domain>      Stop site stack\n"
         << "  site status <domain>    Show site status\n";
@@ -135,7 +137,7 @@ int handle_user_remove(const std::string& username) {
     return 0;
 }
 
-int handle_site_create(const std::string& owner, const std::string& domain) {
+int handle_site_create(const std::string& owner, const std::string& domain, bool dry_run) {
     auto& services = containercp::core::Application::instance().services();
 
     auto* node = services.nodes().find("local");
@@ -145,11 +147,33 @@ int handle_site_create(const std::string& owner, const std::string& domain) {
     }
 
     containercp::operations::SiteCreateOperation op(services.sites(), services.domains(), services.databases(), services.hosting_provider());
-    auto result = op.execute(owner, domain, *node);
+    auto result = op.execute(owner, domain, *node, dry_run);
+
+    if (result.success) {
+        if (dry_run) {
+            return 0;
+        }
+        containercp::core::Application::instance().save();
+        std::cout << "Site created:\n" << domain << "\n";
+    } else {
+        std::cout << result.message << "\n";
+    }
+    return result.success ? 0 : 1;
+}
+
+int handle_site_remove(const std::string& domain) {
+    auto& services = containercp::core::Application::instance().services();
+
+    containercp::operations::SiteRemoveOperation op(
+        services.sites(), services.domains(), services.databases(),
+        services.backups(), services.ssl(), services.mail(),
+        services.filesystem(), services.config(), services.runtime());
+
+    auto result = op.execute(domain);
 
     if (result.success) {
         containercp::core::Application::instance().save();
-        std::cout << "Site created:\n" << domain << "\n";
+        std::cout << "Site removed:\n" << domain << "\n";
     } else {
         std::cout << result.message << "\n";
     }
@@ -548,8 +572,13 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         return 0;
     }
 
-    if (argc == 5 && arg1 == "site" && std::string(argv[2]) == "create") {
-        return handle_site_create(argv[3], argv[4]);
+    if (argc >= 5 && arg1 == "site" && std::string(argv[2]) == "create") {
+        bool dry_run = (argc == 6 && std::string(argv[5]) == "--dry-run");
+        return handle_site_create(argv[3], argv[4], dry_run);
+    }
+
+    if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "remove") {
+        return handle_site_remove(argv[3]);
     }
 
     if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "start") {

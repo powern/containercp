@@ -24,6 +24,8 @@ private:
 
     logger::Logger& logger_;
     std::string sites_root_;
+    bool docker_checked_ = false;
+    bool docker_available_ = false;
 };
 
 } // namespace containercp::runtime

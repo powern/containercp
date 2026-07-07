@@ -11,9 +11,14 @@ DockerRuntime::DockerRuntime(logger::Logger& logger, const std::string& sites_ro
 }
 
 bool DockerRuntime::check_docker() {
+    if (docker_checked_) {
+        return docker_available_;
+    }
+    docker_checked_ = true;
     constexpr const char* cmd = "docker --version > /dev/null 2>&1";
     int rc = std::system(cmd);
-    return rc == 0;
+    docker_available_ = (rc == 0);
+    return docker_available_;
 }
 
 core::OperationResult DockerRuntime::run_command(const std::string& site_dir, const std::string& command) {

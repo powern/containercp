@@ -16,7 +16,7 @@ class SiteCreateOperation {
 public:
     SiteCreateOperation(site::SiteManager& sites, domain::DomainManager& domains, database::DatabaseManager& databases, provider::HostingProvider& provider);
 
-    core::OperationResult execute(const std::string& owner, const std::string& domain, const node::Node& node);
+    core::OperationResult execute(const std::string& owner, const std::string& domain, const node::Node& node, bool dry_run = false);
 
 private:
     site::SiteManager& sites_;

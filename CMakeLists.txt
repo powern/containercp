@@ -29,6 +29,7 @@ add_executable(containercp
     libs/mail/MailDomainManager.cpp
     libs/node/Node.cpp
     libs/operations/SiteCreateOperation.cpp
+    libs/operations/SiteRemoveOperation.cpp
     libs/php/PhpVersion.cpp
     libs/php/PhpVersionManager.cpp
     libs/provider/DockerComposeProvider.cpp

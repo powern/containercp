@@ -3,6 +3,8 @@
 #include "utils/StringUtils.h"
 #include "utils/Validator.h"
 
+#include <iostream>
+
 namespace containercp::operations {
 
 SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, domain::DomainManager& domains, database::DatabaseManager& databases, provider::HostingProvider& provider)
@@ -13,7 +15,7 @@ SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, domain::Domai
 {
 }
 
-core::OperationResult SiteCreateOperation::execute(const std::string& owner, const std::string& domain, const node::Node& node) {
+core::OperationResult SiteCreateOperation::execute(const std::string& owner, const std::string& domain, const node::Node& node, bool dry_run) {
     if (!utils::Validator::is_valid_username(owner)) {
         return {false, "Invalid username."};
     }
@@ -24,6 +26,16 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
 
     if (sites_.find(domain) != nullptr) {
         return {false, "Site already exists."};
+    }
+
+    if (dry_run) {
+        std::cout << "[Dry Run] Would create site: " << domain << "\n";
+        std::cout << "[Dry Run] Would create domain: " << domain << "\n";
+        std::cout << "[Dry Run] Would create database: " << utils::StringUtils::sanitize(domain) << "_db\n";
+        std::cout << "[Dry Run] Would generate docker-compose.yml\n";
+        std::cout << "[Dry Run] Would create directory: /srv/containercp/sites/" << domain << "/\n";
+        std::cout << "[Dry Run] Would start Docker stack\n";
+        return {true, ""};
     }
 
     site::Site site;
@@ -46,7 +58,16 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
     site.db_user = db_user;
     site.db_password = db_password;
 
-    return provider_.create_site(site);
+    auto result = provider_.create_site(site);
+
+    if (!result.success) {
+        databases_.remove(site.id);
+        domains_.remove(site.id);
+        sites_.remove(site.id);
+        return {false, result.message + " Created resources have been rolled back."};
+    }
+
+    return {true, ""};
 }
 
 } // namespace containercp::operations
