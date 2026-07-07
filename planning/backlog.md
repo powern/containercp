@@ -70,6 +70,27 @@ Items are ordered by priority within each category.
 - [ ] BACKUP-007: SiteRemoveOperation integration
 - [ ] BACKUP-008: Tests
 
+## Version 0.6 — DNS and Mail
+
+- [ ] DNS-001: DNS resource and manager
+- [ ] DNS-002: DNS provider interface
+- [ ] DNS-003: DNS CLI and REST API
+- [ ] DNS-004: DNS Web UI pages
+- [ ] MAIL-001: Mail provider implementation
+
+## Version 0.7 — Monitoring
+
+- [ ] MON-001: System metrics collection
+- [ ] MON-002: Resource usage dashboard
+- [ ] MON-003: Log viewer enhancements
+- [ ] MON-004: Health check configuration
+
+## Version 0.8 — Multi-node
+
+- [ ] NODE-001: Remote node registration
+- [ ] NODE-002: Distributed storage
+- [ ] NODE-003: Cross-node site migration
+
 ## Future
 
 - [ ] SSL certificate generation (Let's Encrypt)
