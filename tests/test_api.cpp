@@ -160,3 +160,36 @@ TEST_CASE("Static file path traversal blocked") {
     std::string bad_path = "/../../etc/passwd";
     CHECK(bad_path.find("..") != std::string::npos);
 }
+
+static std::string test_base64(const std::string& input) {
+    static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    size_t i = 0;
+    while (i < input.size()) {
+        size_t start = i;
+        unsigned char c1 = input[i++];
+        unsigned char c2 = (i < input.size()) ? input[i++] : 0;
+        unsigned char c3 = (i < input.size()) ? input[i++] : 0;
+        size_t read = i - start;
+        out += b64[c1 >> 2];
+        out += b64[((c1 & 0x3) << 4) | (c2 >> 4)];
+        out += (read >= 2) ? b64[((c2 & 0xf) << 2) | (c3 >> 6)] : '=';
+        out += (read >= 3) ? b64[c3 & 0x3f] : '=';
+    }
+    return out;
+}
+
+TEST_CASE("Base64 encoding") {
+    CHECK(test_base64("a") == "YQ==");
+    CHECK(test_base64("ab") == "YWI=");
+    CHECK(test_base64("abc") == "YWJj");
+    CHECK(test_base64("admin:secret") == "YWRtaW46c2VjcmV0");
+}
+
+TEST_CASE("Base64 auth credentials") {
+    // Verify that "admin:<password>" encodes correctly for auth comparison
+    std::string creds = "admin:test123";
+    std::string encoded = test_base64(creds);
+    CHECK(encoded == "YWRtaW46dGVzdDEyMw==");
+    CHECK(("Basic " + encoded) == "Basic YWRtaW46dGVzdDEyMw==");
+}

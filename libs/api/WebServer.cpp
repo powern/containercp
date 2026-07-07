@@ -52,6 +52,8 @@ void WebServer::load_password() {
     }
 
     services_.logger().info("WebUI password generated: " + password_);
+    services_.logger().info("WebUI username: admin");
+    services_.logger().info("WebUI password file: " + path);
 }
 
 bool WebServer::check_auth(const Request& req) const {
@@ -65,13 +67,15 @@ bool WebServer::check_auth(const Request& req) const {
     std::string encoded;
     size_t i = 0;
     while (i < creds.size()) {
+        size_t start = i;
         unsigned char c1 = creds[i++];
         unsigned char c2 = (i < creds.size()) ? creds[i++] : 0;
         unsigned char c3 = (i < creds.size()) ? creds[i++] : 0;
+        size_t read = i - start;
         encoded += b64[c1 >> 2];
         encoded += b64[((c1 & 0x3) << 4) | (c2 >> 4)];
-        encoded += (i - 1 < creds.size()) ? b64[((c2 & 0xf) << 2) | (c3 >> 6)] : '=';
-        encoded += (i < creds.size()) ? b64[c3 & 0x3f] : '=';
+        encoded += (read >= 2) ? b64[((c2 & 0xf) << 2) | (c3 >> 6)] : '=';
+        encoded += (read >= 3) ? b64[c3 & 0x3f] : '=';
     }
 
     return it->second == "Basic " + encoded;
@@ -291,7 +295,9 @@ bool WebServer::start() {
     }
 
     running_ = true;
-    services_.logger().info("WebServer: Listening on " + bind_addr_ + ":" + std::to_string(port_));
+    services_.logger().info("Web UI: Listening on http://" + bind_addr_ + ":" + std::to_string(port_) + "/");
+    services_.logger().info("Web UI: Username: admin");
+    services_.logger().info("Web UI: Password file: " + services_.config().config_root() + "/ui-password");
 
     while (running_) {
         struct sockaddr_in client_addr{};
