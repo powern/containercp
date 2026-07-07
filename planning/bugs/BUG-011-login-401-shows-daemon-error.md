@@ -37,15 +37,50 @@ distinguished from network failures.
 4. Added SHA-256 test vectors (NIST, empty string, consistency).
 5. Added route pattern regression tests.
 
-## Files changed
+## Follow-up issue: password file desync
 
-- `libs/api/WebServer.cpp` — added public health route
-- `web/app.js` — proper 401 vs network error handling
-- `tests/test_api.cpp` — SHA-256 tests, route pattern tests
+Even after the route fix, login still fails because the generated
+password in `/etc/containercp/ui-password` does not match the hash
+stored in `auth_users.db`.
 
-## Commit
+**Root cause:**
 
-a89e5e0 Fix Web UI login route authentication
+`AuthService::initialize()` generates a random password on first start
+and stores its SHA-256 hash in `auth_users.db`. It logs the password
+but does NOT write the plaintext to the password file.
+
+The old Basic Auth code (`WebServer::load_password()`, now removed)
+also generated a random password and wrote it to
+`/etc/containercp/ui-password` — but it generated a *different* random
+password. On the next daemon restart, `AuthService::initialize()` sees
+that `auth_users.db` already has an admin user and does nothing, so
+the password file and the stored hash remain permanently desynchronized.
+
+**Fix:**
+
+1. On first start: `AuthService::initialize()` now writes the
+   generated plaintext password to `/etc/containercp/ui-password` so
+   operators can discover it.
+
+2. On every subsequent start: if admin has `must_change_password=true`
+   and the password file exists, `AuthService::initialize()` re-reads
+   the file, re-hashes the password, and updates `auth_users.db` to
+   match. This keeps the file as the source of truth for the temporary
+   password and prevents desync.
+
+3. The file is read with `std::getline` which strips the trailing
+   newline. An additional `\r` trim handles any Windows line endings.
+
+**Files changed:**
+
+- `libs/auth/AuthService.cpp` — write password file on first start,
+  sync hash from file on subsequent starts
+- `tests/test_api.cpp` — password hash consistency test, password
+  file round-trip test
+
+**Commit:**
+
+e469d0d (to be updated)
 
 ## Validation
 
@@ -54,3 +89,7 @@ a89e5e0 Fix Web UI login route authentication
 - [ ] Protected /ui-api/* without token returns 401
 - [ ] GET /ui-api/health is public (no session required)
 - [ ] Login page shows "Invalid username or password" for bad credentials
+- [ ] Password from `/etc/containercp/ui-password` successfully
+      authenticates admin on first login
+- [ ] After password change, file-based sync stops (must_change_password
+      is false)

@@ -2,7 +2,9 @@
 #include "sha256.h"
 #include "core/ServiceRegistry.h"
 
+#include <fstream>
 #include <random>
+#include <sys/stat.h>
 
 namespace containercp::auth {
 
@@ -16,7 +18,10 @@ std::string AuthService::hash_password(const std::string& password) {
 }
 
 void AuthService::initialize() {
+    std::string password_path = services_.config().config_root() + "/ui-password";
+
     auto users = services_.auth_users().list();
+
     if (users.empty()) {
         std::string chars = "abcdefghijklmnopqrstuvwxyz0123456789";
         std::random_device rd;
@@ -40,9 +45,46 @@ void AuthService::initialize() {
         services_.auth_users().create(admin);
         services_.storage().save_auth_users(services_.auth_users().list());
 
+        // Write plaintext password to file so operator can discover it
+        std::string dir = services_.config().config_root();
+        ::mkdir(dir.c_str(), 0755);
+        std::ofstream of(password_path);
+        if (of.is_open()) {
+            of << temp_password << std::endl;
+            of.close();
+        }
+
         services_.logger().info("Web UI: Admin account created");
         services_.logger().info("Web UI: Temporary password: " + temp_password);
-        services_.logger().info("Web UI: You must change this password on first login");
+        services_.logger().info("Web UI: Password file: " + password_path);
+        return;
+    }
+
+    // Subsequent starts: if admin has must_change_password=true and the
+    // password file exists, re-hash the file's content and sync the
+    // stored hash. This prevents desync between the file and the DB.
+    for (auto& u : users) {
+        if (u.username == "admin" && u.must_change_password) {
+            std::ifstream f(password_path);
+            if (f.is_open()) {
+                std::string file_password;
+                std::getline(f, file_password);
+                f.close();
+
+                if (!file_password.empty() && file_password.back() == '\r') {
+                    file_password.pop_back();
+                }
+
+                std::string expected_hash = hash_password(file_password);
+                if (u.password_hash != expected_hash) {
+                    u.password_hash = expected_hash;
+                    services_.auth_users().set_users(users);
+                    services_.storage().save_auth_users(users);
+                    services_.logger().info("Web UI: Synced password hash from " + password_path);
+                }
+            }
+            break;
+        }
     }
 }
 

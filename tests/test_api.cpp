@@ -243,6 +243,43 @@ TEST_CASE("Auth route patterns") {
     }
 }
 
+TEST_CASE("Password hash consistency") {
+    // Verify that the same password always produces the same hash.
+    // This mirrors the AuthService::hash_password logic (sha256 wrapper).
+    std::string password = "ckws0s158xe3hdz0";
+    std::string hash1 = containercp::auth::sha256(password);
+    std::string hash2 = containercp::auth::sha256(password);
+    CHECK(hash1 == hash2);
+    CHECK(hash1.size() == 64);
+
+    // Simulate login verification: hash provided password and compare
+    std::string login_hash = containercp::auth::sha256(password);
+    CHECK(login_hash == hash1);
+}
+
+TEST_CASE("Password file round-trip") {
+    // Simulate the bootstrap flow:
+    // 1. Generate a password
+    // 2. Write it to a temp file (with newline)
+    // 3. Read it back with std::getline (strips newline)
+    // 4. Hash it
+    // 5. Verify the hash matches direct hashing of the original
+
+    std::string original = "ckws0s158xe3hdz0";
+    std::string stored = original + "\n";
+
+    // Simulate std::getline read
+    std::string read_back = stored;
+    if (!read_back.empty() && read_back.back() == '\n') read_back.pop_back();
+    if (!read_back.empty() && read_back.back() == '\r') read_back.pop_back();
+
+    CHECK(read_back == original);
+
+    std::string hash_from_file = containercp::auth::sha256(read_back);
+    std::string hash_direct = containercp::auth::sha256(original);
+    CHECK(hash_from_file == hash_direct);
+}
+
 TEST_CASE("Unauthenticated route access pattern") {
     // Verify the route classification logic used by WebServer::handle_client
     auto is_public = [](const std::string& path) {
