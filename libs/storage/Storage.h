@@ -1,6 +1,7 @@
 #ifndef CONTAINERCP_STORAGE_STORAGE_H
 #define CONTAINERCP_STORAGE_STORAGE_H
 
+#include "database/Database.h"
 #include "domain/Domain.h"
 #include "node/Node.h"
 #include "php/PhpVersion.h"
@@ -31,12 +32,16 @@ public:
     void save_php_versions(const std::vector<php::PhpVersion>& versions);
     std::vector<php::PhpVersion> load_php_versions();
 
+    void save_databases(const std::vector<database::Database>& databases);
+    std::vector<database::Database> load_databases();
+
 private:
     std::string nodes_file() const;
     std::string sites_file() const;
     std::string users_file() const;
     std::string domains_file() const;
     std::string php_versions_file() const;
+    std::string databases_file() const;
 
     std::string db_path_;
 };

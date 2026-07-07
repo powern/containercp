@@ -50,6 +50,11 @@ ServiceRegistry::ServiceRegistry()
         domains_.set_domains(loaded_domains);
     }
 
+    auto loaded_databases = storage_.load_databases();
+    if (!loaded_databases.empty()) {
+        databases_.set_databases(loaded_databases);
+    }
+
     auto loaded_sites = storage_.load_sites();
     if (!loaded_sites.empty()) {
         sites_.set_sites(loaded_sites);
@@ -84,6 +89,10 @@ php::PhpVersionManager& ServiceRegistry::php_versions() {
     return php_versions_;
 }
 
+database::DatabaseManager& ServiceRegistry::databases() {
+    return databases_;
+}
+
 filesystem::Filesystem& ServiceRegistry::filesystem() {
     return filesystem_;
 }
@@ -102,6 +111,7 @@ void ServiceRegistry::save() {
     storage_.save_users(users_.list());
     storage_.save_domains(domains_.list());
     storage_.save_php_versions(php_versions_.list());
+    storage_.save_databases(databases_.list());
 }
 
 } // namespace containercp::core

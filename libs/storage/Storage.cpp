@@ -31,6 +31,10 @@ std::string Storage::php_versions_file() const {
     return db_path_ + "php_versions.db";
 }
 
+std::string Storage::databases_file() const {
+    return db_path_ + "databases.db";
+}
+
 void Storage::save_nodes(const std::vector<node::Node>& nodes) {
     std::ofstream file(nodes_file());
     for (const auto& n : nodes) {
@@ -182,6 +186,42 @@ std::vector<php::PhpVersion> Storage::load_php_versions() {
         versions.push_back(std::move(pv));
     }
     return versions;
+}
+
+void Storage::save_databases(const std::vector<database::Database>& databases) {
+    std::ofstream file(databases_file());
+    for (const auto& d : databases) {
+        file << d.id << "|" << d.db_name << "|" << d.db_user << "|" << d.db_password << "|"
+             << d.engine << "|" << d.version << "|" << d.owner_id << "|" << d.site_id << "|"
+             << (d.enabled ? "1" : "0") << "\n";
+    }
+}
+
+std::vector<database::Database> Storage::load_databases() {
+    std::vector<database::Database> databases;
+    std::ifstream file(databases_file());
+    if (!file.is_open()) {
+        return databases;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::istringstream ss(line);
+        std::string token;
+        database::Database d;
+        if (std::getline(ss, token, '|')) d.id = std::stoull(token);
+        if (std::getline(ss, token, '|')) d.db_name = token;
+        if (std::getline(ss, token, '|')) d.db_user = token;
+        if (std::getline(ss, token, '|')) d.db_password = token;
+        if (std::getline(ss, token, '|')) d.engine = token;
+        if (std::getline(ss, token, '|')) d.version = token;
+        if (std::getline(ss, token, '|')) d.owner_id = std::stoull(token);
+        if (std::getline(ss, token, '|')) d.site_id = std::stoull(token);
+        if (std::getline(ss, token, '|')) d.enabled = (token == "1");
+        d.name = d.db_name;
+        databases.push_back(std::move(d));
+    }
+    return databases;
 }
 
 } // namespace containercp::storage

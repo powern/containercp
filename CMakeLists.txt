@@ -14,6 +14,8 @@ add_executable(containercp
     libs/core/Resource.cpp
     libs/core/ResourceManager.cpp
     libs/core/ServiceRegistry.cpp
+    libs/database/Database.cpp
+    libs/database/DatabaseManager.cpp
     libs/domain/Domain.cpp
     libs/domain/DomainManager.cpp
     libs/docker/ComposeGenerator.cpp

@@ -3,6 +3,7 @@
 
 #include "config/Config.h"
 #include "core/ResourceManager.h"
+#include "database/DatabaseManager.h"
 #include "domain/DomainManager.h"
 #include "filesystem/Filesystem.h"
 #include "logger/Logger.h"
@@ -24,6 +25,7 @@ public:
     user::UserManager& users();
     domain::DomainManager& domains();
     php::PhpVersionManager& php_versions();
+    database::DatabaseManager& databases();
     filesystem::Filesystem& filesystem();
     runtime::Runtime& runtime();
     provider::HostingProvider& hosting_provider();
@@ -40,6 +42,7 @@ private:
     user::UserManager users_;
     domain::DomainManager domains_;
     php::PhpVersionManager php_versions_;
+    database::DatabaseManager databases_;
     storage::Storage storage_;
     filesystem::Filesystem filesystem_;
     runtime::DockerRuntime runtime_;

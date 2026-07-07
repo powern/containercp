@@ -32,6 +32,9 @@ void print_help() {
         << "  php list            List PHP versions\n"
         << "  php show <version>  Show PHP version details\n"
         << "  php default         Show default PHP version\n"
+        << "  database list       List databases\n"
+        << "  database show <name> Show database details\n"
+        << "  database remove <name> Remove database\n"
         << "  site list       List sites\n"
         << "  site create <owner> <domain> Create site\n"
         << "  site start <domain>     Start site stack\n"
@@ -119,7 +122,7 @@ int handle_site_create(const std::string& owner, const std::string& domain) {
         return 1;
     }
 
-    containercp::operations::SiteCreateOperation op(services.sites(), services.domains(), services.hosting_provider());
+    containercp::operations::SiteCreateOperation op(services.sites(), services.domains(), services.databases(), services.hosting_provider());
     auto result = op.execute(owner, domain, *node);
 
     if (result.success) {
@@ -305,6 +308,45 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         }
         std::cout << "Version: " << pv->version << "\n"
                   << "Image: " << pv->image << "\n";
+        return 0;
+    }
+
+    if (argc == 3 && arg1 == "database" && std::string(argv[2]) == "list") {
+        auto& databases = services.databases().list();
+        if (databases.empty()) {
+            std::cout << "No databases.\n";
+        } else {
+            for (const auto& d : databases) {
+                std::cout << d.db_name << "\n";
+            }
+        }
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "database" && std::string(argv[2]) == "show") {
+        auto* db = services.databases().find(argv[3]);
+        if (db == nullptr) {
+            std::cout << "Database not found: " << argv[3] << "\n";
+            return 1;
+        }
+        std::cout << "Name: " << db->db_name << "\n"
+                  << "User: " << db->db_user << "\n"
+                  << "Engine: " << db->engine << "\n"
+                  << "Version: " << db->version << "\n"
+                  << "Site ID: " << db->site_id << "\n"
+                  << "Enabled: " << (db->enabled ? "yes" : "no") << "\n";
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "database" && std::string(argv[2]) == "remove") {
+        auto* db = services.databases().find(argv[3]);
+        if (db == nullptr) {
+            std::cout << "Database not found: " << argv[3] << "\n";
+            return 1;
+        }
+        services.databases().remove(db->id);
+        containercp::core::Application::instance().save();
+        std::cout << "Database removed:\n" << argv[3] << "\n";
         return 0;
     }
 
