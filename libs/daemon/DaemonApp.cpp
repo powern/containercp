@@ -239,18 +239,18 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
     }
 
     if (cmd.name == "template-list") {
-        auto& profiles = s.template_profiles().list();
+        auto by_type = s.profiles().list_by_type(profile::ProfileType::WEB_SERVER);
         std::ostringstream out;
-        for (const auto& p : profiles) {
-            out << p.profile_name;
-            if (p.default_profile) out << " (default)";
+        for (const auto* p : by_type) {
+            out << p->profile_name;
+            if (p->default_profile) out << " (default)";
             out << "\n";
         }
         return Command::success(out.str());
     }
 
     if (cmd.name == "template-show" && cmd.args.size() >= 1) {
-        auto* p = s.template_profiles().find(cmd.args[0]);
+        auto* p = s.profiles().find(cmd.args[0]);
         if (!p) return Command::error("Template not found");
         std::ostringstream out;
         out << "Name: " << p->profile_name << "\n"
@@ -263,7 +263,7 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
     }
 
     if (cmd.name == "template-default") {
-        auto* p = s.template_profiles().get_default();
+        auto* p = s.profiles().get_default(profile::ProfileType::WEB_SERVER);
         if (!p) return Command::error("No default template");
         std::ostringstream out;
         out << "Name: " << p->profile_name << "\n"
@@ -276,12 +276,12 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
     }
 
     if (cmd.name == "template-reload") {
-        s.reload_template_profiles();
+        s.reload_profiles();
         return Command::success("Templates reloaded");
     }
 
     if (cmd.name == "template-validate" && cmd.args.size() >= 1) {
-        auto* profile = s.template_profiles().find(cmd.args[0]);
+        auto* profile = s.profiles().find(cmd.args[0]);
         if (!profile) return Command::error("Template profile not found: " + cmd.args[0]);
 
         if (!s.filesystem().exists(profile->template_path)) {

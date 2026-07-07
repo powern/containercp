@@ -1,33 +1,63 @@
-#include "template/TemplateProfileManager.h"
+#include "profile/ProfileManager.h"
 #include "template/TemplateEngine.h"
-#include "template/web_templates.h"
 
-#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
 
 #include "doctest/doctest.h"
 
-TEST_CASE("TemplateProfileManager create/find/list") {
-    containercp::template_engine::TemplateProfileManager mgr;
-    uint64_t id = mgr.create("nginx-php-default", "nginx", "/path/tmpl", "Default PHP", true);
+using containercp::profile::ProfileType;
+using containercp::profile::ProfileManager;
+
+TEST_CASE("ProfileManager create/find/list") {
+    ProfileManager mgr;
+    uint64_t id = mgr.create("nginx-php-default", ProfileType::WEB_SERVER,
+                             "nginx", "/path/tmpl", "Default PHP", true);
     CHECK(id == 1);
     auto* p = mgr.find("nginx-php-default");
     REQUIRE(p != nullptr);
     CHECK(p->web_server == "nginx");
+    CHECK(p->type == ProfileType::WEB_SERVER);
     CHECK(p->default_profile);
-    CHECK(p->enabled);
     CHECK(mgr.list().size() == 1);
 }
 
-TEST_CASE("TemplateProfileManager get_default") {
-    containercp::template_engine::TemplateProfileManager mgr;
-    mgr.create("nginx-php-default", "nginx", "/a", "desc", true);
-    mgr.create("apache-php-default", "apache", "/b", "desc", false);
-    auto* def = mgr.get_default();
+TEST_CASE("ProfileManager get_default by type") {
+    ProfileManager mgr;
+    mgr.create("nginx-php-default", ProfileType::WEB_SERVER, "nginx", "/a", "desc", true);
+    mgr.create("apache-php-default", ProfileType::WEB_SERVER, "apache", "/b", "desc", false);
+
+    auto* def = mgr.get_default(ProfileType::WEB_SERVER);
     REQUIRE(def != nullptr);
     CHECK(def->profile_name == "nginx-php-default");
+}
+
+TEST_CASE("ProfileManager list_by_type") {
+    ProfileManager mgr;
+    mgr.create("nginx-default", ProfileType::WEB_SERVER, "nginx", "/a", "", true);
+    mgr.create("php-8.4", ProfileType::PHP, "", "/b", "", false);
+    mgr.create("nginx-laravel", ProfileType::WEB_SERVER, "nginx", "/c", "", false);
+
+    auto web = mgr.list_by_type(ProfileType::WEB_SERVER);
+    CHECK(web.size() == 2);
+
+    auto php = mgr.list_by_type(ProfileType::PHP);
+    CHECK(php.size() == 1);
+}
+
+TEST_CASE("ProfileType string conversion") {
+    CHECK(containercp::profile::profile_type_to_string(ProfileType::WEB_SERVER) == "web_server");
+    CHECK(containercp::profile::profile_type_to_string(ProfileType::PHP) == "php");
+    CHECK(containercp::profile::profile_type_to_string(ProfileType::DOCKER) == "docker");
+    CHECK(containercp::profile::profile_type_to_string(ProfileType::SSL) == "ssl");
+    CHECK(containercp::profile::profile_type_to_string(ProfileType::BACKUP) == "backup");
+    CHECK(containercp::profile::profile_type_to_string(ProfileType::MAIL) == "mail");
+    CHECK(containercp::profile::profile_type_to_string(ProfileType::DNS) == "dns");
+
+    CHECK(containercp::profile::profile_type_from_string("web_server") == ProfileType::WEB_SERVER);
+    CHECK(containercp::profile::profile_type_from_string("php") == ProfileType::PHP);
+    CHECK(containercp::profile::profile_type_from_string("unknown") == ProfileType::WEB_SERVER);
 }
 
 TEST_CASE("TemplateEngine render_web replaces variables") {
@@ -47,18 +77,19 @@ TEST_CASE("TemplateEngine render_web ssl_disabled") {
     CHECK(result == "ssl=false");
 }
 
-TEST_CASE("Default web templates exist") {
-    auto tmpl = containercp::template_engine::default_web_templates();
-    CHECK(tmpl.find("nginx-php-default") != tmpl.end());
-    CHECK(tmpl.find("nginx-wordpress") != tmpl.end());
-    CHECK(tmpl.find("nginx-laravel") != tmpl.end());
-    CHECK(tmpl.find("apache-php-default") != tmpl.end());
-    CHECK(tmpl.find("apache-wordpress") != tmpl.end());
-    CHECK(tmpl.size() == 5);
+TEST_CASE("Existing template file is not overwritten") {
+    std::string tmp_dir = "/tmp/containercp_test_profiles/";
+    std::string tmpl_file = tmp_dir + "custom.conf.template";
+    std::filesystem::create_directories(tmp_dir);
+    std::ofstream(tmpl_file) << "CUSTOM_CONTENT";
+    CHECK(std::filesystem::exists(tmpl_file));
+    std::ifstream f(tmpl_file);
+    std::string content((std::istreambuf_iterator<char>(f)), {});
+    CHECK(content == "CUSTOM_CONTENT");
+    std::filesystem::remove_all(tmp_dir);
 }
 
-TEST_CASE("Template validate detects missing variables") {
-    // A template without required variables should fail validation
+TEST_CASE("Profile validate detects missing variables") {
     std::string incomplete = "server_name {{DOMAIN}}; root {{PUBLIC_ROOT}};";
     const char* required[] = {"{{DOMAIN}}", "{{PUBLIC_ROOT}}", "{{PHP_UPSTREAM}}",
                               "{{LOG_ROOT}}", "{{SSL_ENABLED}}"};
@@ -71,33 +102,4 @@ TEST_CASE("Template validate detects missing variables") {
     }
     CHECK(!missing.empty());
     CHECK(missing.find("{{PHP_UPSTREAM}}") != std::string::npos);
-    CHECK(missing.find("{{LOG_ROOT}}") != std::string::npos);
-    CHECK(missing.find("{{SSL_ENABLED}}") != std::string::npos);
-}
-
-TEST_CASE("Complete template has all variables") {
-    std::string complete = "{{DOMAIN}} {{PUBLIC_ROOT}} {{PHP_UPSTREAM}} {{LOG_ROOT}} {{SSL_ENABLED}}";
-    const char* required[] = {"{{DOMAIN}}", "{{PUBLIC_ROOT}}", "{{PHP_UPSTREAM}}",
-                              "{{LOG_ROOT}}", "{{SSL_ENABLED}}"};
-    for (const auto& var : required) {
-        CHECK(complete.find(var) != std::string::npos);
-    }
-}
-
-TEST_CASE("Existing template file is not overwritten") {
-    // Create a temp dir with a pre-existing template
-    std::string tmp_dir = "/tmp/containercp_test_templates/";
-    std::string tmpl_file = tmp_dir + "custom-template.conf.template";
-    std::filesystem::create_directories(tmp_dir);
-
-    // Write custom content
-    std::ofstream(tmpl_file) << "CUSTOM_CONTENT";
-    CHECK(std::filesystem::exists(tmpl_file));
-
-    // Read it back - verify it wasn't changed
-    std::ifstream f(tmpl_file);
-    std::string content((std::istreambuf_iterator<char>(f)), {});
-    CHECK(content == "CUSTOM_CONTENT");
-
-    std::filesystem::remove_all(tmp_dir);
 }

@@ -17,7 +17,7 @@
 #include "php/PhpVersionManager.h"
 #include "ssl/LetsEncryptProvider.h"
 #include "ssl/SslCertificateManager.h"
-#include "template/TemplateProfileManager.h"
+#include "profile/ProfileManager.h"
 #include "provider/DockerComposeProvider.h"
 #include "runtime/DockerRuntime.h"
 #include "site/SiteManager.h"
@@ -35,7 +35,7 @@ public:
     user::UserManager& users();
     domain::DomainManager& domains();
     php::PhpVersionManager& php_versions();
-    template_engine::TemplateProfileManager& template_profiles();
+    profile::ProfileManager& profiles();
     database::DatabaseManager& databases();
     backup::BackupManager& backups();
     access::AccessUserManager& access_users();
@@ -50,7 +50,7 @@ public:
     runtime::Runtime& runtime();
     provider::HostingProvider& hosting_provider();
     void save();
-    void reload_template_profiles();
+    void reload_profiles();
 
 private:
     friend class Application;
@@ -63,7 +63,7 @@ private:
     user::UserManager users_;
     domain::DomainManager domains_;
     php::PhpVersionManager php_versions_;
-    template_engine::TemplateProfileManager template_profiles_;
+    profile::ProfileManager profiles_;
     database::DatabaseManager databases_;
     backup::BackupManager backups_;
     access::AccessUserManager access_users_;

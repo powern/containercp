@@ -34,7 +34,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/api/JsonFormatter.cpp
     ${CMAKE_SOURCE_DIR}/libs/daemon/CommandProtocol.cpp
     ${CMAKE_SOURCE_DIR}/libs/template/TemplateEngine.cpp
-    ${CMAKE_SOURCE_DIR}/libs/template/TemplateProfileManager.cpp
+    ${CMAKE_SOURCE_DIR}/libs/profile/ProfileManager.cpp
 )
 
 target_include_directories(containercp_tests PRIVATE

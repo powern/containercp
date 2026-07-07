@@ -3,8 +3,8 @@
 
 #include "access/AccessGrant.h"
 #include "access/AccessUser.h"
+#include "profile/Profile.h"
 #include "proxy/ReverseProxy.h"
-#include "template/TemplateProfile.h"
 #include "backup/Backup.h"
 #include "database/Database.h"
 #include "mail/MailDomain.h"
@@ -60,8 +60,9 @@ public:
     void save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies);
     std::vector<proxy::ReverseProxy> load_reverse_proxies();
 
-    void save_template_profiles(const std::vector<template_engine::TemplateProfile>& profiles);
-    std::vector<template_engine::TemplateProfile> load_template_profiles();
+    void save_profiles(const std::vector<profile::Profile>& profiles);
+    std::vector<profile::Profile> load_profiles();
+    std::vector<profile::Profile> migrate_template_profiles();
 
 private:
     std::string nodes_file() const;
@@ -76,6 +77,7 @@ private:
     std::string access_users_file() const;
     std::string access_grants_file() const;
     std::string reverse_proxies_file() const;
+    std::string profiles_file() const;
     std::string template_profiles_file() const;
 
     std::string db_path_;

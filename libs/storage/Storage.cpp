@@ -449,22 +449,28 @@ std::vector<proxy::ReverseProxy> Storage::load_reverse_proxies() {
     return proxies;
 }
 
+std::string Storage::profiles_file() const {
+    return db_path_ + "profiles.db";
+}
+
 std::string Storage::template_profiles_file() const {
     return db_path_ + "template_profiles.db";
 }
 
-void Storage::save_template_profiles(const std::vector<template_engine::TemplateProfile>& profiles) {
-    std::ofstream file(template_profiles_file());
+void Storage::save_profiles(const std::vector<profile::Profile>& profiles) {
+    std::ofstream file(profiles_file());
     for (const auto& p : profiles) {
-        file << p.id << "|" << p.profile_name << "|" << p.web_server << "|"
-             << p.runtime << "|" << p.template_path << "|" << p.description << "|"
+        file << p.id << "|" << p.profile_name << "|"
+             << profile::profile_type_to_string(p.type) << "|"
+             << p.web_server << "|" << p.runtime << "|"
+             << p.template_path << "|" << p.description << "|"
              << (p.enabled ? "1" : "0") << "|" << (p.default_profile ? "1" : "0") << "\n";
     }
 }
 
-std::vector<template_engine::TemplateProfile> Storage::load_template_profiles() {
-    std::vector<template_engine::TemplateProfile> profiles;
-    std::ifstream file(template_profiles_file());
+std::vector<profile::Profile> Storage::load_profiles() {
+    std::vector<profile::Profile> profiles;
+    std::ifstream file(profiles_file());
     if (!file.is_open()) {
         return profiles;
     }
@@ -473,7 +479,34 @@ std::vector<template_engine::TemplateProfile> Storage::load_template_profiles() 
         if (line.empty()) continue;
         std::istringstream ss(line);
         std::string token;
-        template_engine::TemplateProfile p;
+        profile::Profile p;
+        if (std::getline(ss, token, '|')) p.id = std::stoull(token);
+        if (std::getline(ss, token, '|')) p.profile_name = token;
+        if (std::getline(ss, token, '|')) p.type = profile::profile_type_from_string(token);
+        if (std::getline(ss, token, '|')) p.web_server = token;
+        if (std::getline(ss, token, '|')) p.runtime = token;
+        if (std::getline(ss, token, '|')) p.template_path = token;
+        if (std::getline(ss, token, '|')) p.description = token;
+        if (std::getline(ss, token, '|')) p.enabled = (token == "1");
+        if (std::getline(ss, token, '|')) p.default_profile = (token == "1");
+        p.name = p.profile_name;
+        profiles.push_back(std::move(p));
+    }
+    return profiles;
+}
+
+std::vector<profile::Profile> Storage::migrate_template_profiles() {
+    std::vector<profile::Profile> profiles;
+    std::ifstream file(template_profiles_file());
+    if (!file.is_open()) return profiles;
+
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::istringstream ss(line);
+        std::string token;
+        profile::Profile p;
+        p.type = profile::ProfileType::WEB_SERVER;
         if (std::getline(ss, token, '|')) p.id = std::stoull(token);
         if (std::getline(ss, token, '|')) p.profile_name = token;
         if (std::getline(ss, token, '|')) p.web_server = token;

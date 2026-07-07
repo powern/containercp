@@ -1,6 +1,8 @@
 #include "ServiceRegistry.h"
 #include "template/web_templates.h"
 
+#include <filesystem>
+
 namespace containercp::core {
 
 ServiceRegistry::ServiceRegistry()
@@ -11,7 +13,7 @@ ServiceRegistry::ServiceRegistry()
     , cert_provider_(logger_)
     , storage_(config_.database_dir())
     , runtime_(logger_, config_.sites_dir())
-    , hosting_provider_(filesystem_, config_, php_versions_, runtime_, template_profiles_)
+    , hosting_provider_(filesystem_, config_, php_versions_, runtime_, profiles_)
 {
     auto loaded_nodes = storage_.load_nodes();
     if (loaded_nodes.empty()) {
@@ -46,22 +48,32 @@ ServiceRegistry::ServiceRegistry()
         php_versions_.create("8.4", "php:8.4-fpm", true);
     storage_.save_php_versions(php_versions_.list());
 
-    auto loaded_templates = storage_.load_template_profiles();
-    if (loaded_templates.empty()) {
-        auto tmpl = template_engine::default_web_templates();
-        for (auto& [name, content] : tmpl) {
-            bool is_default = (name == "nginx-php-default");
-            std::string path = config_.web_templates_dir() + name + ".conf.template";
-            filesystem_.create_directory(config_.web_templates_dir());
-            if (!filesystem_.exists(path)) {
-                filesystem_.create_file(path, content);
+    // Migrate legacy template_profiles.db to profiles.db
+    auto loaded_profiles = storage_.load_profiles();
+    if (loaded_profiles.empty()) {
+        auto migrated = storage_.migrate_template_profiles();
+        if (!migrated.empty()) {
+            profiles_.set_profiles(migrated);
+            storage_.save_profiles(profiles_.list());
+            // Remove old file after migration
+            std::filesystem::remove(config_.database_dir() + "template_profiles.db");
+        } else {
+            auto tmpl = template_engine::default_web_templates();
+            for (auto& [name, content] : tmpl) {
+                bool is_default = (name == "nginx-php-default");
+                std::string path = config_.web_templates_dir() + name + ".conf.template";
+                filesystem_.create_directory(config_.web_templates_dir());
+                if (!filesystem_.exists(path)) {
+                    filesystem_.create_file(path, content);
+                }
+                profiles_.create(name, profile::ProfileType::WEB_SERVER,
+                                 name.find("apache") != std::string::npos ? "apache" : "nginx",
+                                 path, name, is_default);
             }
-            template_profiles_.create(name, name.find("apache") != std::string::npos ? "apache" : "nginx",
-                                      path, name, is_default);
+            storage_.save_profiles(profiles_.list());
         }
-        storage_.save_template_profiles(template_profiles_.list());
     } else {
-        template_profiles_.set_profiles(loaded_templates);
+        profiles_.set_profiles(loaded_profiles);
     }
     } else {
         php_versions_.set_versions(loaded_php);
@@ -141,8 +153,8 @@ php::PhpVersionManager& ServiceRegistry::php_versions() {
     return php_versions_;
 }
 
-template_engine::TemplateProfileManager& ServiceRegistry::template_profiles() {
-    return template_profiles_;
+profile::ProfileManager& ServiceRegistry::profiles() {
+    return profiles_;
 }
 
 database::DatabaseManager& ServiceRegistry::databases() {
@@ -210,13 +222,13 @@ void ServiceRegistry::save() {
     storage_.save_access_users(access_users_.list());
     storage_.save_access_grants(access_grants_.list());
     storage_.save_reverse_proxies(reverse_proxies_.list());
-    storage_.save_template_profiles(template_profiles_.list());
+    storage_.save_profiles(profiles_.list());
 }
 
-void ServiceRegistry::reload_template_profiles() {
-    auto loaded = storage_.load_template_profiles();
+void ServiceRegistry::reload_profiles() {
+    auto loaded = storage_.load_profiles();
     if (!loaded.empty()) {
-        template_profiles_.set_profiles(loaded);
+        profiles_.set_profiles(loaded);
     }
 }
 
