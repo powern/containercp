@@ -4,6 +4,7 @@
 #include "config/Config.h"
 #include "core/ResourceManager.h"
 #include "logger/Logger.h"
+#include "site/SiteManager.h"
 
 namespace containercp::core {
 
@@ -12,6 +13,7 @@ public:
     config::Config& config();
     logger::Logger& logger();
     ResourceManager& nodes();
+    site::SiteManager& sites();
 
 private:
     friend class Application;
@@ -20,6 +22,7 @@ private:
     config::Config& config_;
     logger::Logger& logger_;
     ResourceManager nodes_;
+    site::SiteManager sites_;
 };
 
 } // namespace containercp::core

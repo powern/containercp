@@ -16,6 +16,8 @@ add_executable(containercp
     libs/core/ServiceRegistry.cpp
     libs/logger/Logger.cpp
     libs/node/Node.cpp
+    libs/site/Site.cpp
+    libs/site/SiteManager.cpp
 )
 
 target_include_directories(containercp PRIVATE

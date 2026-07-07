@@ -27,4 +27,8 @@ ResourceManager& ServiceRegistry::nodes() {
     return nodes_;
 }
 
+site::SiteManager& ServiceRegistry::sites() {
+    return sites_;
+}
+
 } // namespace containercp::core

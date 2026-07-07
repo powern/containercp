@@ -19,7 +19,8 @@ void print_help() {
         << "  --version    Show version\n"
         << "  config show     Show configuration\n"
         << "  node list       List nodes\n"
-        << "  node show <name> Show node details\n";
+        << "  node show <name> Show node details\n"
+        << "  site list       List sites\n";
 }
 
 void print_version() {
@@ -74,6 +75,18 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         }
         std::cout << "Name: " << node->name << "\n"
                   << "Type: " << node->type << "\n";
+        return 0;
+    }
+
+    if (argc == 3 && arg1 == "site" && std::string(argv[2]) == "list") {
+        auto& sites = services.sites().list();
+        if (sites.empty()) {
+            std::cout << "No sites.\n";
+        } else {
+            for (const auto& site : sites) {
+                std::cout << site.domain << "\n";
+            }
+        }
         return 0;
     }
 
