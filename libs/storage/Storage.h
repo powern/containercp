@@ -3,6 +3,7 @@
 
 #include "access/AccessGrant.h"
 #include "access/AccessUser.h"
+#include "proxy/ReverseProxy.h"
 #include "backup/Backup.h"
 #include "database/Database.h"
 #include "mail/MailDomain.h"
@@ -55,6 +56,9 @@ public:
     void save_access_grants(const std::vector<access::AccessGrant>& grants);
     std::vector<access::AccessGrant> load_access_grants();
 
+    void save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies);
+    std::vector<proxy::ReverseProxy> load_reverse_proxies();
+
 private:
     std::string nodes_file() const;
     std::string sites_file() const;
@@ -67,6 +71,7 @@ private:
     std::string mail_domains_file() const;
     std::string access_users_file() const;
     std::string access_grants_file() const;
+    std::string reverse_proxies_file() const;
 
     std::string db_path_;
 };

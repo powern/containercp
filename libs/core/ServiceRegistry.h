@@ -5,6 +5,8 @@
 #include "access/AccessUserManager.h"
 #include "access/LocalSftpProvider.h"
 #include "backup/BackupManager.h"
+#include "proxy/NginxProxyProvider.h"
+#include "proxy/ReverseProxyManager.h"
 #include "config/Config.h"
 #include "core/ResourceManager.h"
 #include "database/DatabaseManager.h"
@@ -36,6 +38,8 @@ public:
     access::AccessUserManager& access_users();
     access::AccessGrantManager& access_grants();
     access::AccessProvider& access_provider();
+    proxy::ReverseProxyManager& reverse_proxies();
+    proxy::ProxyProvider& proxy_provider();
     ssl::SslCertificateManager& ssl();
     mail::MailDomainManager& mail();
     filesystem::Filesystem& filesystem();
@@ -59,6 +63,8 @@ private:
     access::AccessUserManager access_users_;
     access::AccessGrantManager access_grants_;
     access::LocalSftpProvider access_provider_;
+    proxy::ReverseProxyManager reverse_proxies_;
+    proxy::NginxProxyProvider proxy_provider_;
     ssl::SslCertificateManager ssl_;
     mail::MailDomainManager mail_;
     storage::Storage storage_;

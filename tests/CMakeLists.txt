@@ -3,6 +3,7 @@ add_executable(containercp_tests
     test_validator.cpp
     test_managers.cpp
     test_access.cpp
+    test_proxy.cpp
     test_storage.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/Validator.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/StringUtils.cpp
@@ -17,6 +18,8 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/access/AccessUserManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/AccessGrant.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/AccessGrantManager.cpp
+    ${CMAKE_SOURCE_DIR}/libs/proxy/ReverseProxy.cpp
+    ${CMAKE_SOURCE_DIR}/libs/proxy/ReverseProxyManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/storage/Storage.cpp
     ${CMAKE_SOURCE_DIR}/libs/node/Node.cpp
     ${CMAKE_SOURCE_DIR}/libs/core/Resource.cpp

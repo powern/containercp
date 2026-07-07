@@ -47,4 +47,8 @@ std::string Config::users_dir() const {
     return data_root_ + "/users/";
 }
 
+std::string Config::proxy_dir() const {
+    return data_root_ + "/proxy/";
+}
+
 } // namespace containercp::config

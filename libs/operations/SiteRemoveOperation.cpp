@@ -7,6 +7,7 @@ namespace containercp::operations {
 SiteRemoveOperation::SiteRemoveOperation(site::SiteManager& sites, domain::DomainManager& domains,
                                          database::DatabaseManager& databases, backup::BackupManager& backups,
                                          ssl::SslCertificateManager& ssl, mail::MailDomainManager& mail,
+                                         proxy::ReverseProxyManager& proxies,
                                          filesystem::Filesystem& fs, config::Config& cfg, runtime::Runtime& rt)
     : sites_(sites)
     , domains_(domains)
@@ -14,6 +15,7 @@ SiteRemoveOperation::SiteRemoveOperation(site::SiteManager& sites, domain::Domai
     , backups_(backups)
     , ssl_(ssl)
     , mail_(mail)
+    , proxies_(proxies)
     , fs_(fs)
     , cfg_(cfg)
     , rt_(rt)
@@ -31,6 +33,11 @@ core::OperationResult SiteRemoveOperation::execute(const std::string& domain) {
     rt_.remove_site(domain);
 
     fs_.remove_directory(cfg_.sites_dir() + domain + "/");
+
+    auto* rp = proxies_.find_by_domain(domain);
+    if (rp != nullptr) {
+        proxies_.remove(rp->id);
+    }
 
     std::vector<uint64_t> domain_ids;
     for (const auto& d : domains_.list()) {

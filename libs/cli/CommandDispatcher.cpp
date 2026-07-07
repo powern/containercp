@@ -76,7 +76,14 @@ void print_help() {
         << "  access user remove <username>          Remove access user\n"
         << "  access grant create <username> <domain> <permission> Create grant\n"
         << "  access grant list                      List grants\n"
-        << "  access grant remove <id>               Remove grant\n";
+        << "  access grant remove <id>               Remove grant\n"
+        << "  proxy list          List proxy configs\n"
+        << "  proxy show <domain> Show proxy config\n"
+        << "  proxy create <domain> Create proxy\n"
+        << "  proxy remove <domain> Remove proxy\n"
+        << "  proxy enable <domain> Enable proxy\n"
+        << "  proxy disable <domain> Disable proxy\n"
+        << "  proxy reload        Reload proxy\n";
 }
 
 void print_version() {
@@ -167,7 +174,7 @@ int handle_site_create(const std::string& owner, const std::string& domain, bool
         return 1;
     }
 
-    containercp::operations::SiteCreateOperation op(services.sites(), services.domains(), services.databases(), services.hosting_provider());
+    containercp::operations::SiteCreateOperation op(services.sites(), services.domains(), services.databases(), services.reverse_proxies(), services.hosting_provider());
     auto result = op.execute(owner, domain, *node, dry_run);
 
     if (result.success) {
@@ -195,6 +202,7 @@ int handle_site_remove(const std::string& domain, bool force) {
     containercp::operations::SiteRemoveOperation op(
         services.sites(), services.domains(), services.databases(),
         services.backups(), services.ssl(), services.mail(),
+        services.reverse_proxies(),
         services.filesystem(), services.config(), services.runtime());
 
     auto result = op.execute(domain);
@@ -737,6 +745,94 @@ int CommandDispatcher::run(int argc, char* argv[]) {
                       << " Permission: " << containercp::access::permission_to_string(g->permission) << "\n";
         }
         return 0;
+    }
+
+    if (argc == 3 && arg1 == "proxy" && std::string(argv[2]) == "list") {
+        auto& proxies = services.reverse_proxies().list();
+        if (proxies.empty()) {
+            std::cout << "No proxy configs.\n";
+        } else {
+            for (const auto& p : proxies) {
+                std::cout << p.id << " " << p.domain << " " << p.status << "\n";
+            }
+        }
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "proxy" && std::string(argv[2]) == "show") {
+        auto* p = services.reverse_proxies().find_by_domain(argv[3]);
+        if (p == nullptr) {
+            std::cout << "Proxy not found: " << argv[3] << "\n";
+            return 1;
+        }
+        std::cout << "Domain: " << p->domain << "\n"
+                  << "Site ID: " << p->site_id << "\n"
+                  << "Provider: " << p->provider << "\n"
+                  << "Upstream: " << p->upstream << "\n"
+                  << "Config: " << p->config_path << "\n"
+                  << "Enabled: " << (p->enabled ? "yes" : "no") << "\n"
+                  << "Status: " << p->status << "\n";
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "proxy" && std::string(argv[2]) == "create") {
+        auto* domain = services.domains().find(argv[3]);
+        if (domain == nullptr) {
+            std::cout << "Domain not found: " << argv[3] << "\n";
+            return 1;
+        }
+        std::string upstream = "http://127.0.0.1:80";
+        std::string config_path = services.config().proxy_dir() + "sites/" + argv[3] + ".conf";
+        services.reverse_proxies().create(argv[3], domain->site_id, config_path, upstream);
+        containercp::core::Application::instance().save();
+        std::cout << "Proxy created:\n" << argv[3] << "\n";
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "proxy" && std::string(argv[2]) == "remove") {
+        auto* p = services.reverse_proxies().find_by_domain(argv[3]);
+        if (p == nullptr) {
+            std::cout << "Proxy not found: " << argv[3] << "\n";
+            return 1;
+        }
+        services.reverse_proxies().remove(p->id);
+        containercp::core::Application::instance().save();
+        std::cout << "Proxy removed:\n" << argv[3] << "\n";
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "proxy" && std::string(argv[2]) == "enable") {
+        auto* p = services.reverse_proxies().find_by_domain(argv[3]);
+        if (p == nullptr) {
+            std::cout << "Proxy not found: " << argv[3] << "\n";
+            return 1;
+        }
+        p->enabled = true;
+        containercp::core::Application::instance().save();
+        std::cout << "Proxy enabled:\n" << argv[3] << "\n";
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "proxy" && std::string(argv[2]) == "disable") {
+        auto* p = services.reverse_proxies().find_by_domain(argv[3]);
+        if (p == nullptr) {
+            std::cout << "Proxy not found: " << argv[3] << "\n";
+            return 1;
+        }
+        p->enabled = false;
+        containercp::core::Application::instance().save();
+        std::cout << "Proxy disabled:\n" << argv[3] << "\n";
+        return 0;
+    }
+
+    if (argc == 3 && arg1 == "proxy" && std::string(argv[2]) == "reload") {
+        auto result = services.proxy_provider().reload();
+        if (result.success) {
+            std::cout << "Proxy reloaded.\n";
+        } else {
+            std::cout << result.message << "\n";
+        }
+        return result.success ? 0 : 1;
     }
 
     if (argc >= 5 && arg1 == "site" && std::string(argv[2]) == "create") {

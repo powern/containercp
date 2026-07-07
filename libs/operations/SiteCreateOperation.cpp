@@ -7,10 +7,14 @@
 
 namespace containercp::operations {
 
-SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, domain::DomainManager& domains, database::DatabaseManager& databases, provider::HostingProvider& provider)
+SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, domain::DomainManager& domains,
+                                         database::DatabaseManager& databases,
+                                         proxy::ReverseProxyManager& proxies,
+                                         provider::HostingProvider& provider)
     : sites_(sites)
     , domains_(domains)
     , databases_(databases)
+    , proxies_(proxies)
     , provider_(provider)
 {
 }
@@ -77,6 +81,7 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
         return {false, result.message + " Created resources have been rolled back."};
     }
 
+    proxies_.create(domain, site.id, "", "");
     return {true, ""};
 }
 

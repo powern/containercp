@@ -55,6 +55,10 @@ std::string Storage::access_grants_file() const {
     return db_path_ + "access_grants.db";
 }
 
+std::string Storage::reverse_proxies_file() const {
+    return db_path_ + "reverse_proxies.db";
+}
+
 void Storage::save_nodes(const std::vector<node::Node>& nodes) {
     std::ofstream file(nodes_file());
     for (const auto& n : nodes) {
@@ -406,6 +410,41 @@ std::vector<access::AccessGrant> Storage::load_access_grants() {
         grants.push_back(std::move(g));
     }
     return grants;
+}
+
+void Storage::save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies) {
+    std::ofstream file(reverse_proxies_file());
+    for (const auto& p : proxies) {
+        file << p.id << "|" << p.domain << "|" << p.site_id << "|"
+             << p.provider << "|" << p.config_path << "|" << p.upstream << "|"
+             << (p.enabled ? "1" : "0") << "|" << p.status << "\n";
+    }
+}
+
+std::vector<proxy::ReverseProxy> Storage::load_reverse_proxies() {
+    std::vector<proxy::ReverseProxy> proxies;
+    std::ifstream file(reverse_proxies_file());
+    if (!file.is_open()) {
+        return proxies;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::istringstream ss(line);
+        std::string token;
+        proxy::ReverseProxy p;
+        if (std::getline(ss, token, '|')) p.id = std::stoull(token);
+        if (std::getline(ss, token, '|')) p.domain = token;
+        if (std::getline(ss, token, '|')) p.site_id = std::stoull(token);
+        if (std::getline(ss, token, '|')) p.provider = token;
+        if (std::getline(ss, token, '|')) p.config_path = token;
+        if (std::getline(ss, token, '|')) p.upstream = token;
+        if (std::getline(ss, token, '|')) p.enabled = (token == "1");
+        if (std::getline(ss, token, '|')) p.status = token;
+        p.name = p.domain;
+        proxies.push_back(std::move(p));
+    }
+    return proxies;
 }
 
 } // namespace containercp::storage

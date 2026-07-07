@@ -38,6 +38,9 @@ add_executable(containercp
     libs/php/PhpVersion.cpp
     libs/php/PhpVersionManager.cpp
     libs/provider/DockerComposeProvider.cpp
+    libs/proxy/NginxProxyProvider.cpp
+    libs/proxy/ReverseProxy.cpp
+    libs/proxy/ReverseProxyManager.cpp
     libs/runtime/DockerRuntime.cpp
     libs/site/Site.cpp
     libs/site/SiteManager.cpp

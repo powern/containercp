@@ -6,6 +6,7 @@ ServiceRegistry::ServiceRegistry()
     : config_(config::Config::instance())
     , logger_(logger::Logger::instance())
     , access_provider_(logger_)
+    , proxy_provider_(filesystem_, config_, logger_)
     , storage_(config_.database_dir())
     , runtime_(logger_, config_.sites_dir())
     , hosting_provider_(filesystem_, config_, php_versions_, runtime_)
@@ -81,6 +82,11 @@ ServiceRegistry::ServiceRegistry()
         access_grants_.set_grants(loaded_grants);
     }
 
+    auto loaded_proxies = storage_.load_reverse_proxies();
+    if (!loaded_proxies.empty()) {
+        reverse_proxies_.set_proxies(loaded_proxies);
+    }
+
     auto loaded_sites = storage_.load_sites();
     if (!loaded_sites.empty()) {
         sites_.set_sites(loaded_sites);
@@ -135,6 +141,14 @@ access::AccessProvider& ServiceRegistry::access_provider() {
     return access_provider_;
 }
 
+proxy::ReverseProxyManager& ServiceRegistry::reverse_proxies() {
+    return reverse_proxies_;
+}
+
+proxy::ProxyProvider& ServiceRegistry::proxy_provider() {
+    return proxy_provider_;
+}
+
 ssl::SslCertificateManager& ServiceRegistry::ssl() {
     return ssl_;
 }
@@ -167,6 +181,7 @@ void ServiceRegistry::save() {
     storage_.save_mail_domains(mail_.list());
     storage_.save_access_users(access_users_.list());
     storage_.save_access_grants(access_grants_.list());
+    storage_.save_reverse_proxies(reverse_proxies_.list());
 }
 
 } // namespace containercp::core
