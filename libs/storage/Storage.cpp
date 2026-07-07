@@ -47,6 +47,10 @@ std::string Storage::mail_domains_file() const {
     return db_path_ + "mail_domains.db";
 }
 
+std::string Storage::access_users_file() const {
+    return db_path_ + "access_users.db";
+}
+
 void Storage::save_nodes(const std::vector<node::Node>& nodes) {
     std::ofstream file(nodes_file());
     for (const auto& n : nodes) {
@@ -337,6 +341,38 @@ std::vector<mail::MailDomain> Storage::load_mail_domains() {
         domains.push_back(std::move(m));
     }
     return domains;
+}
+
+void Storage::save_access_users(const std::vector<access::AccessUser>& users) {
+    std::ofstream file(access_users_file());
+    for (const auto& u : users) {
+        file << u.id << "|" << u.username << "|" << u.site_id << "|"
+             << u.domain << "|" << u.auth_type << "|" << (u.enabled ? "1" : "0") << "\n";
+    }
+}
+
+std::vector<access::AccessUser> Storage::load_access_users() {
+    std::vector<access::AccessUser> users;
+    std::ifstream file(access_users_file());
+    if (!file.is_open()) {
+        return users;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::istringstream ss(line);
+        std::string token;
+        access::AccessUser u;
+        if (std::getline(ss, token, '|')) u.id = std::stoull(token);
+        if (std::getline(ss, token, '|')) u.username = token;
+        if (std::getline(ss, token, '|')) u.site_id = std::stoull(token);
+        if (std::getline(ss, token, '|')) u.domain = token;
+        if (std::getline(ss, token, '|')) u.auth_type = token;
+        if (std::getline(ss, token, '|')) u.enabled = (token == "1");
+        u.name = u.username;
+        users.push_back(std::move(u));
+    }
+    return users;
 }
 
 } // namespace containercp::storage

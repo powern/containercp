@@ -1,6 +1,7 @@
 #ifndef CONTAINERCP_STORAGE_STORAGE_H
 #define CONTAINERCP_STORAGE_STORAGE_H
 
+#include "access/AccessUser.h"
 #include "backup/Backup.h"
 #include "database/Database.h"
 #include "mail/MailDomain.h"
@@ -47,6 +48,9 @@ public:
     void save_mail_domains(const std::vector<mail::MailDomain>& domains);
     std::vector<mail::MailDomain> load_mail_domains();
 
+    void save_access_users(const std::vector<access::AccessUser>& users);
+    std::vector<access::AccessUser> load_access_users();
+
 private:
     std::string nodes_file() const;
     std::string sites_file() const;
@@ -57,6 +61,7 @@ private:
     std::string backups_file() const;
     std::string ssl_certificates_file() const;
     std::string mail_domains_file() const;
+    std::string access_users_file() const;
 
     std::string db_path_;
 };

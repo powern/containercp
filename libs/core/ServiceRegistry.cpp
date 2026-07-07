@@ -5,6 +5,7 @@ namespace containercp::core {
 ServiceRegistry::ServiceRegistry()
     : config_(config::Config::instance())
     , logger_(logger::Logger::instance())
+    , access_provider_(logger_)
     , storage_(config_.database_dir())
     , runtime_(logger_, config_.sites_dir())
     , hosting_provider_(filesystem_, config_, php_versions_, runtime_)
@@ -70,6 +71,11 @@ ServiceRegistry::ServiceRegistry()
         mail_.set_domains(loaded_mail);
     }
 
+    auto loaded_access = storage_.load_access_users();
+    if (!loaded_access.empty()) {
+        access_users_.set_users(loaded_access);
+    }
+
     auto loaded_sites = storage_.load_sites();
     if (!loaded_sites.empty()) {
         sites_.set_sites(loaded_sites);
@@ -112,6 +118,14 @@ backup::BackupManager& ServiceRegistry::backups() {
     return backups_;
 }
 
+access::AccessUserManager& ServiceRegistry::access_users() {
+    return access_users_;
+}
+
+access::AccessProvider& ServiceRegistry::access_provider() {
+    return access_provider_;
+}
+
 ssl::SslCertificateManager& ServiceRegistry::ssl() {
     return ssl_;
 }
@@ -142,6 +156,7 @@ void ServiceRegistry::save() {
     storage_.save_backups(backups_.list());
     storage_.save_ssl_certificates(ssl_.list());
     storage_.save_mail_domains(mail_.list());
+    storage_.save_access_users(access_users_.list());
 }
 
 } // namespace containercp::core

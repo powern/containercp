@@ -1,6 +1,8 @@
 #ifndef CONTAINERCP_CORE_SERVICE_REGISTRY_H
 #define CONTAINERCP_CORE_SERVICE_REGISTRY_H
 
+#include "access/AccessUserManager.h"
+#include "access/LocalSftpProvider.h"
 #include "backup/BackupManager.h"
 #include "config/Config.h"
 #include "core/ResourceManager.h"
@@ -30,6 +32,8 @@ public:
     php::PhpVersionManager& php_versions();
     database::DatabaseManager& databases();
     backup::BackupManager& backups();
+    access::AccessUserManager& access_users();
+    access::AccessProvider& access_provider();
     ssl::SslCertificateManager& ssl();
     mail::MailDomainManager& mail();
     filesystem::Filesystem& filesystem();
@@ -50,6 +54,8 @@ private:
     php::PhpVersionManager php_versions_;
     database::DatabaseManager databases_;
     backup::BackupManager backups_;
+    access::AccessUserManager access_users_;
+    access::LocalSftpProvider access_provider_;
     ssl::SslCertificateManager ssl_;
     mail::MailDomainManager mail_;
     storage::Storage storage_;

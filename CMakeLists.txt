@@ -8,6 +8,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(containercp
     app/containercp/main.cpp
+    libs/access/AccessUser.cpp
+    libs/access/AccessUserManager.cpp
+    libs/access/LocalSftpProvider.cpp
     libs/cli/CommandDispatcher.cpp
     libs/config/Config.cpp
     libs/core/Application.cpp

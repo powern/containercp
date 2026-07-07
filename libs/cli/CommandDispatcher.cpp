@@ -4,6 +4,7 @@
 #include "node/Node.h"
 #include "operations/SiteCreateOperation.h"
 #include "operations/SiteRemoveOperation.h"
+#include "utils/PasswordGenerator.h"
 #include "utils/Validator.h"
 
 #include <chrono>
@@ -66,7 +67,10 @@ void print_help() {
         << "  site remove <domain>     Remove site\n"
         << "  site start <domain>     Start site stack\n"
         << "  site stop <domain>      Stop site stack\n"
-        << "  site status <domain>    Show site status\n";
+        << "  site status <domain>    Show site status\n"
+        << "  access user create <username> <domain> Create access user\n"
+        << "  access user list                       List access users\n"
+        << "  access user show <username>            Show access user\n";
 }
 
 void print_version() {
@@ -587,6 +591,49 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         services.domains().remove(domain->id);
         containercp::core::Application::instance().save();
         std::cout << "Domain removed:\n" << argv[3] << "\n";
+        return 0;
+    }
+
+    if (argc == 6 && arg1 == "access" && std::string(argv[2]) == "user" && std::string(argv[3]) == "create") {
+        auto* domain = services.domains().find(argv[5]);
+        if (domain == nullptr) {
+            std::cout << "Domain not found: " << argv[5] << "\n";
+            return 1;
+        }
+        containercp::access::AccessUserManager& mgr = services.access_users();
+        mgr.create(argv[4], domain->site_id, argv[5]);
+        containercp::core::Application::instance().save();
+        std::string password = containercp::utils::PasswordGenerator::generate();
+        std::cout << "Access user created:\n"
+                  << "Username: " << argv[4] << "\n"
+                  << "Password: " << password << "\n"
+                  << "Domain: " << argv[5] << "\n";
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "access" && std::string(argv[2]) == "user" && std::string(argv[3]) == "list") {
+        auto& users = services.access_users().list();
+        if (users.empty()) {
+            std::cout << "No access users.\n";
+        } else {
+            for (const auto& u : users) {
+                std::cout << u.id << " " << u.username << " " << u.domain
+                          << " " << (u.enabled ? "enabled" : "disabled") << "\n";
+            }
+        }
+        return 0;
+    }
+
+    if (argc == 5 && arg1 == "access" && std::string(argv[2]) == "user" && std::string(argv[3]) == "show") {
+        auto* u = services.access_users().find(argv[4]);
+        if (u == nullptr) {
+            std::cout << "Access user not found: " << argv[4] << "\n";
+            return 1;
+        }
+        std::cout << "Username: " << u->username << "\n"
+                  << "Domain: " << u->domain << "\n"
+                  << "Auth: " << u->auth_type << "\n"
+                  << "Enabled: " << (u->enabled ? "yes" : "no") << "\n";
         return 0;
     }
 
