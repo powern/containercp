@@ -588,7 +588,7 @@ async function loadBackups(p) {
     p.innerHTML = `<div class="page-header"><h1>Backups</h1><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="showBackupModal()">+ Create Backup</button></div></div>`;
     p.innerHTML += tb('All Backups') + buildTable([
       {label:'Filename',html:r=>esc(r.filename)},{label:'Size',html:r=>esc(r.size)+' bytes'},{label:'Status',html:r=>{let m={completed:'badge-ok',failed:'badge-err'};return `<span class="badge ${m[r.status]||'badge-info'}">${esc(r.status)}</span>`;}},{label:'Date',html:r=>esc(r.created_at)},
-      {label:'Actions',html:r=>r.status==='completed'?`<button class="btn-icon" title="Restore">&#8635;</button><button class="btn-icon" style="color:var(--red)" onclick="removeBackup(${r.id})">&#10005;</button>`:''}
+      {label:'Actions',html:r=>r.status==='completed'?`<button class="btn-icon" title="Restore" onclick="restoreBackup(${r.id},'${esc(r.filename)}')">&#8635;</button><button class="btn-icon" style="color:var(--red)" onclick="removeBackup(${r.id})">&#10005;</button>`:''}
     ], data.data||[]);
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load backups</div>'; }
 }
@@ -638,9 +638,40 @@ async function createBackup() {
   }
 }
 
+let restoringBackup = false;
+
+async function restoreBackup(id, filename) {
+  if (restoringBackup) return;
+  if (!confirm('Restore backup ' + filename + '?')) return;
+  restoringBackup = true;
+  try {
+    const res = await apiPost('/api/backups/restore', {id});
+    if (res.success) {
+      toast('Backup restored successfully', 'success');
+      loadBackups($('page'));
+    } else {
+      toast('Error: ' + (res.error || 'Restore failed'), 'error');
+    }
+  } catch(e) {
+    toast('Network error', 'error');
+  } finally {
+    restoringBackup = false;
+  }
+}
+
 async function removeBackup(id) {
   if (!confirm('Remove backup?')) return;
-  const res = await apiPost('/api/backups/remove',{id});
+  try {
+    const res = await apiPost('/api/backups/remove', {id});
+    if (res.success) {
+      toast('Backup removed', 'success');
+      loadBackups($('page'));
+    } else {
+      toast('Error: ' + (res.error || 'Remove failed'), 'error');
+    }
+  } catch(e) {
+    toast('Network error', 'error');
+  }
 }
 
 /* ===== PROFILES, TEMPLATES, NODES, LOGS, SETTINGS ===== */

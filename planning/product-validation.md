@@ -185,68 +185,69 @@ Validation: ContainerCP can be built and installed on a clean Debian 13 (Trixie)
 | 97 | `backup show <id>` shows correct metadata | [ ] | |
 | 98 | `backup restore <id>` restores files | [ ] | |
 | 99 | `backup remove <id>` removes file and record | [ ] | |
+| 100 | Backups survive site removal (files and records preserved) | [ ] | |
 
 ## Template Profiles
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 100 | `template list` shows 5 web server profiles | [ ] | |
-| 101 | `template show nginx-php-default` shows profile details | [ ] | |
-| 102 | `template default` shows nginx-php-default | [ ] | |
-| 103 | `template path` returns `/etc/containercp/templates/web/` | [ ] | |
-| 104 | `template validate nginx-php-default` returns "valid" | [ ] | |
-| 105 | `template reload` succeeds without error | [ ] | |
+| 101 | `template list` shows 5 web server profiles | [ ] | |
+| 102 | `template show nginx-php-default` shows profile details | [ ] | |
+| 103 | `template default` shows nginx-php-default | [ ] | |
+| 104 | `template path` returns `/etc/containercp/templates/web/` | [ ] | |
+| 105 | `template validate nginx-php-default` returns "valid" | [ ] | |
+| 106 | `template reload` succeeds without error | [ ] | |
 
 ## Site Removal
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 106 | `containercp site remove demo.local --force` succeeds | [ ] | |
-| 107 | Site directory is deleted | [ ] | |
-| 108 | Site record removed from `site list` | [ ] | |
-| 109 | Domain records removed | [ ] | |
-| 110 | Database records removed | [ ] | |
-| 111 | Reverse proxy record removed | [ ] | |
-| 112 | Backup files removed | [ ] | |
-| 113 | Docker containers stopped and removed | [ ] | |
-| 114 | No orphan resources remain | [ ] | |
-| 115 | `site remove non-existent` returns "not found" | [ ] | |
+| 107 | `containercp site remove demo.local --force` succeeds | [ ] | |
+| 108 | Site directory is deleted | [ ] | |
+| 109 | Site record removed from `site list` | [ ] | |
+| 110 | Domain records removed | [ ] | |
+| 111 | Database records removed | [ ] | |
+| 112 | Reverse proxy record removed | [ ] | |
+| 113 | Backup files removed | [ ] | |
+| 114 | Docker containers stopped and removed | [ ] | |
+| 115 | No orphan resources remain | [ ] | |
+| 116 | `site remove non-existent` returns "not found" | [ ] | |
 
 ## Web UI Operations
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 116 | Dashboard shows correct site count after creation | [ ] | |
-| 117 | Dashboard shows correct site count after removal | [ ] | |
-| 118 | Sites page lists all sites | [ ] | |
-| 119 | Clicking site domain opens detail page | [ ] | |
-| 120 | Site detail shows correct metadata | [ ] | |
-| 121 | Backups page shows created backup | [ ] | |
-| 122 | Create Site modal validates inputs | [ ] | |
-| 123 | Web UI recovers from daemon restart | [ ] | |
+| 117 | Dashboard shows correct site count after creation | [ ] | |
+| 118 | Dashboard shows correct site count after removal | [ ] | |
+| 119 | Sites page lists all sites | [ ] | |
+| 120 | Clicking site domain opens detail page | [ ] | |
+| 121 | Site detail shows correct metadata | [ ] | |
+| 122 | Backups page shows created backup | [ ] | |
+| 123 | Create Site modal validates inputs | [ ] | |
+| 124 | Web UI recovers from daemon restart | [ ] | |
 
 ## Stability
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 124 | Daemon runs continuously for 24 hours | [ ] | |
-| 125 | No memory leaks detected (stable RSS) | [ ] | |
-| 126 | No zombie processes | [ ] | |
-| 127 | API responds within 500ms for all endpoints | [ ] | |
-| 128 | No orphan files in `/srv/containercp/` | [ ] | |
-| 129 | No orphan Docker containers | [ ] | |
-| 130 | No orphan Docker volumes | [ ] | |
-| 131 | Daemon logs contain no ERROR messages during normal operation | [ ] | |
-| 132 | Clean shutdown (SIGTERM) | [ ] | |
+| 125 | Daemon runs continuously for 24 hours | [ ] | |
+| 126 | No memory leaks detected (stable RSS) | [ ] | |
+| 127 | No zombie processes | [ ] | |
+| 128 | API responds within 500ms for all endpoints | [ ] | |
+| 129 | No orphan files in `/srv/containercp/` | [ ] | |
+| 130 | No orphan Docker containers | [ ] | |
+| 131 | No orphan Docker volumes | [ ] | |
+| 132 | Daemon logs contain no ERROR messages during normal operation | [ ] | |
+| 133 | Clean shutdown (SIGTERM) | [ ] | |
 
 ## Regression
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 133 | All unit tests pass (`ctest`) | [ ] | |
-| 134 | Zero compiler warnings (Debug) | [ ] | |
-| 135 | Zero compiler warnings (Release) | [ ] | |
-| 136 | No new warnings introduced | [ ] | |
+| 134 | All unit tests pass (`ctest`) | [ ] | |
+| 135 | Zero compiler warnings (Debug) | [ ] | |
+| 136 | Zero compiler warnings (Release) | [ ] | |
+| 137 | No new warnings introduced | [ ] | |
 
 ---
 
@@ -266,13 +267,36 @@ Validation: ContainerCP can be built and installed on a clean Debian 13 (Trixie)
 | SSL | 6 | 0 | 0 | 6 |
 | Access | 6 | 0 | 0 | 6 |
 | Database | 4 | 0 | 0 | 4 |
-| Backup and Restore | 6 | 0 | 0 | 6 |
+| Backup and Restore | 7 | 0 | 0 | 7 |
 | Template Profiles | 6 | 0 | 0 | 6 |
 | Site Removal | 10 | 0 | 0 | 10 |
 | Web UI Operations | 8 | 0 | 0 | 8 |
 | Stability | 9 | 0 | 0 | 9 |
 | Regression | 4 | 0 | 0 | 4 |
-| **Total** | **136** | **0** | **0** | **136** |
+| **Total** | **137** | **0** | **0** | **137** |
+
+---
+
+-----|-------|------|------|------------|
+| Validation VM | 3 | 0 | 0 | 3 |
+| Installation | 11 | 0 | 0 | 11 |
+| Configuration | 6 | 0 | 0 | 6 |
+| REST API | 8 | 0 | 0 | 8 |
+| Web UI | 18 | 0 | 0 | 18 |
+| CLI | 6 | 0 | 0 | 6 |
+| Site Management | 10 | 0 | 0 | 10 |
+| Docker Compose | 10 | 0 | 0 | 10 |
+| Web Server | 5 | 0 | 0 | 5 |
+| SSL | 6 | 0 | 0 | 6 |
+| Access | 6 | 0 | 0 | 6 |
+| Database | 4 | 0 | 0 | 4 |
+| Backup and Restore | 7 | 0 | 0 | 7 |
+| Template Profiles | 6 | 0 | 0 | 6 |
+| Site Removal | 10 | 0 | 0 | 10 |
+| Web UI Operations | 8 | 0 | 0 | 8 |
+| Stability | 9 | 0 | 0 | 9 |
+| Regression | 4 | 0 | 0 | 4 |
+| **Total** | **137** | **0** | **0** | **137** |
 
 ---
 
