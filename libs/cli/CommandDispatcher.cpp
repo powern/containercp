@@ -1,4 +1,5 @@
 #include "CommandDispatcher.h"
+#include "node/Node.h"
 
 #include <iostream>
 #include <string>
@@ -45,7 +46,8 @@ int CommandDispatcher::run(int argc, char* argv[]) {
     }
 
     if (argc == 3 && arg1 == "node" && std::string(argv[2]) == "list") {
-        std::cout << "local\n";
+        auto node = node::get_default_node();
+        std::cout << node.name << "\n";
         return 0;
     }
 
