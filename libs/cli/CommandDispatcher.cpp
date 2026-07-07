@@ -75,7 +75,7 @@ void print_help() {
         << "  access grant list                      List grants\n"
         << "  site list       List sites\n"
         << "  site create <owner> <domain> Create site\n"
-        << "  site remove <domain>     Remove site\n"
+        << "  site remove <domain> [--force] Remove site\n"
         << "  site start <domain>     Start site stack\n"
         << "  site stop <domain>      Stop site stack\n"
         << "  site status <domain>    Show site status\n"
@@ -196,6 +196,14 @@ int CommandDispatcher::run(int argc, char* argv[]) {
 
     if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "status") {
         return print_response(send_command("site-status|" + std::string(argv[3])));
+    }
+
+    if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "remove") {
+        return print_response(send_command("site-remove|" + std::string(argv[3])));
+    }
+
+    if (argc == 5 && arg1 == "site" && std::string(argv[2]) == "remove" && std::string(argv[4]) == "--force") {
+        return print_response(send_command("site-remove-force|" + std::string(argv[3])));
     }
 
     if (argc == 3 && arg1 == "database" && std::string(argv[2]) == "list") {

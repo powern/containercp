@@ -22,25 +22,53 @@ bool DockerRuntime::check_docker() {
     return docker_available_;
 }
 
+core::OperationResult DockerRuntime::check_compose() {
+    if (!check_docker()) {
+        return {false, "Docker is not installed."};
+    }
+    if (compose_checked_) {
+        return compose_available_ ? core::OperationResult{true, ""}
+                                  : core::OperationResult{false, "Docker Compose plugin is not installed."};
+    }
+    compose_checked_ = true;
+    // Check docker compose plugin first, then standalone binary
+    if (std::system("docker compose version > /dev/null 2>&1") == 0) {
+        compose_available_ = true;
+        return {true, ""};
+    }
+    if (std::system("docker-compose --version > /dev/null 2>&1") == 0) {
+        compose_available_ = true;
+        return {true, ""};
+    }
+    compose_available_ = false;
+    return {false, "Docker Compose plugin is not installed."};
+}
+
 core::OperationResult DockerRuntime::run_command(const std::string& site_dir, const std::string& command) {
     if (!check_docker()) {
         return {false, "Docker is not installed."};
     }
 
-    // Try docker compose first, fall back to docker-compose
-    std::string compose_cmd = "docker compose";
-    {
-        std::string test = compose_cmd + " version > /dev/null 2>&1";
-        if (std::system(test.c_str()) != 0) {
-            compose_cmd = "docker-compose";
-        }
+    // Check compose availability and determine the correct command
+    auto compose_check = check_compose();
+    if (!compose_check.success) {
+        return compose_check;
     }
 
-    // Replace "docker compose" with the detected compose command
+    // Replace "docker compose" with the correct command
     std::string actual_cmd = command;
     auto pos = actual_cmd.find("docker compose");
     if (pos != std::string::npos) {
-        actual_cmd.replace(pos, 14, compose_cmd);
+        // Determine which compose command to use
+        static bool checked = false;
+        static bool use_docker_compose = true;
+        if (!checked) {
+            checked = true;
+            use_docker_compose = (std::system("docker compose version > /dev/null 2>&1") == 0);
+        }
+        if (!use_docker_compose) {
+            actual_cmd.replace(pos, 14, "docker-compose");
+        }
     }
 
     std::string shell_cmd = "cd " + site_dir + " && " + actual_cmd + " 2>&1";

@@ -17,8 +17,8 @@ DockerComposeProvider::DockerComposeProvider(filesystem::Filesystem& fs, config:
 }
 
 core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
-    auto check = rt_.status("__containercp_check__");
-    if (!check.success && check.message == "Docker is not installed.") {
+    auto check = rt_.check_compose();
+    if (!check.success) {
         return check;
     }
 

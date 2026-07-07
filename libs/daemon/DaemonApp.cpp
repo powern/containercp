@@ -2,6 +2,7 @@
 #include "daemon/CommandProtocol.h"
 #include "core/Application.h"
 #include "operations/SiteCreateOperation.h"
+#include "operations/SiteRemoveOperation.h"
 #include "utils/StringUtils.h"
 #include "utils/Validator.h"
 
@@ -134,6 +135,29 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         out << "Version: " << pv->version << "\n"
             << "Image: " << pv->image << "\n";
         return Command::success(out.str());
+    }
+
+    if (cmd.name == "site-remove" && cmd.args.size() >= 1) {
+        operations::SiteRemoveOperation op(
+            s.sites(), s.domains(), s.databases(),
+            s.backups(), s.ssl(), s.mail(),
+            s.reverse_proxies(),
+            s.filesystem(), s.config(), s.runtime());
+        auto result = op.execute(cmd.args[0]);
+        if (result.success) { s.save(); return Command::success("Site removed: " + cmd.args[0]); }
+        return Command::error(result.message);
+    }
+
+    if (cmd.name == "site-remove-force" && cmd.args.size() >= 1) {
+        // Same as site-remove but no confirmation (already handled client-side)
+        operations::SiteRemoveOperation op(
+            s.sites(), s.domains(), s.databases(),
+            s.backups(), s.ssl(), s.mail(),
+            s.reverse_proxies(),
+            s.filesystem(), s.config(), s.runtime());
+        auto result = op.execute(cmd.args[0]);
+        if (result.success) { s.save(); return Command::success("Site removed: " + cmd.args[0]); }
+        return Command::error(result.message);
     }
 
     if (cmd.name == "site-create" && cmd.args.size() >= 2) {

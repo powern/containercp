@@ -12,6 +12,7 @@ public:
     virtual ~Runtime() = default;
 
     virtual core::OperationResult create_site_stack(const std::string& domain) = 0;
+    virtual core::OperationResult check_compose() = 0;
     virtual core::OperationResult start_site(const std::string& domain) = 0;
     virtual core::OperationResult stop_site(const std::string& domain) = 0;
     virtual core::OperationResult remove_site(const std::string& domain) = 0;

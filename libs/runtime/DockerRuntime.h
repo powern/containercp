@@ -18,6 +18,8 @@ public:
     core::OperationResult remove_site(const std::string& domain) override;
     core::OperationResult status(const std::string& domain) override;
 
+    core::OperationResult check_compose();
+
 private:
     bool check_docker();
     core::OperationResult run_command(const std::string& site_dir, const std::string& command);
@@ -26,6 +28,8 @@ private:
     std::string sites_root_;
     bool docker_checked_ = false;
     bool docker_available_ = false;
+    bool compose_checked_ = false;
+    bool compose_available_ = false;
 };
 
 } // namespace containercp::runtime

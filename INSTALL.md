@@ -17,16 +17,44 @@ apt install -y git cmake ninja-build g++ curl
 **Docker:**
 
 ```
-apt install -y docker.io docker-compose-v2
+apt install -y docker.io
 systemctl enable --now docker
+```
+
+**Docker Compose plugin (Debian 13+):**
+
+The `docker compose` plugin must be installed separately if not
+included with `docker.io`. Use one of these methods:
+
+Option A — Install the Docker Compose plugin from Docker's repository:
+
+```
+apt install -y docker-compose-v2
+```
+
+If `docker-compose-v2` is not available, install the plugin manually:
+
+```
+mkdir -p /usr/libexec/docker/cli-plugins/
+curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 -o /usr/libexec/docker/cli-plugins/docker-compose
+chmod +x /usr/libexec/docker/cli-plugins/docker-compose
+```
+
+Option B — Install the standalone `docker-compose` binary:
+
+```
+apt install -y docker-compose
 ```
 
 **Verify:**
 
 ```
 docker --version
-docker compose version
+docker compose version  ||  docker-compose --version
 ```
+
+ContainerCP supports both `docker compose` (plugin) and `docker-compose`
+(standalone). At least one must work.
 
 ## Build
 
