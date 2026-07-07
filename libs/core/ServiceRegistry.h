@@ -3,6 +3,7 @@
 
 #include "config/Config.h"
 #include "core/ResourceManager.h"
+#include "filesystem/Filesystem.h"
 #include "logger/Logger.h"
 #include "site/SiteManager.h"
 #include "storage/Storage.h"
@@ -15,6 +16,7 @@ public:
     logger::Logger& logger();
     ResourceManager& nodes();
     site::SiteManager& sites();
+    filesystem::Filesystem& filesystem();
     void save();
 
 private:
@@ -26,6 +28,7 @@ private:
     ResourceManager nodes_;
     site::SiteManager sites_;
     storage::Storage storage_;
+    filesystem::Filesystem filesystem_;
 };
 
 } // namespace containercp::core

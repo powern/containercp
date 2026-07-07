@@ -2,9 +2,11 @@
 
 namespace containercp::operations {
 
-SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, core::ResourceManager& nodes)
+SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, core::ResourceManager& nodes, filesystem::Filesystem& fs, config::Config& cfg)
     : sites_(sites)
     , nodes_(nodes)
+    , fs_(fs)
+    , cfg_(cfg)
 {
 }
 
@@ -22,6 +24,11 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
     }
 
     sites_.create(domain, owner, node.id);
+
+    std::string site_dir = cfg_.data_root() + "/sites/" + domain + "/";
+    fs_.create_directory(site_dir);
+    fs_.create_file(site_dir + "README.txt", "This site is managed by ContainerCP.\n");
+
     return {true, ""};
 }
 

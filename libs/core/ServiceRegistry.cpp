@@ -43,6 +43,10 @@ site::SiteManager& ServiceRegistry::sites() {
     return sites_;
 }
 
+filesystem::Filesystem& ServiceRegistry::filesystem() {
+    return filesystem_;
+}
+
 void ServiceRegistry::save() {
     storage_.save_nodes(nodes_.list());
     storage_.save_sites(sites_.list());
