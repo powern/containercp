@@ -1,6 +1,5 @@
 #include "Storage.h"
 
-#include <cstdint>
 #include <fstream>
 #include <sstream>
 #include <string>

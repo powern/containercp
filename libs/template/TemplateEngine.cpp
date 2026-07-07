@@ -1,7 +1,5 @@
 #include "TemplateEngine.h"
 
-#include <string>
-
 namespace containercp::template_engine {
 
 std::string TemplateEngine::render(const std::string& template_content, const std::string& domain, const std::string& owner) const {

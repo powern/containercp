@@ -12,7 +12,7 @@ EnvGenerator::EnvGenerator(filesystem::Filesystem& fs, const std::string& site_d
 }
 
 std::string EnvGenerator::generate_password(int length) {
-    static const char chars[] =
+    static constexpr char chars[] =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         "abcdefghijklmnopqrstuvwxyz"
         "0123456789";
@@ -47,15 +47,19 @@ bool EnvGenerator::generate(const std::string& domain, const std::string& owner)
     env << "PHP_UPLOAD_LIMIT=128M\n";
     env << "\n";
 
+    constexpr int db_pass_len = 32;
+    constexpr int root_pass_len = 48;
+    constexpr int redis_pass_len = 32;
+
     env << "# MariaDB\n";
     env << "DB_NAME=site_db\n";
     env << "DB_USER=site_user\n";
-    env << "DB_PASSWORD=" << generate_password(32) << "\n";
-    env << "MYSQL_ROOT_PASSWORD=" << generate_password(48) << "\n";
+    env << "DB_PASSWORD=" << generate_password(db_pass_len) << "\n";
+    env << "MYSQL_ROOT_PASSWORD=" << generate_password(root_pass_len) << "\n";
     env << "\n";
 
     env << "# Redis\n";
-    env << "REDIS_PASSWORD=" << generate_password(32) << "\n";
+    env << "REDIS_PASSWORD=" << generate_password(redis_pass_len) << "\n";
     env << "\n";
 
     env << "# Timezone\n";

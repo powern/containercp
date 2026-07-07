@@ -14,6 +14,10 @@ public:
     const std::string& data_root() const;
     const std::string& log_root() const;
 
+    std::string database_dir() const;
+    std::string sites_dir() const;
+    std::string templates_dir() const;
+
 private:
     Config();
 

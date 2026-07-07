@@ -31,4 +31,16 @@ const std::string& Config::log_root() const {
     return log_root_;
 }
 
+std::string Config::database_dir() const {
+    return data_root_ + "/database/";
+}
+
+std::string Config::sites_dir() const {
+    return data_root_ + "/sites/";
+}
+
+std::string Config::templates_dir() const {
+    return config_root_ + "/templates/";
+}
+
 } // namespace containercp::config

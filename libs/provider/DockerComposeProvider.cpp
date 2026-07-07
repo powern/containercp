@@ -12,7 +12,7 @@ DockerComposeProvider::DockerComposeProvider(filesystem::Filesystem& fs, config:
 }
 
 core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
-    std::string site_dir = cfg_.data_root() + "/sites/" + site.domain + "/";
+    std::string site_dir = cfg_.sites_dir() + site.domain + "/";
 
     filesystem::SiteLayout layout(fs_, site_dir);
     layout.create();
@@ -20,7 +20,7 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
     docker::EnvGenerator env(fs_, site_dir);
     env.generate(site.domain, site.owner);
 
-    docker::ComposeGenerator gen(fs_, cfg_.config_root() + "/templates/");
+    docker::ComposeGenerator gen(fs_, cfg_.templates_dir());
     gen.generate(site.domain, site.owner, site_dir + "docker-compose.yml");
 
     std::string nginx_cfg =

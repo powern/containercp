@@ -5,8 +5,8 @@ namespace containercp::core {
 ServiceRegistry::ServiceRegistry()
     : config_(config::Config::instance())
     , logger_(logger::Logger::instance())
-    , storage_(config_.data_root() + "/database/")
-    , runtime_(logger_, config_.data_root() + "/sites/")
+    , storage_(config_.database_dir())
+    , runtime_(logger_, config_.sites_dir())
     , hosting_provider_(filesystem_, config_, runtime_)
 {
     auto loaded_nodes = storage_.load_nodes();

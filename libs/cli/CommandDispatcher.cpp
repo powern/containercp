@@ -41,7 +41,7 @@ int handle_site_create(const std::string& owner, const std::string& domain) {
         return 1;
     }
 
-    containercp::operations::SiteCreateOperation op(services.sites(), services.nodes(), services.hosting_provider());
+    containercp::operations::SiteCreateOperation op(services.sites(), services.hosting_provider());
     auto result = op.execute(owner, domain, *node);
 
     if (result.success) {

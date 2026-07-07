@@ -9,7 +9,7 @@ SiteLayout::SiteLayout(Filesystem& fs, const std::string& site_root)
 }
 
 bool SiteLayout::create() {
-    const char* dirs[] = {
+    static constexpr const char* dirs[] = {
         "www",
         "public",
         "logs/nginx",

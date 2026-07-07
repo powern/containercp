@@ -2,9 +2,8 @@
 
 namespace containercp::operations {
 
-SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, core::ResourceManager& nodes, provider::HostingProvider& provider)
+SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, provider::HostingProvider& provider)
     : sites_(sites)
-    , nodes_(nodes)
     , provider_(provider)
 {
 }
