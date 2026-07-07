@@ -593,13 +593,27 @@ async function loadBackups(p) {
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load backups</div>'; }
 }
 
-function showBackupModal() {
-  showModal('Create Backup', '<div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Domain</label><input id="bk-domain" placeholder="example.com" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;"></div><button class="btn btn-primary" onclick="createBackup()" style="margin-top:12px;">Create Backup</button>', 400);
+async function showBackupModal() {
+  let sitesHtml = '<option value="" disabled selected>Loading sites...</option>';
+  try {
+    const sites = await api('/api/sites');
+    const list = (sites.data||[]);
+    if (list.length === 0) {
+      sitesHtml = '<option value="" disabled selected>No sites available</option>';
+    } else {
+      sitesHtml = list.map(s => '<option value="'+esc(s.domain)+'">'+esc(s.domain)+'</option>').join('');
+    }
+  } catch(e) {
+    sitesHtml = '<option value="" disabled selected>Failed to load sites</option>';
+  }
+  showModal('Create Backup', '<div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Site</label><select id="bk-domain" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;">'+sitesHtml+'</select><div style="margin-top:8px;font-size:11px;color:var(--text3);">Or type a domain manually:</div><input id="bk-domain-manual" placeholder="example.com" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;margin-top:4px;"><button class="btn btn-primary" onclick="createBackup()" style="margin-top:12px;">Create Backup</button>', 420);
 }
 
 async function createBackup() {
-  const domain = $('bk-domain').value.trim();
-  if (!domain) { toast('Domain required', 'error'); return; }
+  const sel = $('bk-domain');
+  const manual = $('bk-domain-manual');
+  const domain = (sel && sel.value && sel.selectedIndex > 0) ? sel.value : (manual ? manual.value.trim() : '');
+  if (!domain) { toast('Select a site or enter a domain', 'error'); return; }
   hideModal();
   try {
     const res = await apiPost('/api/backups/create',{domain});
@@ -656,9 +670,14 @@ async function loadLogs(p) {
 }
 
 async function loadSettings(p) {
+  let version = '...';
+  try {
+    const res = await api('/api/version');
+    if (res.success && res.data && res.data.version) version = 'v' + res.data.version;
+  } catch(e) {}
   p.innerHTML = `<div class="page-header"><h1>Settings</h1></div>
     <div class="details-panel"><div class="details-grid">
-      <div class="details-field"><div class="details-label">Version</div><div class="details-value">0.1.0</div></div>
+      <div class="details-field"><div class="details-label">Version</div><div class="details-value">${esc(version)}</div></div>
       <div class="details-field"><div class="details-label">API Port</div><div class="details-value">8080</div></div>
       <div class="details-field"><div class="details-label">Data Root</div><div class="details-value">/srv/containercp</div></div>
       <div class="details-field"><div class="details-label">Config Root</div><div class="details-value">/etc/containercp</div></div>
