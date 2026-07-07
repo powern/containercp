@@ -14,47 +14,31 @@ apt update
 apt install -y git cmake ninja-build g++ curl
 ```
 
-**Docker:**
+**Docker and Docker Compose:**
 
+Debian 13 (bookworm):
 ```
-apt install -y docker.io
+apt install -y docker.io docker-compose
 systemctl enable --now docker
 ```
 
-**Docker Compose plugin (Debian 13+):**
-
-The `docker compose` plugin must be installed separately if not
-included with `docker.io`. Use one of these methods:
-
-Option A — Install the Docker Compose plugin from Docker's repository:
-
+Debian 12 (bullseye):
 ```
-apt install -y docker-compose-v2
-```
-
-If `docker-compose-v2` is not available, install the plugin manually:
-
-```
-mkdir -p /usr/libexec/docker/cli-plugins/
-curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 -o /usr/libexec/docker/cli-plugins/docker-compose
-chmod +x /usr/libexec/docker/cli-plugins/docker-compose
-```
-
-Option B — Install the standalone `docker-compose` binary:
-
-```
-apt install -y docker-compose
+apt install -y docker.io docker-compose-v2
+systemctl enable --now docker
 ```
 
 **Verify:**
 
 ```
 docker --version
-docker compose version  ||  docker-compose --version
+docker compose version     # Debian 12
+docker-compose version     # Debian 13
 ```
 
-ContainerCP supports both `docker compose` (plugin) and `docker-compose`
-(standalone). At least one must work.
+ContainerCP supports both `docker compose` (plugin, Debian 12+) and
+`docker-compose` (standalone binary, Debian 13+). It detects the
+available command automatically at runtime.
 
 ## Build
 
