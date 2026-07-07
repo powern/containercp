@@ -60,6 +60,16 @@ ServiceRegistry::ServiceRegistry()
         backups_.set_backups(loaded_backups);
     }
 
+    auto loaded_ssl = storage_.load_ssl_certificates();
+    if (!loaded_ssl.empty()) {
+        ssl_.set_certificates(loaded_ssl);
+    }
+
+    auto loaded_mail = storage_.load_mail_domains();
+    if (!loaded_mail.empty()) {
+        mail_.set_domains(loaded_mail);
+    }
+
     auto loaded_sites = storage_.load_sites();
     if (!loaded_sites.empty()) {
         sites_.set_sites(loaded_sites);
@@ -102,6 +112,14 @@ backup::BackupManager& ServiceRegistry::backups() {
     return backups_;
 }
 
+ssl::SslCertificateManager& ServiceRegistry::ssl() {
+    return ssl_;
+}
+
+mail::MailDomainManager& ServiceRegistry::mail() {
+    return mail_;
+}
+
 filesystem::Filesystem& ServiceRegistry::filesystem() {
     return filesystem_;
 }
@@ -122,6 +140,8 @@ void ServiceRegistry::save() {
     storage_.save_php_versions(php_versions_.list());
     storage_.save_databases(databases_.list());
     storage_.save_backups(backups_.list());
+    storage_.save_ssl_certificates(ssl_.list());
+    storage_.save_mail_domains(mail_.list());
 }
 
 } // namespace containercp::core

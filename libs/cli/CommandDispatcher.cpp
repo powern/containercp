@@ -40,6 +40,14 @@ void print_help() {
         << "  backup list            List backups\n"
         << "  backup show <id>       Show backup details\n"
         << "  backup remove <id>     Remove backup\n"
+        << "  ssl list               List SSL certificates\n"
+        << "  ssl show <domain>      Show SSL certificate\n"
+        << "  ssl enable <domain>    Enable SSL for domain\n"
+        << "  ssl disable <domain>   Disable SSL for domain\n"
+        << "  mail list              List mail domains\n"
+        << "  mail show <domain>     Show mail domain\n"
+        << "  mail enable <domain>   Enable mail for domain\n"
+        << "  mail disable <domain>  Disable mail for domain\n"
         << "  database list       List databases\n"
         << "  database show <name> Show database details\n"
         << "  database remove <name> Remove database\n"
@@ -380,6 +388,106 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         services.backups().remove(b->id);
         containercp::core::Application::instance().save();
         std::cout << "Backup removed:\n" << id << "\n";
+        return 0;
+    }
+
+    if (argc == 3 && arg1 == "ssl" && std::string(argv[2]) == "list") {
+        auto& certs = services.ssl().list();
+        if (certs.empty()) {
+            std::cout << "No SSL certificates.\n";
+        } else {
+            for (const auto& c : certs) {
+                std::cout << c.domain << " [" << c.status << "]\n";
+            }
+        }
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "ssl" && std::string(argv[2]) == "show") {
+        auto* c = services.ssl().find_by_domain(argv[3]);
+        if (c == nullptr) {
+            std::cout << "SSL not found: " << argv[3] << "\n";
+            return 1;
+        }
+        std::cout << "Domain: " << c->domain << "\n"
+                  << "Provider: " << c->provider << "\n"
+                  << "Cert: " << c->certificate_path << "\n"
+                  << "Key: " << c->key_path << "\n"
+                  << "Expires: " << c->expires_at << "\n"
+                  << "Status: " << c->status << "\n"
+                  << "Enabled: " << (c->enabled ? "yes" : "no") << "\n";
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "ssl" && std::string(argv[2]) == "enable") {
+        if (services.ssl().find_by_domain(argv[3]) != nullptr) {
+            std::cout << "SSL already enabled for " << argv[3] << "\n";
+            return 1;
+        }
+        std::string cert = services.config().sites_dir() + argv[3] + "/ssl/fullchain.pem";
+        std::string key = services.config().sites_dir() + argv[3] + "/ssl/privkey.pem";
+        services.ssl().create(0, argv[3], cert, key);
+        containercp::core::Application::instance().save();
+        std::cout << "SSL enabled:\n" << argv[3] << "\n";
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "ssl" && std::string(argv[2]) == "disable") {
+        auto* c = services.ssl().find_by_domain(argv[3]);
+        if (c == nullptr) {
+            std::cout << "SSL not found: " << argv[3] << "\n";
+            return 1;
+        }
+        services.ssl().remove(c->id);
+        containercp::core::Application::instance().save();
+        std::cout << "SSL disabled:\n" << argv[3] << "\n";
+        return 0;
+    }
+
+    if (argc == 3 && arg1 == "mail" && std::string(argv[2]) == "list") {
+        auto& domains = services.mail().list();
+        if (domains.empty()) {
+            std::cout << "No mail domains.\n";
+        } else {
+            for (const auto& m : domains) {
+                std::cout << m.domain << " [" << m.status << "]\n";
+            }
+        }
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "mail" && std::string(argv[2]) == "show") {
+        auto* m = services.mail().find_by_domain(argv[3]);
+        if (m == nullptr) {
+            std::cout << "Mail domain not found: " << argv[3] << "\n";
+            return 1;
+        }
+        std::cout << "Domain: " << m->domain << "\n"
+                  << "Status: " << m->status << "\n"
+                  << "Enabled: " << (m->enabled ? "yes" : "no") << "\n";
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "mail" && std::string(argv[2]) == "enable") {
+        if (services.mail().find_by_domain(argv[3]) != nullptr) {
+            std::cout << "Mail already enabled for " << argv[3] << "\n";
+            return 1;
+        }
+        services.mail().create(0, argv[3], 0);
+        containercp::core::Application::instance().save();
+        std::cout << "Mail enabled:\n" << argv[3] << "\n";
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "mail" && std::string(argv[2]) == "disable") {
+        auto* m = services.mail().find_by_domain(argv[3]);
+        if (m == nullptr) {
+            std::cout << "Mail domain not found: " << argv[3] << "\n";
+            return 1;
+        }
+        services.mail().remove(m->id);
+        containercp::core::Application::instance().save();
+        std::cout << "Mail disabled:\n" << argv[3] << "\n";
         return 0;
     }
 

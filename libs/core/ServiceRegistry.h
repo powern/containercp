@@ -8,7 +8,9 @@
 #include "domain/DomainManager.h"
 #include "filesystem/Filesystem.h"
 #include "logger/Logger.h"
+#include "mail/MailDomainManager.h"
 #include "php/PhpVersionManager.h"
+#include "ssl/SslCertificateManager.h"
 #include "provider/DockerComposeProvider.h"
 #include "runtime/DockerRuntime.h"
 #include "site/SiteManager.h"
@@ -28,6 +30,8 @@ public:
     php::PhpVersionManager& php_versions();
     database::DatabaseManager& databases();
     backup::BackupManager& backups();
+    ssl::SslCertificateManager& ssl();
+    mail::MailDomainManager& mail();
     filesystem::Filesystem& filesystem();
     runtime::Runtime& runtime();
     provider::HostingProvider& hosting_provider();
@@ -46,6 +50,8 @@ private:
     php::PhpVersionManager php_versions_;
     database::DatabaseManager databases_;
     backup::BackupManager backups_;
+    ssl::SslCertificateManager ssl_;
+    mail::MailDomainManager mail_;
     storage::Storage storage_;
     filesystem::Filesystem filesystem_;
     runtime::DockerRuntime runtime_;

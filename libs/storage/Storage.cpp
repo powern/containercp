@@ -39,6 +39,14 @@ std::string Storage::backups_file() const {
     return db_path_ + "backups.db";
 }
 
+std::string Storage::ssl_certificates_file() const {
+    return db_path_ + "ssl_certificates.db";
+}
+
+std::string Storage::mail_domains_file() const {
+    return db_path_ + "mail_domains.db";
+}
+
 void Storage::save_nodes(const std::vector<node::Node>& nodes) {
     std::ofstream file(nodes_file());
     for (const auto& n : nodes) {
@@ -261,6 +269,74 @@ std::vector<backup::Backup> Storage::load_backups() {
         backups.push_back(std::move(b));
     }
     return backups;
+}
+
+void Storage::save_ssl_certificates(const std::vector<ssl::SslCertificate>& certs) {
+    std::ofstream file(ssl_certificates_file());
+    for (const auto& c : certs) {
+        file << c.id << "|" << c.domain_id << "|" << c.domain << "|"
+             << c.provider << "|" << c.certificate_path << "|" << c.key_path << "|"
+             << c.expires_at << "|" << c.status << "|" << (c.enabled ? "1" : "0") << "\n";
+    }
+}
+
+std::vector<ssl::SslCertificate> Storage::load_ssl_certificates() {
+    std::vector<ssl::SslCertificate> certs;
+    std::ifstream file(ssl_certificates_file());
+    if (!file.is_open()) {
+        return certs;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::istringstream ss(line);
+        std::string token;
+        ssl::SslCertificate c;
+        if (std::getline(ss, token, '|')) c.id = std::stoull(token);
+        if (std::getline(ss, token, '|')) c.domain_id = std::stoull(token);
+        if (std::getline(ss, token, '|')) c.domain = token;
+        if (std::getline(ss, token, '|')) c.provider = token;
+        if (std::getline(ss, token, '|')) c.certificate_path = token;
+        if (std::getline(ss, token, '|')) c.key_path = token;
+        if (std::getline(ss, token, '|')) c.expires_at = token;
+        if (std::getline(ss, token, '|')) c.status = token;
+        if (std::getline(ss, token, '|')) c.enabled = (token == "1");
+        c.name = c.domain;
+        certs.push_back(std::move(c));
+    }
+    return certs;
+}
+
+void Storage::save_mail_domains(const std::vector<mail::MailDomain>& domains) {
+    std::ofstream file(mail_domains_file());
+    for (const auto& m : domains) {
+        file << m.id << "|" << m.domain_id << "|" << m.domain << "|"
+             << m.owner_id << "|" << (m.enabled ? "1" : "0") << "|" << m.status << "\n";
+    }
+}
+
+std::vector<mail::MailDomain> Storage::load_mail_domains() {
+    std::vector<mail::MailDomain> domains;
+    std::ifstream file(mail_domains_file());
+    if (!file.is_open()) {
+        return domains;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::istringstream ss(line);
+        std::string token;
+        mail::MailDomain m;
+        if (std::getline(ss, token, '|')) m.id = std::stoull(token);
+        if (std::getline(ss, token, '|')) m.domain_id = std::stoull(token);
+        if (std::getline(ss, token, '|')) m.domain = token;
+        if (std::getline(ss, token, '|')) m.owner_id = std::stoull(token);
+        if (std::getline(ss, token, '|')) m.enabled = (token == "1");
+        if (std::getline(ss, token, '|')) m.status = token;
+        m.name = m.domain;
+        domains.push_back(std::move(m));
+    }
+    return domains;
 }
 
 } // namespace containercp::storage

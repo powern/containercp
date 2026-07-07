@@ -25,6 +25,8 @@ add_executable(containercp
     libs/filesystem/Filesystem.cpp
     libs/filesystem/SiteLayout.cpp
     libs/logger/Logger.cpp
+    libs/mail/MailDomain.cpp
+    libs/mail/MailDomainManager.cpp
     libs/node/Node.cpp
     libs/operations/SiteCreateOperation.cpp
     libs/php/PhpVersion.cpp
@@ -33,6 +35,8 @@ add_executable(containercp
     libs/runtime/DockerRuntime.cpp
     libs/site/Site.cpp
     libs/site/SiteManager.cpp
+    libs/ssl/SslCertificate.cpp
+    libs/ssl/SslCertificateManager.cpp
     libs/storage/Storage.cpp
     libs/template/TemplateEngine.cpp
     libs/user/User.cpp

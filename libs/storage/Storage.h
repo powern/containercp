@@ -3,6 +3,8 @@
 
 #include "backup/Backup.h"
 #include "database/Database.h"
+#include "mail/MailDomain.h"
+#include "ssl/SslCertificate.h"
 #include "domain/Domain.h"
 #include "node/Node.h"
 #include "php/PhpVersion.h"
@@ -39,6 +41,12 @@ public:
     void save_backups(const std::vector<backup::Backup>& backups);
     std::vector<backup::Backup> load_backups();
 
+    void save_ssl_certificates(const std::vector<ssl::SslCertificate>& certs);
+    std::vector<ssl::SslCertificate> load_ssl_certificates();
+
+    void save_mail_domains(const std::vector<mail::MailDomain>& domains);
+    std::vector<mail::MailDomain> load_mail_domains();
+
 private:
     std::string nodes_file() const;
     std::string sites_file() const;
@@ -47,6 +55,8 @@ private:
     std::string php_versions_file() const;
     std::string databases_file() const;
     std::string backups_file() const;
+    std::string ssl_certificates_file() const;
+    std::string mail_domains_file() const;
 
     std::string db_path_;
 };
