@@ -1,4 +1,4 @@
-# Web UI Preview
+# ContainerCP Admin Panel
 
 ## How to start
 
@@ -20,36 +20,60 @@ cmake --build build-release
 http://127.0.0.1:8080/
 ```
 
-## Available API endpoints
+## Dashboard
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /api/version | Application version |
-| GET | /api/health | Health check |
-| GET | /api/sites | List all sites |
-| GET | /api/users | List all users |
-| GET | /api/domains | List all domains |
-| GET | /api/databases | List all databases |
-| GET | /api/ssl | List SSL certificates |
-| GET | /api/proxy | List proxy configs |
-| GET | /api/access-users | List access users |
+The dashboard shows:
 
-## Dashboard pages
+- Resource cards with counts (Sites, Domains, Databases, SSL, Proxy, Access, Users, Nodes)
+- System health panel (Daemon, REST API, Storage, Runtime, Proxy)
+- Recent activity feed
 
-- **Dashboard** — overview cards with counts for all resource types
-- **Sites** — table of all sites
-- **Users** — table of all users
-- **Domains** — table of all domains
-- **Databases** — table of all databases
-- **SSL** — table of SSL certificates
-- **Proxy** — table of proxy configs
-- **Access** — table of access users
+## Pages
 
-## Current limitations
+| Page | Description |
+|------|-------------|
+| Dashboard | Overview with cards, health, activity |
+| Sites | Table with create, filter, actions |
+| Domains | Table with SSL status badges |
+| Databases | Table with engine info |
+| SSL | Table with certificate status badges |
+| Proxy | Table with proxy configs |
+| Access | Table with access users |
+| Profiles | Configuration profiles (tabs for Web/PHP/Docker/SSL) |
+| Templates | Web server template list |
+| Nodes | Node details |
+| Logs | System log viewer |
+| Settings | Application settings |
 
-- Read-only: the UI only displays data, no create/edit/delete
-- No authentication: the API is open on localhost
-- No pagination: all data is loaded at once
-- No real-time updates: manual refresh required
-- Static files are served from `/opt/containercp/web/`
-- The daemon must be running for the UI to work
+## Features
+
+- **Dark theme by default** with light/dark toggle
+- **Responsive layout** with collapsible sidebar on mobile
+- **Search** across resource tables
+- **Status indicator** in top bar (green/red dot)
+- **Version badge** in top bar
+- **Inline SVG icons** throughout the UI
+- **Professional typography** and consistent spacing
+
+## REST API endpoints used
+
+| Endpoint | Page |
+|----------|------|
+| GET /api/health | Dashboard, status |
+| GET /api/version | Top bar |
+| GET /api/sites | Dashboard, Sites |
+| GET /api/domains | Dashboard, Domains |
+| GET /api/databases | Dashboard, Databases |
+| GET /api/ssl | Dashboard, SSL |
+| GET /api/proxy | Dashboard, Proxy |
+| GET /api/access-users | Dashboard, Access |
+| GET /api/users | Dashboard |
+| GET /api/nodes | Dashboard |
+
+## Technical details
+
+- Pure HTML5, CSS3, Vanilla JavaScript
+- No frameworks, no build tools, no npm
+- Served by containercpd's built-in HTTP server
+- Files located in `/opt/containercp/web/`
+- Zero external dependencies

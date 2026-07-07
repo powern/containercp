@@ -151,7 +151,7 @@ TEST_CASE("Static file route check") {
     CHECK(f.is_open());
     std::string content((std::istreambuf_iterator<char>(f)), {});
     CHECK(!content.empty());
-    CHECK(content.find("ContainerCP Dashboard") != std::string::npos);
+    CHECK(content.find("ContainerCP") != std::string::npos);
 }
 
 TEST_CASE("Static file path traversal blocked") {
