@@ -609,17 +609,33 @@ async function showBackupModal() {
   showModal('Create Backup', '<div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Site</label><select id="bk-domain" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;">'+sitesHtml+'</select><div style="margin-top:8px;font-size:11px;color:var(--text3);">Or type a domain manually:</div><input id="bk-domain-manual" placeholder="example.com" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;margin-top:4px;"><button class="btn btn-primary" onclick="createBackup()" style="margin-top:12px;">Create Backup</button>', 420);
 }
 
+let creatingBackup = false;
+
 async function createBackup() {
+  if (creatingBackup) return;
+  creatingBackup = true;
   const sel = $('bk-domain');
   const manual = $('bk-domain-manual');
-  const domain = (sel && sel.value && sel.selectedIndex > 0) ? sel.value : (manual ? manual.value.trim() : '');
-  if (!domain) { toast('Select a site or enter a domain', 'error'); return; }
+  const domain = (sel && sel.value) ? sel.value : (manual ? manual.value.trim() : '');
+  if (!domain) {
+    toast('Select a site or enter a domain', 'error');
+    creatingBackup = false;
+    return;
+  }
   hideModal();
   try {
     const res = await apiPost('/api/backups/create',{domain});
-    if (res.success) { toast('Backup created: '+res.data.filename, 'success'); loadBackups($('page')); }
-    else toast('Error: '+(res.error||'Unknown'), 'error');
-  } catch(e) { toast('Network error', 'error'); }
+    if (res.success) {
+      toast('Backup created: '+res.data.filename, 'success');
+      loadBackups($('page'));
+    } else {
+      toast('Error: '+(res.error||'Unknown'), 'error');
+    }
+  } catch(e) {
+    toast('Network error', 'error');
+  } finally {
+    creatingBackup = false;
+  }
 }
 
 async function removeBackup(id) {
