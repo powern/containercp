@@ -1,5 +1,6 @@
 #include "core/Application.h"
 #include "api/ApiServer.h"
+#include "api/WebServer.h"
 #include "daemon/DaemonApp.h"
 #include "daemon/CommandProtocol.h"
 
@@ -11,32 +12,43 @@
 #include <thread>
 #include <unistd.h>
 
+static int parse_arg(int argc, char* argv[], const std::string& name, int default_val) {
+    for (int i = 1; i < argc - 1; ++i) {
+        if (std::string(argv[i]) == name) {
+            return std::stoi(argv[i + 1]);
+        }
+    }
+    return default_val;
+}
+
+static int parse_env(const std::string& name, int default_val) {
+    const char* val = std::getenv(name.c_str());
+    if (val != nullptr) return std::stoi(val);
+    return default_val;
+}
+
 int main(int argc, char* argv[]) {
     containercp::core::Application::instance();
     auto& services = containercp::core::Application::instance().services();
 
-    int api_port = 8080;
-
-    for (int i = 1; i < argc - 1; ++i) {
-        if (std::string(argv[i]) == "--api-port") {
-            api_port = std::stoi(argv[i + 1]);
-            break;
-        }
-    }
-
-    const char* env_port = std::getenv("CONTAINERCP_API_PORT");
-    if (env_port != nullptr) {
-        api_port = std::stoi(env_port);
-    }
+    int api_port = parse_env("CONTAINERCP_API_PORT", parse_arg(argc, argv, "--api-port", 8080));
+    int ui_port = parse_env("CONTAINERCP_UI_PORT", parse_arg(argc, argv, "--ui-port", 8081));
 
     const std::string socket_path = services.config().data_root() + "/containercpd.sock";
 
-    // Start REST API server in background thread
+    // Start REST API server on localhost only (background thread)
     containercp::api::ApiServer api_server(services, api_port);
     std::thread api_thread([&api_server]() {
         api_server.start();
     });
     api_thread.detach();
+
+    // Start Web UI server on public address (background thread)
+    containercp::api::WebServer web_server(services, "0.0.0.0", ui_port);
+    std::thread web_thread([&web_server]() {
+        web_server.start();
+    });
+    web_thread.detach();
 
     // Remove old socket file
     ::unlink(socket_path.c_str());
@@ -68,10 +80,11 @@ int main(int argc, char* argv[]) {
 
     services.logger().info("Daemon: Listening on " + socket_path);
     services.logger().info("Daemon: REST API on 127.0.0.1:" + std::to_string(api_port));
+    services.logger().info("Daemon: Web UI on 0.0.0.0:" + std::to_string(ui_port));
+    services.logger().info("Daemon: Web UI API calls go to 127.0.0.1:" + std::to_string(api_port));
 
     containercp::daemon::DaemonApp daemon(services);
 
-    // Accept loop
     while (true) {
         struct sockaddr_un client_addr{};
         socklen_t client_len = sizeof(client_addr);

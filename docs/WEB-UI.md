@@ -16,8 +16,19 @@ cmake --build build-release
 
 3. Open in browser:
 
+Local access (full functionality):
 ```
 http://127.0.0.1:8080/
+```
+
+External access (static UI only, use SSH tunnel for API):
+```
+http://<server-ip>:8081/
+```
+
+For full external access, set up a reverse proxy or use SSH tunneling:
+```
+ssh -L 8080:127.0.0.1:8080 user@<server>
 ```
 
 ## Dashboard

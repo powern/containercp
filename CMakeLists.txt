@@ -15,6 +15,7 @@ set(CONTAINERCP_SOURCES
     libs/access/LocalSftpProvider.cpp
     libs/api/ApiServer.cpp
     libs/api/AuthMiddleware.cpp
+    libs/api/WebServer.cpp
     libs/api/JsonFormatter.cpp
     libs/api/Response.cpp
     libs/api/Router.cpp

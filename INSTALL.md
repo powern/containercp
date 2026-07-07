@@ -129,11 +129,33 @@ example.com
 
 ## Web UI
 
-Open in your browser:
+The daemon starts two HTTP listeners:
+
+| Port | Bind | Purpose | Access |
+|------|------|---------|--------|
+| 8080 | 127.0.0.1 | REST API + Web UI | Local access only |
+| 8081 | 0.0.0.0 | Web UI only (no API) | External network |
+
+For local access (recommended), open:
 
 ```
-http://<server-ip>:8080/
+http://127.0.0.1:8080/
 ```
+
+For external access from another machine, use SSH port forwarding:
+
+```
+ssh -L 8080:127.0.0.1:8080 user@<server>
+```
+
+Then open `http://127.0.0.1:8080/` on your local machine.
+
+For production external access, set up a reverse proxy (nginx, Apache)
+that serves the static files from `/opt/containercp/web/` and proxies
+`/api/*` requests to `http://127.0.0.1:8080`.
+
+The public Web UI port (8081) serves static files only. API calls from
+the browser will not work on this port for security reasons.
 
 ## SSL certificates
 
