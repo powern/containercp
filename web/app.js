@@ -653,7 +653,11 @@ async function restoreBackup(id, filename) {
       toast('Error: ' + (res.error || 'Restore failed'), 'error');
     }
   } catch(e) {
-    toast('Network error', 'error');
+    if (e.status) {
+      toast('Error: ' + e.message, 'error');
+    } else {
+      toast('Network error', 'error');
+    }
   } finally {
     restoringBackup = false;
   }

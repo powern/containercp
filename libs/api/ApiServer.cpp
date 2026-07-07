@@ -504,6 +504,41 @@ bool ApiServer::start() {
         return r;
     });
 
+    router_.add("POST", "/api/backups/restore", [&s](const Request& req) {
+        Response r;
+        std::string id_str = json_extract(req.body, "id");
+        if (id_str.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"id required\"}";
+            return r;
+        }
+        uint64_t id = std::stoull(id_str);
+        auto* b = s.backups().find(id);
+        if (!b) {
+            r.body = "{\"success\":false,\"error\":\"Backup not found\"}";
+            return r;
+        }
+        std::string site_domain;
+        for (const auto& site : s.sites().list()) {
+            if (site.id == b->site_id) {
+                site_domain = site.domain;
+                break;
+            }
+        }
+        if (site_domain.empty()) {
+            r.body = "{\"success\":false,\"error\":\"Site not found\"}";
+            return r;
+        }
+        std::string site_dir = s.config().sites_dir() + site_domain + "/";
+        auto result = s.backup_provider().restore_backup(b->file_path, site_dir);
+        if (!result.success) {
+            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
+            return r;
+        }
+        r.body = "{\"success\":true,\"data\":{\"message\":\"Backup restored: " + JsonFormatter::escape(b->filename) + "\"}}";
+        return r;
+    });
+
     // Resource CRUD endpoints
     auto remove_resource = [&s](const std::string& type, const std::string& name) -> Response {
         Response r;
