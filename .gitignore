@@ -1,5 +1,6 @@
 # Build directories
 build/
+build-release/
 cmake-build-*/
 
 # CMake generated files
@@ -16,6 +17,21 @@ compile_commands.json
 
 # Logs
 *.log
+
+# Runtime data
+/srv/containercp/
+/etc/containercp/
+
+# Database files
+*.db
+
+# Certificates and keys
+*.pem
+*.key
+*.crt
+
+# Environment files
+.env
 
 # Editor files
 .vscode/
