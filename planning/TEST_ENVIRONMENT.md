@@ -60,9 +60,16 @@ The daemon logs:
 - REST API on `127.0.0.1:8080`
 - Web UI on `0.0.0.0:8081`
 
+## Role of validation
+
+The Validation VM is the **primary quality gate** for the project.
+Unit tests and integration tests are necessary but no longer
+sufficient. Real deployment and real usage determine whether an
+Epic is complete.
+
 ## Validation checklist
 
-The full 114-item checklist is in `planning/product-validation.md`.
+The full 126-item checklist is in `planning/product-validation.md`.
 
 Validation priority order:
 
@@ -83,9 +90,11 @@ Validation priority order:
 
 ## Development lifecycle update
 
-Every Epic now finishes with:
+Every Epic now follows this lifecycle:
 
 ```
+Architecture Proposal
+    ↓
 Implementation
     ↓
 Unit Tests
@@ -98,16 +107,19 @@ Git Push
     ↓
 Deploy to Validation VM
     ↓
-Execute validation checklist
+Real Product Validation
     ↓
-Fix discovered issues
+Architecture Review
     ↓
-Repeat until validation passes
+Bug Fixes
     ↓
-Close Epic
+Repeat until stable
+    ↓
+Epic Closed
 ```
 
-No Epic is marked complete before Validation VM testing has succeeded.
+No Epic is considered complete until it has successfully passed
+validation on the official Validation VM.
 
 ## Rules
 
@@ -115,6 +127,6 @@ No Epic is marked complete before Validation VM testing has succeeded.
 2. No development tools beyond the listed packages are pre-installed.
 3. No runtime data is pre-created.
 4. The daemon is started fresh for each validation run.
-5. All 114 checklist items must pass.
+5. All 126 checklist items must pass.
 6. Discovered bugs are documented in `planning/bugs/`.
 7. Fixes are committed before the next RC iteration.

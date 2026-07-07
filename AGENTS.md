@@ -59,6 +59,7 @@ other interface. CLI and Web UI are only clients of the API.
 7. **Backward compatibility** — never break existing commands
 8. **One responsibility per subsystem** — clean module boundaries
 9. **Resources are always linked** — site_id foreign keys throughout
+10. **Validation-driven development** — VM validation is the primary quality gate
 
 ## Safety rules
 
@@ -76,8 +77,16 @@ Forbidden without confirmation:
 - Tests must be added with every Epic
 - Zero compiler warnings required before commit
 - All existing tests must pass before commit
+- Validation is the primary quality gate — unit tests are necessary but not sufficient
 - Validation VM testing is required before closing any Epic
+- No Epic is considered complete until it has passed validation on the official VM
 - See `planning/TEST_ENVIRONMENT.md` for VM setup
+
+## Validation-driven development
+
+Validation on the official VM is the primary quality gate. Unit tests
+and integration tests are necessary but no longer sufficient. Real
+deployment and real usage determine whether an Epic is complete.
 
 ## Product release lifecycle
 
@@ -96,9 +105,13 @@ Every major version follows this lifecycle:
 Release Candidates must pass the product validation checklist
 in `planning/product-validation.md` before shipping.
 
-Each Epic now finishes with:
+## Epic lifecycle
+
+Every Epic now follows this lifecycle:
 
 ```
+Architecture Proposal
+    ↓
 Implementation
     ↓
 Unit Tests
@@ -111,16 +124,19 @@ Git Push
     ↓
 Deploy to Validation VM
     ↓
-Execute validation checklist
+Real Product Validation
     ↓
-Fix discovered issues
+Architecture Review
     ↓
-Repeat until validation passes
+Bug Fixes
     ↓
-Close Epic
+Repeat until stable
+    ↓
+Epic Closed
 ```
 
-No Epic is marked complete before Validation VM testing has succeeded.
+No Epic is considered complete until it has successfully passed
+validation on the official Validation VM.
 
 ## Current product stage
 
