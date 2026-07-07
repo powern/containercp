@@ -1,85 +1,17 @@
-# ContainerCP
+# ContainerCP — Project Vision
 
-## Vision
+See [`README.md`](README.md) for the current state of ContainerCP.
 
-ContainerCP is a modern container-oriented hosting control panel.
+See [`planning/PRODUCT_VISION.md`](planning/PRODUCT_VISION.md) for the
+long-term product vision.
 
-The user should never have to know that Docker exists.
+See [`planning/product-roadmap.md`](planning/product-roadmap.md) for
+the version roadmap.
 
-Creating a website should automatically create everything required.
+## Quick links
 
-Example:
-
-Create Site
-
-↓
-
-PHP Container
-
-↓
-
-Database
-
-↓
-
-Redis
-
-↓
-
-SSL
-
-↓
-
-Reverse Proxy
-
-↓
-
-Monitoring
-
-↓
-
-Backups
-
-↓
-
-Ready.
-
----
-
-## Main principles
-
-Simple
-
-Safe
-
-Modular
-
-Recoverable
-
-Everything configurable.
-
----
-
-## First milestone
-
-CLI only.
-
-No Web UI.
-
-No Mail.
-
-No DNS.
-
-No Clustering.
-
-No Kubernetes.
-
----
-
-## Long-term goal
-
-A production-ready hosting panel built around containers instead of system services.
-
-Every website is an isolated stack.
-
-The control panel manages stacks, not processes.
+- **Current version:** v0.5 Release Candidate
+- **Installation:** [`INSTALL.md`](INSTALL.md)
+- **Validation:** [`planning/product-validation.md`](planning/product-validation.md)
+- **Architecture:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- **Tech stack:** [`docs/TECH_STACK.md`](docs/TECH_STACK.md)
