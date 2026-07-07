@@ -1,6 +1,7 @@
 #include "CommandDispatcher.h"
 #include "core/Application.h"
 #include "node/Node.h"
+#include "operations/SiteCreateOperation.h"
 
 #include <iostream>
 #include <string>
@@ -20,7 +21,8 @@ void print_help() {
         << "  config show     Show configuration\n"
         << "  node list       List nodes\n"
         << "  node show <name> Show node details\n"
-        << "  site list       List sites\n";
+        << "  site list       List sites\n"
+        << "  site create <owner> <domain> Create site\n";
 }
 
 void print_version() {
@@ -76,6 +78,24 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         std::cout << "Name: " << node->name << "\n"
                   << "Type: " << node->type << "\n";
         return 0;
+    }
+
+    if (argc == 5 && arg1 == "site" && std::string(argv[2]) == "create") {
+        auto* node = services.nodes().find("local");
+        if (node == nullptr) {
+            services.logger().error("no node available");
+            return 1;
+        }
+
+        operations::SiteCreateOperation op(services.sites(), services.nodes());
+        auto result = op.execute(argv[3], argv[4], *node);
+
+        if (result.success) {
+            std::cout << "Site created:\n" << argv[4] << "\n";
+        } else {
+            std::cout << result.message << "\n";
+        }
+        return result.success ? 0 : 1;
     }
 
     if (argc == 3 && arg1 == "site" && std::string(argv[2]) == "list") {

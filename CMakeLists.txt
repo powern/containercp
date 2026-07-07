@@ -16,6 +16,7 @@ add_executable(containercp
     libs/core/ServiceRegistry.cpp
     libs/logger/Logger.cpp
     libs/node/Node.cpp
+    libs/operations/SiteCreateOperation.cpp
     libs/site/Site.cpp
     libs/site/SiteManager.cpp
 )

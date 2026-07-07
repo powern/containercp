@@ -1,0 +1,26 @@
+#ifndef CONTAINERCP_OPERATIONS_SITE_CREATE_OPERATION_H
+#define CONTAINERCP_OPERATIONS_SITE_CREATE_OPERATION_H
+
+#include "core/OperationResult.h"
+#include "core/ResourceManager.h"
+#include "node/Node.h"
+#include "site/SiteManager.h"
+
+#include <string>
+
+namespace containercp::operations {
+
+class SiteCreateOperation {
+public:
+    SiteCreateOperation(site::SiteManager& sites, core::ResourceManager& nodes);
+
+    core::OperationResult execute(const std::string& owner, const std::string& domain, const node::Node& node);
+
+private:
+    site::SiteManager& sites_;
+    core::ResourceManager& nodes_;
+};
+
+} // namespace containercp::operations
+
+#endif // CONTAINERCP_OPERATIONS_SITE_CREATE_OPERATION_H
