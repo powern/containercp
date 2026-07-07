@@ -4,7 +4,11 @@
 #include "node/Node.h"
 #include "operations/SiteCreateOperation.h"
 
+#include <chrono>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -32,6 +36,10 @@ void print_help() {
         << "  php list            List PHP versions\n"
         << "  php show <version>  Show PHP version details\n"
         << "  php default         Show default PHP version\n"
+        << "  backup create <domain>  Create backup\n"
+        << "  backup list            List backups\n"
+        << "  backup show <id>       Show backup details\n"
+        << "  backup remove <id>     Remove backup\n"
         << "  database list       List databases\n"
         << "  database show <name> Show database details\n"
         << "  database remove <name> Remove database\n"
@@ -308,6 +316,70 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         }
         std::cout << "Version: " << pv->version << "\n"
                   << "Image: " << pv->image << "\n";
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "backup" && std::string(argv[2]) == "create") {
+        auto* site = services.sites().find(argv[3]);
+        if (site == nullptr) {
+            std::cout << "Site not found: " << argv[3] << "\n";
+            return 1;
+        }
+        auto now = std::chrono::system_clock::now();
+        auto tt = std::chrono::system_clock::to_time_t(now);
+        std::ostringstream ts;
+        ts << std::put_time(std::gmtime(&tt), "%Y-%m-%dT%H:%M:%SZ");
+        std::string created_at = ts.str();
+        std::string backup_path = services.config().sites_dir() + site->domain + "/backups/" + created_at + ".backup";
+        services.filesystem().create_file(backup_path, "");
+        std::ifstream f(backup_path, std::ios::ate | std::ios::binary);
+        uint64_t size = f.tellg();
+        f.close();
+        services.backups().create(site->id, 0, created_at + ".backup", size, created_at);
+        containercp::core::Application::instance().save();
+        std::cout << "Backup created:\n" << created_at << ".backup\n";
+        return 0;
+    }
+
+    if (argc == 3 && arg1 == "backup" && std::string(argv[2]) == "list") {
+        auto& backups = services.backups().list();
+        if (backups.empty()) {
+            std::cout << "No backups.\n";
+        } else {
+            for (const auto& b : backups) {
+                std::cout << b.id << " " << b.filename << " " << b.status << "\n";
+            }
+        }
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "backup" && std::string(argv[2]) == "show") {
+        uint64_t id = std::stoull(argv[3]);
+        auto* b = services.backups().find(id);
+        if (b == nullptr) {
+            std::cout << "Backup not found: " << id << "\n";
+            return 1;
+        }
+        std::cout << "ID: " << b->id << "\n"
+                  << "Site ID: " << b->site_id << "\n"
+                  << "File: " << b->filename << "\n"
+                  << "Type: " << b->type << "\n"
+                  << "Size: " << b->size << "\n"
+                  << "Created: " << b->created_at << "\n"
+                  << "Status: " << b->status << "\n";
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "backup" && std::string(argv[2]) == "remove") {
+        uint64_t id = std::stoull(argv[3]);
+        auto* b = services.backups().find(id);
+        if (b == nullptr) {
+            std::cout << "Backup not found: " << id << "\n";
+            return 1;
+        }
+        services.backups().remove(b->id);
+        containercp::core::Application::instance().save();
+        std::cout << "Backup removed:\n" << id << "\n";
         return 0;
     }
 

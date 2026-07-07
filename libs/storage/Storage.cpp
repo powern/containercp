@@ -35,6 +35,10 @@ std::string Storage::databases_file() const {
     return db_path_ + "databases.db";
 }
 
+std::string Storage::backups_file() const {
+    return db_path_ + "backups.db";
+}
+
 void Storage::save_nodes(const std::vector<node::Node>& nodes) {
     std::ofstream file(nodes_file());
     for (const auto& n : nodes) {
@@ -222,6 +226,41 @@ std::vector<database::Database> Storage::load_databases() {
         databases.push_back(std::move(d));
     }
     return databases;
+}
+
+void Storage::save_backups(const std::vector<backup::Backup>& backups) {
+    std::ofstream file(backups_file());
+    for (const auto& b : backups) {
+        file << b.id << "|" << b.site_id << "|" << b.owner_id << "|"
+             << b.filename << "|" << b.type << "|" << b.size << "|"
+             << b.created_at << "|" << b.status << "\n";
+    }
+}
+
+std::vector<backup::Backup> Storage::load_backups() {
+    std::vector<backup::Backup> backups;
+    std::ifstream file(backups_file());
+    if (!file.is_open()) {
+        return backups;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::istringstream ss(line);
+        std::string token;
+        backup::Backup b;
+        if (std::getline(ss, token, '|')) b.id = std::stoull(token);
+        if (std::getline(ss, token, '|')) b.site_id = std::stoull(token);
+        if (std::getline(ss, token, '|')) b.owner_id = std::stoull(token);
+        if (std::getline(ss, token, '|')) b.filename = token;
+        if (std::getline(ss, token, '|')) b.type = token;
+        if (std::getline(ss, token, '|')) b.size = std::stoull(token);
+        if (std::getline(ss, token, '|')) b.created_at = token;
+        if (std::getline(ss, token, '|')) b.status = token;
+        b.name = b.filename;
+        backups.push_back(std::move(b));
+    }
+    return backups;
 }
 
 } // namespace containercp::storage

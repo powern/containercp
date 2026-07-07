@@ -1,6 +1,7 @@
 #ifndef CONTAINERCP_STORAGE_STORAGE_H
 #define CONTAINERCP_STORAGE_STORAGE_H
 
+#include "backup/Backup.h"
 #include "database/Database.h"
 #include "domain/Domain.h"
 #include "node/Node.h"
@@ -35,6 +36,9 @@ public:
     void save_databases(const std::vector<database::Database>& databases);
     std::vector<database::Database> load_databases();
 
+    void save_backups(const std::vector<backup::Backup>& backups);
+    std::vector<backup::Backup> load_backups();
+
 private:
     std::string nodes_file() const;
     std::string sites_file() const;
@@ -42,6 +46,7 @@ private:
     std::string domains_file() const;
     std::string php_versions_file() const;
     std::string databases_file() const;
+    std::string backups_file() const;
 
     std::string db_path_;
 };

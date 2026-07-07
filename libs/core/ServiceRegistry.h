@@ -1,6 +1,7 @@
 #ifndef CONTAINERCP_CORE_SERVICE_REGISTRY_H
 #define CONTAINERCP_CORE_SERVICE_REGISTRY_H
 
+#include "backup/BackupManager.h"
 #include "config/Config.h"
 #include "core/ResourceManager.h"
 #include "database/DatabaseManager.h"
@@ -26,6 +27,7 @@ public:
     domain::DomainManager& domains();
     php::PhpVersionManager& php_versions();
     database::DatabaseManager& databases();
+    backup::BackupManager& backups();
     filesystem::Filesystem& filesystem();
     runtime::Runtime& runtime();
     provider::HostingProvider& hosting_provider();
@@ -43,6 +45,7 @@ private:
     domain::DomainManager domains_;
     php::PhpVersionManager php_versions_;
     database::DatabaseManager databases_;
+    backup::BackupManager backups_;
     storage::Storage storage_;
     filesystem::Filesystem filesystem_;
     runtime::DockerRuntime runtime_;

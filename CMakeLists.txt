@@ -13,6 +13,8 @@ add_executable(containercp
     libs/core/Application.cpp
     libs/core/Resource.cpp
     libs/core/ResourceManager.cpp
+    libs/backup/Backup.cpp
+    libs/backup/BackupManager.cpp
     libs/core/ServiceRegistry.cpp
     libs/database/Database.cpp
     libs/database/DatabaseManager.cpp
