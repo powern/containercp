@@ -49,6 +49,7 @@ TEST_CASE("SiteManager create/find/list/remove") {
     CHECK(s->domain == "example.com");
     CHECK(s->owner == "admin");
     CHECK(s->node_id == 1);
+    CHECK(s->id == 1);
 
     CHECK(mgr.list().size() == 1);
 

@@ -53,7 +53,7 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
     site.owner = owner;
     site.node_id = node.id;
 
-    sites_.create(domain, owner, node.id);
+    site.id = sites_.create(domain, owner, node.id);
 
     domains_.create(domain, 0, site.id);
 
