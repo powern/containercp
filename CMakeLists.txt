@@ -20,6 +20,7 @@ set(CONTAINERCP_SOURCES
     libs/api/Router.cpp
     libs/backup/Backup.cpp
     libs/backup/BackupManager.cpp
+    libs/backup/TarBackupProvider.cpp
     libs/config/Config.cpp
     libs/core/Application.cpp
     libs/core/Resource.cpp

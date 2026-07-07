@@ -16,6 +16,8 @@ struct Backup : core::Resource {
     uint64_t size = 0;
     std::string created_at;
     std::string status = "completed";
+    std::string file_path;
+    std::string compression = "gzip";
 };
 
 } // namespace containercp::backup

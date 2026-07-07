@@ -50,26 +50,34 @@ Items are ordered by priority within each category.
 
 ## Sprint 7 — Admin Panel Phase 2
 
-- [ ] CCP-5001: Add /api/profiles endpoint
-- [ ] CCP-5002: Add /api/nodes endpoint
-- [ ] CCP-5003: Add /api/logs endpoint
-- [ ] CCP-5004: Add /api/site-config endpoint
-- [ ] CCP-5005: Site detail page with tabs
-- [ ] CCP-5006: Create Site modal/dialog
-- [ ] CCP-5007: Toast notification system
-- [ ] CCP-5008: Improved tables with row actions
-- [ ] CCP-5009: Global error handling and loading states
+- [x] CCP-5001: Add /api/profiles endpoint
+- [x] CCP-5002: Add /api/nodes endpoint
+- [x] CCP-5003: Add /api/logs endpoint
+- [x] CCP-5005: Site detail page with tabs
+- [x] CCP-5006: Create Site modal/dialog
+- [x] CCP-5007: Toast notification system
+- [x] CCP-5008: Improved tables with row actions
+- [x] CCP-5009: Global error handling and loading states
+
+## Backlog — Backup and Restore
+
+- [ ] BACKUP-001: BackupProvider interface
+- [ ] BACKUP-002: TarBackupProvider
+- [ ] BACKUP-003: Backup file management
+- [ ] BACKUP-004: Update Backup resource and manager
+- [ ] BACKUP-005: CLI commands
+- [ ] BACKUP-006: REST API endpoint
+- [ ] BACKUP-007: SiteRemoveOperation integration
+- [ ] BACKUP-008: Tests
 
 ## Future
 
 - [ ] SSL certificate generation (Let's Encrypt)
 - [ ] Reverse proxy integration (Traefik / Caddy)
 - [ ] User management CLI commands
-- [ ] Backup command
 - [ ] Resource usage monitoring
 - [ ] Stack logs command
 - [ ] Multi-node support
-- [ ] Web UI (Phase 2)
 - [ ] Mail server support
 - [ ] DNS server integration
 - [ ] README update

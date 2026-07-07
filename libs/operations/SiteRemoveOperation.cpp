@@ -64,6 +64,10 @@ core::OperationResult SiteRemoveOperation::execute(const std::string& domain) {
 
     for (const auto& b : backups_.list()) {
         if (b.site_id == site_id) {
+            if (!b.file_path.empty()) {
+                std::string rm = "rm -f " + b.file_path + " 2>/dev/null";
+                std::system(rm.c_str());
+            }
             backups_.remove(b.id);
         }
     }

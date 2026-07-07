@@ -2,7 +2,9 @@
 
 namespace containercp::backup {
 
-uint64_t BackupManager::create(uint64_t site_id, uint64_t owner_id, const std::string& filename, uint64_t size, const std::string& created_at) {
+uint64_t BackupManager::create(uint64_t site_id, uint64_t owner_id, const std::string& filename,
+                                uint64_t size, const std::string& created_at,
+                                const std::string& file_path, const std::string& compression) {
     Backup b;
     b.id = next_id_++;
     b.name = filename;
@@ -13,6 +15,8 @@ uint64_t BackupManager::create(uint64_t site_id, uint64_t owner_id, const std::s
     b.size = size;
     b.created_at = created_at;
     b.status = "completed";
+    b.file_path = file_path;
+    b.compression = compression;
     backups_.push_back(std::move(b));
     return b.id;
 }
@@ -34,6 +38,16 @@ Backup* BackupManager::find(uint64_t id) {
         }
     }
     return nullptr;
+}
+
+std::vector<Backup*> BackupManager::find_by_site(uint64_t site_id) {
+    std::vector<Backup*> result;
+    for (auto& b : backups_) {
+        if (b.site_id == site_id) {
+            result.push_back(&b);
+        }
+    }
+    return result;
 }
 
 const std::vector<Backup>& BackupManager::list() const {

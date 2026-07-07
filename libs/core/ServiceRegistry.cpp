@@ -8,6 +8,7 @@ namespace containercp::core {
 ServiceRegistry::ServiceRegistry()
     : config_(config::Config::instance())
     , logger_(logger::Logger::instance())
+    , backup_provider_(logger_)
     , access_provider_(logger_)
     , proxy_provider_(filesystem_, config_, logger_, ssl_)
     , cert_provider_(logger_)
@@ -163,6 +164,10 @@ database::DatabaseManager& ServiceRegistry::databases() {
 
 backup::BackupManager& ServiceRegistry::backups() {
     return backups_;
+}
+
+backup::BackupProvider& ServiceRegistry::backup_provider() {
+    return backup_provider_;
 }
 
 access::AccessUserManager& ServiceRegistry::access_users() {

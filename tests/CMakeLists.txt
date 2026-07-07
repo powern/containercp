@@ -9,6 +9,7 @@ add_executable(containercp_tests
     test_api.cpp
     test_daemon.cpp
     test_template.cpp
+    test_backup.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/Validator.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/StringUtils.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/PasswordGenerator.cpp
@@ -35,6 +36,10 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/daemon/CommandProtocol.cpp
     ${CMAKE_SOURCE_DIR}/libs/template/TemplateEngine.cpp
     ${CMAKE_SOURCE_DIR}/libs/profile/ProfileManager.cpp
+    ${CMAKE_SOURCE_DIR}/libs/backup/Backup.cpp
+    ${CMAKE_SOURCE_DIR}/libs/backup/BackupManager.cpp
+    ${CMAKE_SOURCE_DIR}/libs/backup/TarBackupProvider.cpp
+    ${CMAKE_SOURCE_DIR}/libs/logger/Logger.cpp
 )
 
 target_include_directories(containercp_tests PRIVATE

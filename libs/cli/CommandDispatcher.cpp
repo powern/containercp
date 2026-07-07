@@ -63,7 +63,11 @@ void print_help() {
         << "  database list       List databases\n"
         << "  database show <name> Show database details\n"
         << "  database remove <name> Remove database\n"
+        << "  backup create <domain> Create backup\n"
         << "  backup list            List backups\n"
+        << "  backup show <id>       Show backup details\n"
+        << "  backup remove <id>     Remove backup\n"
+        << "  backup restore <id>    Restore backup\n"
         << "  ssl list               List SSL certificates\n"
         << "  ssl show <domain>      Show SSL certificate\n"
         << "  mail list              List mail domains\n"
@@ -185,8 +189,24 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         return print_response(send_command("database-remove|" + std::string(argv[3])));
     }
 
+    if (argc == 4 && arg1 == "backup" && std::string(argv[2]) == "create") {
+        return print_response(send_command("backup-create|" + std::string(argv[3])));
+    }
+
     if (argc == 3 && arg1 == "backup" && std::string(argv[2]) == "list") {
         return print_response(send_command("backup-list"));
+    }
+
+    if (argc == 4 && arg1 == "backup" && std::string(argv[2]) == "show") {
+        return print_response(send_command("backup-show|" + std::string(argv[3])));
+    }
+
+    if (argc == 4 && arg1 == "backup" && std::string(argv[2]) == "remove") {
+        return print_response(send_command("backup-remove|" + std::string(argv[3])));
+    }
+
+    if (argc == 4 && arg1 == "backup" && std::string(argv[2]) == "restore") {
+        return print_response(send_command("backup-restore|" + std::string(argv[3])));
     }
 
     if (argc == 3 && arg1 == "ssl" && std::string(argv[2]) == "list") {

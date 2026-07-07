@@ -213,6 +213,30 @@ bool ApiServer::start() {
         return r;
     });
 
+    router_.add("GET", "/api/backups", [&s](const Request&) {
+        Response r;
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":[";
+        bool first = true;
+        for (const auto& b : s.backups().list()) {
+            if (!first) json << ",";
+            first = false;
+            json << "{\"id\":" << b.id
+                 << ",\"site_id\":" << b.site_id
+                 << ",\"filename\":\"" << JsonFormatter::escape(b.filename)
+                 << "\",\"type\":\"" << JsonFormatter::escape(b.type)
+                 << "\",\"size\":" << b.size
+                 << ",\"created_at\":\"" << JsonFormatter::escape(b.created_at)
+                 << "\",\"status\":\"" << JsonFormatter::escape(b.status)
+                 << "\",\"file_path\":\"" << JsonFormatter::escape(b.file_path)
+                 << "\",\"compression\":\"" << JsonFormatter::escape(b.compression)
+                 << "\"}";
+        }
+        json << "]}";
+        r.body = json.str();
+        return r;
+    });
+
     router_.add("GET", "/api/databases", [&s](const Request&) {
         Response r;
         r.body = JsonFormatter::success(JsonFormatter::databases(s.databases().list()));

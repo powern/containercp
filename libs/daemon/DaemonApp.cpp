@@ -2,6 +2,9 @@
 #include "daemon/CommandProtocol.h"
 #include "core/Application.h"
 
+#include <chrono>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 
@@ -309,6 +312,92 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         }
 
         return Command::success("Template is valid");
+    }
+
+    if (cmd.name == "backup-list") {
+        auto& backups = s.backups().list();
+        std::ostringstream out;
+        for (const auto& b : backups) {
+            out << b.id << " " << b.filename << " " << b.status << " " << b.size << "\n";
+        }
+        return Command::success(out.str());
+    }
+
+    if (cmd.name == "backup-show" && cmd.args.size() >= 1) {
+        uint64_t id = std::stoull(cmd.args[0]);
+        auto* b = s.backups().find(id);
+        if (!b) return Command::error("Backup not found");
+        std::ostringstream out;
+        out << "ID: " << b->id << "\n"
+            << "Filename: " << b->filename << "\n"
+            << "Type: " << b->type << "\n"
+            << "Size: " << b->size << "\n"
+            << "Created: " << b->created_at << "\n"
+            << "Status: " << b->status << "\n"
+            << "Path: " << b->file_path << "\n"
+            << "Compression: " << b->compression << "\n";
+        return Command::success(out.str());
+    }
+
+    if (cmd.name == "backup-remove" && cmd.args.size() >= 1) {
+        uint64_t id = std::stoull(cmd.args[0]);
+        auto* b = s.backups().find(id);
+        if (!b) return Command::error("Backup not found");
+        if (!b->file_path.empty()) {
+            s.backup_provider().remove_backup(b->file_path);
+        }
+        s.backups().remove(id);
+        s.save();
+        return Command::success("Backup removed: " + std::to_string(id));
+    }
+
+    if (cmd.name == "backup-create" && cmd.args.size() >= 1) {
+        auto* site = s.sites().find(cmd.args[0]);
+        if (!site) return Command::error("Site not found");
+        auto now = std::chrono::system_clock::now();
+        auto tt = std::chrono::system_clock::to_time_t(now);
+        std::ostringstream ts;
+        ts << std::put_time(std::gmtime(&tt), "%Y%m%dT%H%M%SZ");
+        std::string timestamp = ts.str();
+        std::string filename = site->domain + "-" + timestamp + ".tar.gz";
+        std::string file_path = "/srv/containercp/backups/" + filename;
+        std::string site_dir = s.config().sites_dir() + site->domain + "/";
+
+        // Ensure backup directory exists
+        s.filesystem().create_directory("/srv/containercp/backups/");
+
+        auto result = s.backup_provider().create_backup(site_dir, file_path);
+        if (!result.success) return Command::error(result.message);
+
+        // Get file size
+        std::ifstream f(file_path, std::ios::ate | std::ios::binary);
+        uint64_t size = f.tellg();
+        f.close();
+
+        s.backups().create(site->id, 0, filename, size, timestamp, file_path, "gzip");
+        s.save();
+        std::ostringstream out;
+        out << "Backup created: " << filename << " (" << size << " bytes)";
+        return Command::success(out.str());
+    }
+
+    if (cmd.name == "backup-restore" && cmd.args.size() >= 1) {
+        uint64_t id = std::stoull(cmd.args[0]);
+        auto* b = s.backups().find(id);
+        if (!b) return Command::error("Backup not found");
+        // Find site by iterating
+        std::string site_domain;
+        for (const auto& site : s.sites().list()) {
+            if (site.id == b->site_id) {
+                site_domain = site.domain;
+                break;
+            }
+        }
+        if (site_domain.empty()) return Command::error("Site not found");
+        std::string site_dir = s.config().sites_dir() + site_domain + "/";
+        auto result = s.backup_provider().restore_backup(b->file_path, site_dir);
+        if (!result.success) return Command::error(result.message);
+        return Command::success("Backup restored: " + b->filename);
     }
 
     return Command::error("Unknown command: " + cmd.name);

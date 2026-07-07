@@ -253,7 +253,8 @@ void Storage::save_backups(const std::vector<backup::Backup>& backups) {
     for (const auto& b : backups) {
         file << b.id << "|" << b.site_id << "|" << b.owner_id << "|"
              << b.filename << "|" << b.type << "|" << b.size << "|"
-             << b.created_at << "|" << b.status << "\n";
+             << b.created_at << "|" << b.status << "|"
+             << b.file_path << "|" << b.compression << "\n";
     }
 }
 
@@ -277,6 +278,8 @@ std::vector<backup::Backup> Storage::load_backups() {
         if (std::getline(ss, token, '|')) b.size = std::stoull(token);
         if (std::getline(ss, token, '|')) b.created_at = token;
         if (std::getline(ss, token, '|')) b.status = token;
+        if (std::getline(ss, token, '|')) b.file_path = token;
+        if (std::getline(ss, token, '|')) b.compression = token;
         b.name = b.filename;
         backups.push_back(std::move(b));
     }
