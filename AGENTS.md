@@ -76,6 +76,8 @@ Forbidden without confirmation:
 - Tests must be added with every Epic
 - Zero compiler warnings required before commit
 - All existing tests must pass before commit
+- Validation VM testing is required before closing any Epic
+- See `planning/TEST_ENVIRONMENT.md` for VM setup
 
 ## Product release lifecycle
 
@@ -94,6 +96,32 @@ Every major version follows this lifecycle:
 Release Candidates must pass the product validation checklist
 in `planning/product-validation.md` before shipping.
 
+Each Epic now finishes with:
+
+```
+Implementation
+    ↓
+Unit Tests
+    ↓
+Integration Tests
+    ↓
+Git Commit
+    ↓
+Git Push
+    ↓
+Deploy to Validation VM
+    ↓
+Execute validation checklist
+    ↓
+Fix discovered issues
+    ↓
+Repeat until validation passes
+    ↓
+Close Epic
+```
+
+No Epic is marked complete before Validation VM testing has succeeded.
+
 ## Current product stage
 
 ContainerCP is approaching Version 0.5 (Web Administration).
@@ -102,4 +130,5 @@ with daemon architecture, REST API, Web UI, and growing provider
 ecosystem.
 
 The next major milestone is the First Production Validation on a
-clean Debian 12 system.
+clean Debian 13 (Trixie) system. Validation VM testing is now
+required for every Epic (see `planning/TEST_ENVIRONMENT.md`).

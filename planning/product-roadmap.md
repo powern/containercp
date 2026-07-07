@@ -111,7 +111,7 @@ Tests              Growing        50%
 - Pagination for large datasets
 
 **Release Candidates:**
-- v0.5.0-rc1 — first integration test on Debian 12
+- v0.5.0-rc1 — first integration test on Debian 13 (Trixie)
 - v0.5.0-rc2 — bug fixes from rc1
 - v0.5.0-rc3 — final validation before release
 
@@ -119,11 +119,12 @@ Tests              Growing        50%
 After Version 0.5 implementation is complete, the project enters
 the First Production Validation phase. No new features are added.
 The entire validation checklist in `planning/product-validation.md`
-must pass on a clean Debian 12 system before Version 0.5 ships.
+must pass on a clean Debian 13 (Trixie) Validation VM before
+Version 0.5 ships (see `planning/TEST_ENVIRONMENT.md`).
 
 **Acceptance criteria for v0.5.0:**
 - Zero compiler warnings (Debug + Release)
-- All 114 validation checks pass
+- All 126 validation checks pass on Validation VM
 - All unit tests pass
 - 24-hour stability test passes
 - No orphan resources after cleanup
@@ -179,15 +180,17 @@ must pass on a clean Debian 12 system before Version 0.5 ships.
 
 ## First Production Validation
 
-**Objective:** Deploy ContainerCP on a clean Debian 12 server and verify
-the complete hosting workflow end-to-end.
+**Objective:** Deploy ContainerCP on a clean Debian 13 (Trixie)
+Validation VM (see `planning/TEST_ENVIRONMENT.md`) and verify the
+complete hosting workflow end-to-end.
 
 ### Prerequisites
 
-- Clean Debian 12 installation
+- Clean Debian 13 (Trixie) installation
 - Docker and Docker Compose installed
 - Git, CMake, Ninja, g++ installed
 - Port 8080 open for Web UI
+- Port 8081 open for external Web UI
 - Root or sudo access
 
 ### Validation checklist
