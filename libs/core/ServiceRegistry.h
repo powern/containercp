@@ -6,6 +6,7 @@
 #include "access/LocalSftpProvider.h"
 #include "backup/BackupManager.h"
 #include "backup/TarBackupProvider.h"
+#include "jobs/JobManager.h"
 #include "proxy/NginxProxyProvider.h"
 #include "proxy/ReverseProxyManager.h"
 #include "config/Config.h"
@@ -40,6 +41,7 @@ public:
     database::DatabaseManager& databases();
     backup::BackupManager& backups();
     backup::BackupProvider& backup_provider();
+    jobs::JobManager& jobs();
     access::AccessUserManager& access_users();
     access::AccessGrantManager& access_grants();
     access::AccessProvider& access_provider();
@@ -68,6 +70,7 @@ private:
     profile::ProfileManager profiles_;
     database::DatabaseManager databases_;
     backup::BackupManager backups_;
+    jobs::JobManager jobs_;
     backup::TarBackupProvider backup_provider_;
     access::AccessUserManager access_users_;
     access::AccessGrantManager access_grants_;

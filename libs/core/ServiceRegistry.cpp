@@ -166,6 +166,10 @@ backup::BackupManager& ServiceRegistry::backups() {
     return backups_;
 }
 
+jobs::JobManager& ServiceRegistry::jobs() {
+    return jobs_;
+}
+
 backup::BackupProvider& ServiceRegistry::backup_provider() {
     return backup_provider_;
 }

@@ -36,6 +36,7 @@ set(CONTAINERCP_SOURCES
     libs/docker/EnvGenerator.cpp
     libs/filesystem/Filesystem.cpp
     libs/filesystem/SiteLayout.cpp
+    libs/jobs/JobManager.cpp
     libs/logger/Logger.cpp
     libs/mail/MailDomain.cpp
     libs/mail/MailDomainManager.cpp

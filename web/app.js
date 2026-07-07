@@ -48,7 +48,7 @@ function loadPage(page, params) {
   const p = $('page');
   p.scrollTop = 0;
   if (page === 'dashboard') loadDashboard(p);
-  else if (page === 'sites') loadSites(p);
+  else if (page === 'sites' || page === 'sites-refresh') loadSites(p);
   else if (page === 'site-detail') loadSiteDetail(p, params);
   else if (page === 'domains') loadDomains(p);
   else if (page === 'databases') loadDatabases(p);
@@ -57,6 +57,7 @@ function loadPage(page, params) {
   else if (page === 'access') loadAccess(p);
   else if (page === 'profiles') loadProfiles(p);
   else if (page === 'templates') loadTemplates(p);
+  else if (page === 'backups') loadBackups(p);
   else if (page === 'nodes') loadNodes(p);
   else if (page === 'logs') loadLogs(p);
   else if (page === 'settings') loadSettings(p);
@@ -185,8 +186,24 @@ async function createSite() {
   const owner = $('cs-owner').value.trim();
   const domain = $('cs-domain').value.trim();
   if (!owner || !domain) { toast('Owner and domain required', 'error'); return; }
-  toast('Site creation would start for ' + domain, 'info');
   hideModal();
+  try {
+    const res = await fetch('/api/sites/create', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({owner, domain})
+    });
+    const data = await res.json();
+    if (data.success) {
+      toast('Site created: ' + domain, 'success');
+      // Reload sites page
+      loadPage('sites');
+    } else {
+      toast('Error: ' + (data.error || 'Unknown error'), 'error');
+    }
+  } catch(e) {
+    toast('Network error: ' + e.message, 'error');
+  }
 }
 
 /* ===== SITE DETAIL ===== */
@@ -314,6 +331,50 @@ async function loadTemplates(p) {
       {label:'Name',html:r=>esc(r.name)},{label:'Web Server',html:r=>esc(r.web_server)},{label:'Valid',html:r=>'<span class="badge badge-ok">Valid</span>'}
     ], web, 'No templates');
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load templates</div>'; }
+}
+
+/* ===== BACKUPS ===== */
+async function loadBackups(p) {
+  try {
+    const data = await api('/api/backups');
+    p.innerHTML = `<div class="page-header"><h1>Backups</h1><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="showBackupModal()">+ Create Backup</button></div></div>`;
+    p.innerHTML += tb('All Backups') + buildTable([
+      {label:'ID',html:r=>esc(r.id)},
+      {label:'Filename',html:r=>esc(r.filename)},
+      {label:'Site ID',html:r=>esc(r.site_id)},
+      {label:'Size',html:r=>esc(r.size)+' bytes'},
+      {label:'Status',html:r=>{let m={completed:'badge-ok',failed:'badge-err'};return `<span class="badge ${m[r.status]||'badge-info'}">${esc(r.status)}</span>`;}},
+      {label:'Date',html:r=>esc(r.created_at)}
+    ], data.data||[]);
+  } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load backups</div>'; }
+}
+
+function showBackupModal() {
+  showModal('Create Backup', `
+    <div style="display:grid;gap:12px;">
+      <div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Domain</label><input id="bk-domain" placeholder="example.com" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;"></div>
+      <button class="btn btn-primary" onclick="createBackup()">Create Backup</button>
+    </div>`);
+}
+
+async function createBackup() {
+  const domain = $('bk-domain').value.trim();
+  if (!domain) { toast('Domain required', 'error'); return; }
+  hideModal();
+  try {
+    const res = await fetch('/api/backups/create', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({domain})
+    });
+    const data = await res.json();
+    if (data.success) {
+      toast('Backup created: ' + data.data.filename, 'success');
+      loadPage('backups');
+    } else {
+      toast('Error: ' + (data.error || 'Unknown'), 'error');
+    }
+  } catch(e) { toast('Network error', 'error'); }
 }
 
 /* ===== NODES ===== */

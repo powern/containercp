@@ -1,9 +1,13 @@
 #include "ApiServer.h"
 #include "api/JsonFormatter.h"
+#include "operations/SiteCreateOperation.h"
+#include "operations/SiteRemoveOperation.h"
 
 #include <arpa/inet.h>
+#include <chrono>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <netinet/in.h>
 #include <sstream>
@@ -11,6 +15,25 @@
 #include <unistd.h>
 
 namespace containercp::api {
+
+// Simple JSON value extraction
+static std::string json_extract(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\":\"";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) {
+        search = "\"" + key + "\":";
+        pos = json.find(search);
+        if (pos == std::string::npos) return "";
+        pos += search.size();
+        auto end = json.find_first_of(",}", pos);
+        if (end == std::string::npos) return "";
+        return json.substr(pos, end - pos);
+    }
+    pos += search.size();
+    auto end = json.find("\"", pos);
+    if (end == std::string::npos) return "";
+    return json.substr(pos, end - pos);
+}
 
 ApiServer::ApiServer(core::ServiceRegistry& services, int port)
     : port_(port)
@@ -30,7 +53,6 @@ void ApiServer::handle_client(int client_fd, ApiServer* server) {
         return;
     }
 
-    // Serve static files for non-API paths
     if (req.path.find("/api/") != 0) {
         resp = server->serve_static(req.path);
     } else {
@@ -47,7 +69,6 @@ Response ApiServer::serve_static(const std::string& path) const {
     if (path == "/" || path.empty()) {
         file_path += "/index.html";
     } else {
-        // Remove leading slash and prevent directory traversal
         std::string clean = path.substr(1);
         if (clean.find("..") != std::string::npos) {
             Response r;
@@ -68,7 +89,6 @@ Response ApiServer::serve_static(const std::string& path) const {
 
     std::string content((std::istreambuf_iterator<char>(file)), {});
 
-    // Determine content type
     std::string ext;
     auto dot = file_path.find_last_of('.');
     if (dot != std::string::npos) ext = file_path.substr(dot);
@@ -87,8 +107,7 @@ Response ApiServer::serve_static(const std::string& path) const {
 
 Request ApiServer::parse_request(int client_fd) const {
     Request req;
-
-    char buf[8192];
+    char buf[24576];  // 24KB buffer for larger POST bodies
     ssize_t n = ::read(client_fd, buf, sizeof(buf) - 1);
     if (n <= 0) return req;
     buf[n] = '\0';
@@ -102,6 +121,9 @@ Request ApiServer::parse_request(int client_fd) const {
         line_stream >> req.method >> req.path;
     }
 
+    bool chunked = false;
+    int content_length = 0;
+
     while (std::getline(stream, line)) {
         if (line.empty() || line == "\r") break;
         if (line.back() == '\r') line.pop_back();
@@ -111,6 +133,8 @@ Request ApiServer::parse_request(int client_fd) const {
             std::string val = line.substr(colon + 1);
             if (!val.empty() && val[0] == ' ') val = val.substr(1);
             req.headers[key] = val;
+            if (key == "Content-Length") content_length = std::stoi(val);
+            if (key == "Transfer-Encoding" && val == "chunked") chunked = true;
         }
     }
 
@@ -127,12 +151,23 @@ Request ApiServer::parse_request(int client_fd) const {
         }
     }
 
-    auto it = req.headers.find("Content-Length");
-    if (it != req.headers.end()) {
-        int body_len = std::stoi(it->second);
-        if (body_len > 0 && body_len < 8192) {
-            req.body = std::string(buf + n - body_len, body_len);
+    if (chunked) {
+        // Simple chunked body reading
+        std::string body;
+        std::string chunk_line;
+        while (std::getline(stream, chunk_line)) {
+            if (chunk_line.back() == '\r') chunk_line.pop_back();
+            if (chunk_line.empty()) continue;
+            int chunk_size = std::stoi(chunk_line, nullptr, 16);
+            if (chunk_size == 0) break;
+            char chunk[8192];
+            stream.read(chunk, chunk_size);
+            body.append(chunk, chunk_size);
+            stream.ignore(2); // \r\n
         }
+        req.body = body;
+    } else if (content_length > 0) {
+        req.body = std::string(buf + n - content_length, content_length);
     }
 
     return req;
@@ -168,9 +203,9 @@ bool ApiServer::start() {
     running_ = true;
     services_.logger().info("ApiServer: Listening on 127.0.0.1:" + std::to_string(port_));
 
-    // Setup routes
     auto& s = services_;
 
+    // GET endpoints
     router_.add("GET", "/api/version", [](const Request&) {
         Response r;
         r.body = JsonFormatter::success(JsonFormatter::version("0.1.0"));
@@ -245,8 +280,6 @@ bool ApiServer::start() {
 
     router_.add("GET", "/api/access-users", [&s](const Request&) {
         Response r;
-        r.body = JsonFormatter::success(JsonFormatter::users(std::vector<user::User>()));
-        // Return access users via their own listing
         auto& users = s.access_users().list();
         std::ostringstream json;
         json << "{\"success\":true,\"data\":[";
@@ -302,6 +335,142 @@ bool ApiServer::start() {
         json << "{\"time\":\"" << ts << "\",\"level\":\"info\",\"message\":\"REST API listening\"}";
         json << "]}";
         Response r;
+        r.body = json.str();
+        return r;
+    });
+
+    router_.add("GET", "/api/jobs", [&s](const Request&) {
+        Response r;
+        auto& jobs = s.jobs().list();
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":[";
+        bool first = true;
+        for (const auto& j : jobs) {
+            if (!first) json << ",";
+            first = false;
+            json << "{\"id\":" << j.id
+                 << ",\"type\":\"" << JsonFormatter::escape(j.type)
+                 << "\",\"status\":\"" << JsonFormatter::escape(j.status)
+                 << "\",\"progress\":" << j.progress
+                 << ",\"message\":\"" << JsonFormatter::escape(j.message)
+                 << "\",\"created_at\":\"" << JsonFormatter::escape(j.created_at)
+                 << "\"}";
+        }
+        json << "]}";
+        r.body = json.str();
+        return r;
+    });
+
+    // POST endpoints
+    router_.add("POST", "/api/sites/create", [&s](const Request& req) {
+        Response r;
+        std::string owner = json_extract(req.body, "owner");
+        std::string domain = json_extract(req.body, "domain");
+        if (owner.empty() || domain.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"owner and domain required\"}";
+            return r;
+        }
+
+        // Create job
+        auto& jobs = s.jobs();
+        auto& nodes = s.nodes();
+        auto* node = nodes.find("local");
+        if (!node) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"No node available\"}";
+            return r;
+        }
+
+        uint64_t job_id = jobs.create("site_create", {
+            "Validating parameters", "Creating site record",
+            "Creating domain", "Creating database",
+            "Generating configuration", "Starting containers"
+        });
+        jobs.update(job_id, "running", 10);
+
+        operations::SiteCreateOperation op(s.sites(), s.domains(),
+            s.databases(), s.reverse_proxies(), s.hosting_provider());
+        auto result = op.execute(owner, domain, *node);
+
+        if (result.success) {
+            s.save();
+            jobs.update(job_id, "completed", 100, "Site created successfully");
+            std::ostringstream json;
+            json << "{\"success\":true,\"data\":{\"domain\":\"" << domain << "\",\"message\":\"Site created\"}}";
+            r.body = json.str();
+        } else {
+            jobs.update(job_id, "failed", 0, result.message);
+            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
+        }
+        return r;
+    });
+
+    router_.add("POST", "/api/sites/remove", [&s](const Request& req) {
+        Response r;
+        std::string domain = json_extract(req.body, "domain");
+        if (domain.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"domain required\"}";
+            return r;
+        }
+
+        operations::SiteRemoveOperation op(
+            s.sites(), s.domains(), s.databases(),
+            s.backups(), s.ssl(), s.mail(),
+            s.reverse_proxies(),
+            s.filesystem(), s.config(), s.runtime());
+
+        auto result = op.execute(domain);
+        if (result.success) {
+            s.save();
+            r.body = "{\"success\":true,\"data\":{\"message\":\"Site removed\"}}";
+        } else {
+            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
+        }
+        return r;
+    });
+
+    router_.add("POST", "/api/backups/create", [&s](const Request& req) {
+        Response r;
+        std::string domain = json_extract(req.body, "domain");
+        if (domain.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"domain required\"}";
+            return r;
+        }
+
+        auto* site = s.sites().find(domain);
+        if (!site) {
+            r.body = "{\"success\":false,\"error\":\"Site not found\"}";
+            return r;
+        }
+
+        auto now = std::chrono::system_clock::now();
+        auto tt = std::chrono::system_clock::to_time_t(now);
+        std::ostringstream ts;
+        ts << std::put_time(std::gmtime(&tt), "%Y%m%dT%H%M%SZ");
+        std::string timestamp = ts.str();
+        std::string filename = domain + "-" + timestamp + ".tar.gz";
+        std::string file_path = "/srv/containercp/backups/" + filename;
+        std::string site_dir = s.config().sites_dir() + domain + "/";
+
+        s.filesystem().create_directory("/srv/containercp/backups/");
+        auto result = s.backup_provider().create_backup(site_dir, file_path);
+        if (!result.success) {
+            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
+            return r;
+        }
+
+        std::ifstream f(file_path, std::ios::ate | std::ios::binary);
+        uint64_t size = f.tellg();
+        f.close();
+
+        s.backups().create(site->id, 0, filename, size, timestamp, file_path, "gzip");
+        s.save();
+
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":{\"filename\":\"" << filename << "\",\"size\":" << size << "}}";
         r.body = json.str();
         return r;
     });
