@@ -55,6 +55,15 @@ ContainerCP is designed for:
 | REST API built-in | Yes | No | No | Yes | No |
 | Daemon architecture | Yes | No | No | No | No |
 
+## Architecture Proposal requirement
+
+Before any new subsystem is implemented, an Architecture Proposal
+must be written and approved. This ensures every feature aligns with
+the Product Vision before code is written.
+
+Proposals are stored in `planning/proposals/` and follow the template
+in `planning/proposals/README.md`.
+
 ## Core principles (immutable)
 
 These principles must never be violated:

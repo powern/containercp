@@ -4,6 +4,9 @@ This roadmap is guided by the Product Vision in `planning/PRODUCT_VISION.md`.
 Every version milestone supports the vision of a modern, container-native
 hosting control panel.
 
+Before implementing any milestone, an Architecture Proposal must be
+written and approved (see `planning/proposals/README.md`).
+
 ## Current maturity assessment
 
 ```

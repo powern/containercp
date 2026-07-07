@@ -20,6 +20,18 @@ Before planning ANY Epic, read these documents IN ORDER:
 5. Latest Sprint/Epic Reviews — recent progress and debt
 6. `docs/ADR/` — architecture decisions
 
+## Architecture Proposal stage
+
+No Epic may start with implementation.
+
+Every Epic must first begin with an Architecture Proposal.
+
+Create `planning/proposals/ARCH-XXX-ShortName.md` following the
+template in `planning/proposals/README.md`.
+
+Architecture decisions must be validated before implementation begins.
+This prevents unnecessary refactoring.
+
 ## Architecture rule
 
 Every subsystem must be designed in this order:
