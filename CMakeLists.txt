@@ -16,6 +16,7 @@ add_executable(containercp
     libs/core/ServiceRegistry.cpp
     libs/docker/ComposeGenerator.cpp
     libs/filesystem/Filesystem.cpp
+    libs/filesystem/SiteLayout.cpp
     libs/logger/Logger.cpp
     libs/node/Node.cpp
     libs/operations/SiteCreateOperation.cpp

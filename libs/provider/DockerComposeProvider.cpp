@@ -1,4 +1,5 @@
 #include "DockerComposeProvider.h"
+#include "filesystem/SiteLayout.h"
 
 namespace containercp::provider {
 
@@ -11,8 +12,9 @@ DockerComposeProvider::DockerComposeProvider(filesystem::Filesystem& fs, config:
 
 core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
     std::string site_dir = cfg_.data_root() + "/sites/" + site.domain + "/";
-    fs_.create_directory(site_dir);
-    fs_.create_file(site_dir + "README.txt", "This site is managed by ContainerCP.\n");
+
+    filesystem::SiteLayout layout(fs_, site_dir);
+    layout.create();
 
     docker::ComposeGenerator gen(fs_, cfg_.config_root() + "/templates/");
     gen.generate(site.domain, site.owner, site_dir + "docker-compose.yml");
