@@ -19,6 +19,8 @@ set(CONTAINERCP_SOURCES
     libs/api/JsonFormatter.cpp
     libs/api/Response.cpp
     libs/api/Router.cpp
+    libs/auth/AuthService.cpp
+    libs/auth/AuthUserManager.cpp
     libs/backup/Backup.cpp
     libs/backup/BackupManager.cpp
     libs/backup/TarBackupProvider.cpp

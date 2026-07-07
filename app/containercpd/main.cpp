@@ -82,7 +82,7 @@ int main(int argc, char* argv[]) {
     services.logger().info("Daemon: REST API on 127.0.0.1:" + std::to_string(api_port));
     services.logger().info("Daemon: Web UI on 0.0.0.0:" + std::to_string(ui_port));
     services.logger().info("Daemon: Web UI API proxy /ui-api/* -> 127.0.0.1:" + std::to_string(api_port));
-    services.logger().info("Daemon: Web UI basic auth enabled (admin / /etc/containercp/ui-password)");
+    services.logger().info("Daemon: Web UI login required");
 
     containercp::daemon::DaemonApp daemon(services);
 

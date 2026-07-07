@@ -1,4 +1,5 @@
 #include "ServiceRegistry.h"
+#include "auth/AuthService.h"
 #include "template/web_templates.h"
 
 #include <filesystem>
@@ -13,6 +14,7 @@ ServiceRegistry::ServiceRegistry()
     , proxy_provider_(filesystem_, config_, logger_, ssl_)
     , cert_provider_(logger_)
     , storage_(config_.database_dir())
+    , auth_(*this)
     , runtime_(logger_, config_.sites_dir())
     , hosting_provider_(filesystem_, config_, php_versions_, runtime_, profiles_)
 {
@@ -124,6 +126,13 @@ ServiceRegistry::ServiceRegistry()
     if (!loaded_sites.empty()) {
         sites_.set_sites(loaded_sites);
     }
+
+    auto loaded_auth_users = storage_.load_auth_users();
+    if (!loaded_auth_users.empty()) {
+        auth_users_.set_users(loaded_auth_users);
+    }
+
+    auth_.initialize();
 }
 
 config::Config& ServiceRegistry::config() {
@@ -206,6 +215,18 @@ mail::MailDomainManager& ServiceRegistry::mail() {
     return mail_;
 }
 
+auth::AuthUserManager& ServiceRegistry::auth_users() {
+    return auth_users_;
+}
+
+auth::AuthService& ServiceRegistry::auth() {
+    return auth_;
+}
+
+storage::Storage& ServiceRegistry::storage() {
+    return storage_;
+}
+
 filesystem::Filesystem& ServiceRegistry::filesystem() {
     return filesystem_;
 }
@@ -232,6 +253,7 @@ void ServiceRegistry::save() {
     storage_.save_access_grants(access_grants_.list());
     storage_.save_reverse_proxies(reverse_proxies_.list());
     storage_.save_profiles(profiles_.list());
+    storage_.save_auth_users(auth_users_.list());
 }
 
 void ServiceRegistry::reload_profiles() {

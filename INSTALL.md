@@ -154,12 +154,12 @@ Open in browser:
 http://<server-ip>:8081/
 ```
 
-The external Web UI requires a username and password:
+The external Web UI requires a login with username and password:
 
 - **Username:** `admin`
 - **Password:** Generated on first daemon start, printed to the daemon log.
-  Stored at `/etc/containercp/ui-password`. To set a custom password,
-  write it to this file before starting the daemon.
+  The password is hashed and stored in `/srv/containercp/database/auth_users.db`.
+  On first login, you will be required to change the temporary password.
 
 The API proxy (`/ui-api/...`) forwards requests to the internal REST
 API on `127.0.0.1:8080`. The raw `/api/...` paths are explicitly
@@ -167,7 +167,7 @@ rejected on port 8081 for security.
 
 ### SSH forwarding (alternative)
 
-For command-line access without basic auth:
+For local access without authentication:
 
 ```
 ssh -L 8080:127.0.0.1:8080 user@<server>

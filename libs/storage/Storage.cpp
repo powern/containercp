@@ -51,6 +51,10 @@ std::string Storage::access_users_file() const {
     return db_path_ + "access_users.db";
 }
 
+std::string Storage::auth_users_file() const {
+    return db_path_ + "auth_users.db";
+}
+
 std::string Storage::access_grants_file() const {
     return db_path_ + "access_grants.db";
 }
@@ -381,6 +385,39 @@ std::vector<access::AccessUser> Storage::load_access_users() {
         if (std::getline(ss, token, '|')) u.auth_type = token;
         if (std::getline(ss, token, '|')) u.password_hash = token;
         if (std::getline(ss, token, '|')) u.enabled = (token == "1");
+        u.name = u.username;
+        users.push_back(std::move(u));
+    }
+    return users;
+}
+
+void Storage::save_auth_users(const std::vector<auth::AuthUser>& users) {
+    std::ofstream file(auth_users_file());
+    for (const auto& u : users) {
+        file << u.id << "|" << u.username << "|" << u.password_hash << "|"
+             << (u.must_change_password ? "1" : "0") << "|"
+             << (u.enabled ? "1" : "0") << "|" << u.role << "\n";
+    }
+}
+
+std::vector<auth::AuthUser> Storage::load_auth_users() {
+    std::vector<auth::AuthUser> users;
+    std::ifstream file(auth_users_file());
+    if (!file.is_open()) {
+        return users;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::istringstream ss(line);
+        std::string token;
+        auth::AuthUser u;
+        if (std::getline(ss, token, '|')) u.id = std::stoull(token);
+        if (std::getline(ss, token, '|')) u.username = token;
+        if (std::getline(ss, token, '|')) u.password_hash = token;
+        if (std::getline(ss, token, '|')) u.must_change_password = (token == "1");
+        if (std::getline(ss, token, '|')) u.enabled = (token == "1");
+        if (std::getline(ss, token, '|')) u.role = token;
         u.name = u.username;
         users.push_back(std::move(u));
     }

@@ -21,18 +21,17 @@ Local access (full functionality, no auth):
 http://127.0.0.1:8080/
 ```
 
-External access (with basic auth):
+External access (with login page):
 ```
 http://<server-ip>:8081/
 ```
 
 Default credentials:
 - **Username:** `admin`
-- **Password:** Generated on first daemon start. Printed to daemon log.
-  Stored at `/etc/containercp/ui-password`. Set a custom password by
-  writing it to this file before starting the daemon.
+- **Password:** Generated on first daemon start, printed to daemon log.
+  You must change the temporary password on first login.
 
-For SSH tunneling (bypasses basic auth):
+For SSH tunneling (bypasses login):
 ```
 ssh -L 8080:127.0.0.1:8080 user@<server>
 ```

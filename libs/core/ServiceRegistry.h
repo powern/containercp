@@ -3,6 +3,8 @@
 
 #include "access/AccessGrantManager.h"
 #include "access/AccessUserManager.h"
+#include "auth/AuthService.h"
+#include "auth/AuthUserManager.h"
 #include "access/LocalSftpProvider.h"
 #include "backup/BackupManager.h"
 #include "backup/TarBackupProvider.h"
@@ -53,6 +55,9 @@ public:
     filesystem::Filesystem& filesystem();
     runtime::Runtime& runtime();
     provider::HostingProvider& hosting_provider();
+    auth::AuthUserManager& auth_users();
+    auth::AuthService& auth();
+    storage::Storage& storage();
     void save();
     void reload_profiles();
 
@@ -81,6 +86,8 @@ private:
     ssl::LetsEncryptProvider cert_provider_;
     mail::MailDomainManager mail_;
     storage::Storage storage_;
+    auth::AuthUserManager auth_users_;
+    auth::AuthService auth_;
     filesystem::Filesystem filesystem_;
     runtime::DockerRuntime runtime_;
     provider::DockerComposeProvider hosting_provider_;

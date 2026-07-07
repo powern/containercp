@@ -3,6 +3,7 @@
 
 #include "access/AccessGrant.h"
 #include "access/AccessUser.h"
+#include "auth/AuthUser.h"
 #include "profile/Profile.h"
 #include "proxy/ReverseProxy.h"
 #include "backup/Backup.h"
@@ -64,6 +65,9 @@ public:
     std::vector<profile::Profile> load_profiles();
     std::vector<profile::Profile> migrate_template_profiles();
 
+    void save_auth_users(const std::vector<auth::AuthUser>& users);
+    std::vector<auth::AuthUser> load_auth_users();
+
 private:
     std::string nodes_file() const;
     std::string sites_file() const;
@@ -79,6 +83,7 @@ private:
     std::string reverse_proxies_file() const;
     std::string profiles_file() const;
     std::string template_profiles_file() const;
+    std::string auth_users_file() const;
 
     std::string db_path_;
 };

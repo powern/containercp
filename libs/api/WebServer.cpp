@@ -11,8 +11,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include <random>
-
 namespace containercp::api {
 
 WebServer::WebServer(core::ServiceRegistry& services, const std::string& bind_addr, int port, int api_port)
@@ -23,62 +21,150 @@ WebServer::WebServer(core::ServiceRegistry& services, const std::string& bind_ad
 {
 }
 
-void WebServer::load_password() {
-    std::string dir = services_.config().config_root();
-    std::string path = dir + "/ui-password";
+void WebServer::send_json(int client_fd, int status, const std::string& body) {
+    std::ostringstream resp;
+    resp << "HTTP/1.1 " << status << " " << (status == 200 ? "OK" : status == 401 ? "Unauthorized" : status == 400 ? "Bad Request" : "Not Found") << "\r\n"
+         << "Content-Type: application/json\r\n"
+         << "Content-Length: " << body.size() << "\r\n"
+         << "Access-Control-Allow-Origin: *\r\n"
+         << "\r\n"
+         << body;
+    std::string resp_str = resp.str();
+    ::write(client_fd, resp_str.data(), resp_str.size());
+    ::close(client_fd);
+}
 
-    ::mkdir(dir.c_str(), 0755);
+void WebServer::send_unauthorized(int client_fd) {
+    send_json(client_fd, 401, "{\"success\":false,\"error\":\"Unauthorized\",\"login_required\":true}");
+}
 
-    std::ifstream f(path);
-    if (f.is_open()) {
-        std::getline(f, password_);
-        f.close();
+std::string WebServer::extract_session_token(const std::string& raw_request) const {
+    std::istringstream stream(raw_request);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (line.back() == '\r') line.pop_back();
+        auto colon = line.find(':');
+        if (colon != std::string::npos) {
+            std::string key = line.substr(0, colon);
+            std::string val = line.substr(colon + 1);
+            if (!val.empty() && val[0] == ' ') val = val.substr(1);
+            if (key == "X-Session-Token") {
+                return val;
+            }
+        }
+        if (line.empty()) break;
+    }
+    return "";
+}
+
+bool WebServer::require_session(const std::string& raw_request, int client_fd) {
+    std::string token = extract_session_token(raw_request);
+    if (token.empty() || services_.auth().validate_session(token) == nullptr) {
+        send_unauthorized(client_fd);
+        return false;
+    }
+    return true;
+}
+
+void WebServer::handle_auth_login(const std::string& raw_request, int client_fd) {
+    // Parse JSON body after headers
+    auto body_start = raw_request.find("\r\n\r\n");
+    if (body_start == std::string::npos) {
+        send_json(client_fd, 400, "{\"success\":false,\"error\":\"Bad request\"}");
+        return;
+    }
+    std::string body = raw_request.substr(body_start + 4);
+
+    auto uname_pos = body.find("\"username\":\"");
+    auto pwd_pos = body.find("\"password\":\"");
+    if (uname_pos == std::string::npos || pwd_pos == std::string::npos) {
+        send_json(client_fd, 400, "{\"success\":false,\"error\":\"Missing credentials\"}");
         return;
     }
 
-    std::string chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> dist(0, chars.size() - 1);
-    password_.reserve(16);
-    for (int i = 0; i < 16; ++i) {
-        password_ += chars[dist(gen)];
+    uname_pos += 11;
+    auto uname_end = body.find("\"", uname_pos);
+    pwd_pos += 11;
+    auto pwd_end = body.find("\"", pwd_pos);
+
+    if (uname_end == std::string::npos || pwd_end == std::string::npos) {
+        send_json(client_fd, 400, "{\"success\":false,\"error\":\"Bad request\"}");
+        return;
     }
 
-    std::ofstream of(path);
-    if (of.is_open()) {
-        of << password_ << std::endl;
-        of.close();
+    std::string username = body.substr(uname_pos, uname_end - uname_pos);
+    std::string password = body.substr(pwd_pos, pwd_end - pwd_pos);
+
+    std::string token = services_.auth().authenticate(username, password);
+    if (token.empty()) {
+        send_json(client_fd, 401, "{\"success\":false,\"error\":\"Invalid credentials\"}");
+        return;
     }
 
-    services_.logger().info("WebUI password generated: " + password_);
-    services_.logger().info("WebUI username: admin");
-    services_.logger().info("WebUI password file: " + path);
+    auto* user = services_.auth_users().find(username);
+    bool must_change = user ? user->must_change_password : false;
+
+    std::string resp = "{\"success\":true,\"data\":{\"token\":\"" + token
+        + "\",\"username\":\"" + username
+        + "\",\"must_change_password\":" + (must_change ? "true" : "false") + "}}";
+    send_json(client_fd, 200, resp);
 }
 
-bool WebServer::check_auth(const Request& req) const {
-    auto it = req.headers.find("Authorization");
-    if (it == req.headers.end()) {
-        return false;
+void WebServer::handle_auth_change_password(const std::string& raw_request, int client_fd) {
+    if (!require_session(raw_request, client_fd)) return;
+
+    auto body_start = raw_request.find("\r\n\r\n");
+    if (body_start == std::string::npos) {
+        send_json(client_fd, 400, "{\"success\":false,\"error\":\"Bad request\"}");
+        return;
+    }
+    std::string body = raw_request.substr(body_start + 4);
+
+    auto old_pos = body.find("\"old_password\":\"");
+    auto new_pos = body.find("\"new_password\":\"");
+    if (old_pos == std::string::npos || new_pos == std::string::npos) {
+        send_json(client_fd, 400, "{\"success\":false,\"error\":\"Missing fields\"}");
+        return;
     }
 
-    const std::string creds = "admin:" + password_;
-    static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string encoded;
-    size_t i = 0;
-    while (i < creds.size()) {
-        size_t start = i;
-        unsigned char c1 = creds[i++];
-        unsigned char c2 = (i < creds.size()) ? creds[i++] : 0;
-        unsigned char c3 = (i < creds.size()) ? creds[i++] : 0;
-        size_t read = i - start;
-        encoded += b64[c1 >> 2];
-        encoded += b64[((c1 & 0x3) << 4) | (c2 >> 4)];
-        encoded += (read >= 2) ? b64[((c2 & 0xf) << 2) | (c3 >> 6)] : '=';
-        encoded += (read >= 3) ? b64[c3 & 0x3f] : '=';
+    old_pos += 15;
+    auto old_end = body.find("\"", old_pos);
+    new_pos += 15;
+    auto new_end = body.find("\"", new_pos);
+
+    std::string old_password = body.substr(old_pos, old_end - old_pos);
+    std::string new_password = body.substr(new_pos, new_end - new_pos);
+
+    std::string token = extract_session_token(raw_request);
+    if (services_.auth().change_password(token, old_password, new_password)) {
+        send_json(client_fd, 200, "{\"success\":true,\"data\":{\"message\":\"Password changed\"}}");
+    } else {
+        send_json(client_fd, 400, "{\"success\":false,\"error\":\"Failed to change password\"}");
+    }
+}
+
+void WebServer::handle_auth_logout(const std::string& raw_request, int client_fd) {
+    std::string token = extract_session_token(raw_request);
+    if (!token.empty()) {
+        services_.auth().logout(token);
+    }
+    send_json(client_fd, 200, "{\"success\":true,\"data\":{\"message\":\"Logged out\"}}");
+}
+
+void WebServer::handle_auth_me(const std::string& raw_request, int client_fd) {
+    std::string token = extract_session_token(raw_request);
+    auto* session = services_.auth().validate_session(token);
+    if (!session) {
+        send_unauthorized(client_fd);
+        return;
     }
 
-    return it->second == "Basic " + encoded;
+    auto* user = services_.auth_users().find(session->username);
+    std::string resp = "{\"success\":true,\"data\":{"
+        "\"username\":\"" + session->username + "\","
+        "\"role\":\"" + session->role + "\","
+        "\"must_change_password\":" + (user && user->must_change_password ? "true" : "false") + "}}";
+    send_json(client_fd, 200, resp);
 }
 
 void WebServer::handle_client(int client_fd, WebServer* server) {
@@ -93,23 +179,31 @@ void WebServer::handle_client(int client_fd, WebServer* server) {
 
     Request req = server->parse_request(raw);
 
-    if (!server->check_auth(req)) {
-        std::string body = "Unauthorized";
-        std::ostringstream resp;
-        resp << "HTTP/1.1 401 Unauthorized\r\n"
-             << "Content-Type: text/plain\r\n"
-             << "Content-Length: " << body.size() << "\r\n"
-             << "WWW-Authenticate: Basic realm=\"ContainerCP Web UI\"\r\n"
-             << "\r\n"
-             << body;
-        std::string resp_str = resp.str();
-        ::write(client_fd, resp_str.data(), resp_str.size());
-        ::close(client_fd);
+    // Auth routes (no session required for login/logout)
+    if (req.path == "/ui-api/auth/login") {
+        server->handle_auth_login(raw, client_fd);
+        return;
+    }
+    if (req.path == "/ui-api/auth/logout") {
+        server->handle_auth_logout(raw, client_fd);
         return;
     }
 
-    // Proxy UI API calls to internal API
+    // Auth routes that require session
+    if (req.path == "/ui-api/auth/change-password") {
+        server->handle_auth_change_password(raw, client_fd);
+        return;
+    }
+    if (req.path == "/ui-api/auth/me") {
+        server->handle_auth_me(raw, client_fd);
+        return;
+    }
+
+    // All other /ui-api/* routes require session
     if (req.path.find("/ui-api/") == 0) {
+        if (!server->require_session(raw, client_fd)) {
+            return;
+        }
         server->proxy_to_api(raw, client_fd);
         return;
     }
@@ -145,21 +239,12 @@ void WebServer::proxy_to_api(const std::string& raw_request, int client_fd) {
     addr.sin_port = ::htons(api_port_);
 
     if (::connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        std::string body = "{\"success\":false,\"error\":\"API unavailable\"}";
-        std::ostringstream resp;
-        resp << "HTTP/1.1 502 Bad Gateway\r\n"
-             << "Content-Type: application/json\r\n"
-             << "Content-Length: " << body.size() << "\r\n"
-             << "\r\n"
-             << body;
-        std::string resp_str = resp.str();
-        ::write(client_fd, resp_str.data(), resp_str.size());
+        send_json(client_fd, 502, "{\"success\":false,\"error\":\"API unavailable\"}");
         ::close(sock);
-        ::close(client_fd);
         return;
     }
 
-    // Rewrite path in the first line: /ui-api/... -> /api/...
+    // Rewrite path: /ui-api/... -> /api/...
     size_t sp1 = raw_request.find(' ');
     size_t sp2 = raw_request.find(' ', sp1 + 1);
     if (sp1 == std::string::npos || sp2 == std::string::npos) {
@@ -266,8 +351,6 @@ Request WebServer::parse_request(const std::string& raw) const {
 }
 
 bool WebServer::start() {
-    load_password();
-
     server_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd_ < 0) {
         services_.logger().error("WebServer: Failed to create socket");
@@ -296,8 +379,7 @@ bool WebServer::start() {
 
     running_ = true;
     services_.logger().info("Web UI: Listening on http://" + bind_addr_ + ":" + std::to_string(port_) + "/");
-    services_.logger().info("Web UI: Username: admin");
-    services_.logger().info("Web UI: Password file: " + services_.config().config_root() + "/ui-password");
+    services_.logger().info("Web UI: Login required");
 
     while (running_) {
         struct sockaddr_in client_addr{};
