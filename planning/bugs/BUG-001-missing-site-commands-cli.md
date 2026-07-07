@@ -30,5 +30,8 @@ CLI's CommandDispatcher::run() method.
 Fixed by adding daemon handlers for site-start, site-stop, site-status
 and wiring them in the thin CLI. Also removed duplicate backup-list handler.
 
+## Fix commit
+193cd38
+
 ## Status
 Resolved
