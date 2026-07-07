@@ -56,3 +56,20 @@ TEST_CASE("SiteManager create/find/list/remove") {
     CHECK(mgr.find("example.com") == nullptr);
     CHECK(mgr.list().empty());
 }
+
+TEST_CASE("SiteManager remove cleans state") {
+    containercp::site::SiteManager mgr;
+    mgr.create("test.com", "admin", 1);
+    mgr.create("other.com", "admin", 1);
+    CHECK(mgr.list().size() == 2);
+
+    // Remove one site
+    auto* s = mgr.find("test.com");
+    REQUIRE(s != nullptr);
+    mgr.remove(s->id);
+
+    // Only the other site remains
+    CHECK(mgr.list().size() == 1);
+    CHECK(mgr.find("test.com") == nullptr);
+    CHECK(mgr.find("other.com") != nullptr);
+}

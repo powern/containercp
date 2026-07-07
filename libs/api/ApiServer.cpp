@@ -427,6 +427,8 @@ bool ApiServer::start() {
             json << "{\"success\":true,\"data\":{\"domain\":\"" << domain << "\",\"message\":\"Site created\"}}";
             r.body = json.str();
         } else {
+            // Save after rollback to persist cleaned state
+            s.save();
             jobs.update(job_id, "failed", 0, result.message);
             r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
         }

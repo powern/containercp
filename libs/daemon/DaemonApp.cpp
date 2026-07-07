@@ -181,6 +181,8 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
             s.save();
             return Command::success("Site created: " + domain);
         }
+        // Save after rollback to persist cleaned state
+        s.save();
         return Command::error(result.message);
     }
 
