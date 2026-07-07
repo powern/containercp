@@ -48,6 +48,18 @@ Items are ordered by priority within each category.
 - [ ] CCP-4005: Access directory mapping
 - [ ] CCP-4006: Document future SFTP implementation
 
+## Sprint 7 — Admin Panel Phase 2
+
+- [ ] CCP-5001: Add /api/profiles endpoint
+- [ ] CCP-5002: Add /api/nodes endpoint
+- [ ] CCP-5003: Add /api/logs endpoint
+- [ ] CCP-5004: Add /api/site-config endpoint
+- [ ] CCP-5005: Site detail page with tabs
+- [ ] CCP-5006: Create Site modal/dialog
+- [ ] CCP-5007: Toast notification system
+- [ ] CCP-5008: Improved tables with row actions
+- [ ] CCP-5009: Global error handling and loading states
+
 ## Future
 
 - [ ] SSL certificate generation (Let's Encrypt)

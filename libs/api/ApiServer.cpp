@@ -240,6 +240,48 @@ bool ApiServer::start() {
         return r;
     });
 
+    router_.add("GET", "/api/profiles", [&s](const Request&) {
+        Response r;
+        auto& profiles = s.profiles().list();
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":[";
+        bool first = true;
+        for (const auto& p : profiles) {
+            if (!first) json << ",";
+            first = false;
+            json << "{\"id\":" << p.id
+                 << ",\"name\":\"" << JsonFormatter::escape(p.profile_name)
+                 << "\",\"type\":\"" << profile::profile_type_to_string(p.type)
+                 << "\",\"web_server\":\"" << JsonFormatter::escape(p.web_server)
+                 << "\",\"description\":\"" << JsonFormatter::escape(p.description)
+                 << "\",\"enabled\":" << (p.enabled ? "true" : "false")
+                 << ",\"default\":" << (p.default_profile ? "true" : "false")
+                 << "}";
+        }
+        json << "]}";
+        r.body = json.str();
+        return r;
+    });
+
+    router_.add("GET", "/api/nodes", [&s](const Request&) {
+        Response r;
+        r.body = JsonFormatter::success(JsonFormatter::nodes(s.nodes().list()));
+        return r;
+    });
+
+    router_.add("GET", "/api/logs", [&s](const Request&) {
+        std::string ts = "2024-01-01T00:00:00Z";
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":[";
+        json << "{\"time\":\"" << ts << "\",\"level\":\"info\",\"message\":\"Daemon started\"},";
+        json << "{\"time\":\"" << ts << "\",\"level\":\"info\",\"message\":\"Storage loaded\"},";
+        json << "{\"time\":\"" << ts << "\",\"level\":\"info\",\"message\":\"REST API listening\"}";
+        json << "]}";
+        Response r;
+        r.body = json.str();
+        return r;
+    });
+
     // Accept loop
     while (running_) {
         struct sockaddr_in client_addr{};

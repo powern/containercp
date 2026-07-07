@@ -32,7 +32,7 @@ public:
     static std::string nodes(const std::vector<node::Node>& nodes);
     static std::string databases(const std::vector<database::Database>& databases);
 
-private:
+public:
     static std::string escape(const std::string& s);
 };
 
