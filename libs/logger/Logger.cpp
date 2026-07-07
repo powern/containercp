@@ -4,6 +4,11 @@
 
 namespace containercp::logger {
 
+Logger& Logger::instance() {
+    static Logger log;
+    return log;
+}
+
 void Logger::info(const std::string& message) {
     std::cout << "[INFO] " << message << "\n";
 }
