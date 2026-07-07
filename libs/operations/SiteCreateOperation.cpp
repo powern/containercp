@@ -61,8 +61,16 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
     auto result = provider_.create_site(site);
 
     if (!result.success) {
-        databases_.remove(site.id);
-        domains_.remove(site.id);
+        for (const auto& d : databases_.list()) {
+            if (d.site_id == site.id) {
+                databases_.remove(d.id);
+            }
+        }
+        for (const auto& d : domains_.list()) {
+            if (d.site_id == site.id) {
+                domains_.remove(d.id);
+            }
+        }
         sites_.remove(site.id);
         return {false, result.message + " Created resources have been rolled back."};
     }
