@@ -12,10 +12,11 @@ public:
     EnvGenerator(filesystem::Filesystem& fs, const std::string& site_dir);
 
     bool generate(const std::string& domain, const std::string& owner);
+    bool generate(const std::string& domain, const std::string& owner,
+                  const std::string& db_name, const std::string& db_user,
+                  const std::string& db_password);
 
 private:
-    std::string generate_password(int length);
-
     filesystem::Filesystem& fs_;
     std::string site_dir_;
 };

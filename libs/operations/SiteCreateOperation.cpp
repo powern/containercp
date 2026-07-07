@@ -1,6 +1,7 @@
 #include "SiteCreateOperation.h"
-
-#include <random>
+#include "utils/PasswordGenerator.h"
+#include "utils/StringUtils.h"
+#include "utils/Validator.h"
 
 namespace containercp::operations {
 
@@ -12,41 +13,13 @@ SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, domain::Domai
 {
 }
 
-std::string SiteCreateOperation::sanitize(const std::string& domain) {
-    std::string result = domain;
-    for (auto& c : result) {
-        if (!std::isalnum(static_cast<unsigned char>(c))) {
-            c = '_';
-        }
-    }
-    return result;
-}
-
-std::string SiteCreateOperation::generate_password(int length) {
-    static constexpr char chars[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        "abcdefghijklmnopqrstuvwxyz"
-        "0123456789";
-
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> dist(0, sizeof(chars) - 2);
-
-    std::string password;
-    password.reserve(length);
-    for (int i = 0; i < length; ++i) {
-        password += chars[dist(gen)];
-    }
-    return password;
-}
-
 core::OperationResult SiteCreateOperation::execute(const std::string& owner, const std::string& domain, const node::Node& node) {
-    if (domain.empty()) {
-        return {false, "Domain cannot be empty."};
+    if (!utils::Validator::is_valid_username(owner)) {
+        return {false, "Invalid username."};
     }
 
-    if (owner.empty()) {
-        return {false, "Owner cannot be empty."};
+    if (!utils::Validator::is_valid_hostname(domain)) {
+        return {false, "Invalid domain."};
     }
 
     if (sites_.find(domain) != nullptr) {
@@ -63,8 +36,15 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
 
     domains_.create(domain, 0, site.id);
 
-    std::string safe = sanitize(domain);
-    databases_.create(safe + "_db", safe + "_user", generate_password(32), 0, site.id);
+    std::string safe = utils::StringUtils::sanitize(domain);
+    std::string db_name = safe + "_db";
+    std::string db_user = safe + "_user";
+    std::string db_password = utils::PasswordGenerator::generate();
+    databases_.create(db_name, db_user, db_password, 0, site.id);
+
+    site.db_name = db_name;
+    site.db_user = db_user;
+    site.db_password = db_password;
 
     return provider_.create_site(site);
 }

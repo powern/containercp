@@ -12,6 +12,9 @@ struct Site : core::Resource {
     std::string domain;
     std::string owner;
     uint64_t node_id = 0;
+    std::string db_name;
+    std::string db_user;
+    std::string db_password;
 };
 
 } // namespace containercp::site

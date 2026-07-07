@@ -41,6 +41,9 @@ add_executable(containercp
     libs/template/TemplateEngine.cpp
     libs/user/User.cpp
     libs/user/UserManager.cpp
+    libs/utils/PasswordGenerator.cpp
+    libs/utils/StringUtils.cpp
+    libs/utils/Validator.cpp
 )
 
 target_include_directories(containercp PRIVATE

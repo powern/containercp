@@ -3,6 +3,7 @@
 #include "domain/DomainManager.h"
 #include "node/Node.h"
 #include "operations/SiteCreateOperation.h"
+#include "utils/Validator.h"
 
 #include <chrono>
 #include <fstream>
@@ -64,6 +65,11 @@ void print_version() {
 
 int handle_user_create(const std::string& username) {
     auto& services = containercp::core::Application::instance().services();
+
+    if (!containercp::utils::Validator::is_valid_username(username)) {
+        std::cout << "Invalid username.\n";
+        return 1;
+    }
 
     if (services.users().find(username) != nullptr) {
         std::cout << "User already exists: " << username << "\n";

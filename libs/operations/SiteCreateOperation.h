@@ -19,9 +19,6 @@ public:
     core::OperationResult execute(const std::string& owner, const std::string& domain, const node::Node& node);
 
 private:
-    std::string sanitize(const std::string& domain);
-    std::string generate_password(int length);
-
     site::SiteManager& sites_;
     domain::DomainManager& domains_;
     database::DatabaseManager& databases_;

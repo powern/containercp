@@ -19,7 +19,11 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
     layout.create();
 
     docker::EnvGenerator env(fs_, site_dir);
-    env.generate(site.domain, site.owner);
+    if (site.db_name.empty()) {
+        env.generate(site.domain, site.owner);
+    } else {
+        env.generate(site.domain, site.owner, site.db_name, site.db_user, site.db_password);
+    }
 
     auto* php_version = php_.get_default();
     std::string php_image = php_version ? php_version->image : "php:8.4-fpm";
