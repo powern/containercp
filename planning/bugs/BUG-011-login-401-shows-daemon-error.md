@@ -43,53 +43,56 @@ Even after the route fix, login still fails because the generated
 password in `/etc/containercp/ui-password` does not match the hash
 stored in `auth_users.db`.
 
-**Root cause:**
+After the bootstrap consistency fix (commit e469d0d), the password
+file and stored hash now match — but authentication still fails.
 
-`AuthService::initialize()` generates a random password on first start
-and stores its SHA-256 hash in `auth_users.db`. It logs the password
-but does NOT write the plaintext to the password file.
+**Final root cause: JSON field offset one-off error.**
 
-The old Basic Auth code (`WebServer::load_password()`, now removed)
-also generated a random password and wrote it to
-`/etc/containercp/ui-password` — but it generated a *different* random
-password. On the next daemon restart, `AuthService::initialize()` sees
-that `auth_users.db` already has an admin user and does nothing, so
-the password file and the stored hash remain permanently desynchronized.
+The custom JSON parser in `WebServer::handle_auth_login()` used
+`uname_pos += 11` to skip past the field name `"username":"`. But
+`"username":"` is 12 characters, so the opening quote `"` of the
+value was included in the extracted username. The result was
+`"admin"` (with quote) instead of `admin`, which never matched the
+stored username. Same bug for `"password":"` (12 chars, offset was
+11) and `"old_password":"` / `"new_password":"` (16 chars, offset
+was 15).
+
+**Timeline of bugs:**
+
+| # | Commit | Bug | Fix |
+|---|--------|-----|-----|
+| 1 | c0dfa12 | login route returned 401 (wrong frontend error) | a89e5e0 — proper 401 handling |
+| 2 | c0dfa12 | password file never written | 46437ad — write + sync file |
+| 3 | c0dfa12 | JSON field offset off by 1 | this commit |
 
 **Fix:**
 
-1. On first start: `AuthService::initialize()` now writes the
-   generated plaintext password to `/etc/containercp/ui-password` so
-   operators can discover it.
-
-2. On every subsequent start: if admin has `must_change_password=true`
-   and the password file exists, `AuthService::initialize()` re-reads
-   the file, re-hashes the password, and updates `auth_users.db` to
-   match. This keeps the file as the source of truth for the temporary
-   password and prevents desync.
-
-3. The file is read with `std::getline` which strips the trailing
-   newline. An additional `\r` trim handles any Windows line endings.
+1. `"username":"` offset: 11 → 12 (was including opening quote)
+2. `"password":"` offset: 11 → 12 (same bug)
+3. `"old_password":"` offset: 15 → 16 (same bug)
+4. `"new_password":"` offset: 15 → 16 (same bug)
+5. Added null-check and empty-check for extracted values.
+6. Added detailed auth failure logging (unknown user, disabled,
+   password mismatch, malformed request, missing credentials).
+7. Added `hash_password → verify_password` round-trip unit test.
 
 **Files changed:**
 
-- `libs/auth/AuthService.cpp` — write password file on first start,
-  sync hash from file on subsequent starts
-- `tests/test_api.cpp` — password hash consistency test, password
-  file round-trip test
+- `libs/api/WebServer.cpp` — fix JSON field offsets, add logging
+- `libs/auth/AuthService.cpp` — add auth failure logging
+- `tests/test_api.cpp` — hash round-trip test
 
-**Commit:**
+**Commits:**
 
-e469d0d (to be updated)
+- 46437ad Fix Web UI bootstrap password consistency (file sync)
+- (this) Fix Web UI password verification (JSON offset)
 
 ## Validation
 
-- [ ] POST /ui-api/auth/login without token reaches login handler
-- [ ] GET /ui-api/auth/me without token returns login_required
-- [ ] Protected /ui-api/* without token returns 401
-- [ ] GET /ui-api/health is public (no session required)
-- [ ] Login page shows "Invalid username or password" for bad credentials
-- [ ] Password from `/etc/containercp/ui-password` successfully
-      authenticates admin on first login
-- [ ] After password change, file-based sync stops (must_change_password
-      is false)
+- [ ] POST /ui-api/auth/login with valid credentials returns 200 + token
+- [ ] POST /ui-api/auth/login with wrong password returns 401
+- [ ] POST /ui-api/auth/login with disabled user returns 401
+- [ ] POST /ui-api/auth/login with missing fields returns 400
+- [ ] Daemon log shows reason for each failed login attempt
+- [ ] Daemon log does not contain the password
+- [ ] After password change, file-based sync stops

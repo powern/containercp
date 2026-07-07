@@ -67,10 +67,10 @@ bool WebServer::require_session(const std::string& raw_request, int client_fd) {
 }
 
 void WebServer::handle_auth_login(const std::string& raw_request, int client_fd) {
-    // Parse JSON body after headers
     auto body_start = raw_request.find("\r\n\r\n");
     if (body_start == std::string::npos) {
         send_json(client_fd, 400, "{\"success\":false,\"error\":\"Bad request\"}");
+        services_.logger().info("Auth: login request malformed (no body)");
         return;
     }
     std::string body = raw_request.substr(body_start + 4);
@@ -79,35 +79,51 @@ void WebServer::handle_auth_login(const std::string& raw_request, int client_fd)
     auto pwd_pos = body.find("\"password\":\"");
     if (uname_pos == std::string::npos || pwd_pos == std::string::npos) {
         send_json(client_fd, 400, "{\"success\":false,\"error\":\"Missing credentials\"}");
+        services_.logger().info("Auth: login missing username or password in request body");
         return;
     }
 
-    uname_pos += 11;
+    // Skip past the field name and opening quote: "username":" is 12 chars
+    uname_pos += 12;
     auto uname_end = body.find("\"", uname_pos);
-    pwd_pos += 11;
+    pwd_pos += 12;
     auto pwd_end = body.find("\"", pwd_pos);
 
     if (uname_end == std::string::npos || pwd_end == std::string::npos) {
         send_json(client_fd, 400, "{\"success\":false,\"error\":\"Bad request\"}");
+        services_.logger().info("Auth: login malformed JSON structure");
         return;
     }
 
     std::string username = body.substr(uname_pos, uname_end - uname_pos);
     std::string password = body.substr(pwd_pos, pwd_end - pwd_pos);
 
-    std::string token = services_.auth().authenticate(username, password);
-    if (token.empty()) {
+    auto* user = services_.auth_users().find(username);
+    if (user == nullptr) {
         send_json(client_fd, 401, "{\"success\":false,\"error\":\"Invalid credentials\"}");
+        services_.logger().info("Auth: login failed — unknown user '" + username + "'");
+        return;
+    }
+    if (!user->enabled) {
+        send_json(client_fd, 401, "{\"success\":false,\"error\":\"Invalid credentials\"}");
+        services_.logger().info("Auth: login failed — user '" + username + "' disabled");
         return;
     }
 
-    auto* user = services_.auth_users().find(username);
-    bool must_change = user ? user->must_change_password : false;
+    std::string token = services_.auth().authenticate(username, password);
+    if (token.empty()) {
+        send_json(client_fd, 401, "{\"success\":false,\"error\":\"Invalid credentials\"}");
+        services_.logger().info("Auth: login failed — password mismatch for '" + username + "'");
+        return;
+    }
+
+    bool must_change = user->must_change_password;
 
     std::string resp = "{\"success\":true,\"data\":{\"token\":\"" + token
         + "\",\"username\":\"" + username
         + "\",\"must_change_password\":" + (must_change ? "true" : "false") + "}}";
     send_json(client_fd, 200, resp);
+    services_.logger().info("Auth: login success — '" + username + "'");
 }
 
 void WebServer::handle_auth_change_password(const std::string& raw_request, int client_fd) {
@@ -127,13 +143,23 @@ void WebServer::handle_auth_change_password(const std::string& raw_request, int 
         return;
     }
 
-    old_pos += 15;
+    old_pos += 16;
     auto old_end = body.find("\"", old_pos);
-    new_pos += 15;
+    new_pos += 16;
     auto new_end = body.find("\"", new_pos);
+
+    if (old_end == std::string::npos || new_end == std::string::npos) {
+        send_json(client_fd, 400, "{\"success\":false,\"error\":\"Bad request\"}");
+        return;
+    }
 
     std::string old_password = body.substr(old_pos, old_end - old_pos);
     std::string new_password = body.substr(new_pos, new_end - new_pos);
+
+    if (old_password.empty() || new_password.empty()) {
+        send_json(client_fd, 400, "{\"success\":false,\"error\":\"Missing fields\"}");
+        return;
+    }
 
     std::string token = extract_session_token(raw_request);
     if (services_.auth().change_password(token, old_password, new_password)) {

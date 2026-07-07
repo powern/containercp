@@ -91,14 +91,21 @@ void AuthService::initialize() {
 std::string AuthService::authenticate(const std::string& username, const std::string& password) {
     auto users = services_.auth_users().list();
     for (const auto& u : users) {
-        if (u.username == username && u.enabled) {
+        if (u.username == username) {
+            if (!u.enabled) {
+                services_.logger().info("Auth: user '" + username + "' is disabled");
+                return "";
+            }
             if (u.password_hash == hash_password(password)) {
                 std::string token = generate_token();
                 sessions_[token] = {u.username, u.role, std::chrono::steady_clock::now()};
                 return token;
             }
+            services_.logger().info("Auth: password mismatch for '" + username + "'");
+            return "";
         }
     }
+    services_.logger().info("Auth: unknown user '" + username + "'");
     return "";
 }
 

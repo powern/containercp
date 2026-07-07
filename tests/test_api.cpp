@@ -219,6 +219,23 @@ TEST_CASE("SHA-256 password consistency") {
     CHECK(hlen == 64);
 }
 
+TEST_CASE("Password hash then verify round-trip") {
+    // Direct test: hash a known password, then verify the same
+    // password produces the same hash. This exactly mirrors what
+    // AuthService::initialize() and AuthService::authenticate() do.
+    std::string password = "bp7oa1hau33l34hf";
+    std::string stored_hash = containercp::auth::sha256(password);
+    CHECK(stored_hash.size() == 64);
+
+    // Simulate login verification: hash the provided password and compare
+    std::string login_hash = containercp::auth::sha256(password);
+    CHECK(login_hash == stored_hash);
+
+    // A DIFFERENT password must NOT match
+    std::string wrong_hash = containercp::auth::sha256("wrongpassword");
+    CHECK(wrong_hash != stored_hash);
+}
+
 TEST_CASE("Auth route patterns") {
     // Regression: these routes must match the WebServer's public route logic
     std::vector<std::string> public_routes = {
