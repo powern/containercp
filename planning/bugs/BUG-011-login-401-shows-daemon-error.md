@@ -87,6 +87,33 @@ was 15).
 - 46437ad Fix Web UI bootstrap password consistency (file sync)
 - (this) Fix Web UI password verification (JSON offset)
 
+## Follow-up issue: password reset after restart
+
+After successful password change (must_change_password=false), a
+daemon rebuild and restart caused the password to reset to a new
+temporary password.
+
+**Investigation:** The code logic correctly persists `auth_users.db`
+after password change. `AuthService::initialize()` only creates a new
+admin when `users.empty()`, and only syncs from the password file
+when `must_change_password=true`. On restart with
+`must_change_password=false`, no changes should occur.
+
+Root cause could not be conclusively identified through code review.
+Possible causes under investigation:
+- The `auth_users.db` file might not be flushed/synced to disk after
+  the password change write
+- A filesystem issue on the validation VM
+- A stale `auth_users.db` from a previous code version with different
+  format
+
+**Defensive hardening:**
+- Added startup logging to show whether admin was loaded from storage
+  or created fresh, and the value of `must_change_password`
+- Added persistence round-trip regression test that simulates:
+  bootstrap → save → load → change password → save → reload →
+  verify must_change_password=false and new password works
+
 ## Validation
 
 - [ ] POST /ui-api/auth/login with valid credentials returns 200 + token

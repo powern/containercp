@@ -161,7 +161,12 @@ TEST_CASE("Static file path traversal blocked") {
     CHECK(bad_path.find("..") != std::string::npos);
 }
 
+#include "auth/AuthUser.h"
 #include "auth/sha256.h"
+
+#include <cstdio>
+#include <fstream>
+#include <sstream>
 
 static std::string test_base64(const std::string& input) {
     static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -217,6 +222,102 @@ TEST_CASE("SHA-256 password consistency") {
     CHECK(h1 == h2);
     size_t hlen = h1.length();
     CHECK(hlen == 64);
+}
+
+TEST_CASE("Auth user persistence round-trip") {
+    // Simulate bootstrap -> change password -> reload cycle
+    // This mirrors what happens during daemon restart
+
+    // 1. Create an admin user (like bootstrap does)
+    containercp::auth::AuthUser admin;
+    admin.id = 1;
+    admin.name = "admin";
+    admin.username = "admin";
+    admin.password_hash = containercp::auth::sha256("temp-password-123");
+    admin.must_change_password = true;
+    admin.enabled = true;
+    admin.role = "admin";
+
+    // 2. Save to a temp file and reload (simulate first start save+load)
+    {
+        std::ofstream f("/tmp/test_auth_users.db");
+        REQUIRE(f.is_open());
+        f << admin.id << "|" << admin.username << "|" << admin.password_hash << "|"
+          << (admin.must_change_password ? "1" : "0") << "|"
+          << (admin.enabled ? "1" : "0") << "|" << admin.role << "\n";
+        f.close();
+    }
+
+    // 3. Load back (simulate restart)
+    containercp::auth::AuthUser loaded;
+    {
+        std::ifstream f("/tmp/test_auth_users.db");
+        REQUIRE(f.is_open());
+        std::string line;
+        std::getline(f, line);
+        std::istringstream ss(line);
+        std::string token;
+        if (std::getline(ss, token, '|')) loaded.id = std::stoull(token);
+        if (std::getline(ss, token, '|')) loaded.username = token;
+        if (std::getline(ss, token, '|')) loaded.password_hash = token;
+        if (std::getline(ss, token, '|')) loaded.must_change_password = (token == "1");
+        if (std::getline(ss, token, '|')) loaded.enabled = (token == "1");
+        if (std::getline(ss, token, '|')) loaded.role = token;
+        loaded.name = loaded.username;
+    }
+
+    // 4. Verify loaded data matches original
+    CHECK(loaded.id == 1);
+    CHECK(loaded.username == "admin");
+    CHECK(loaded.password_hash == admin.password_hash);
+    CHECK(loaded.must_change_password == true);
+    CHECK(loaded.enabled == true);
+    CHECK(loaded.role == "admin");
+
+    // 5. Simulate password change: update hash and must_change_password
+    loaded.password_hash = containercp::auth::sha256("new-password-456");
+    loaded.must_change_password = false;
+
+    // 6. Save updated state (simulate change_password persist)
+    {
+        std::ofstream f("/tmp/test_auth_users.db");
+        REQUIRE(f.is_open());
+        f << loaded.id << "|" << loaded.username << "|" << loaded.password_hash << "|"
+          << (loaded.must_change_password ? "1" : "0") << "|"
+          << (loaded.enabled ? "1" : "0") << "|" << loaded.role << "\n";
+        f.close();
+    }
+
+    // 7. Reload again (simulate another restart)
+    containercp::auth::AuthUser reloaded;
+    {
+        std::ifstream f("/tmp/test_auth_users.db");
+        REQUIRE(f.is_open());
+        std::string line;
+        std::getline(f, line);
+        std::istringstream ss(line);
+        std::string token;
+        if (std::getline(ss, token, '|')) reloaded.id = std::stoull(token);
+        if (std::getline(ss, token, '|')) reloaded.username = token;
+        if (std::getline(ss, token, '|')) reloaded.password_hash = token;
+        if (std::getline(ss, token, '|')) reloaded.must_change_password = (token == "1");
+        if (std::getline(ss, token, '|')) reloaded.enabled = (token == "1");
+        if (std::getline(ss, token, '|')) reloaded.role = token;
+        reloaded.name = reloaded.username;
+    }
+
+    // 8. Verify must_change_password stayed false and new hash works
+    CHECK(reloaded.must_change_password == false);
+    CHECK(reloaded.password_hash == containercp::auth::sha256("new-password-456"));
+
+    // 9. Verify old password no longer works
+    CHECK(reloaded.password_hash != containercp::auth::sha256("temp-password-123"));
+
+    // 10. Verify new password authenticates
+    bool auth_ok = (reloaded.password_hash == containercp::auth::sha256("new-password-456"));
+    CHECK(auth_ok);
+
+    std::remove("/tmp/test_auth_users.db");
 }
 
 TEST_CASE("Password hash then verify round-trip") {

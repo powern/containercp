@@ -63,6 +63,22 @@ void AuthService::initialize() {
     // Subsequent starts: if admin has must_change_password=true and the
     // password file exists, re-hash the file's content and sync the
     // stored hash. This prevents desync between the file and the DB.
+    // Log bootstrap state for debugging
+    bool admin_found = false;
+    bool admin_must_change = false;
+    for (const auto& u : users) {
+        if (u.username == "admin") {
+            admin_found = true;
+            admin_must_change = u.must_change_password;
+            services_.logger().info("Web UI: Admin loaded from storage (must_change="
+                + std::string(admin_must_change ? "true" : "false") + ")");
+            break;
+        }
+    }
+    if (!admin_found) {
+        services_.logger().info("Web UI: No admin user found in storage");
+    }
+
     for (auto& u : users) {
         if (u.username == "admin" && u.must_change_password) {
             std::ifstream f(password_path);
