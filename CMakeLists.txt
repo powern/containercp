@@ -12,6 +12,7 @@ add_executable(containercp
     libs/config/Config.cpp
     libs/core/Application.cpp
     libs/core/Resource.cpp
+    libs/core/ResourceManager.cpp
     libs/core/ServiceRegistry.cpp
     libs/logger/Logger.cpp
     libs/node/Node.cpp

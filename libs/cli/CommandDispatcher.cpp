@@ -51,8 +51,9 @@ int CommandDispatcher::run(int argc, char* argv[]) {
     }
 
     if (argc == 3 && arg1 == "node" && std::string(argv[2]) == "list") {
-        auto node = node::get_default_node();
-        std::cout << node.name << "\n";
+        for (const auto& node : services.nodes().list()) {
+            std::cout << node.name << "\n";
+        }
         return 0;
     }
 
@@ -66,13 +67,13 @@ int CommandDispatcher::run(int argc, char* argv[]) {
     }
 
     if (argc == 4 && arg1 == "node" && std::string(argv[2]) == "show") {
-        auto node = node::find_node(argv[3]);
-        if (node.name.empty()) {
+        auto* node = services.nodes().find(argv[3]);
+        if (node == nullptr) {
             services.logger().error("node \"" + std::string(argv[3]) + "\" not found");
             return 1;
         }
-        std::cout << "Name: " << node.name << "\n"
-                  << "Type: " << node.type << "\n";
+        std::cout << "Name: " << node->name << "\n"
+                  << "Type: " << node->type << "\n";
         return 0;
     }
 

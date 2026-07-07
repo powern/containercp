@@ -2,6 +2,7 @@
 #define CONTAINERCP_CORE_SERVICE_REGISTRY_H
 
 #include "config/Config.h"
+#include "core/ResourceManager.h"
 #include "logger/Logger.h"
 
 namespace containercp::core {
@@ -10,6 +11,7 @@ class ServiceRegistry {
 public:
     config::Config& config();
     logger::Logger& logger();
+    ResourceManager& nodes();
 
 private:
     friend class Application;
@@ -17,6 +19,7 @@ private:
 
     config::Config& config_;
     logger::Logger& logger_;
+    ResourceManager nodes_;
 };
 
 } // namespace containercp::core
