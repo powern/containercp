@@ -1,6 +1,9 @@
 #include "DaemonApp.h"
 #include "daemon/CommandProtocol.h"
 #include "core/Application.h"
+#include "operations/SiteCreateOperation.h"
+#include "utils/StringUtils.h"
+#include "utils/Validator.h"
 
 #include <chrono>
 #include <fstream>
@@ -131,6 +134,29 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         out << "Version: " << pv->version << "\n"
             << "Image: " << pv->image << "\n";
         return Command::success(out.str());
+    }
+
+    if (cmd.name == "site-create" && cmd.args.size() >= 2) {
+        const std::string& owner = cmd.args[0];
+        const std::string& domain = cmd.args[1];
+        {
+            std::string msg = utils::Validator::validate_username(owner);
+            if (!msg.empty()) return Command::error(msg);
+        }
+        {
+            std::string msg = utils::Validator::validate_hostname(domain);
+            if (!msg.empty()) return Command::error(msg);
+        }
+        auto* node = s.nodes().find("local");
+        if (!node) return Command::error("No node available");
+        operations::SiteCreateOperation op(s.sites(), s.domains(),
+            s.databases(), s.reverse_proxies(), s.hosting_provider());
+        auto result = op.execute(owner, domain, *node);
+        if (result.success) {
+            s.save();
+            return Command::success("Site created: " + domain);
+        }
+        return Command::error(result.message);
     }
 
     if (cmd.name == "site-list") {
@@ -412,6 +438,40 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         auto result = s.backup_provider().restore_backup(b->file_path, site_dir);
         if (!result.success) return Command::error(result.message);
         return Command::success("Backup restored: " + b->filename);
+    }
+
+    if (cmd.name == "profile-list") {
+        auto& profiles = s.profiles().list();
+        std::ostringstream out;
+        for (const auto& p : profiles) {
+            out << p.profile_name;
+            if (p.default_profile) out << " (default)";
+            out << " [" << profile::profile_type_to_string(p.type) << "]\n";
+        }
+        return Command::success(out.str());
+    }
+
+    if (cmd.name == "profile-show" && cmd.args.size() >= 1) {
+        auto* p = s.profiles().find(cmd.args[0]);
+        if (!p) return Command::error("Profile not found");
+        std::ostringstream out;
+        out << "Name: " << p->profile_name << "\n"
+            << "Type: " << profile::profile_type_to_string(p->type) << "\n"
+            << "Web Server: " << p->web_server << "\n"
+            << "Runtime: " << p->runtime << "\n"
+            << "Description: " << p->description << "\n"
+            << "Enabled: " << (p->enabled ? "yes" : "no") << "\n"
+            << "Default: " << (p->default_profile ? "yes" : "no") << "\n";
+        return Command::success(out.str());
+    }
+
+    if (cmd.name == "profile-default") {
+        auto* p = s.profiles().get_default(profile::ProfileType::WEB_SERVER);
+        if (!p) return Command::error("No default profile");
+        std::ostringstream out;
+        out << "Name: " << p->profile_name << "\n"
+            << "Web Server: " << p->web_server << "\n";
+        return Command::success(out.str());
     }
 
     return Command::error("Unknown command: " + cmd.name);

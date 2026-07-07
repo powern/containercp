@@ -1,5 +1,6 @@
 #include "ApiServer.h"
 #include "api/JsonFormatter.h"
+#include "core/Version.h"
 #include "operations/SiteCreateOperation.h"
 #include "operations/SiteRemoveOperation.h"
 
@@ -208,7 +209,7 @@ bool ApiServer::start() {
     // GET endpoints
     router_.add("GET", "/api/version", [](const Request&) {
         Response r;
-        r.body = JsonFormatter::success(JsonFormatter::version("0.1.0"));
+        r.body = JsonFormatter::success(JsonFormatter::version(containercp::core::VERSION));
         return r;
     });
 

@@ -1,4 +1,5 @@
 #include "CommandDispatcher.h"
+#include "core/Version.h"
 #include "daemon/CommandProtocol.h"
 #include "daemon/UnixSocketClient.h"
 #include "utils/Validator.h"
@@ -6,12 +7,9 @@
 #include <iostream>
 #include <string>
 
-#include <iostream>
-#include <string>
-
 namespace {
 
-constexpr const char* VERSION = "0.1.0";
+constexpr const char* VERSION = containercp::core::VERSION;
 constexpr const char* SOCKET_PATH = "/srv/containercp/containercpd.sock";
 
 std::string send_command(const std::string& cmd_line) {
@@ -81,6 +79,9 @@ void print_help() {
         << "  site start <domain>     Start site stack\n"
         << "  site stop <domain>      Stop site stack\n"
         << "  site status <domain>    Show site status\n"
+        << "  profile list            List profiles\n"
+        << "  profile show <name>     Show profile details\n"
+        << "  profile default         Show default profile\n"
         << "  template list           List templates\n"
         << "  template show <name>    Show template details\n"
         << "  template default        Show default template\n"
@@ -173,6 +174,10 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         return print_response(send_command("php-default"));
     }
 
+    if (argc == 5 && arg1 == "site" && std::string(argv[2]) == "create") {
+        return print_response(send_command("site-create|" + std::string(argv[3]) + "|" + std::string(argv[4])));
+    }
+
     if (argc == 3 && arg1 == "site" && std::string(argv[2]) == "list") {
         return print_response(send_command("site-list"));
     }
@@ -243,6 +248,18 @@ int CommandDispatcher::run(int argc, char* argv[]) {
 
     if (argc == 4 && arg1 == "access" && std::string(argv[2]) == "grant" && std::string(argv[3]) == "list") {
         return print_response(send_command("access-grant-list"));
+    }
+
+    if (argc == 3 && arg1 == "profile" && std::string(argv[2]) == "list") {
+        return print_response(send_command("profile-list"));
+    }
+
+    if (argc == 4 && arg1 == "profile" && std::string(argv[2]) == "show") {
+        return print_response(send_command("profile-show|" + std::string(argv[3])));
+    }
+
+    if (argc == 3 && arg1 == "profile" && std::string(argv[2]) == "default") {
+        return print_response(send_command("profile-default"));
     }
 
     if (argc == 3 && arg1 == "template" && std::string(argv[2]) == "list") {
