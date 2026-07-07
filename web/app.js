@@ -10,6 +10,10 @@ async function api(path, opts) {
   }
 }
 
+async function apiPost(path, body) {
+  return api(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+}
+
 /* ===== TOAST ===== */
 function toast(msg, type) {
   let c = document.getElementById('toast-container');
@@ -37,7 +41,6 @@ function qsa(s) { return document.querySelectorAll(s); }
 let currentPage = 'dashboard';
 let searchTerm = '';
 
-/* ===== NAVIGATION ===== */
 function navigate(page, params) {
   currentPage = page;
   qsa('.nav-link').forEach(l => l.classList.toggle('active', l.dataset.page === (page === 'site-detail' ? 'sites' : page)));
@@ -48,16 +51,16 @@ function loadPage(page, params) {
   const p = $('page');
   p.scrollTop = 0;
   if (page === 'dashboard') loadDashboard(p);
-  else if (page === 'sites' || page === 'sites-refresh') loadSites(p);
+  else if (page === 'sites') loadSites(p);
   else if (page === 'site-detail') loadSiteDetail(p, params);
   else if (page === 'domains') loadDomains(p);
   else if (page === 'databases') loadDatabases(p);
   else if (page === 'ssl') loadSsl(p);
   else if (page === 'proxy') loadProxy(p);
   else if (page === 'access') loadAccess(p);
+  else if (page === 'backups') loadBackups(p);
   else if (page === 'profiles') loadProfiles(p);
   else if (page === 'templates') loadTemplates(p);
-  else if (page === 'backups') loadBackups(p);
   else if (page === 'nodes') loadNodes(p);
   else if (page === 'logs') loadLogs(p);
   else if (page === 'settings') loadSettings(p);
@@ -66,51 +69,45 @@ function loadPage(page, params) {
 /* ===== DASHBOARD ===== */
 async function loadDashboard(p) {
   try {
-    const [health, sites, domains, databases, ssl, proxy, access, users, nodes] = await Promise.all([
-      api('/api/health'), api('/api/sites'), api('/api/domains'),
-      api('/api/databases'), api('/api/ssl'), api('/api/proxy'),
-      api('/api/access-users'), api('/api/users')
+    const [health, sites, jobs] = await Promise.all([
+      api('/api/health'), api('/api/sites'), api('/api/jobs')
     ]);
     const ok = health.data?.status === 'ok';
+    const recentJobs = (jobs.data||[]).slice(-5).reverse();
     p.innerHTML = `
       <div class="page-header"><h1>Dashboard</h1></div>
       <div class="cards">
-        ${card('Sites', sites.data?.length||0,'#6366f1')}
-        ${card('Domains', domains.data?.length||0,'#3b82f6')}
-        ${card('Databases', databases.data?.length||0,'#8b5cf6')}
-        ${card('SSL', ssl.data?.length||0,'#ec4899')}
-        ${card('Proxy', proxy.data?.length||0,'#06b6d4')}
-        ${card('Access', access.data?.length||0,'#f97316')}
-        ${card('Users', users.data?.length||0,'#22c55e')}
-        ${card('Nodes', nodes.data?.length||0,'#eab308')}
+        ${card('Sites', (sites.data||[]).length, '#6366f1')}
+        ${card('Domains', 0, '#3b82f6', 'loading...')}
+        ${card('Backups', 0, '#8b5cf6', 'loading...')}
+        ${card('SSL', 0, '#ec4899', 'loading...')}
       </div>
-      <div style="font-size:13px;color:var(--text2);margin-bottom:12px;font-weight:600;">System Health</div>
       <div class="health-grid">
-        ${healthItem('Daemon', ok)}
-        ${healthItem('REST API', ok)}
-        ${healthItem('Storage', true)}
-        ${healthItem('Runtime', ok)}
-        ${healthItem('Proxy Service', true)}
+        <div class="health-item"><div class="health-dot ${ok?'ok':'error'}"></div><div><div class="health-name">Daemon</div><div class="health-label">${ok?'Running':'Unavailable'}</div></div></div>
+        <div class="health-item"><div class="health-dot ok"></div><div><div class="health-name">REST API</div><div class="health-label">Online</div></div></div>
+        <div class="health-item"><div class="health-dot ok"></div><div><div class="health-name">Storage</div><div class="health-label">Loaded</div></div></div>
       </div>
-      <div style="font-size:13px;color:var(--text2);margin-bottom:12px;font-weight:600;">Recent Activity</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:12px;font-weight:600;">Recent Jobs</div>
       <div class="activity-list">
-        <div class="activity-item"><div class="activity-icon" style="background:var(--green)"></div><div class="activity-text">System started</div><div class="activity-time">just now</div></div>
-        <div class="activity-item"><div class="activity-icon" style="background:var(--blue)"></div><div class="activity-text">API server listening</div><div class="activity-time">just now</div></div>
-        <div class="activity-item"><div class="activity-icon" style="background:var(--yellow)"></div><div class="activity-text">${sites.data?.length||0} sites loaded</div><div class="activity-time">just now</div></div>
+        ${recentJobs.length ? recentJobs.map(j => `<div class="activity-item"><div class="activity-icon" style="background:${j.status==='completed'?'var(--green)':j.status==='failed'?'var(--red)':'var(--yellow)'}"></div><div class="activity-text">${esc(j.type)}: ${esc(j.message||j.status)}</div><div class="activity-time">${j.progress}%</div></div>`).join('') : '<div class="activity-item"><div class="activity-text" style="color:var(--text3)">No recent jobs</div></div>'}
       </div>`;
-  } catch (e) { p.innerHTML = '<div class="empty-state">Failed to load dashboard</div>'; }
+    // Load dynamic counts
+    Promise.all([api('/api/domains'), api('/api/backups'), api('/api/ssl')]).then(([d,b,s])=>{
+      const cards = qsa('.card .count');
+      if (cards.length >= 4) { cards[1].textContent = (d.data||[]).length; cards[1].className='count'+(cards[1].textContent==='0'?' zero':''); }
+      if (cards.length >= 4) { cards[2].textContent = (b.data||[]).length; cards[2].className='count'+(cards[2].textContent==='0'?' zero':''); }
+      if (cards.length >= 4) { cards[3].textContent = (s.data||[]).length; cards[3].className='count'+(cards[3].textContent==='0'?' zero':''); }
+    }).catch(()=>{});
+  } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load dashboard</div>'; }
 }
 
-function card(label, count, color) {
-  return `<div class="card"><div class="card-header"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg><h3>${label}</h3></div><div class="count${count===0?' zero':''}">${count}</div></div>`;
-}
-function healthItem(name, ok) {
-  return `<div class="health-item"><div class="health-dot ${ok?'ok':'error'}"></div><div><div class="health-name">${name}</div><div class="health-label">${ok?'Running':'Unavailable'}</div></div></div>`;
+function card(label, count, color, sub) {
+  return `<div class="card"><div class="card-header"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg><h3>${label}</h3></div><div class="count${count===0?' zero':''}">${sub||count}</div></div>`;
 }
 
 /* ===== TOOLBAR & TABLE ===== */
-function tb(title, placeholder) {
-  return `<div class="table-toolbar"><div style="font-weight:600;font-size:14px;">${title}</div><div class="search-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="text" placeholder="${placeholder||'Search...'}" oninput="searchTerm=this.value;window.renderTable&&renderTable()"></div></div>`;
+function tb(title) {
+  return `<div class="table-toolbar"><div style="font-weight:600;font-size:14px;">${title}</div><div class="search-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>&nbsp;<input type="text" placeholder="Search..." oninput="searchTerm=this.value;window.renderTable&&renderTable()"></div></div>`;
 }
 
 function buildTable(columns, rows, emptyMsg) {
@@ -121,12 +118,8 @@ function buildTable(columns, rows, emptyMsg) {
   return h;
 }
 
-function actionBtn(label, cls, onclick) {
-  return `<button class="btn btn-sm ${cls}" onclick="${onclick}">${label}</button>`;
-}
-
 /* ===== MODAL ===== */
-function showModal(title, bodyHtml) {
+function showModal(title, bodyHtml, width) {
   let overlay = document.getElementById('modal-overlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -135,36 +128,28 @@ function showModal(title, bodyHtml) {
     overlay.addEventListener('click', e => { if (e.target === overlay) hideModal(); });
     document.body.appendChild(overlay);
   }
-  overlay.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;width:480px;max-width:90vw;max-height:80vh;overflow-y:auto;">
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border);">
-      <h2 style="font-size:16px;font-weight:600;">${esc(title)}</h2>
-      <button class="btn-icon" onclick="hideModal()" style="font-size:18px;">&times;</button>
-    </div>
-    <div style="padding:20px;">${bodyHtml}</div>
-  </div>`;
+  overlay.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;width:${width||480}px;max-width:90vw;max-height:80vh;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border);"><h2 style="font-size:16px;font-weight:600;">${esc(title)}</h2><button class="btn-icon" onclick="hideModal()" style="font-size:18px;">&times;</button></div>
+    <div style="padding:20px;">${bodyHtml}</div></div>`;
   overlay.style.display = 'flex';
 }
 
-function hideModal() {
-  const o = document.getElementById('modal-overlay');
-  if (o) o.style.display = 'none';
-}
+function hideModal() { const o=document.getElementById('modal-overlay'); if(o)o.style.display='none'; }
 
 /* ===== SITES ===== */
 async function loadSites(p) {
   try {
     const data = await api('/api/sites');
-    p.innerHTML = `<div class="page-header"><h1>Sites</h1><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="showCreateSiteModal()">+ Create Site</button></div></div>`;
-    p.innerHTML += tb('All Sites','Search domains...');
+    p.innerHTML = `<div class="page-header"><h1>Sites</h1><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="showCreateSiteWizard()">+ Create Site</button></div></div>`;
+    p.innerHTML += tb('All Sites');
     window.renderTable = () => {
       const tbl = $('sites-table');
       if (!tbl) return;
       const filtered = (data.data||[]).filter(r => !searchTerm || r.domain.includes(searchTerm) || r.owner.includes(searchTerm));
       tbl.innerHTML = buildTable([
-        {label:'ID',html:r=>esc(r.id)},
         {label:'Domain',html:r=>`<a href="#" onclick="navigate('site-detail',${r.id});return false" style="color:var(--primary);text-decoration:none;">${esc(r.domain)}</a>`},
         {label:'Owner',html:r=>esc(r.owner)},
-        {label:'Actions',html:r=>`<button class="btn-icon" onclick="navigate('site-detail',${r.id})" title="View">&#128065;</button><button class="btn-icon" title="Start">&#9654;</button><button class="btn-icon" title="Stop">&#9646;&#9646;</button><button class="btn-icon" style="color:var(--red)" title="Remove" onclick="if(confirm('Remove ${esc(r.domain)}?'))toast('Site removed (mock)','warn')">&#10005;</button>`}
+        {label:'Actions',html:r=>`<button class="btn-icon" onclick="navigate('site-detail',${r.id})" title="View">&#128065;</button><button class="btn-icon" style="color:var(--red)" title="Remove" onclick="removeSite('${esc(r.domain)}')">&#10005;</button>`}
       ], filtered, 'No sites');
     };
     p.innerHTML += `<div id="sites-table"></div>`;
@@ -172,37 +157,65 @@ async function loadSites(p) {
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load sites</div>'; }
 }
 
-function showCreateSiteModal() {
-  showModal('Create Site', `
-    <div style="display:grid;gap:12px;">
-      <div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Owner</label><input id="cs-owner" class="modal-input" placeholder="admin" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;"></div>
-      <div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Domain</label><input id="cs-domain" class="modal-input" placeholder="example.com" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;"></div>
-      <div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Template</label><select id="cs-template" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;"><option value="">Default (nginx-php-default)</option></select></div>
-      <button class="btn btn-primary" onclick="createSite()" style="margin-top:8px;">Create Site</button>
-    </div>`);
+async function removeSite(domain) {
+  if (!confirm('Remove site '+domain+'? This cannot be undone.')) return;
+  try {
+    const res = await apiPost('/api/sites/remove', {domain});
+    if (res.success) { toast('Site removed: '+domain, 'success'); loadSites($('page')); }
+    else toast('Error: '+res.error, 'error');
+  } catch(e) { toast('Network error', 'error'); }
 }
 
-async function createSite() {
-  const owner = $('cs-owner').value.trim();
-  const domain = $('cs-domain').value.trim();
-  if (!owner || !domain) { toast('Owner and domain required', 'error'); return; }
+/* ===== SITE CREATION WIZARD ===== */
+function showCreateSiteWizard() {
+  showModal('Create Site', `
+    <div style="display:grid;gap:14px;">
+      <div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Owner</label><input id="wiz-owner" value="admin" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" oninput="document.getElementById('wiz-owner-err').textContent=''"><div id="wiz-owner-err" style="color:var(--red);font-size:11px;margin-top:2px;"></div></div>
+      <div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Domain</label><input id="wiz-domain" placeholder="example.com" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" oninput="document.getElementById('wiz-domain-err').textContent=''"><div id="wiz-domain-err" style="color:var(--red);font-size:11px;margin-top:2px;"></div></div>
+      <button class="btn btn-primary" onclick="startSiteWizard()">Create Site</button>
+    </div>`, 420);
+}
+
+async function startSiteWizard() {
+  const owner = $('wiz-owner').value.trim();
+  const domain = $('wiz-domain').value.trim();
+  let valid = true;
+  if (!owner) { $('wiz-owner-err').textContent = 'Owner is required'; valid = false; }
+  if (!domain) { $('wiz-domain-err').textContent = 'Domain is required'; valid = false; }
+  else if (!domain.includes('.')) { $('wiz-domain-err').textContent = 'Domain must contain a dot'; valid = false; }
+  if (!valid) return;
+
   hideModal();
+
+  // Show progress overlay
+  const overlay = document.createElement('div');
+  overlay.id = 'progress-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9500;display:flex;flex-direction:column;align-items:center;justify-content:center;';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:30px;width:400px;max-width:90vw;">
+      <h3 style="margin-bottom:16px;">Deploying ${esc(domain)}</h3>
+      <div style="height:8px;background:var(--bg3);border-radius:4px;overflow:hidden;margin-bottom:12px;"><div id="progress-bar" style="height:100%;width:0%;background:var(--primary);border-radius:4px;transition:width .3s;"></div></div>
+      <div id="progress-step" style="font-size:13px;color:var(--text2);margin-bottom:4px;">Starting...</div>
+      <div id="progress-status" style="font-size:11px;color:var(--text3);"></div>
+    </div>`;
+  document.body.appendChild(overlay);
+
   try {
-    const res = await fetch('/api/sites/create', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({owner, domain})
-    });
-    const data = await res.json();
-    if (data.success) {
-      toast('Site created: ' + domain, 'success');
-      // Reload sites page
-      loadPage('sites');
+    const res = await apiPost('/api/sites/create', {owner, domain});
+    if (res.success) {
+      $('progress-bar').style.width = '100%';
+      $('progress-step').textContent = 'Site created successfully';
+      $('progress-status').textContent = 'Completed';
+      setTimeout(() => { document.getElementById('progress-overlay')?.remove(); navigate('sites'); }, 1500);
     } else {
-      toast('Error: ' + (data.error || 'Unknown error'), 'error');
+      $('progress-step').textContent = 'Error: ' + (res.error||'Unknown');
+      $('progress-status').textContent = 'Failed';
+      $('progress-bar').style.background = 'var(--red)';
     }
   } catch(e) {
-    toast('Network error: ' + e.message, 'error');
+    $('progress-step').textContent = 'Network error';
+    $('progress-status').textContent = 'Failed';
+    $('progress-bar').style.background = 'var(--red)';
   }
 }
 
@@ -214,103 +227,191 @@ async function loadSiteDetail(p, siteId) {
     if (!site) { p.innerHTML = '<div class="empty-state">Site not found</div>'; return; }
     p.innerHTML = `
       <div class="page-header">
-        <h1><a href="#" onclick="navigate('sites');return false" style="color:var(--text2);text-decoration:none;">&larr; Sites</a> / ${esc(site.domain)}</h1>
-        <div class="page-actions"><button class="btn btn-sm">&#9654; Start</button><button class="btn btn-sm">&#9646;&#9646; Stop</button><button class="btn btn-sm btn-danger">Remove</button></div>
+        <h1><a href="#" onclick="navigate('sites');return false" style="color:var(--text2);text-decoration:none;">&larr;</a> ${esc(site.domain)}</h1>
+        <div class="page-actions"><button class="btn btn-sm btn-danger" onclick="removeSite('${esc(site.domain)}')">Remove</button></div>
       </div>
-      <div class="tabs" id="site-tabs">
-        <div class="tab active" data-tab="general">General</div>
-        <div class="tab" data-tab="profiles">Profiles</div>
-        <div class="tab" data-tab="ssl">SSL</div>
-        <div class="tab" data-tab="proxy">Proxy</div>
-        <div class="tab" data-tab="access">Access</div>
+      <div class="details-panel" style="margin-bottom:16px;">
+        <div class="details-grid">
+          <div class="details-field"><div class="details-label">Domain</div><div class="details-value">${esc(site.domain)}</div></div>
+          <div class="details-field"><div class="details-label">Owner</div><div class="details-value">${esc(site.owner)}</div></div>
+          <div class="details-field"><div class="details-label">Node ID</div><div class="details-value">${site.node_id}</div></div>
+        </div>
       </div>
-      <div id="site-tab-content"></div>`;
-    qsa('#site-tabs .tab').forEach(t => {
-      t.addEventListener('click', () => {
-        qsa('#site-tabs .tab').forEach(x => x.classList.remove('active'));
-        t.classList.add('active');
-        renderSiteTab(t.dataset.tab, site);
-      });
-    });
-    renderSiteTab('general', site);
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;" id="site-rel"></div>`;
+    // Load related resources
+    const [domains, databases, ssl, proxy, backups] = await Promise.all([
+      api('/api/domains'), api('/api/databases'), api('/api/ssl'), api('/api/proxy'), api('/api/backups')
+    ]);
+    const rel = $('site-rel');
+    const related = [
+      {label:'Domains',items:(domains.data||[]).filter(d=>d.site_id==site.id).map(d=>d.domain),color:'#3b82f6'},
+      {label:'Databases',items:(databases.data||[]).filter(d=>d.site_id==site.id).map(d=>d.name),color:'#8b5cf6'},
+      {label:'SSL',items:(ssl.data||[]).filter(c=>c.site_id==site.id).map(c=>c.status),color:'#ec4899'},
+      {label:'Proxy',items:(proxy.data||[]).filter(p=>p.site_id==site.id).map(p=>p.status),color:'#06b6d4'},
+      {label:'Backups',items:(backups.data||[]).filter(b=>b.site_id==site.id).map(b=>b.filename),color:'#f97316'}
+    ];
+    rel.innerHTML = related.map(r => `<div class="card"><h3>${r.label}</h3><div class="count${r.items.length===0?' zero':''}">${r.items.length || 0}</div><div style="font-size:11px;color:var(--text3);margin-top:4px;">${r.items.slice(0,2).join(', ')}${r.items.length>2?'...':''}</div></div>`).join('');
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load site</div>'; }
-}
-
-function renderSiteTab(tab, site) {
-  const c = $('site-tab-content');
-  if (tab === 'general') {
-    c.innerHTML = `<div class="details-panel"><div class="details-grid">
-      <div class="details-field"><div class="details-label">ID</div><div class="details-value">${site.id}</div></div>
-      <div class="details-field"><div class="details-label">Domain</div><div class="details-value">${esc(site.domain)}</div></div>
-      <div class="details-field"><div class="details-label">Owner</div><div class="details-value">${esc(site.owner)}</div></div>
-      <div class="details-field"><div class="details-label">Node ID</div><div class="details-value">${site.node_id}</div></div>
-    </div></div>`;
-  } else {
-    c.innerHTML = `<div class="details-panel"><div class="empty-state">${tab} information will appear here</div></div>`;
-  }
 }
 
 /* ===== DOMAINS ===== */
 async function loadDomains(p) {
   try {
     const data = await api('/api/domains');
-    p.innerHTML = `<div class="page-header"><h1>Domains</h1><div class="page-actions"><button class="btn btn-primary btn-sm">+ Add Domain</button></div></div>`;
-    p.innerHTML += tb('All Domains') + buildTable([
-      {label:'ID',html:r=>esc(r.id)},
-      {label:'Domain',html:r=>esc(r.domain)},
-      {label:'Site ID',html:r=>esc(r.site_id)},
-      {label:'PHP',html:r=>esc(r.php_version)},
-      {label:'SSL',html:r=>r.ssl_enabled?'<span class="badge badge-ok">Enabled</span>':'<span class="badge badge-err">Disabled</span>'},
-      {label:'Actions',html:r=>actionBtn('View','',"toast('View domain','info')")}
-    ], (data.data||[]).filter(r=>!searchTerm||r.domain.includes(searchTerm)));
+    p.innerHTML = `<div class="page-header"><h1>Domains</h1></div>`;
+    p.innerHTML += tb('All Domains');
+    window.renderTable = () => {
+      const tbl = $('domains-table');
+      if (!tbl) return;
+      tbl.innerHTML = buildTable([
+        {label:'Domain',html:r=>esc(r.domain)},{label:'Site ID',html:r=>esc(r.site_id)},{label:'SSL',html:r=>r.ssl_enabled?'<span class="badge badge-ok">Enabled</span>':'<span class="badge badge-err">Disabled</span>'},
+        {label:'Actions',html:r=>`<button class="btn-icon" style="color:var(--red)" onclick="removeDomain('${esc(r.domain)}')">&#10005;</button>`}
+      ], (data.data||[]).filter(r=>!searchTerm||r.domain.includes(searchTerm)));
+    };
+    p.innerHTML += `<div id="domains-table"></div>`;
+    window.renderTable();
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load domains</div>'; }
+}
+
+async function removeDomain(domain) {
+  if (!confirm('Remove domain '+domain+'?')) return;
+  try { const res = await apiPost('/api/domains/remove',{domain}); if(res.success){toast('Domain removed','success');loadDomains($('page'));}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
 }
 
 /* ===== DATABASES ===== */
 async function loadDatabases(p) {
   try {
     const data = await api('/api/databases');
-    p.innerHTML = `<div class="page-header"><h1>Databases</h1><div class="page-actions"><button class="btn btn-primary btn-sm">+ Create Database</button></div></div>`;
-    p.innerHTML += tb('All Databases') + buildTable([
-      {label:'ID',html:r=>esc(r.id)},{label:'Name',html:r=>esc(r.name)},{label:'Engine',html:r=>esc(r.engine)},{label:'Site ID',html:r=>esc(r.site_id)},{label:'Enabled',html:r=>r.enabled?'<span class="badge badge-ok">Yes</span>':'<span class="badge badge-err">No</span>'},{label:'Actions',html:r=>actionBtn('View','',"toast('View database','info')")}
-    ], data.data||[]);
+    p.innerHTML = `<div class="page-header"><h1>Databases</h1></div>`;
+    p.innerHTML += tb('All Databases');
+    window.renderTable = () => {
+      const tbl = $('dbs-table');
+      if (!tbl) return;
+      tbl.innerHTML = buildTable([
+        {label:'Name',html:r=>esc(r.name)},{label:'Engine',html:r=>esc(r.engine)},{label:'Site ID',html:r=>esc(r.site_id)},
+        {label:'Actions',html:r=>`<button class="btn-icon" style="color:var(--red)" onclick="removeDatabase('${esc(r.name)}')">&#10005;</button>`}
+      ], data.data||[]);
+    };
+    p.innerHTML += `<div id="dbs-table"></div>`;
+    window.renderTable();
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load databases</div>'; }
+}
+
+async function removeDatabase(name) {
+  if (!confirm('Remove database?')) return;
+  try { const res = await apiPost('/api/databases/remove',{name}); if(res.success){toast('Database removed','success');loadDatabases($('page'));}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
 }
 
 /* ===== SSL ===== */
 async function loadSsl(p) {
   try {
     const data = await api('/api/ssl');
-    p.innerHTML = `<div class="page-header"><h1>SSL Certificates</h1><div class="page-actions"><button class="btn btn-primary btn-sm">+ Request Certificate</button></div></div>`;
-    p.innerHTML += tb('All Certificates') + buildTable([
-      {label:'ID',html:r=>esc(r.id)},{label:'Domain',html:r=>esc(r.domain)},{label:'Provider',html:r=>esc(r.provider)},{label:'Status',html:r=>{let m={active:'badge-ok',requested:'badge-warn',placeholder:'badge-info'};return `<span class="badge ${m[r.status]||'badge-err'}">${esc(r.status)}</span>`;}},{label:'Expires',html:r=>esc(r.expires_at)},{label:'Actions',html:r=>actionBtn('Renew','',"toast('Renew certificate','info')")}
-    ], data.data||[]);
+    p.innerHTML = `<div class="page-header"><h1>SSL Certificates</h1></div>`;
+    p.innerHTML += tb('All Certificates');
+    window.renderTable = () => {
+      const tbl = $('ssl-table');
+      if (!tbl) return;
+      tbl.innerHTML = buildTable([
+        {label:'Domain',html:r=>esc(r.domain)},{label:'Provider',html:r=>esc(r.provider)},
+        {label:'Status',html:r=>{let m={active:'badge-ok',requested:'badge-warn',placeholder:'badge-info',disabled:'badge-err'};return `<span class="badge ${m[r.status]||'badge-err'}">${esc(r.status)}</span>`;}},
+        {label:'Actions',html:r=>`<button class="btn-icon" onclick="toggleSsl('${esc(r.domain)}',${!r.enabled})" title="${r.enabled?'Disable':'Enable'}">${r.enabled?'&#9646;&#9646;':'&#9654;'}</button><button class="btn-icon" style="color:var(--red)" onclick="removeSsl('${esc(r.domain)}')">&#10005;</button>`}
+      ], data.data||[]);
+    };
+    p.innerHTML += `<div id="ssl-table"></div>`;
+    window.renderTable();
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load SSL</div>'; }
+}
+
+async function toggleSsl(domain, enable) {
+  const ep = enable ? '/api/ssl/enable' : '/api/ssl/disable';
+  try { const res = await apiPost(ep,{domain}); if(res.success){toast('SSL '+(enable?'enabled':'disabled'),'success');loadSsl($('page'));}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
+}
+async function removeSsl(domain) {
+  if (!confirm('Remove SSL certificate?')) return;
+  try { const res = await apiPost('/api/ssl/remove',{domain}); if(res.success){toast('SSL removed','success');loadSsl($('page'));}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
 }
 
 /* ===== PROXY ===== */
 async function loadProxy(p) {
   try {
     const data = await api('/api/proxy');
-    p.innerHTML = `<div class="page-header"><h1>Reverse Proxy</h1><div class="page-actions"><button class="btn btn-primary btn-sm">+ Add Proxy</button></div></div>`;
-    p.innerHTML += tb('All Proxy Configs') + buildTable([
-      {label:'ID',html:r=>esc(r.id)},{label:'Domain',html:r=>esc(r.domain)},{label:'Provider',html:r=>esc(r.provider)},{label:'Status',html:r=>esc(r.status)},{label:'Enabled',html:r=>r.enabled?'<span class="badge badge-ok">Yes</span>':'<span class="badge badge-err">No</span>'},{label:'Actions',html:r=>actionBtn('Open','',"toast('Open proxy config','info')")}
-    ], data.data||[]);
+    p.innerHTML = `<div class="page-header"><h1>Reverse Proxy</h1></div>`;
+    p.innerHTML += tb('All Proxy Configs');
+    window.renderTable = () => {
+      const tbl = $('proxy-table');
+      if (!tbl) return;
+      tbl.innerHTML = buildTable([
+        {label:'Domain',html:r=>esc(r.domain)},{label:'Provider',html:r=>esc(r.provider)},{label:'Status',html:r=>esc(r.status)},
+        {label:'Actions',html:r=>`<button class="btn-icon" style="color:var(--red)" onclick="removeProxy('${esc(r.domain)}')">&#10005;</button>`}
+      ], data.data||[]);
+    };
+    p.innerHTML += `<div id="proxy-table"></div>`;
+    window.renderTable();
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load proxy</div>'; }
+}
+
+async function removeProxy(domain) {
+  if (!confirm('Remove proxy config?')) return;
+  try { const res = await apiPost('/api/proxy/remove',{domain}); if(res.success){toast('Proxy removed','success');loadProxy($('page'));}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
 }
 
 /* ===== ACCESS ===== */
 async function loadAccess(p) {
   try {
     const data = await api('/api/access-users');
-    p.innerHTML = `<div class="page-header"><h1>Access Users</h1><div class="page-actions"><button class="btn btn-primary btn-sm">+ Create User</button></div></div>`;
-    p.innerHTML += tb('All Access Users') + buildTable([
-      {label:'ID',html:r=>esc(r.id)},{label:'Username',html:r=>esc(r.username)},{label:'Enabled',html:r=>r.enabled?'<span class="badge badge-ok">Yes</span>':'<span class="badge badge-err">No</span>'},{label:'Actions',html:r=>actionBtn('Disable','',"toast('Toggle user','info')")}
-    ], data.data||[]);
+    p.innerHTML = `<div class="page-header"><h1>Access Users</h1></div>`;
+    p.innerHTML += tb('All Access Users');
+    window.renderTable = () => {
+      const tbl = $('access-table');
+      if (!tbl) return;
+      tbl.innerHTML = buildTable([
+        {label:'Username',html:r=>esc(r.username)},{label:'Enabled',html:r=>r.enabled?'<span class="badge badge-ok">Yes</span>':'<span class="badge badge-err">No</span>'},
+        {label:'Actions',html:r=>`<button class="btn-icon" style="color:var(--red)" onclick="removeAccessUser('${esc(r.username)}')">&#10005;</button>`}
+      ], data.data||[]);
+    };
+    p.innerHTML += `<div id="access-table"></div>`;
+    window.renderTable();
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load access users</div>'; }
 }
 
-/* ===== PROFILES ===== */
+async function removeAccessUser(username) {
+  if (!confirm('Remove access user?')) return;
+  try { const res = await apiPost('/api/access-users/remove',{username}); if(res.success){toast('User removed','success');loadAccess($('page'));}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
+}
+
+/* ===== BACKUPS ===== */
+async function loadBackups(p) {
+  try {
+    const data = await api('/api/backups');
+    p.innerHTML = `<div class="page-header"><h1>Backups</h1><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="showBackupModal()">+ Create Backup</button></div></div>`;
+    p.innerHTML += tb('All Backups') + buildTable([
+      {label:'Filename',html:r=>esc(r.filename)},{label:'Size',html:r=>esc(r.size)+' bytes'},{label:'Status',html:r=>{let m={completed:'badge-ok',failed:'badge-err'};return `<span class="badge ${m[r.status]||'badge-info'}">${esc(r.status)}</span>`;}},{label:'Date',html:r=>esc(r.created_at)},
+      {label:'Actions',html:r=>r.status==='completed'?`<button class="btn-icon" title="Restore">&#8635;</button><button class="btn-icon" style="color:var(--red)" onclick="removeBackup(${r.id})">&#10005;</button>`:''}
+    ], data.data||[]);
+  } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load backups</div>'; }
+}
+
+function showBackupModal() {
+  showModal('Create Backup', '<div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Domain</label><input id="bk-domain" placeholder="example.com" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;"></div><button class="btn btn-primary" onclick="createBackup()" style="margin-top:12px;">Create Backup</button>', 400);
+}
+
+async function createBackup() {
+  const domain = $('bk-domain').value.trim();
+  if (!domain) { toast('Domain required', 'error'); return; }
+  hideModal();
+  try {
+    const res = await apiPost('/api/backups/create',{domain});
+    if (res.success) { toast('Backup created: '+res.data.filename, 'success'); loadBackups($('page')); }
+    else toast('Error: '+(res.error||'Unknown'), 'error');
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+async function removeBackup(id) {
+  if (!confirm('Remove backup?')) return;
+  const res = await apiPost('/api/backups/remove',{id});
+}
+
+/* ===== PROFILES, TEMPLATES, NODES, LOGS, SETTINGS ===== */
 async function loadProfiles(p) {
   try {
     const data = await api('/api/profiles');
@@ -321,88 +422,37 @@ async function loadProfiles(p) {
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load profiles</div>'; }
 }
 
-/* ===== TEMPLATES ===== */
 async function loadTemplates(p) {
   try {
     const data = await api('/api/profiles');
     const web = (data.data||[]).filter(r => r.type === 'web_server');
-    p.innerHTML = `<div class="page-header"><h1>Web Server Templates</h1><div class="page-actions"><button class="btn btn-sm">Validate All</button><button class="btn btn-sm">Reload</button></div></div>`;
+    p.innerHTML = `<div class="page-header"><h1>Web Server Templates</h1></div>`;
     p.innerHTML += tb('Templates') + buildTable([
       {label:'Name',html:r=>esc(r.name)},{label:'Web Server',html:r=>esc(r.web_server)},{label:'Valid',html:r=>'<span class="badge badge-ok">Valid</span>'}
     ], web, 'No templates');
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load templates</div>'; }
 }
 
-/* ===== BACKUPS ===== */
-async function loadBackups(p) {
-  try {
-    const data = await api('/api/backups');
-    p.innerHTML = `<div class="page-header"><h1>Backups</h1><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="showBackupModal()">+ Create Backup</button></div></div>`;
-    p.innerHTML += tb('All Backups') + buildTable([
-      {label:'ID',html:r=>esc(r.id)},
-      {label:'Filename',html:r=>esc(r.filename)},
-      {label:'Site ID',html:r=>esc(r.site_id)},
-      {label:'Size',html:r=>esc(r.size)+' bytes'},
-      {label:'Status',html:r=>{let m={completed:'badge-ok',failed:'badge-err'};return `<span class="badge ${m[r.status]||'badge-info'}">${esc(r.status)}</span>`;}},
-      {label:'Date',html:r=>esc(r.created_at)}
-    ], data.data||[]);
-  } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load backups</div>'; }
-}
-
-function showBackupModal() {
-  showModal('Create Backup', `
-    <div style="display:grid;gap:12px;">
-      <div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Domain</label><input id="bk-domain" placeholder="example.com" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;"></div>
-      <button class="btn btn-primary" onclick="createBackup()">Create Backup</button>
-    </div>`);
-}
-
-async function createBackup() {
-  const domain = $('bk-domain').value.trim();
-  if (!domain) { toast('Domain required', 'error'); return; }
-  hideModal();
-  try {
-    const res = await fetch('/api/backups/create', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({domain})
-    });
-    const data = await res.json();
-    if (data.success) {
-      toast('Backup created: ' + data.data.filename, 'success');
-      loadPage('backups');
-    } else {
-      toast('Error: ' + (data.error || 'Unknown'), 'error');
-    }
-  } catch(e) { toast('Network error', 'error'); }
-}
-
-/* ===== NODES ===== */
 async function loadNodes(p) {
-  p.innerHTML = `<div class="page-header"><h1>Nodes</h1></div>
-    <div class="health-grid"><div class="health-item"><div class="health-dot ok"></div><div><div class="health-name">local</div><div class="health-label">Local node (default)</div></div></div></div>`;
   try {
     const data = await api('/api/nodes');
-    p.innerHTML += `<div style="margin-top:16px">${tb('Node Details')}${buildTable([
+    p.innerHTML = `<div class="page-header"><h1>Nodes</h1></div>`;
+    p.innerHTML += tb('Node Details') + buildTable([
       {label:'ID',html:r=>esc(r.id)},{label:'Name',html:r=>esc(r.name)},{label:'Type',html:r=>esc(r.type)}
-    ], data.data||[], 'No nodes')}</div>`;
-  } catch(e) { /* nodes may not be available */ }
+    ], data.data||[], 'No nodes');
+  } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load nodes</div>'; }
 }
 
-/* ===== LOGS ===== */
 async function loadLogs(p) {
   try {
     const data = await api('/api/logs');
     p.innerHTML = `<div class="page-header"><h1>Logs</h1><div class="page-actions"><button class="btn btn-sm" onclick="loadLogs($('page'))">Refresh</button></div></div>`;
-    p.innerHTML += tb('System Logs','Filter logs...') + buildTable([
-      {label:'Time',html:r=>esc(r.time)},
-      {label:'Level',html:r=>{let m={info:'badge-info',warn:'badge-warn',error:'badge-err'};return `<span class="badge ${m[r.level]||'badge-info'}">${esc(r.level)}</span>`;}},
-      {label:'Message',html:r=>esc(r.message)}
+    p.innerHTML += tb('System Logs') + buildTable([
+      {label:'Time',html:r=>esc(r.time)},{label:'Level',html:r=>{let m={info:'badge-info',warn:'badge-warn',error:'badge-err'};return `<span class="badge ${m[r.level]||'badge-info'}">${esc(r.level)}</span>`;}},{label:'Message',html:r=>esc(r.message)}
     ], data.data||[], 'No logs');
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load logs</div>'; }
 }
 
-/* ===== SETTINGS ===== */
 async function loadSettings(p) {
   p.innerHTML = `<div class="page-header"><h1>Settings</h1></div>
     <div class="details-panel"><div class="details-grid">
@@ -436,8 +486,7 @@ async function updateStatus() {
 /* ===== SEARCH ===== */
 document.addEventListener('input', e => {
   if (e.target.closest('.search-box input')) {
-    const val = e.target.value;
-    searchTerm = val;
+    searchTerm = e.target.value;
     if (window.renderTable) window.renderTable();
   }
 });

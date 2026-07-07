@@ -339,13 +339,37 @@ bool ApiServer::start() {
         return r;
     });
 
-    router_.add("GET", "/api/jobs", [&s](const Request&) {
+    // Job listing: GET /api/jobs  and  GET /api/jobs?id=123
+    auto job_handler = [&s](const Request& req) {
         Response r;
-        auto& jobs = s.jobs().list();
+        // Check if id query param is present
+        auto it = req.query.find("id");
+        if (it != req.query.end()) {
+            uint64_t id = std::stoull(it->second);
+            auto* job = s.jobs().find(id);
+            if (!job) {
+                r.status_code = 404;
+                r.body = "{\"success\":false,\"error\":\"Job not found\"}";
+                return r;
+            }
+            std::ostringstream json;
+            json << "{\"success\":true,\"data\":{"
+                 << "\"id\":" << job->id
+                 << ",\"type\":\"" << JsonFormatter::escape(job->type)
+                 << "\",\"status\":\"" << JsonFormatter::escape(job->status)
+                 << "\",\"progress\":" << job->progress
+                 << ",\"current_step\":" << job->current_step
+                 << ",\"message\":\"" << JsonFormatter::escape(job->message)
+                 << "\",\"created_at\":\"" << JsonFormatter::escape(job->created_at)
+                 << "\"}}";
+            r.body = json.str();
+            return r;
+        }
+        // List all jobs
         std::ostringstream json;
         json << "{\"success\":true,\"data\":[";
         bool first = true;
-        for (const auto& j : jobs) {
+        for (const auto& j : s.jobs().list()) {
             if (!first) json << ",";
             first = false;
             json << "{\"id\":" << j.id
@@ -359,7 +383,8 @@ bool ApiServer::start() {
         json << "]}";
         r.body = json.str();
         return r;
-    });
+    };
+    router_.add("GET", "/api/jobs", job_handler);
 
     // POST endpoints
     router_.add("POST", "/api/sites/create", [&s](const Request& req) {
@@ -473,6 +498,86 @@ bool ApiServer::start() {
         json << "{\"success\":true,\"data\":{\"filename\":\"" << filename << "\",\"size\":" << size << "}}";
         r.body = json.str();
         return r;
+    });
+
+    // Resource CRUD endpoints
+    auto remove_resource = [&s](const std::string& type, const std::string& name) -> Response {
+        Response r;
+        if (type == "domain") {
+            auto* domain = s.domains().find(name);
+            if (!domain) { r.body = "{\"success\":false,\"error\":\"Not found\"}"; return r; }
+            s.domains().remove(domain->id);
+        } else if (type == "database") {
+            auto* db = s.databases().find(name);
+            if (!db) { r.body = "{\"success\":false,\"error\":\"Not found\"}"; return r; }
+            s.databases().remove(db->id);
+        } else if (type == "ssl") {
+            auto* cert = s.ssl().find_by_domain(name);
+            if (!cert) { r.body = "{\"success\":false,\"error\":\"Not found\"}"; return r; }
+            s.ssl().remove(cert->id);
+        } else if (type == "proxy") {
+            auto* p = s.reverse_proxies().find_by_domain(name);
+            if (!p) { r.body = "{\"success\":false,\"error\":\"Not found\"}"; return r; }
+            s.reverse_proxies().remove(p->id);
+        } else if (type == "access-user") {
+            auto* u = s.access_users().find(name);
+            if (!u) { r.body = "{\"success\":false,\"error\":\"Not found\"}"; return r; }
+            s.access_users().remove(u->id);
+        } else {
+            r.body = "{\"success\":false,\"error\":\"Unknown type\"}";
+            return r;
+        }
+        s.save();
+        r.body = "{\"success\":true,\"data\":{\"message\":\"Removed\"}}";
+        return r;
+    };
+
+    auto modify_ssl = [&s](const std::string& domain, bool enable) -> Response {
+        Response r;
+        auto* cert = s.ssl().find_by_domain(domain);
+        if (!cert) { r.body = "{\"success\":false,\"error\":\"SSL not found\"}"; return r; }
+        cert->enabled = enable;
+        if (enable) cert->status = "active";
+        else cert->status = "disabled";
+        s.save();
+        r.body = enable ? "{\"success\":true,\"data\":{\"message\":\"SSL enabled\"}}"
+                        : "{\"success\":true,\"data\":{\"message\":\"SSL disabled\"}}";
+        return r;
+    };
+
+    router_.add("POST", "/api/domains/remove", [&s, &remove_resource](const Request& req) {
+        std::string domain = json_extract(req.body, "domain");
+        return remove_resource("domain", domain);
+    });
+
+    router_.add("POST", "/api/databases/remove", [&s, &remove_resource](const Request& req) {
+        std::string name = json_extract(req.body, "name");
+        return remove_resource("database", name);
+    });
+
+    router_.add("POST", "/api/ssl/remove", [&s, &remove_resource](const Request& req) {
+        std::string domain = json_extract(req.body, "domain");
+        return remove_resource("ssl", domain);
+    });
+
+    router_.add("POST", "/api/proxy/remove", [&s, &remove_resource](const Request& req) {
+        std::string domain = json_extract(req.body, "domain");
+        return remove_resource("proxy", domain);
+    });
+
+    router_.add("POST", "/api/access-users/remove", [&s, &remove_resource](const Request& req) {
+        std::string username = json_extract(req.body, "username");
+        return remove_resource("access-user", username);
+    });
+
+    router_.add("POST", "/api/ssl/enable", [&s, &modify_ssl](const Request& req) {
+        std::string domain = json_extract(req.body, "domain");
+        return modify_ssl(domain, true);
+    });
+
+    router_.add("POST", "/api/ssl/disable", [&s, &modify_ssl](const Request& req) {
+        std::string domain = json_extract(req.body, "domain");
+        return modify_ssl(domain, false);
     });
 
     // Accept loop
