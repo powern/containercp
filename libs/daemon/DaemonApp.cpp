@@ -140,6 +140,29 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         return Command::success(out.str());
     }
 
+    if (cmd.name == "site-start" && cmd.args.size() >= 1) {
+        auto* site = s.sites().find(cmd.args[0]);
+        if (!site) return Command::error("Site not found");
+        auto result = s.hosting_provider().start_site(*site);
+        s.save();
+        return result.success ? Command::success("Site started") : Command::error(result.message);
+    }
+
+    if (cmd.name == "site-stop" && cmd.args.size() >= 1) {
+        auto* site = s.sites().find(cmd.args[0]);
+        if (!site) return Command::error("Site not found");
+        auto result = s.hosting_provider().stop_site(*site);
+        s.save();
+        return result.success ? Command::success("Site stopped") : Command::error(result.message);
+    }
+
+    if (cmd.name == "site-status" && cmd.args.size() >= 1) {
+        auto* site = s.sites().find(cmd.args[0]);
+        if (!site) return Command::error("Site not found");
+        auto result = s.hosting_provider().status(*site);
+        return result.success ? Command::success("Status OK") : Command::error(result.message);
+    }
+
     if (cmd.name == "database-list") {
         auto& databases = s.databases().list();
         std::ostringstream out;
@@ -166,15 +189,6 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         s.databases().remove(db->id);
         s.save();
         return Command::success("Database removed: " + cmd.args[0]);
-    }
-
-    if (cmd.name == "backup-list") {
-        auto& backups = s.backups().list();
-        std::ostringstream out;
-        for (const auto& b : backups) {
-            out << b.id << " " << b.filename << " " << b.status << "\n";
-        }
-        return Command::success(out.str());
     }
 
     if (cmd.name == "ssl-list") {

@@ -177,6 +177,18 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         return print_response(send_command("site-list"));
     }
 
+    if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "start") {
+        return print_response(send_command("site-start|" + std::string(argv[3])));
+    }
+
+    if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "stop") {
+        return print_response(send_command("site-stop|" + std::string(argv[3])));
+    }
+
+    if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "status") {
+        return print_response(send_command("site-status|" + std::string(argv[3])));
+    }
+
     if (argc == 3 && arg1 == "database" && std::string(argv[2]) == "list") {
         return print_response(send_command("database-list"));
     }
