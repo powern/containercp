@@ -41,7 +41,7 @@ int handle_site_create(const std::string& owner, const std::string& domain) {
         return 1;
     }
 
-    containercp::operations::SiteCreateOperation op(services.sites(), services.nodes(), services.filesystem(), services.config(), services.runtime());
+    containercp::operations::SiteCreateOperation op(services.sites(), services.nodes(), services.hosting_provider());
     auto result = op.execute(owner, domain, *node);
 
     if (result.success) {
@@ -55,7 +55,12 @@ int handle_site_create(const std::string& owner, const std::string& domain) {
 
 int handle_site_start(const std::string& domain) {
     auto& services = containercp::core::Application::instance().services();
-    auto result = services.runtime().start_site(domain);
+    auto* site = services.sites().find(domain);
+    if (site == nullptr) {
+        std::cout << "Site not found: " << domain << "\n";
+        return 1;
+    }
+    auto result = services.hosting_provider().start_site(*site);
     if (result.success) {
         std::cout << "Site started:\n" << domain << "\n";
     } else {
@@ -66,7 +71,12 @@ int handle_site_start(const std::string& domain) {
 
 int handle_site_stop(const std::string& domain) {
     auto& services = containercp::core::Application::instance().services();
-    auto result = services.runtime().stop_site(domain);
+    auto* site = services.sites().find(domain);
+    if (site == nullptr) {
+        std::cout << "Site not found: " << domain << "\n";
+        return 1;
+    }
+    auto result = services.hosting_provider().stop_site(*site);
     if (result.success) {
         std::cout << "Site stopped:\n" << domain << "\n";
     } else {
@@ -77,7 +87,12 @@ int handle_site_stop(const std::string& domain) {
 
 int handle_site_status(const std::string& domain) {
     auto& services = containercp::core::Application::instance().services();
-    auto result = services.runtime().status(domain);
+    auto* site = services.sites().find(domain);
+    if (site == nullptr) {
+        std::cout << "Site not found: " << domain << "\n";
+        return 1;
+    }
+    auto result = services.hosting_provider().status(*site);
     if (!result.success) {
         std::cout << result.message << "\n";
     }

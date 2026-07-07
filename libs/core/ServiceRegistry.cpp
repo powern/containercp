@@ -7,6 +7,7 @@ ServiceRegistry::ServiceRegistry()
     , logger_(logger::Logger::instance())
     , storage_(config_.data_root() + "/database/")
     , runtime_(logger_, config_.data_root() + "/sites/")
+    , hosting_provider_(filesystem_, config_, runtime_)
 {
     auto loaded_nodes = storage_.load_nodes();
     if (loaded_nodes.empty()) {
@@ -50,6 +51,10 @@ filesystem::Filesystem& ServiceRegistry::filesystem() {
 
 runtime::Runtime& ServiceRegistry::runtime() {
     return runtime_;
+}
+
+provider::HostingProvider& ServiceRegistry::hosting_provider() {
+    return hosting_provider_;
 }
 
 void ServiceRegistry::save() {

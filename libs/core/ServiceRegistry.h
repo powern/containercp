@@ -5,6 +5,7 @@
 #include "core/ResourceManager.h"
 #include "filesystem/Filesystem.h"
 #include "logger/Logger.h"
+#include "provider/DockerComposeProvider.h"
 #include "runtime/DockerRuntime.h"
 #include "site/SiteManager.h"
 #include "storage/Storage.h"
@@ -19,6 +20,7 @@ public:
     site::SiteManager& sites();
     filesystem::Filesystem& filesystem();
     runtime::Runtime& runtime();
+    provider::HostingProvider& hosting_provider();
     void save();
 
 private:
@@ -32,6 +34,7 @@ private:
     storage::Storage storage_;
     filesystem::Filesystem filesystem_;
     runtime::DockerRuntime runtime_;
+    provider::DockerComposeProvider hosting_provider_;
 };
 
 } // namespace containercp::core

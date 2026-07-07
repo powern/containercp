@@ -2,12 +2,10 @@
 
 namespace containercp::operations {
 
-SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, core::ResourceManager& nodes, filesystem::Filesystem& fs, config::Config& cfg, runtime::Runtime& rt)
+SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, core::ResourceManager& nodes, provider::HostingProvider& provider)
     : sites_(sites)
     , nodes_(nodes)
-    , fs_(fs)
-    , cfg_(cfg)
-    , rt_(rt)
+    , provider_(provider)
 {
 }
 
@@ -24,21 +22,15 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
         return {false, "Site already exists."};
     }
 
+    site::Site site;
+    site.name = domain;
+    site.domain = domain;
+    site.owner = owner;
+    site.node_id = node.id;
+
     sites_.create(domain, owner, node.id);
 
-    std::string site_dir = cfg_.data_root() + "/sites/" + domain + "/";
-    fs_.create_directory(site_dir);
-    fs_.create_file(site_dir + "README.txt", "This site is managed by ContainerCP.\n");
-
-    docker::ComposeGenerator gen(fs_, cfg_.config_root() + "/templates/");
-    gen.generate(domain, owner, site_dir + "docker-compose.yml");
-
-    auto result = rt_.create_site_stack(domain);
-    if (!result.success) {
-        return result;
-    }
-
-    return {true, ""};
+    return provider_.create_site(site);
 }
 
 } // namespace containercp::operations
