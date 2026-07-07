@@ -81,162 +81,165 @@ Validation: ContainerCP can be built and installed on a clean Debian 13 (Trixie)
 
 | 35 | `http://0.0.0.0:8081/` loads (external Web UI) | [ ] | |
 | 36 | Port 8081 rejects `/api/*` with 403 | [ ] | |
+| 37 | Port 8081 returns 401 without auth header | [ ] | |
+| 38 | Port 8081 `/ui-api/api/health` returns valid JSON (with auth) | [ ] | |
+| 39 | `/etc/containercp/ui-password` exists and is non-empty | [ ] | |
 
 
 ## CLI
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 37 | `containercp --help` lists all commands | [ ] | |
-| 38 | `containercp --version` shows version | [ ] | |
-| 39 | `containercp node list` shows "local" | [ ] | |
-| 40 | `containercp user list` shows "admin" | [ ] | |
-| 41 | CLI connects to daemon via UNIX socket | [ ] | |
-| 42 | CLI shows friendly error when daemon is not running | [ ] | |
+| 40 | `containercp --help` lists all commands | [ ] | |
+| 41 | `containercp --version` shows version | [ ] | |
+| 42 | `containercp node list` shows "local" | [ ] | |
+| 43 | `containercp user list` shows "admin" | [ ] | |
+| 44 | CLI connects to daemon via UNIX socket | [ ] | |
+| 45 | CLI shows friendly error when daemon is not running | [ ] | |
 
 ## Site Management
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 43 | `containercp site create admin demo.local` succeeds | [ ] | |
-| 44 | Site appears in `site list` | [ ] | |
-| 45 | Domain appears in `domain list` | [ ] | |
-| 46 | Database appears in `database list` | [ ] | |
-| 47 | Second `site create` with same domain fails with "already exists" | [ ] | |
-| 48 | Site directory created at `/srv/containercp/sites/demo.local/` | [ ] | |
-| 49 | Reverse proxy record created in `proxy list` | [ ] | |
-| 50 | Multiple sites can coexist | [ ] | |
-| 51 | Site creation validates domain format | [ ] | |
-| 52 | Site creation validates owner format | [ ] | |
+| 46 | `containercp site create admin demo.local` succeeds | [ ] | |
+| 47 | Site appears in `site list` | [ ] | |
+| 48 | Domain appears in `domain list` | [ ] | |
+| 49 | Database appears in `database list` | [ ] | |
+| 50 | Second `site create` with same domain fails with "already exists" | [ ] | |
+| 51 | Site directory created at `/srv/containercp/sites/demo.local/` | [ ] | |
+| 52 | Reverse proxy record created in `proxy list` | [ ] | |
+| 53 | Multiple sites can coexist | [ ] | |
+| 54 | Site creation validates domain format | [ ] | |
+| 55 | Site creation validates owner format | [ ] | |
 
 ## Docker Compose
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 53 | `docker-compose.yml` generated in site directory | [ ] | |
-| 54 | `.env` file contains database credentials | [ ] | |
-| 55 | nginx container starts | [ ] | |
-| 56 | php container starts | [ ] | |
-| 57 | mariadb container starts | [ ] | |
-| 58 | redis container starts | [ ] | |
-| 59 | All containers reach "healthy" status | [ ] | |
-| 60 | `containercp site stop demo.local` stops containers | [ ] | |
-| 61 | `containercp site start demo.local` starts containers | [ ] | |
-| 62 | `containercp site status demo.local` shows container state | [ ] | |
+| 56 | `docker-compose.yml` generated in site directory | [ ] | |
+| 57 | `.env` file contains database credentials | [ ] | |
+| 58 | nginx container starts | [ ] | |
+| 59 | php container starts | [ ] | |
+| 60 | mariadb container starts | [ ] | |
+| 61 | redis container starts | [ ] | |
+| 62 | All containers reach "healthy" status | [ ] | |
+| 63 | `containercp site stop demo.local` stops containers | [ ] | |
+| 64 | `containercp site start demo.local` starts containers | [ ] | |
+| 65 | `containercp site status demo.local` shows container state | [ ] | |
 
 ## Web Server
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 63 | Nginx config generated at `config/nginx/default.conf` | [ ] | |
-| 64 | Proxy config generated at `/srv/containercp/proxy/sites/demo.local.conf` | [ ] | |
-| 65 | PHP upstream points to `php:9000` | [ ] | |
-| 66 | Web root points to `/var/www/html` | [ ] | |
-| 67 | HTTP request returns valid response | [ ] | |
+| 66 | Nginx config generated at `config/nginx/default.conf` | [ ] | |
+| 67 | Proxy config generated at `/srv/containercp/proxy/sites/demo.local.conf` | [ ] | |
+| 68 | PHP upstream points to `php:9000` | [ ] | |
+| 69 | Web root points to `/var/www/html` | [ ] | |
+| 70 | HTTP request returns valid response | [ ] | |
 
 ## SSL
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 68 | `containercp ssl request demo.local` creates certificate | [ ] | |
-| 69 | Certificate appears in `ssl list` | [ ] | |
-| 70 | Certificate status is "active" | [ ] | |
-| 71 | `ssl show demo.local` shows certificate details | [ ] | |
-| 72 | `ssl renew demo.local` updates certificate | [ ] | |
-| 73 | `ssl revoke demo.local` removes certificate | [ ] | |
+| 71 | `containercp ssl request demo.local` creates certificate | [ ] | |
+| 72 | Certificate appears in `ssl list` | [ ] | |
+| 73 | Certificate status is "active" | [ ] | |
+| 74 | `ssl show demo.local` shows certificate details | [ ] | |
+| 75 | `ssl renew demo.local` updates certificate | [ ] | |
+| 76 | `ssl revoke demo.local` removes certificate | [ ] | |
 
 ## Access
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 74 | `containercp access user create developer demo.local` succeeds | [ ] | |
-| 75 | User appears in `access user list` | [ ] | |
-| 76 | Grant record created for the site | [ ] | |
-| 77 | `access user disable developer` marks user disabled | [ ] | |
-| 78 | `access user enable developer` marks user enabled | [ ] | |
-| 79 | `access user remove developer` removes user and grants | [ ] | |
+| 77 | `containercp access user create developer demo.local` succeeds | [ ] | |
+| 78 | User appears in `access user list` | [ ] | |
+| 79 | Grant record created for the site | [ ] | |
+| 80 | `access user disable developer` marks user disabled | [ ] | |
+| 81 | `access user enable developer` marks user enabled | [ ] | |
+| 82 | `access user remove developer` removes user and grants | [ ] | |
 
 ## Database
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 80 | Database record has unique credentials | [ ] | |
-| 81 | `.env` DB_NAME matches database record | [ ] | |
-| 82 | `.env` DB_USER matches database record | [ ] | |
-| 83 | `.env` DB_PASSWORD matches database record | [ ] | |
+| 83 | Database record has unique credentials | [ ] | |
+| 84 | `.env` DB_NAME matches database record | [ ] | |
+| 85 | `.env` DB_USER matches database record | [ ] | |
+| 86 | `.env` DB_PASSWORD matches database record | [ ] | |
 
 ## Backup and Restore
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 84 | `containercp backup create demo.local` creates backup file | [ ] | |
-| 85 | Backup file exists at `/srv/containercp/backups/` | [ ] | |
-| 86 | Backup record appears in `backup list` | [ ] | |
-| 87 | `backup show <id>` shows correct metadata | [ ] | |
-| 88 | `backup restore <id>` restores files | [ ] | |
-| 89 | `backup remove <id>` removes file and record | [ ] | |
+| 87 | `containercp backup create demo.local` creates backup file | [ ] | |
+| 88 | Backup file exists at `/srv/containercp/backups/` | [ ] | |
+| 89 | Backup record appears in `backup list` | [ ] | |
+| 90 | `backup show <id>` shows correct metadata | [ ] | |
+| 91 | `backup restore <id>` restores files | [ ] | |
+| 92 | `backup remove <id>` removes file and record | [ ] | |
 
 ## Template Profiles
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 90 | `template list` shows 5 web server profiles | [ ] | |
-| 91 | `template show nginx-php-default` shows profile details | [ ] | |
-| 92 | `template default` shows nginx-php-default | [ ] | |
-| 93 | `template path` returns `/etc/containercp/templates/web/` | [ ] | |
-| 94 | `template validate nginx-php-default` returns "valid" | [ ] | |
-| 95 | `template reload` succeeds without error | [ ] | |
+| 93 | `template list` shows 5 web server profiles | [ ] | |
+| 94 | `template show nginx-php-default` shows profile details | [ ] | |
+| 95 | `template default` shows nginx-php-default | [ ] | |
+| 96 | `template path` returns `/etc/containercp/templates/web/` | [ ] | |
+| 97 | `template validate nginx-php-default` returns "valid" | [ ] | |
+| 98 | `template reload` succeeds without error | [ ] | |
 
 ## Site Removal
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 96 | `containercp site remove demo.local --force` succeeds | [ ] | |
-| 97 | Site directory is deleted | [ ] | |
-| 98 | Site record removed from `site list` | [ ] | |
-| 99 | Domain records removed | [ ] | |
-| 100 | Database records removed | [ ] | |
-| 101 | Reverse proxy record removed | [ ] | |
-| 102 | Backup files removed | [ ] | |
-| 103 | Docker containers stopped and removed | [ ] | |
-| 104 | No orphan resources remain | [ ] | |
-| 105 | `site remove non-existent` returns "not found" | [ ] | |
+| 99 | `containercp site remove demo.local --force` succeeds | [ ] | |
+| 100 | Site directory is deleted | [ ] | |
+| 101 | Site record removed from `site list` | [ ] | |
+| 102 | Domain records removed | [ ] | |
+| 103 | Database records removed | [ ] | |
+| 104 | Reverse proxy record removed | [ ] | |
+| 105 | Backup files removed | [ ] | |
+| 106 | Docker containers stopped and removed | [ ] | |
+| 107 | No orphan resources remain | [ ] | |
+| 108 | `site remove non-existent` returns "not found" | [ ] | |
 
 ## Web UI Operations
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 106 | Dashboard shows correct site count after creation | [ ] | |
-| 107 | Dashboard shows correct site count after removal | [ ] | |
-| 108 | Sites page lists all sites | [ ] | |
-| 109 | Clicking site domain opens detail page | [ ] | |
-| 110 | Site detail shows correct metadata | [ ] | |
-| 111 | Backups page shows created backup | [ ] | |
-| 112 | Create Site modal validates inputs | [ ] | |
-| 113 | Web UI recovers from daemon restart | [ ] | |
+| 109 | Dashboard shows correct site count after creation | [ ] | |
+| 110 | Dashboard shows correct site count after removal | [ ] | |
+| 111 | Sites page lists all sites | [ ] | |
+| 112 | Clicking site domain opens detail page | [ ] | |
+| 113 | Site detail shows correct metadata | [ ] | |
+| 114 | Backups page shows created backup | [ ] | |
+| 115 | Create Site modal validates inputs | [ ] | |
+| 116 | Web UI recovers from daemon restart | [ ] | |
 
 ## Stability
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 114 | Daemon runs continuously for 24 hours | [ ] | |
-| 115 | No memory leaks detected (stable RSS) | [ ] | |
-| 116 | No zombie processes | [ ] | |
-| 117 | API responds within 500ms for all endpoints | [ ] | |
-| 118 | No orphan files in `/srv/containercp/` | [ ] | |
-| 119 | No orphan Docker containers | [ ] | |
-| 120 | No orphan Docker volumes | [ ] | |
-| 121 | Daemon logs contain no ERROR messages during normal operation | [ ] | |
-| 122 | Clean shutdown (SIGTERM) | [ ] | |
+| 117 | Daemon runs continuously for 24 hours | [ ] | |
+| 118 | No memory leaks detected (stable RSS) | [ ] | |
+| 119 | No zombie processes | [ ] | |
+| 120 | API responds within 500ms for all endpoints | [ ] | |
+| 121 | No orphan files in `/srv/containercp/` | [ ] | |
+| 122 | No orphan Docker containers | [ ] | |
+| 123 | No orphan Docker volumes | [ ] | |
+| 124 | Daemon logs contain no ERROR messages during normal operation | [ ] | |
+| 125 | Clean shutdown (SIGTERM) | [ ] | |
 
 ## Regression
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 123 | All unit tests pass (`ctest`) | [ ] | |
-| 124 | Zero compiler warnings (Debug) | [ ] | |
-| 125 | Zero compiler warnings (Release) | [ ] | |
-| 126 | No new warnings introduced | [ ] | |
+| 126 | All unit tests pass (`ctest`) | [ ] | |
+| 127 | Zero compiler warnings (Debug) | [ ] | |
+| 128 | Zero compiler warnings (Release) | [ ] | |
+| 129 | No new warnings introduced | [ ] | |
 
 ---
 
@@ -248,7 +251,7 @@ Validation: ContainerCP can be built and installed on a clean Debian 13 (Trixie)
 | Installation | 10 | 0 | 0 | 10 |
 | Configuration | 6 | 0 | 0 | 6 |
 | REST API | 8 | 0 | 0 | 8 |
-| Web UI | 9 | 0 | 0 | 9 |
+| Web UI | 12 | 0 | 0 | 12 |
 | CLI | 6 | 0 | 0 | 6 |
 | Site Management | 10 | 0 | 0 | 10 |
 | Docker Compose | 10 | 0 | 0 | 10 |
@@ -262,7 +265,7 @@ Validation: ContainerCP can be built and installed on a clean Debian 13 (Trixie)
 | Web UI Operations | 8 | 0 | 0 | 8 |
 | Stability | 9 | 0 | 0 | 9 |
 | Regression | 4 | 0 | 0 | 4 |
-| **Total** | **126** | **0** | **0** | **126** |
+| **Total** | **129** | **0** | **0** | **129** |
 
 ---
 

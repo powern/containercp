@@ -44,7 +44,7 @@ int main(int argc, char* argv[]) {
     api_thread.detach();
 
     // Start Web UI server on public address (background thread)
-    containercp::api::WebServer web_server(services, "0.0.0.0", ui_port);
+    containercp::api::WebServer web_server(services, "0.0.0.0", ui_port, api_port);
     std::thread web_thread([&web_server]() {
         web_server.start();
     });
@@ -81,7 +81,8 @@ int main(int argc, char* argv[]) {
     services.logger().info("Daemon: Listening on " + socket_path);
     services.logger().info("Daemon: REST API on 127.0.0.1:" + std::to_string(api_port));
     services.logger().info("Daemon: Web UI on 0.0.0.0:" + std::to_string(ui_port));
-    services.logger().info("Daemon: Web UI API calls go to 127.0.0.1:" + std::to_string(api_port));
+    services.logger().info("Daemon: Web UI API proxy /ui-api/* -> 127.0.0.1:" + std::to_string(api_port));
+    services.logger().info("Daemon: Web UI basic auth enabled (admin / /etc/containercp/ui-password)");
 
     containercp::daemon::DaemonApp daemon(services);
 

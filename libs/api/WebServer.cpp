@@ -8,23 +8,109 @@
 #include <netinet/in.h>
 #include <sstream>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
-
+#include <random>
 
 namespace containercp::api {
 
-WebServer::WebServer(core::ServiceRegistry& services, const std::string& bind_addr, int port)
+WebServer::WebServer(core::ServiceRegistry& services, const std::string& bind_addr, int port, int api_port)
     : bind_addr_(bind_addr)
     , port_(port)
+    , api_port_(api_port)
     , services_(services)
 {
 }
 
-void WebServer::handle_client(int client_fd, WebServer* server) {
-    Request req = server->parse_request(client_fd);
+void WebServer::load_password() {
+    std::string dir = services_.config().config_root();
+    std::string path = dir + "/ui-password";
 
-    // Reject API paths — API is only on localhost
+    ::mkdir(dir.c_str(), 0755);
+
+    std::ifstream f(path);
+    if (f.is_open()) {
+        std::getline(f, password_);
+        f.close();
+        return;
+    }
+
+    std::string chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dist(0, chars.size() - 1);
+    password_.reserve(16);
+    for (int i = 0; i < 16; ++i) {
+        password_ += chars[dist(gen)];
+    }
+
+    std::ofstream of(path);
+    if (of.is_open()) {
+        of << password_ << std::endl;
+        of.close();
+    }
+
+    services_.logger().info("WebUI password generated: " + password_);
+}
+
+bool WebServer::check_auth(const Request& req) const {
+    auto it = req.headers.find("Authorization");
+    if (it == req.headers.end()) {
+        return false;
+    }
+
+    const std::string creds = "admin:" + password_;
+    static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string encoded;
+    size_t i = 0;
+    while (i < creds.size()) {
+        unsigned char c1 = creds[i++];
+        unsigned char c2 = (i < creds.size()) ? creds[i++] : 0;
+        unsigned char c3 = (i < creds.size()) ? creds[i++] : 0;
+        encoded += b64[c1 >> 2];
+        encoded += b64[((c1 & 0x3) << 4) | (c2 >> 4)];
+        encoded += (i - 1 < creds.size()) ? b64[((c2 & 0xf) << 2) | (c3 >> 6)] : '=';
+        encoded += (i < creds.size()) ? b64[c3 & 0x3f] : '=';
+    }
+
+    return it->second == "Basic " + encoded;
+}
+
+void WebServer::handle_client(int client_fd, WebServer* server) {
+    char buf[65536];
+    ssize_t n = ::read(client_fd, buf, sizeof(buf) - 1);
+    if (n <= 0) {
+        ::close(client_fd);
+        return;
+    }
+    buf[n] = '\0';
+    std::string raw(buf);
+
+    Request req = server->parse_request(raw);
+
+    if (!server->check_auth(req)) {
+        std::string body = "Unauthorized";
+        std::ostringstream resp;
+        resp << "HTTP/1.1 401 Unauthorized\r\n"
+             << "Content-Type: text/plain\r\n"
+             << "Content-Length: " << body.size() << "\r\n"
+             << "WWW-Authenticate: Basic realm=\"ContainerCP Web UI\"\r\n"
+             << "\r\n"
+             << body;
+        std::string resp_str = resp.str();
+        ::write(client_fd, resp_str.data(), resp_str.size());
+        ::close(client_fd);
+        return;
+    }
+
+    // Proxy UI API calls to internal API
+    if (req.path.find("/ui-api/") == 0) {
+        server->proxy_to_api(raw, client_fd);
+        return;
+    }
+
+    // Reject raw API paths
     if (req.path.find("/api/") == 0) {
         Response resp;
         resp.status_code = 403;
@@ -39,6 +125,59 @@ void WebServer::handle_client(int client_fd, WebServer* server) {
     Response resp = server->serve_static(req.path);
     std::string resp_str = resp.to_string();
     ::write(client_fd, resp_str.data(), resp_str.size());
+    ::close(client_fd);
+}
+
+void WebServer::proxy_to_api(const std::string& raw_request, int client_fd) {
+    int sock = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        ::close(client_fd);
+        return;
+    }
+
+    struct sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = ::inet_addr("127.0.0.1");
+    addr.sin_port = ::htons(api_port_);
+
+    if (::connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        std::string body = "{\"success\":false,\"error\":\"API unavailable\"}";
+        std::ostringstream resp;
+        resp << "HTTP/1.1 502 Bad Gateway\r\n"
+             << "Content-Type: application/json\r\n"
+             << "Content-Length: " << body.size() << "\r\n"
+             << "\r\n"
+             << body;
+        std::string resp_str = resp.str();
+        ::write(client_fd, resp_str.data(), resp_str.size());
+        ::close(sock);
+        ::close(client_fd);
+        return;
+    }
+
+    // Rewrite path in the first line: /ui-api/... -> /api/...
+    size_t sp1 = raw_request.find(' ');
+    size_t sp2 = raw_request.find(' ', sp1 + 1);
+    if (sp1 == std::string::npos || sp2 == std::string::npos) {
+        ::close(sock);
+        ::close(client_fd);
+        return;
+    }
+    std::string req_path = raw_request.substr(sp1 + 1, sp2 - sp1 - 1);
+    if (req_path.find("/ui-api") == 0) {
+        req_path = req_path.substr(7);
+    }
+    std::string rewritten = raw_request.substr(0, sp1 + 1) + req_path + raw_request.substr(sp2);
+
+    ::write(sock, rewritten.data(), rewritten.size());
+
+    char resp_buf[65536];
+    ssize_t resp_n;
+    while ((resp_n = ::read(sock, resp_buf, sizeof(resp_buf))) > 0) {
+        ::write(client_fd, resp_buf, resp_n);
+    }
+
+    ::close(sock);
     ::close(client_fd);
 }
 
@@ -83,14 +222,9 @@ Response WebServer::serve_static(const std::string& path) const {
     return r;
 }
 
-Request WebServer::parse_request(int client_fd) const {
+Request WebServer::parse_request(const std::string& raw) const {
     Request req;
-    char buf[8192];
-    ssize_t n = ::read(client_fd, buf, sizeof(buf) - 1);
-    if (n <= 0) return req;
-    buf[n] = '\0';
-
-    std::istringstream stream(buf);
+    std::istringstream stream(raw);
     std::string line;
 
     if (!std::getline(stream, line)) return req;
@@ -128,6 +262,8 @@ Request WebServer::parse_request(int client_fd) const {
 }
 
 bool WebServer::start() {
+    load_password();
+
     server_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd_ < 0) {
         services_.logger().error("WebServer: Failed to create socket");

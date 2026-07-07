@@ -16,17 +16,23 @@ cmake --build build-release
 
 3. Open in browser:
 
-Local access (full functionality):
+Local access (full functionality, no auth):
 ```
 http://127.0.0.1:8080/
 ```
 
-External access (static UI only, use SSH tunnel for API):
+External access (with basic auth):
 ```
 http://<server-ip>:8081/
 ```
 
-For full external access, set up a reverse proxy or use SSH tunneling:
+Default credentials:
+- **Username:** `admin`
+- **Password:** Generated on first daemon start. Printed to daemon log.
+  Stored at `/etc/containercp/ui-password`. Set a custom password by
+  writing it to this file before starting the daemon.
+
+For SSH tunneling (bypasses basic auth):
 ```
 ssh -L 8080:127.0.0.1:8080 user@<server>
 ```

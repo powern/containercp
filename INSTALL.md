@@ -134,15 +134,40 @@ The daemon starts two HTTP listeners:
 | Port | Bind | Purpose | Access |
 |------|------|---------|--------|
 | 8080 | 127.0.0.1 | REST API + Web UI | Local access only |
-| 8081 | 0.0.0.0 | Web UI only (no API) | External network |
+| 8081 | 0.0.0.0 | Web UI with API proxy | External network |
 
-For local access (recommended), open:
+### Local access (recommended)
+
+Open in browser:
 
 ```
 http://127.0.0.1:8080/
 ```
 
-For external access from another machine, use SSH port forwarding:
+No authentication required for local access.
+
+### External access
+
+Open in browser:
+
+```
+http://<server-ip>:8081/
+```
+
+The external Web UI requires a username and password:
+
+- **Username:** `admin`
+- **Password:** Generated on first daemon start, printed to the daemon log.
+  Stored at `/etc/containercp/ui-password`. To set a custom password,
+  write it to this file before starting the daemon.
+
+The API proxy (`/ui-api/...`) forwards requests to the internal REST
+API on `127.0.0.1:8080`. The raw `/api/...` paths are explicitly
+rejected on port 8081 for security.
+
+### SSH forwarding (alternative)
+
+For command-line access without basic auth:
 
 ```
 ssh -L 8080:127.0.0.1:8080 user@<server>
@@ -150,12 +175,12 @@ ssh -L 8080:127.0.0.1:8080 user@<server>
 
 Then open `http://127.0.0.1:8080/` on your local machine.
 
-For production external access, set up a reverse proxy (nginx, Apache)
-that serves the static files from `/opt/containercp/web/` and proxies
-`/api/*` requests to `http://127.0.0.1:8080`.
+### Production reverse proxy
 
-The public Web UI port (8081) serves static files only. API calls from
-the browser will not work on this port for security reasons.
+For production, set up nginx or Apache to serve the static files
+from `/opt/containercp/web/` and proxy `/api/*` to
+`http://127.0.0.1:8080`. The public Web UI port (8081) is designed
+for development and small deployments.
 
 ## SSL certificates
 

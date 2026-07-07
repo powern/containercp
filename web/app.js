@@ -1,7 +1,9 @@
 /* ===== API ===== */
+const API_BASE = window.location.port === '8081' ? '/ui-api' : '';
+
 async function api(path, opts) {
   try {
-    const res = await fetch(path, opts);
+    const res = await fetch(API_BASE + path, opts);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return await res.json();
   } catch (e) {
