@@ -21,22 +21,26 @@ Items are ordered by priority within each category.
 
 ## Sprint 4 — Production Ready PHP Hosting
 
-- [ ] CCP-2001: Shared utility module
-- [ ] CCP-2002: Domain validation
-- [ ] CCP-2003: Username validation
-- [ ] CCP-2004: Site remove command
-- [ ] CCP-2005: Improve .env generation
-- [ ] CCP-2006: Dry-run mode
-- [ ] CCP-2007: Cache Docker availability
-- [ ] CCP-2008: Recovery support
+- [x] CCP-2001: Shared utility module
+- [x] CCP-2002: Domain validation
+- [x] CCP-2003: Username validation
+- [x] CCP-2004: Site remove command
+- [x] CCP-2005: Improve .env generation
+- [x] CCP-2006: Dry-run mode
+- [x] CCP-2007: Cache Docker availability
+- [x] CCP-2008: Recovery support
+
+## Sprint 5 — Tests and Reliability
+
+- [ ] CCP-3001: Add test framework
+- [ ] CCP-3002: Unit tests for Validator
+- [ ] CCP-3003: Unit tests for managers and Storage
+- [ ] CCP-3004: Fix filesystem rollback gap
+- [ ] CCP-3005: Add --force for site remove
+- [ ] CCP-3006: Improve validation error messages
 
 ## Future
 
-- [ ] Site remove command
-- [ ] Input validation (domain format, owner)
-- [ ] Error handling (Docker missing, disk full, etc.)
-- [ ] Docker availability check on startup
-- [ ] Basic test suite
 - [ ] SSL certificate generation (Let's Encrypt)
 - [ ] Reverse proxy integration (Traefik / Caddy)
 - [ ] User management CLI commands
