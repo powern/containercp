@@ -1,5 +1,44 @@
 # SFTP Provider Implementation Plan
 
+## AccessUser to Linux user mapping
+
+Each `AccessUser` resource will eventually map to a Linux system user
+when the SFTP provider is enabled.
+
+### Mapping rules
+
+```
+AccessUser.username  →  system user: au-<username>
+                      (prefixed with "au-" to avoid conflicts)
+
+AccessGrant.site_id  →  system group: site-<id>
+                      (one group per site, controls filesystem access)
+```
+
+### Example
+
+An AccessUser "developer" with grants to sites 1 and 3 would produce:
+
+```
+system user:  au-developer
+primary group: au-developer
+supplementary groups: site-1, site-3
+
+home directory: /srv/containercp/users/au-developer (chroot jail)
+```
+
+### Directory permissions
+
+```
+/srv/containercp/sites/<id>/     root:site-<id>  750
+/srv/containercp/sites/<id>/public/  site-<id>:site-<id>  770
+```
+
+### Key generation
+
+When the SFTP provider is enabled, each `AccessUser` without a
+`password_hash` will be assigned an SSH key pair automatically.
+
 ## Chroot strategy
 
 Each SFTP user will be chrooted to their site path using OpenSSH's

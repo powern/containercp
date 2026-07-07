@@ -70,7 +70,13 @@ void print_help() {
         << "  site status <domain>    Show site status\n"
         << "  access user create <username> <domain> Create access user\n"
         << "  access user list                       List access users\n"
-        << "  access user show <username>            Show access user\n";
+        << "  access user show <username>            Show access user\n"
+        << "  access user enable <username>          Enable access user\n"
+        << "  access user disable <username>         Disable access user\n"
+        << "  access user remove <username>          Remove access user\n"
+        << "  access grant create <username> <domain> <permission> Create grant\n"
+        << "  access grant list                      List grants\n"
+        << "  access grant remove <id>               Remove grant\n";
 }
 
 void print_version() {
@@ -591,6 +597,96 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         services.domains().remove(domain->id);
         containercp::core::Application::instance().save();
         std::cout << "Domain removed:\n" << argv[3] << "\n";
+        return 0;
+    }
+
+    if (argc == 5 && arg1 == "access" && std::string(argv[2]) == "user" && std::string(argv[3]) == "enable") {
+        auto* u = services.access_users().find(argv[4]);
+        if (u == nullptr) {
+            std::cout << "Access user not found: " << argv[4] << "\n";
+            return 1;
+        }
+        u->enabled = true;
+        containercp::core::Application::instance().save();
+        std::cout << "Access user enabled:\n" << argv[4] << "\n";
+        return 0;
+    }
+
+    if (argc == 5 && arg1 == "access" && std::string(argv[2]) == "user" && std::string(argv[3]) == "disable") {
+        auto* u = services.access_users().find(argv[4]);
+        if (u == nullptr) {
+            std::cout << "Access user not found: " << argv[4] << "\n";
+            return 1;
+        }
+        u->enabled = false;
+        containercp::core::Application::instance().save();
+        std::cout << "Access user disabled:\n" << argv[4] << "\n";
+        return 0;
+    }
+
+    if (argc == 5 && arg1 == "access" && std::string(argv[2]) == "user" && std::string(argv[3]) == "remove") {
+        auto* u = services.access_users().find(argv[4]);
+        if (u == nullptr) {
+            std::cout << "Access user not found: " << argv[4] << "\n";
+            return 1;
+        }
+        auto grants = services.access_grants().find_by_user(u->id);
+        for (auto* g : grants) {
+            services.access_grants().remove(g->id);
+        }
+        services.access_users().remove(u->id);
+        containercp::core::Application::instance().save();
+        std::cout << "Access user removed:\n" << argv[4] << "\n";
+        return 0;
+    }
+
+    if (argc == 7 && arg1 == "access" && std::string(argv[2]) == "grant" && std::string(argv[3]) == "create") {
+        auto* u = services.access_users().find(argv[4]);
+        if (u == nullptr) {
+            std::cout << "Access user not found: " << argv[4] << "\n";
+            return 1;
+        }
+        auto* domain = services.domains().find(argv[5]);
+        if (domain == nullptr) {
+            std::cout << "Domain not found: " << argv[5] << "\n";
+            return 1;
+        }
+        containercp::access::Permission perm = containercp::access::Permission::READ_WRITE;
+        std::string perm_str = argv[6];
+        if (perm_str == "read_only") perm = containercp::access::Permission::READ_ONLY;
+        else if (perm_str == "deploy") perm = containercp::access::Permission::DEPLOY;
+        services.access_grants().create(u->id, domain->site_id, perm);
+        containercp::core::Application::instance().save();
+        std::cout << "Grant created:\n"
+                  << "User: " << argv[4] << "\n"
+                  << "Domain: " << argv[5] << "\n"
+                  << "Permission: " << perm_str << "\n";
+        return 0;
+    }
+
+    if (argc == 5 && arg1 == "access" && std::string(argv[2]) == "grant" && std::string(argv[3]) == "remove") {
+        uint64_t gid = std::stoull(argv[4]);
+        if (services.access_grants().find(gid) == nullptr) {
+            std::cout << "Grant not found: " << gid << "\n";
+            return 1;
+        }
+        services.access_grants().remove(gid);
+        containercp::core::Application::instance().save();
+        std::cout << "Grant removed:\n" << gid << "\n";
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "access" && std::string(argv[2]) == "grant" && std::string(argv[3]) == "list") {
+        auto& grants = services.access_grants().list();
+        if (grants.empty()) {
+            std::cout << "No grants.\n";
+        } else {
+            for (const auto& g : grants) {
+                std::cout << g.id << " user=" << g.access_user_id
+                          << " site=" << g.site_id
+                          << " perm=" << containercp::access::permission_to_string(g.permission) << "\n";
+            }
+        }
         return 0;
     }
 
