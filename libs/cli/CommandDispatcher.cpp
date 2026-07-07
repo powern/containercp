@@ -31,7 +31,7 @@ void print_version() {
 namespace containercp::cli {
 
 int CommandDispatcher::run(int argc, char* argv[]) {
-    auto& app = core::Application::instance();
+    auto& services = core::Application::instance().services();
 
     if (argc == 1) {
         print_help();
@@ -57,7 +57,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
     }
 
     if (argc == 3 && arg1 == "config" && std::string(argv[2]) == "show") {
-        auto& cfg = app.config();
+        auto& cfg = services.config();
         std::cout << "SourceRoot : " << cfg.source_root() << "\n"
                   << "ConfigRoot : " << cfg.config_root() << "\n"
                   << "DataRoot   : " << cfg.data_root() << "\n"
@@ -68,7 +68,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
     if (argc == 4 && arg1 == "node" && std::string(argv[2]) == "show") {
         auto node = node::find_node(argv[3]);
         if (node.name.empty()) {
-            app.logger().error("node \"" + std::string(argv[3]) + "\" not found");
+            services.logger().error("node \"" + std::string(argv[3]) + "\" not found");
             return 1;
         }
         std::cout << "Name: " << node.name << "\n"
@@ -76,7 +76,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         return 0;
     }
 
-    app.logger().error("unknown command");
+    services.logger().error("unknown command");
     std::cout << "\n";
     print_help();
     return 1;

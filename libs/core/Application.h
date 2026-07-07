@@ -1,8 +1,7 @@
 #ifndef CONTAINERCP_CORE_APPLICATION_H
 #define CONTAINERCP_CORE_APPLICATION_H
 
-#include "config/Config.h"
-#include "logger/Logger.h"
+#include "core/ServiceRegistry.h"
 
 namespace containercp::core {
 
@@ -10,8 +9,7 @@ class Application {
 public:
     static Application& instance();
 
-    config::Config& config();
-    logger::Logger& logger();
+    ServiceRegistry& services();
 
 private:
     Application();
@@ -19,8 +17,7 @@ private:
     Application(const Application&) = delete;
     Application& operator=(const Application&) = delete;
 
-    config::Config& config_;
-    logger::Logger& logger_;
+    ServiceRegistry registry_;
 };
 
 } // namespace containercp::core

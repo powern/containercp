@@ -7,18 +7,10 @@ Application& Application::instance() {
     return app;
 }
 
-Application::Application()
-    : config_(config::Config::instance())
-    , logger_(logger::Logger::instance())
-{
-}
+Application::Application() = default;
 
-config::Config& Application::config() {
-    return config_;
-}
-
-logger::Logger& Application::logger() {
-    return logger_;
+ServiceRegistry& Application::services() {
+    return registry_;
 }
 
 } // namespace containercp::core
