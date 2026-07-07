@@ -271,6 +271,46 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         return Command::success(out.str());
     }
 
+    if (cmd.name == "template-path") {
+        return Command::success(s.config().web_templates_dir());
+    }
+
+    if (cmd.name == "template-reload") {
+        s.reload_template_profiles();
+        return Command::success("Templates reloaded");
+    }
+
+    if (cmd.name == "template-validate" && cmd.args.size() >= 1) {
+        auto* profile = s.template_profiles().find(cmd.args[0]);
+        if (!profile) return Command::error("Template profile not found: " + cmd.args[0]);
+
+        if (!s.filesystem().exists(profile->template_path)) {
+            return Command::error("Template file not found: " + profile->template_path);
+        }
+
+        std::string content = s.filesystem().read_file(profile->template_path);
+        if (content.empty()) return Command::error("Template file is empty");
+
+        const char* required_vars[] = {
+            "{{DOMAIN}}", "{{PUBLIC_ROOT}}", "{{PHP_UPSTREAM}}",
+            "{{LOG_ROOT}}", "{{SSL_ENABLED}}"
+        };
+
+        std::string missing;
+        for (const auto& var : required_vars) {
+            if (content.find(var) == std::string::npos) {
+                if (!missing.empty()) missing += ", ";
+                missing += var;
+            }
+        }
+
+        if (!missing.empty()) {
+            return Command::error("Missing required variables: " + missing);
+        }
+
+        return Command::success("Template is valid");
+    }
+
     return Command::error("Unknown command: " + cmd.name);
 }
 

@@ -213,4 +213,11 @@ void ServiceRegistry::save() {
     storage_.save_template_profiles(template_profiles_.list());
 }
 
+void ServiceRegistry::reload_template_profiles() {
+    auto loaded = storage_.load_template_profiles();
+    if (!loaded.empty()) {
+        template_profiles_.set_profiles(loaded);
+    }
+}
+
 } // namespace containercp::core

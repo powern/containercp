@@ -79,7 +79,10 @@ void print_help() {
         << "  site status <domain>    Show site status\n"
         << "  template list           List templates\n"
         << "  template show <name>    Show template details\n"
-        << "  template default        Show default template\n";
+        << "  template default        Show default template\n"
+        << "  template path           Show template directory\n"
+        << "  template validate <name> Validate template\n"
+        << "  template reload         Reload templates from disk\n";
 }
 
 void print_version() {
@@ -220,6 +223,18 @@ int CommandDispatcher::run(int argc, char* argv[]) {
 
     if (argc == 3 && arg1 == "template" && std::string(argv[2]) == "default") {
         return print_response(send_command("template-default"));
+    }
+
+    if (argc == 3 && arg1 == "template" && std::string(argv[2]) == "path") {
+        return print_response(send_command("template-path"));
+    }
+
+    if (argc == 3 && arg1 == "template" && std::string(argv[2]) == "reload") {
+        return print_response(send_command("template-reload"));
+    }
+
+    if (argc == 4 && arg1 == "template" && std::string(argv[2]) == "validate") {
+        return print_response(send_command("template-validate|" + std::string(argv[3])));
     }
 
     std::cout << "Error: unknown command\n\n";

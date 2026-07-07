@@ -50,6 +50,7 @@ public:
     runtime::Runtime& runtime();
     provider::HostingProvider& hosting_provider();
     void save();
+    void reload_template_profiles();
 
 private:
     friend class Application;
