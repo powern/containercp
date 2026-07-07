@@ -3,6 +3,7 @@
 
 #include <arpa/inet.h>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <netinet/in.h>
 #include <sstream>
@@ -29,10 +30,59 @@ void ApiServer::handle_client(int client_fd, ApiServer* server) {
         return;
     }
 
-    resp = server->router_.dispatch(req);
+    // Serve static files for non-API paths
+    if (req.path.find("/api/") != 0) {
+        resp = server->serve_static(req.path);
+    } else {
+        resp = server->router_.dispatch(req);
+    }
+
     std::string resp_str = resp.to_string();
     ::write(client_fd, resp_str.data(), resp_str.size());
     ::close(client_fd);
+}
+
+Response ApiServer::serve_static(const std::string& path) const {
+    std::string file_path = services_.config().source_root() + "/web";
+    if (path == "/" || path.empty()) {
+        file_path += "/index.html";
+    } else {
+        // Remove leading slash and prevent directory traversal
+        std::string clean = path.substr(1);
+        if (clean.find("..") != std::string::npos) {
+            Response r;
+            r.status_code = 403;
+            r.body = "Forbidden";
+            return r;
+        }
+        file_path += "/" + clean;
+    }
+
+    std::ifstream file(file_path, std::ios::binary);
+    if (!file.is_open()) {
+        Response r;
+        r.status_code = 404;
+        r.body = "Not found";
+        return r;
+    }
+
+    std::string content((std::istreambuf_iterator<char>(file)), {});
+
+    // Determine content type
+    std::string ext;
+    auto dot = file_path.find_last_of('.');
+    if (dot != std::string::npos) ext = file_path.substr(dot);
+
+    Response r;
+    r.status_code = 200;
+    r.body = content;
+    if (ext == ".css") r.content_type = "text/css";
+    else if (ext == ".js") r.content_type = "application/javascript";
+    else if (ext == ".png") r.content_type = "image/png";
+    else if (ext == ".ico") r.content_type = "image/x-icon";
+    else r.content_type = "text/html";
+
+    return r;
 }
 
 Request ApiServer::parse_request(int client_fd) const {
@@ -46,14 +96,12 @@ Request ApiServer::parse_request(int client_fd) const {
     std::istringstream stream(buf);
     std::string line;
 
-    // Parse request line: METHOD PATH HTTP/1.1
     if (!std::getline(stream, line)) return req;
     {
         std::istringstream line_stream(line);
         line_stream >> req.method >> req.path;
     }
 
-    // Parse headers
     while (std::getline(stream, line)) {
         if (line.empty() || line == "\r") break;
         if (line.back() == '\r') line.pop_back();
@@ -66,7 +114,6 @@ Request ApiServer::parse_request(int client_fd) const {
         }
     }
 
-    // Parse query string
     auto qpos = req.path.find('?');
     if (qpos != std::string::npos) {
         std::string qs = req.path.substr(qpos + 1);
@@ -80,7 +127,6 @@ Request ApiServer::parse_request(int client_fd) const {
         }
     }
 
-    // Read body
     auto it = req.headers.find("Content-Length");
     if (it != req.headers.end()) {
         int body_len = std::stoi(it->second);
@@ -123,10 +169,9 @@ bool ApiServer::start() {
     services_.logger().info("ApiServer: Listening on 127.0.0.1:" + std::to_string(port_));
 
     // Setup routes
-    auto& cfg = services_.config();
     auto& s = services_;
 
-    router_.add("GET", "/api/version", [&cfg](const Request&) {
+    router_.add("GET", "/api/version", [](const Request&) {
         Response r;
         r.body = JsonFormatter::success(JsonFormatter::version("0.1.0"));
         return r;
@@ -165,6 +210,33 @@ bool ApiServer::start() {
     router_.add("GET", "/api/ssl", [&s](const Request&) {
         Response r;
         r.body = JsonFormatter::success(JsonFormatter::ssl_certificates(s.ssl().list()));
+        return r;
+    });
+
+    router_.add("GET", "/api/databases", [&s](const Request&) {
+        Response r;
+        r.body = JsonFormatter::success(JsonFormatter::databases(s.databases().list()));
+        return r;
+    });
+
+    router_.add("GET", "/api/access-users", [&s](const Request&) {
+        Response r;
+        r.body = JsonFormatter::success(JsonFormatter::users(std::vector<user::User>()));
+        // Return access users via their own listing
+        auto& users = s.access_users().list();
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":[";
+        bool first = true;
+        for (const auto& u : users) {
+            if (!first) json << ",";
+            first = false;
+            json << "{\"id\":" << u.id
+                 << ",\"username\":\"" << u.username
+                 << "\",\"enabled\":" << (u.enabled ? "true" : "false")
+                 << "}";
+        }
+        json << "]}";
+        r.body = json.str();
         return r;
     });
 

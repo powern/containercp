@@ -21,6 +21,7 @@ public:
 
 private:
     static void handle_client(int client_fd, ApiServer* server);
+    Response serve_static(const std::string& path) const;
     Request parse_request(int client_fd) const;
 
     int port_;

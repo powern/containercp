@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ContainerCP Dashboard</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="logo">ContainerCP</div>
+    <nav class="nav">
+      <a href="#" class="nav-link active" data-page="dashboard">Dashboard</a>
+      <a href="#" class="nav-link" data-page="sites">Sites</a>
+      <a href="#" class="nav-link" data-page="users">Users</a>
+      <a href="#" class="nav-link" data-page="domains">Domains</a>
+      <a href="#" class="nav-link" data-page="databases">Databases</a>
+      <a href="#" class="nav-link" data-page="ssl">SSL</a>
+      <a href="#" class="nav-link" data-page="proxy">Proxy</a>
+      <a href="#" class="nav-link" data-page="access">Access</a>
+    </nav>
+  </aside>
+  <main class="main">
+    <header class="header">
+      <h1 id="page-title">Dashboard</h1>
+      <div class="status" id="status-badge">Checking...</div>
+    </header>
+    <div class="content" id="content">
+      <div class="cards" id="cards"></div>
+      <div class="table-container" id="table-container"></div>
+    </div>
+  </main>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

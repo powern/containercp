@@ -1,12 +1,13 @@
 #ifndef CONTAINERCP_API_JSON_FORMATTER_H
 #define CONTAINERCP_API_JSON_FORMATTER_H
 
-#include "site/Site.h"
-#include "user/User.h"
+#include "database/Database.h"
 #include "domain/Domain.h"
-#include "proxy/ReverseProxy.h"
-#include "ssl/SslCertificate.h"
 #include "node/Node.h"
+#include "proxy/ReverseProxy.h"
+#include "site/Site.h"
+#include "ssl/SslCertificate.h"
+#include "user/User.h"
 
 #include <string>
 #include <vector>
@@ -29,6 +30,7 @@ public:
     static std::string proxies(const std::vector<proxy::ReverseProxy>& proxies);
     static std::string ssl_certificates(const std::vector<ssl::SslCertificate>& certs);
     static std::string nodes(const std::vector<node::Node>& nodes);
+    static std::string databases(const std::vector<database::Database>& databases);
 
 private:
     static std::string escape(const std::string& s);

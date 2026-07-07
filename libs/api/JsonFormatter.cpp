@@ -156,4 +156,23 @@ std::string JsonFormatter::nodes(const std::vector<node::Node>& nodes) {
     return json.str();
 }
 
+std::string JsonFormatter::databases(const std::vector<database::Database>& databases) {
+    std::ostringstream json;
+    json << "[";
+    bool first = true;
+    for (const auto& d : databases) {
+        if (!first) json << ",";
+        first = false;
+        json << "{\"id\":" << d.id
+             << ",\"name\":\"" << escape(d.db_name)
+             << "\",\"user\":\"" << escape(d.db_user)
+             << "\",\"engine\":\"" << escape(d.engine)
+             << "\",\"site_id\":" << d.site_id
+             << ",\"enabled\":" << (d.enabled ? "true" : "false")
+             << "}";
+    }
+    json << "]";
+    return json.str();
+}
+
 } // namespace containercp::api
