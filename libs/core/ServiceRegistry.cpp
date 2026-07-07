@@ -6,7 +6,7 @@ ServiceRegistry::ServiceRegistry()
     : config_(config::Config::instance())
     , logger_(logger::Logger::instance())
     , storage_(config_.data_root() + "/database/")
-    , runtime_(logger_)
+    , runtime_(logger_, config_.data_root() + "/sites/")
 {
     auto loaded_nodes = storage_.load_nodes();
     if (loaded_nodes.empty()) {

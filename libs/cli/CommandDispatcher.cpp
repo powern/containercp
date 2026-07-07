@@ -22,11 +22,66 @@ void print_help() {
         << "  node list       List nodes\n"
         << "  node show <name> Show node details\n"
         << "  site list       List sites\n"
-        << "  site create <owner> <domain> Create site\n";
+        << "  site create <owner> <domain> Create site\n"
+        << "  site start <domain>     Start site stack\n"
+        << "  site stop <domain>      Stop site stack\n"
+        << "  site status <domain>    Show site status\n";
 }
 
 void print_version() {
     std::cout << "containercp " << VERSION << "\n";
+}
+
+int handle_site_create(const std::string& owner, const std::string& domain) {
+    auto& services = containercp::core::Application::instance().services();
+
+    auto* node = services.nodes().find("local");
+    if (node == nullptr) {
+        services.logger().error("no node available");
+        return 1;
+    }
+
+    containercp::operations::SiteCreateOperation op(services.sites(), services.nodes(), services.filesystem(), services.config(), services.runtime());
+    auto result = op.execute(owner, domain, *node);
+
+    if (result.success) {
+        containercp::core::Application::instance().save();
+        std::cout << "Site created:\n" << domain << "\n";
+    } else {
+        std::cout << result.message << "\n";
+    }
+    return result.success ? 0 : 1;
+}
+
+int handle_site_start(const std::string& domain) {
+    auto& services = containercp::core::Application::instance().services();
+    auto result = services.runtime().start_site(domain);
+    if (result.success) {
+        std::cout << "Site started:\n" << domain << "\n";
+    } else {
+        std::cout << result.message << "\n";
+    }
+    return result.success ? 0 : 1;
+}
+
+int handle_site_stop(const std::string& domain) {
+    auto& services = containercp::core::Application::instance().services();
+    auto result = services.runtime().stop_site(domain);
+    if (result.success) {
+        std::cout << "Site stopped:\n" << domain << "\n";
+    } else {
+        std::cout << result.message << "\n";
+    }
+    return result.success ? 0 : 1;
+}
+
+int handle_site_status(const std::string& domain) {
+    auto& services = containercp::core::Application::instance().services();
+    auto result = services.runtime().status(domain);
+    if (!result.success) {
+        std::cout << result.message << "\n";
+    }
+    return result.success ? 0 : 1;
 }
 
 } // anonymous namespace
@@ -81,22 +136,19 @@ int CommandDispatcher::run(int argc, char* argv[]) {
     }
 
     if (argc == 5 && arg1 == "site" && std::string(argv[2]) == "create") {
-        auto* node = services.nodes().find("local");
-        if (node == nullptr) {
-            services.logger().error("no node available");
-            return 1;
-        }
+        return handle_site_create(argv[3], argv[4]);
+    }
 
-        operations::SiteCreateOperation op(services.sites(), services.nodes(), services.filesystem(), services.config(), services.runtime());
-        auto result = op.execute(argv[3], argv[4], *node);
+    if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "start") {
+        return handle_site_start(argv[3]);
+    }
 
-        if (result.success) {
-            core::Application::instance().save();
-            std::cout << "Site created:\n" << argv[4] << "\n";
-        } else {
-            std::cout << result.message << "\n";
-        }
-        return result.success ? 0 : 1;
+    if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "stop") {
+        return handle_site_stop(argv[3]);
+    }
+
+    if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "status") {
+        return handle_site_status(argv[3]);
     }
 
     if (argc == 3 && arg1 == "site" && std::string(argv[2]) == "list") {

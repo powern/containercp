@@ -33,7 +33,10 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
     docker::ComposeGenerator gen(fs_, cfg_.config_root() + "/templates/");
     gen.generate(domain, owner, site_dir + "docker-compose.yml");
 
-    rt_.create_site_stack(domain);
+    auto result = rt_.create_site_stack(domain);
+    if (!result.success) {
+        return result;
+    }
 
     return {true, ""};
 }
