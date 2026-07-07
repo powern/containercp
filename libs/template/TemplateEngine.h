@@ -7,7 +7,17 @@ namespace containercp::template_engine {
 
 class TemplateEngine {
 public:
-    std::string render(const std::string& template_content, const std::string& domain, const std::string& owner, const std::string& php_image) const;
+    std::string render(const std::string& template_content,
+                       const std::string& domain,
+                       const std::string& owner,
+                       const std::string& php_image) const;
+
+    std::string render_web(const std::string& template_content,
+                           const std::string& domain,
+                           const std::string& public_root,
+                           const std::string& php_upstream,
+                           const std::string& log_root,
+                           bool ssl_enabled) const;
 };
 
 } // namespace containercp::template_engine

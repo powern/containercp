@@ -1,14 +1,18 @@
 #include "DockerComposeProvider.h"
 #include "docker/EnvGenerator.h"
 #include "filesystem/SiteLayout.h"
+#include "template/TemplateEngine.h"
 
 namespace containercp::provider {
 
-DockerComposeProvider::DockerComposeProvider(filesystem::Filesystem& fs, config::Config& cfg, php::PhpVersionManager& php, runtime::Runtime& rt)
+DockerComposeProvider::DockerComposeProvider(filesystem::Filesystem& fs, config::Config& cfg,
+                                             php::PhpVersionManager& php, runtime::Runtime& rt,
+                                             template_engine::TemplateProfileManager& tmpl)
     : fs_(fs)
     , cfg_(cfg)
     , php_(php)
     , rt_(rt)
+    , tmpl_(tmpl)
 {
 }
 
@@ -36,30 +40,18 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
     docker::ComposeGenerator gen(fs_, cfg_.templates_dir());
     gen.generate(site.domain, site.owner, php_image, site_dir + "docker-compose.yml");
 
-    std::string nginx_cfg =
-        "server {\n"
-        "    listen 80;\n"
-        "    server_name _;\n"
-        "    root /var/www/html;\n"
-        "    index index.php index.html;\n"
-        "\n"
-        "    location / {\n"
-        "        try_files $uri $uri/ /index.php?$query_string;\n"
-        "    }\n"
-        "\n"
-        "    location ~ \\.php$ {\n"
-        "        fastcgi_pass php:9000;\n"
-        "        fastcgi_index index.php;\n"
-        "        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
-        "        include fastcgi_params;\n"
-        "    }\n"
-        "\n"
-        "    location ~ /\\.ht {\n"
-        "        deny all;\n"
-        "    }\n"
-        "}\n";
+    // Generate web server config from template profile
+    auto* profile = tmpl_.get_default();
+    if (profile != nullptr && fs_.exists(profile->template_path)) {
+        std::string template_content = fs_.read_file(profile->template_path);
+        template_engine::TemplateEngine engine;
+        std::string rendered = engine.render_web(template_content, site.domain,
+            "/var/www/html", "php:9000", "/var/log", false);
+        std::string config_dir = site_dir + "config/" + profile->web_server + "/";
+        fs_.create_directory(config_dir);
+        fs_.create_file(config_dir + "default.conf", rendered);
+    }
 
-    fs_.create_file(site_dir + "config/nginx/default.conf", nginx_cfg);
     fs_.create_file(site_dir + "public/index.php", "<?php\nphpinfo();\n");
 
     return rt_.create_site_stack(site.domain);

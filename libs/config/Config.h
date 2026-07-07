@@ -19,6 +19,7 @@ public:
     std::string templates_dir() const;
     std::string users_dir() const;
     std::string proxy_dir() const;
+    std::string web_templates_dir() const;
 
 private:
     Config();

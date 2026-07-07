@@ -51,4 +51,8 @@ std::string Config::proxy_dir() const {
     return data_root_ + "/proxy/";
 }
 
+std::string Config::web_templates_dir() const {
+    return config_root_ + "/templates/web/";
+}
+
 } // namespace containercp::config

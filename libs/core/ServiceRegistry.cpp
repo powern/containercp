@@ -1,4 +1,5 @@
 #include "ServiceRegistry.h"
+#include "template/web_templates.h"
 
 namespace containercp::core {
 
@@ -10,7 +11,7 @@ ServiceRegistry::ServiceRegistry()
     , cert_provider_(logger_)
     , storage_(config_.database_dir())
     , runtime_(logger_, config_.sites_dir())
-    , hosting_provider_(filesystem_, config_, php_versions_, runtime_)
+    , hosting_provider_(filesystem_, config_, php_versions_, runtime_, template_profiles_)
 {
     auto loaded_nodes = storage_.load_nodes();
     if (loaded_nodes.empty()) {
@@ -43,7 +44,25 @@ ServiceRegistry::ServiceRegistry()
         php_versions_.create("8.2", "php:8.2-fpm", false);
         php_versions_.create("8.3", "php:8.3-fpm", false);
         php_versions_.create("8.4", "php:8.4-fpm", true);
-        storage_.save_php_versions(php_versions_.list());
+    storage_.save_php_versions(php_versions_.list());
+
+    auto loaded_templates = storage_.load_template_profiles();
+    if (loaded_templates.empty()) {
+        auto tmpl = template_engine::default_web_templates();
+        for (auto& [name, content] : tmpl) {
+            bool is_default = (name == "nginx-php-default");
+            std::string path = config_.web_templates_dir() + name + ".conf.template";
+            filesystem_.create_directory(config_.web_templates_dir());
+            if (!filesystem_.exists(path)) {
+                filesystem_.create_file(path, content);
+            }
+            template_profiles_.create(name, name.find("apache") != std::string::npos ? "apache" : "nginx",
+                                      path, name, is_default);
+        }
+        storage_.save_template_profiles(template_profiles_.list());
+    } else {
+        template_profiles_.set_profiles(loaded_templates);
+    }
     } else {
         php_versions_.set_versions(loaded_php);
     }
@@ -122,6 +141,10 @@ php::PhpVersionManager& ServiceRegistry::php_versions() {
     return php_versions_;
 }
 
+template_engine::TemplateProfileManager& ServiceRegistry::template_profiles() {
+    return template_profiles_;
+}
+
 database::DatabaseManager& ServiceRegistry::databases() {
     return databases_;
 }
@@ -187,6 +210,7 @@ void ServiceRegistry::save() {
     storage_.save_access_users(access_users_.list());
     storage_.save_access_grants(access_grants_.list());
     storage_.save_reverse_proxies(reverse_proxies_.list());
+    storage_.save_template_profiles(template_profiles_.list());
 }
 
 } // namespace containercp::core

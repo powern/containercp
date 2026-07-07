@@ -76,7 +76,10 @@ void print_help() {
         << "  site remove <domain>     Remove site\n"
         << "  site start <domain>     Start site stack\n"
         << "  site stop <domain>      Stop site stack\n"
-        << "  site status <domain>    Show site status\n";
+        << "  site status <domain>    Show site status\n"
+        << "  template list           List templates\n"
+        << "  template show <name>    Show template details\n"
+        << "  template default        Show default template\n";
 }
 
 void print_version() {
@@ -205,6 +208,18 @@ int CommandDispatcher::run(int argc, char* argv[]) {
 
     if (argc == 4 && arg1 == "access" && std::string(argv[2]) == "grant" && std::string(argv[3]) == "list") {
         return print_response(send_command("access-grant-list"));
+    }
+
+    if (argc == 3 && arg1 == "template" && std::string(argv[2]) == "list") {
+        return print_response(send_command("template-list"));
+    }
+
+    if (argc == 4 && arg1 == "template" && std::string(argv[2]) == "show") {
+        return print_response(send_command("template-show|" + std::string(argv[3])));
+    }
+
+    if (argc == 3 && arg1 == "template" && std::string(argv[2]) == "default") {
+        return print_response(send_command("template-default"));
     }
 
     std::cout << "Error: unknown command\n\n";

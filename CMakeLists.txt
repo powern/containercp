@@ -55,6 +55,7 @@ set(CONTAINERCP_SOURCES
     libs/ssl/LetsEncryptProvider.cpp
     libs/storage/Storage.cpp
     libs/template/TemplateEngine.cpp
+    libs/template/TemplateProfileManager.cpp
     libs/user/User.cpp
     libs/user/UserManager.cpp
     libs/utils/PasswordGenerator.cpp

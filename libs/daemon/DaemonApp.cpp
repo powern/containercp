@@ -238,6 +238,39 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         return Command::success(out.str());
     }
 
+    if (cmd.name == "template-list") {
+        auto& profiles = s.template_profiles().list();
+        std::ostringstream out;
+        for (const auto& p : profiles) {
+            out << p.profile_name;
+            if (p.default_profile) out << " (default)";
+            out << "\n";
+        }
+        return Command::success(out.str());
+    }
+
+    if (cmd.name == "template-show" && cmd.args.size() >= 1) {
+        auto* p = s.template_profiles().find(cmd.args[0]);
+        if (!p) return Command::error("Template not found");
+        std::ostringstream out;
+        out << "Name: " << p->profile_name << "\n"
+            << "Web Server: " << p->web_server << "\n"
+            << "Runtime: " << p->runtime << "\n"
+            << "Description: " << p->description << "\n"
+            << "Enabled: " << (p->enabled ? "yes" : "no") << "\n"
+            << "Default: " << (p->default_profile ? "yes" : "no") << "\n";
+        return Command::success(out.str());
+    }
+
+    if (cmd.name == "template-default") {
+        auto* p = s.template_profiles().get_default();
+        if (!p) return Command::error("No default template");
+        std::ostringstream out;
+        out << "Name: " << p->profile_name << "\n"
+            << "Web Server: " << p->web_server << "\n";
+        return Command::success(out.str());
+    }
+
     return Command::error("Unknown command: " + cmd.name);
 }
 
