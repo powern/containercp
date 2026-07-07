@@ -103,6 +103,24 @@ Tests              Growing        50%
 - Form validation (client + server)
 - Pagination for large datasets
 
+**Release Candidates:**
+- v0.5.0-rc1 — first integration test on Debian 12
+- v0.5.0-rc2 — bug fixes from rc1
+- v0.5.0-rc3 — final validation before release
+
+**First Production Validation milestone:**
+After Version 0.5 implementation is complete, the project enters
+the First Production Validation phase. No new features are added.
+The entire validation checklist in `planning/product-validation.md`
+must pass on a clean Debian 12 system before Version 0.5 ships.
+
+**Acceptance criteria for v0.5.0:**
+- Zero compiler warnings (Debug + Release)
+- All 114 validation checks pass
+- All unit tests pass
+- 24-hour stability test passes
+- No orphan resources after cleanup
+
 ## Version 0.6 — DNS and Mail
 
 **Planned features:**

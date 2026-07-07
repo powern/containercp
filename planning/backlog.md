@@ -59,16 +59,15 @@ Items are ordered by priority within each category.
 - [x] CCP-5008: Improved tables with row actions
 - [x] CCP-5009: Global error handling and loading states
 
-## Backlog — Backup and Restore
+## Version 0.5 — Release Cycle
 
-- [ ] BACKUP-001: BackupProvider interface
-- [ ] BACKUP-002: TarBackupProvider
-- [ ] BACKUP-003: Backup file management
-- [ ] BACKUP-004: Update Backup resource and manager
-- [ ] BACKUP-005: CLI commands
-- [ ] BACKUP-006: REST API endpoint
-- [ ] BACKUP-007: SiteRemoveOperation integration
-- [ ] BACKUP-008: Tests
+- [ ] Finish remaining Web UI features (wizard, forms, detail pages)
+- [ ] Run first Release Candidate (rc1)
+- [ ] Run full validation checklist
+- [ ] Fix discovered issues
+- [ ] Release v0.5.0-rc2
+- [ ] Final validation
+- [ ] Release v0.5.0
 
 ## Version 0.6 — DNS and Mail
 
