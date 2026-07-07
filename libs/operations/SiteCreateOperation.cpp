@@ -2,11 +2,12 @@
 
 namespace containercp::operations {
 
-SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, core::ResourceManager& nodes, filesystem::Filesystem& fs, config::Config& cfg)
+SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, core::ResourceManager& nodes, filesystem::Filesystem& fs, config::Config& cfg, runtime::Runtime& rt)
     : sites_(sites)
     , nodes_(nodes)
     , fs_(fs)
     , cfg_(cfg)
+    , rt_(rt)
 {
 }
 
@@ -31,6 +32,8 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
 
     docker::ComposeGenerator gen(fs_, cfg_.config_root() + "/templates/");
     gen.generate(domain, owner, site_dir + "docker-compose.yml");
+
+    rt_.create_site_stack(domain);
 
     return {true, ""};
 }

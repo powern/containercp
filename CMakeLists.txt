@@ -19,6 +19,7 @@ add_executable(containercp
     libs/logger/Logger.cpp
     libs/node/Node.cpp
     libs/operations/SiteCreateOperation.cpp
+    libs/runtime/DockerRuntime.cpp
     libs/site/Site.cpp
     libs/site/SiteManager.cpp
     libs/storage/Storage.cpp

@@ -87,7 +87,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
             return 1;
         }
 
-        operations::SiteCreateOperation op(services.sites(), services.nodes(), services.filesystem(), services.config());
+        operations::SiteCreateOperation op(services.sites(), services.nodes(), services.filesystem(), services.config(), services.runtime());
         auto result = op.execute(argv[3], argv[4], *node);
 
         if (result.success) {
