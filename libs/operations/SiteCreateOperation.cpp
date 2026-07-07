@@ -10,11 +10,14 @@ namespace containercp::operations {
 SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, domain::DomainManager& domains,
                                          database::DatabaseManager& databases,
                                          proxy::ReverseProxyManager& proxies,
+                                         filesystem::Filesystem& fs, config::Config& cfg,
                                          provider::HostingProvider& provider)
     : sites_(sites)
     , domains_(domains)
     , databases_(databases)
     , proxies_(proxies)
+    , fs_(fs)
+    , cfg_(cfg)
     , provider_(provider)
 {
 }
@@ -67,6 +70,12 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
     auto result = provider_.create_site(site);
 
     if (!result.success) {
+        // Rollback: remove filesystem
+        fs_.remove_directory(cfg_.sites_dir() + domain + "/");
+        // Rollback: remove proxy config if it exists
+        auto* rp = proxies_.find_by_domain(domain);
+        if (rp != nullptr) proxies_.remove(rp->id);
+        // Rollback: remove in-memory records
         for (const auto& d : databases_.list()) {
             if (d.site_id == site.id) {
                 databases_.remove(d.id);

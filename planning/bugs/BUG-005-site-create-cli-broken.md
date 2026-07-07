@@ -22,9 +22,11 @@ The operation was only available through the REST API.
 Add site-create handler to daemon with validation (username, hostname).
 Wire it in the CLI thin client.
 Add help text.
+Add --dry-run support with separate handler.
 
 ## Fix commit
-This commit
+1. Initial fix: 638c98e (added daemon handler and CLI wiring)
+2. Dry-run fix: this commit (added site-create-dry-run handler, argc==6 parsing)
 
 ## Status
 Resolved

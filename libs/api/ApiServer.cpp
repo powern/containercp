@@ -416,7 +416,8 @@ bool ApiServer::start() {
         jobs.update(job_id, "running", 10);
 
         operations::SiteCreateOperation op(s.sites(), s.domains(),
-            s.databases(), s.reverse_proxies(), s.hosting_provider());
+            s.databases(), s.reverse_proxies(),
+            s.filesystem(), s.config(), s.hosting_provider());
         auto result = op.execute(owner, domain, *node);
 
         if (result.success) {

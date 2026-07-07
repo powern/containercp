@@ -178,6 +178,10 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         return print_response(send_command("site-create|" + std::string(argv[3]) + "|" + std::string(argv[4])));
     }
 
+    if (argc == 6 && arg1 == "site" && std::string(argv[2]) == "create" && std::string(argv[5]) == "--dry-run") {
+        return print_response(send_command("site-create-dry-run|" + std::string(argv[3]) + "|" + std::string(argv[4])));
+    }
+
     if (argc == 3 && arg1 == "site" && std::string(argv[2]) == "list") {
         return print_response(send_command("site-list"));
     }

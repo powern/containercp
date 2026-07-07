@@ -150,13 +150,24 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         auto* node = s.nodes().find("local");
         if (!node) return Command::error("No node available");
         operations::SiteCreateOperation op(s.sites(), s.domains(),
-            s.databases(), s.reverse_proxies(), s.hosting_provider());
+            s.databases(), s.reverse_proxies(),
+            s.filesystem(), s.config(), s.hosting_provider());
         auto result = op.execute(owner, domain, *node);
         if (result.success) {
             s.save();
             return Command::success("Site created: " + domain);
         }
         return Command::error(result.message);
+    }
+
+    if (cmd.name == "site-create-dry-run" && cmd.args.size() >= 2) {
+        auto* node = s.nodes().find("local");
+        if (!node) return Command::error("No node available");
+        operations::SiteCreateOperation op(s.sites(), s.domains(),
+            s.databases(), s.reverse_proxies(),
+            s.filesystem(), s.config(), s.hosting_provider());
+        auto result = op.execute(cmd.args[0], cmd.args[1], *node, true);
+        return result.success ? Command::success("") : Command::error(result.message);
     }
 
     if (cmd.name == "site-list") {
