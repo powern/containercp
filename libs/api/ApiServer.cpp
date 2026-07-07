@@ -477,10 +477,10 @@ bool ApiServer::start() {
         ts << std::put_time(std::gmtime(&tt), "%Y%m%dT%H%M%SZ");
         std::string timestamp = ts.str();
         std::string filename = domain + "-" + timestamp + ".tar.gz";
-        std::string file_path = "/srv/containercp/backups/" + filename;
+        std::string file_path = s.config().data_root() + "/backups/" + filename;
         std::string site_dir = s.config().sites_dir() + domain + "/";
 
-        s.filesystem().create_directory("/srv/containercp/backups/");
+        s.filesystem().create_directory(s.config().data_root() + "/backups/");
         auto result = s.backup_provider().create_backup(site_dir, file_path);
         if (!result.success) {
             r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";

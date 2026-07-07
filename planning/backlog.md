@@ -67,11 +67,11 @@ Before planning any new Epic, read these documents IN ORDER:
 - [x] CCP-5008: Improved tables with row actions
 - [x] CCP-5009: Global error handling and loading states
 
-## Version 0.5 — Release Cycle
+## Version 0.5 — First Production Validation
 
-- [ ] Finish remaining Web UI features (wizard, forms, detail pages)
-- [ ] Run first Release Candidate (rc1)
-- [ ] Run full validation checklist
+- [x] Complete Web UI features (wizard, forms, detail pages, CRUD)
+- [ ] Run first Release Candidate (rc1) on clean Debian 12
+- [ ] Run full 114-item validation checklist
 - [ ] Fix discovered issues
 - [ ] Release v0.5.0-rc2
 - [ ] Final validation
