@@ -12,11 +12,11 @@ bool SiteLayout::create() {
     const char* dirs[] = {
         "www",
         "public",
-        "logs",
+        "logs/nginx",
         "tmp",
         "ssl",
         "backups",
-        "config",
+        "config/nginx",
         "compose",
     };
 

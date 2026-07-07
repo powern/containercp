@@ -23,6 +23,32 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
     docker::ComposeGenerator gen(fs_, cfg_.config_root() + "/templates/");
     gen.generate(site.domain, site.owner, site_dir + "docker-compose.yml");
 
+    std::string nginx_cfg =
+        "server {\n"
+        "    listen 80;\n"
+        "    server_name _;\n"
+        "    root /var/www/html;\n"
+        "    index index.php index.html;\n"
+        "\n"
+        "    location / {\n"
+        "        try_files $uri $uri/ /index.php?$query_string;\n"
+        "    }\n"
+        "\n"
+        "    location ~ \\.php$ {\n"
+        "        fastcgi_pass php:9000;\n"
+        "        fastcgi_index index.php;\n"
+        "        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
+        "        include fastcgi_params;\n"
+        "    }\n"
+        "\n"
+        "    location ~ /\\.ht {\n"
+        "        deny all;\n"
+        "    }\n"
+        "}\n";
+
+    fs_.create_file(site_dir + "config/nginx/default.conf", nginx_cfg);
+    fs_.create_file(site_dir + "public/index.php", "<?php\nphpinfo();\n");
+
     return rt_.create_site_stack(site.domain);
 }
 
