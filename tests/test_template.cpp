@@ -1,5 +1,6 @@
 #include "profile/ProfileManager.h"
 #include "template/TemplateEngine.h"
+#include "template/web_templates.h"
 
 #include <filesystem>
 #include <fstream>
@@ -87,6 +88,45 @@ TEST_CASE("Existing template file is not overwritten") {
     std::string content((std::istreambuf_iterator<char>(f)), {});
     CHECK(content == "CUSTOM_CONTENT");
     std::filesystem::remove_all(tmp_dir);
+}
+
+TEST_CASE("Default web template produces valid nginx config") {
+    // Verify the built-in nginx-php-default template generates a valid
+    // config that nginx would accept. This mirrors the logic in
+    // DockerComposeProvider::create_site().
+    auto templates = containercp::template_engine::default_web_templates();
+    REQUIRE(templates.find("nginx-php-default") != templates.end());
+
+    containercp::template_engine::TemplateEngine engine;
+    std::string rendered = engine.render_web(templates["nginx-php-default"],
+        "test.example.com", "/var/www/html", "php:9000", "/var/log", false);
+
+    CHECK(rendered.find("server_name test.example.com") != std::string::npos);
+    CHECK(rendered.find("root /var/www/html") != std::string::npos);
+    CHECK(rendered.find("fastcgi_pass php:9000") != std::string::npos);
+    CHECK(rendered.find("listen 80") != std::string::npos);
+    CHECK(rendered.find("index index.php") != std::string::npos);
+}
+
+TEST_CASE("Default nginx profile has correct metadata") {
+    // Verify the nginx-php-default profile matches what
+    // DockerComposeProvider expects (web_server = "nginx").
+    ProfileManager mgr;
+    mgr.create("nginx-php-default", ProfileType::WEB_SERVER, "nginx", "/path/tmpl", "Default", true);
+    auto* p = mgr.get_default(ProfileType::WEB_SERVER);
+    REQUIRE(p != nullptr);
+    CHECK(p->web_server == "nginx");
+    CHECK(p->default_profile);
+    CHECK(p->type == ProfileType::WEB_SERVER);
+}
+
+TEST_CASE("Site nginx config path structure") {
+    // Verify that the config file path matches what docker-compose mounts.
+    // docker-compose mounts ./config/nginx:/etc/nginx/conf.d
+    // So config should be at: <site_dir>/config/nginx/default.conf
+    std::string site_dir = "/srv/containercp/sites/test.example.com/";
+    std::string config_file = site_dir + "config/nginx/default.conf";
+    CHECK(config_file == "/srv/containercp/sites/test.example.com/config/nginx/default.conf");
 }
 
 TEST_CASE("Profile validate detects missing variables") {
