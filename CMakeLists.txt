@@ -8,6 +8,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(containercp
     app/containercp/main.cpp
+    libs/cli/CommandDispatcher.cpp
+)
+
+target_include_directories(containercp PRIVATE
+    libs
 )
 
 target_compile_options(containercp PRIVATE
