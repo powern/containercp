@@ -3,12 +3,14 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <sys/stat.h>
 
 namespace containercp::storage {
 
 Storage::Storage(const std::string& db_path)
     : db_path_(db_path)
 {
+    ::mkdir(db_path_.c_str(), 0755);
 }
 
 std::string Storage::nodes_file() const {

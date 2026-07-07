@@ -122,32 +122,62 @@ containercp auth debug
     username=admin enabled=1 must_change=0 hash_present=yes role=admin
 ```
 
-### Likely root cause that can now be diagnosed
+### Actual root cause (found via diagnostics)
 
-With these diagnostics, the exact failure point can be determined:
+Validation logs confirmed:
 
-1. If **startup log** shows `users loaded = 0` despite the password
-   change having logged a successful save — the file is either not
-   being written to the expected path, or is being overwritten by
-   another code path.
+```
+[INFO] Auth: db path = /srv/containercp/database/auth_users.db
+[INFO] Auth: db exists = no
+[INFO] Auth: users loaded = 0
+[INFO] Auth: DECISION: create admin (no users found)
+```
 
-2. If **startup log** shows `users loaded = 1` but `must_change=1`
-   despite the password change logging `must_change after=0` — the
-   save is writing stale data, or a subsequent operation reverts it.
+The filesystem confirmed:
 
-3. If **startup log** shows `db exists = no` — the file is at a
-   different path than expected.
+```
+ls -la /srv/containercp/database/
+  No such file or directory
+```
 
-**Added this commit:**
-- Comprehensive startup logging (db path, file existence, user count,
-  each user's enabled/must_change/hash_present fields)
-- Post-change verification (reloads auth_users.db after save to
-  confirm it was written correctly)
-- CLI `containercp auth debug` command for runtime diagnostics
-- Updated startup DECISION logging (create/sync/skip) to clarify
-  exactly which code path was taken
-- `AuthService` now has access to `config().database_dir()` for
-  logging the auth_users.db path
+**Root cause:** The `Storage` class did not create the database directory
+(`/srv/containercp/database/`). When `std::ofstream` was used to write
+`auth_users.db`, the file open succeeded from C++'s perspective (no error
+thrown), but no data was actually written because the parent directory
+did not exist. On the next daemon restart, `load_auth_users()` returned
+empty, and `initialize()` created a brand new admin with a new temporary
+password — every single time.
+
+**Why other resources worked:** They didn't. Nodes, users, and other
+resources were also being silently lost, but the bootstrap code for those
+resources re-creates defaults on every start (e.g., a new "local" node
+and "admin" system user are created each time the file is missing). The
+auth bootstrap happened to be the first place where this data loss
+became visible because the admin password change is a user-observable
+action.
+
+**Fix:**
+
+1. `Storage` constructor now calls `::mkdir(db_path_.c_str(), 0755)` to
+   ensure the database directory exists before any save operation. This
+   benefits ALL resource types, not just auth.
+
+2. `AuthService::initialize()` now verifies the file was actually written
+   after the first save, logging a FATAL error if not.
+
+3. `AuthService::change_password()` now verifies the file was actually
+   written after each password change, logging a FATAL error if not.
+
+4. Added storage-level tests:
+   - Auth storage creates directory and persists
+   - Auth user survives simulated restart (save → reload → save → reload)
+   - must_change_password=false persists after password change
+
+**Files changed:**
+
+- `libs/storage/Storage.cpp` — create database directory in constructor
+- `libs/auth/AuthService.cpp` — verify file was written after save
+- `tests/test_storage.cpp` — directory creation + persistence tests
 
 ## Validation
 

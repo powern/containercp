@@ -56,6 +56,16 @@ void AuthService::initialize() {
         services_.auth_users().create(admin);
         services_.storage().save_auth_users(services_.auth_users().list());
 
+        // Verify the file was actually written
+        {
+            std::ifstream verify_db(auth_db_path);
+            if (!verify_db.is_open()) {
+                services_.logger().error("Auth: FATAL — failed to save " + auth_db_path
+                    + ". Check that " + services_.config().database_dir() + " exists and is writable.");
+            }
+            verify_db.close();
+        }
+
         std::string dir = services_.config().config_root();
         ::mkdir(dir.c_str(), 0755);
         std::ofstream of(password_path);
@@ -169,6 +179,16 @@ bool AuthService::change_password(const std::string& token, const std::string& o
 
             services_.auth_users().set_users(users);
             services_.storage().save_auth_users(users);
+
+            // Verify the file was actually written to disk
+            {
+                std::string db_path = services_.config().database_dir() + "auth_users.db";
+                std::ifstream verify_file(db_path);
+                if (!verify_file.is_open()) {
+                    services_.logger().error("Auth: FATAL — password change could not write to " + db_path);
+                }
+                verify_file.close();
+            }
 
             // Verify the save worked by reloading
             auto verify = services_.storage().load_auth_users();
