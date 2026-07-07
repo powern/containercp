@@ -16,7 +16,8 @@ void print_help() {
         << "Commands:\n"
         << "  --help       Show help\n"
         << "  --version    Show version\n"
-        << "  node list    List nodes\n";
+        << "  node list       List nodes\n"
+        << "  node show <name> Show node details\n";
 }
 
 void print_version() {
@@ -48,6 +49,17 @@ int CommandDispatcher::run(int argc, char* argv[]) {
     if (argc == 3 && arg1 == "node" && std::string(argv[2]) == "list") {
         auto node = node::get_default_node();
         std::cout << node.name << "\n";
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "node" && std::string(argv[2]) == "show") {
+        auto node = node::find_node(argv[3]);
+        if (node.name.empty()) {
+            std::cerr << "Error: node \"" << argv[3] << "\" not found\n";
+            return 1;
+        }
+        std::cout << "Name: " << node.name << "\n"
+                  << "Type: " << node.type << "\n";
         return 0;
     }
 
