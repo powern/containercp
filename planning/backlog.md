@@ -32,12 +32,21 @@ Items are ordered by priority within each category.
 
 ## Sprint 5 — Tests and Reliability
 
-- [ ] CCP-3001: Add test framework
-- [ ] CCP-3002: Unit tests for Validator
-- [ ] CCP-3003: Unit tests for managers and Storage
-- [ ] CCP-3004: Fix filesystem rollback gap
-- [ ] CCP-3005: Add --force for site remove
-- [ ] CCP-3006: Improve validation error messages
+- [x] CCP-3001: Add test framework
+- [x] CCP-3002: Unit tests for Validator
+- [x] CCP-3003: Unit tests for managers and Storage
+- [x] CCP-3004: Fix filesystem rollback gap
+- [x] CCP-3005: Add --force for site remove
+- [x] CCP-3006: Improve validation error messages
+
+## Sprint 6 — Developer Access Layer
+
+- [ ] CCP-4001: AccessUser resource
+- [ ] CCP-4002: AccessProvider abstraction
+- [ ] CCP-4003: LocalSftpProvider placeholder
+- [ ] CCP-4004: CLI access user commands
+- [ ] CCP-4005: Access directory mapping
+- [ ] CCP-4006: Document future SFTP implementation
 
 ## Future
 
