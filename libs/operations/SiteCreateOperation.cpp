@@ -16,12 +16,14 @@ SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, domain::Domai
 }
 
 core::OperationResult SiteCreateOperation::execute(const std::string& owner, const std::string& domain, const node::Node& node, bool dry_run) {
-    if (!utils::Validator::is_valid_username(owner)) {
-        return {false, "Invalid username."};
+    {
+        std::string msg = utils::Validator::validate_username(owner);
+        if (!msg.empty()) return {false, msg};
     }
 
-    if (!utils::Validator::is_valid_hostname(domain)) {
-        return {false, "Invalid domain."};
+    {
+        std::string msg = utils::Validator::validate_hostname(domain);
+        if (!msg.empty()) return {false, msg};
     }
 
     if (sites_.find(domain) != nullptr) {

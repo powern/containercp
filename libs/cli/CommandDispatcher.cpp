@@ -13,6 +13,14 @@
 #include <sstream>
 #include <string>
 
+static bool confirm_action(const std::string& prompt) {
+    std::cout << prompt << "\n"
+              << "Are you sure? [y/N] ";
+    std::string line;
+    std::getline(std::cin, line);
+    return line == "y" || line == "Y" || line == "yes" || line == "YES";
+}
+
 namespace {
 
 constexpr const char* VERSION = "0.1.0";
@@ -68,9 +76,12 @@ void print_version() {
 int handle_user_create(const std::string& username) {
     auto& services = containercp::core::Application::instance().services();
 
-    if (!containercp::utils::Validator::is_valid_username(username)) {
-        std::cout << "Invalid username.\n";
-        return 1;
+    {
+        std::string msg = containercp::utils::Validator::validate_username(username);
+        if (!msg.empty()) {
+            std::cout << msg << "\n";
+            return 1;
+        }
     }
 
     if (services.users().find(username) != nullptr) {
@@ -161,8 +172,15 @@ int handle_site_create(const std::string& owner, const std::string& domain, bool
     return result.success ? 0 : 1;
 }
 
-int handle_site_remove(const std::string& domain) {
+int handle_site_remove(const std::string& domain, bool force) {
     auto& services = containercp::core::Application::instance().services();
+
+    if (!force) {
+        if (!confirm_action("WARNING: This will permanently remove " + domain + " and all its data.")) {
+            std::cout << "Aborted.\n";
+            return 1;
+        }
+    }
 
     containercp::operations::SiteRemoveOperation op(
         services.sites(), services.domains(), services.databases(),
@@ -578,7 +596,11 @@ int CommandDispatcher::run(int argc, char* argv[]) {
     }
 
     if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "remove") {
-        return handle_site_remove(argv[3]);
+        return handle_site_remove(argv[3], false);
+    }
+
+    if (argc == 5 && arg1 == "site" && std::string(argv[2]) == "remove" && std::string(argv[4]) == "--force") {
+        return handle_site_remove(argv[3], true);
     }
 
     if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "start") {

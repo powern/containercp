@@ -7,9 +7,12 @@ namespace containercp::utils {
 
 struct Validator {
     static bool is_valid_hostname(const std::string& hostname);
-    static std::string normalize_hostname(const std::string& hostname);
-
     static bool is_valid_username(const std::string& username);
+
+    static std::string validate_hostname(const std::string& hostname);
+    static std::string validate_username(const std::string& username);
+
+    static std::string normalize_hostname(const std::string& hostname);
 };
 
 } // namespace containercp::utils

@@ -13,6 +13,11 @@ DockerComposeProvider::DockerComposeProvider(filesystem::Filesystem& fs, config:
 }
 
 core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
+    auto check = rt_.status("__containercp_check__");
+    if (!check.success && check.message == "Docker is not installed.") {
+        return check;
+    }
+
     std::string site_dir = cfg_.sites_dir() + site.domain + "/";
 
     filesystem::SiteLayout layout(fs_, site_dir);
