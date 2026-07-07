@@ -1,5 +1,9 @@
 # ContainerCP Product Roadmap
 
+This roadmap is guided by the Product Vision in `planning/PRODUCT_VISION.md`.
+Every version milestone supports the vision of a modern, container-native
+hosting control panel.
+
 ## Current maturity assessment
 
 ```

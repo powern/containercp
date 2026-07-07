@@ -2,6 +2,14 @@
 
 Items are ordered by priority within each category.
 
+Before planning any new Epic, read these documents IN ORDER:
+1. planning/PRODUCT_VISION.md
+2. planning/product-roadmap.md
+3. planning/product-validation.md
+4. planning/backlog.md
+5. Latest reviews
+6. docs/ADR/
+
 ## Sprint 2 — PHP Hosting MVP
 
 - [x] Generate complete site directory layout
