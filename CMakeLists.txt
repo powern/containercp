@@ -11,6 +11,7 @@ add_executable(containercp
     libs/cli/CommandDispatcher.cpp
     libs/config/Config.cpp
     libs/core/Application.cpp
+    libs/core/Resource.cpp
     libs/core/ServiceRegistry.cpp
     libs/logger/Logger.cpp
     libs/node/Node.cpp
