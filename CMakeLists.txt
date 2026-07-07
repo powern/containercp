@@ -8,6 +8,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(containercp
     app/containercp/main.cpp
+    libs/api/ApiServer.cpp
+    libs/api/AuthMiddleware.cpp
+    libs/api/JsonFormatter.cpp
+    libs/api/Response.cpp
+    libs/api/Router.cpp
     libs/access/AccessGrant.cpp
     libs/access/AccessGrantManager.cpp
     libs/access/AccessUser.cpp
