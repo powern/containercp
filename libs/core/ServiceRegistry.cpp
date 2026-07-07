@@ -5,13 +5,25 @@ namespace containercp::core {
 ServiceRegistry::ServiceRegistry()
     : config_(config::Config::instance())
     , logger_(logger::Logger::instance())
+    , storage_(config_.data_root() + "/database/")
 {
-    Resource res;
-    res.name = "local";
-    uint64_t id = nodes_.add(res);
-    auto* node = nodes_.find(id);
-    if (node != nullptr) {
-        node->type = "local";
+    auto loaded_nodes = storage_.load_nodes();
+    if (loaded_nodes.empty()) {
+        Resource res;
+        res.name = "local";
+        uint64_t id = nodes_.add(res);
+        auto* node = nodes_.find(id);
+        if (node != nullptr) {
+            node->type = "local";
+        }
+        storage_.save_nodes(nodes_.list());
+    } else {
+        nodes_.set_nodes(loaded_nodes);
+    }
+
+    auto loaded_sites = storage_.load_sites();
+    if (!loaded_sites.empty()) {
+        sites_.set_sites(loaded_sites);
     }
 }
 
@@ -29,6 +41,11 @@ ResourceManager& ServiceRegistry::nodes() {
 
 site::SiteManager& ServiceRegistry::sites() {
     return sites_;
+}
+
+void ServiceRegistry::save() {
+    storage_.save_nodes(nodes_.list());
+    storage_.save_sites(sites_.list());
 }
 
 } // namespace containercp::core

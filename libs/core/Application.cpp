@@ -13,4 +13,8 @@ ServiceRegistry& Application::services() {
     return registry_;
 }
 
+void Application::save() {
+    registry_.save();
+}
+
 } // namespace containercp::core

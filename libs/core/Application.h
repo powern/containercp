@@ -10,6 +10,7 @@ public:
     static Application& instance();
 
     ServiceRegistry& services();
+    void save();
 
 private:
     Application();

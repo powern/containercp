@@ -19,6 +19,7 @@ add_executable(containercp
     libs/operations/SiteCreateOperation.cpp
     libs/site/Site.cpp
     libs/site/SiteManager.cpp
+    libs/storage/Storage.cpp
 )
 
 target_include_directories(containercp PRIVATE

@@ -18,6 +18,8 @@ public:
     node::Node* find(const std::string& name);
     const std::vector<node::Node>& list() const;
 
+    void set_nodes(const std::vector<node::Node>& nodes);
+
 private:
     std::vector<node::Node> nodes_;
     uint64_t next_id_ = 1;

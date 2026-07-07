@@ -36,4 +36,14 @@ const std::vector<Site>& SiteManager::list() const {
     return sites_;
 }
 
+void SiteManager::set_sites(const std::vector<Site>& sites) {
+    sites_ = sites;
+    next_id_ = 1;
+    for (const auto& s : sites_) {
+        if (s.id >= next_id_) {
+            next_id_ = s.id + 1;
+        }
+    }
+}
+
 } // namespace containercp::site

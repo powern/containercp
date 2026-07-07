@@ -42,4 +42,14 @@ const std::vector<node::Node>& ResourceManager::list() const {
     return nodes_;
 }
 
+void ResourceManager::set_nodes(const std::vector<node::Node>& nodes) {
+    nodes_ = nodes;
+    next_id_ = 1;
+    for (const auto& n : nodes_) {
+        if (n.id >= next_id_) {
+            next_id_ = n.id + 1;
+        }
+    }
+}
+
 } // namespace containercp::core

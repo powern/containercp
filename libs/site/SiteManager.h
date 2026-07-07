@@ -16,6 +16,8 @@ public:
     Site* find(const std::string& domain);
     const std::vector<Site>& list() const;
 
+    void set_sites(const std::vector<Site>& sites);
+
 private:
     std::vector<Site> sites_;
     uint64_t next_id_ = 1;

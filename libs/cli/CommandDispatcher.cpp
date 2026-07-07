@@ -91,6 +91,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         auto result = op.execute(argv[3], argv[4], *node);
 
         if (result.success) {
+            core::Application::instance().save();
             std::cout << "Site created:\n" << argv[4] << "\n";
         } else {
             std::cout << result.message << "\n";
