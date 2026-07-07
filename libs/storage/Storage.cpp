@@ -51,6 +51,10 @@ std::string Storage::access_users_file() const {
     return db_path_ + "access_users.db";
 }
 
+std::string Storage::access_grants_file() const {
+    return db_path_ + "access_grants.db";
+}
+
 void Storage::save_nodes(const std::vector<node::Node>& nodes) {
     std::ofstream file(nodes_file());
     for (const auto& n : nodes) {
@@ -346,8 +350,8 @@ std::vector<mail::MailDomain> Storage::load_mail_domains() {
 void Storage::save_access_users(const std::vector<access::AccessUser>& users) {
     std::ofstream file(access_users_file());
     for (const auto& u : users) {
-        file << u.id << "|" << u.username << "|" << u.site_id << "|"
-             << u.domain << "|" << u.auth_type << "|" << (u.enabled ? "1" : "0") << "\n";
+        file << u.id << "|" << u.username << "|" << u.auth_type << "|"
+             << u.password_hash << "|" << (u.enabled ? "1" : "0") << "\n";
     }
 }
 
@@ -365,14 +369,43 @@ std::vector<access::AccessUser> Storage::load_access_users() {
         access::AccessUser u;
         if (std::getline(ss, token, '|')) u.id = std::stoull(token);
         if (std::getline(ss, token, '|')) u.username = token;
-        if (std::getline(ss, token, '|')) u.site_id = std::stoull(token);
-        if (std::getline(ss, token, '|')) u.domain = token;
         if (std::getline(ss, token, '|')) u.auth_type = token;
+        if (std::getline(ss, token, '|')) u.password_hash = token;
         if (std::getline(ss, token, '|')) u.enabled = (token == "1");
         u.name = u.username;
         users.push_back(std::move(u));
     }
     return users;
+}
+
+void Storage::save_access_grants(const std::vector<access::AccessGrant>& grants) {
+    std::ofstream file(access_grants_file());
+    for (const auto& g : grants) {
+        file << g.id << "|" << g.access_user_id << "|" << g.site_id << "|"
+             << access::permission_to_string(g.permission) << "\n";
+    }
+}
+
+std::vector<access::AccessGrant> Storage::load_access_grants() {
+    std::vector<access::AccessGrant> grants;
+    std::ifstream file(access_grants_file());
+    if (!file.is_open()) {
+        return grants;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::istringstream ss(line);
+        std::string token;
+        access::AccessGrant g;
+        if (std::getline(ss, token, '|')) g.id = std::stoull(token);
+        if (std::getline(ss, token, '|')) g.access_user_id = std::stoull(token);
+        if (std::getline(ss, token, '|')) g.site_id = std::stoull(token);
+        if (std::getline(ss, token, '|')) g.permission = access::permission_from_string(token);
+        g.name = std::to_string(g.access_user_id) + "-" + std::to_string(g.site_id);
+        grants.push_back(std::move(g));
+    }
+    return grants;
 }
 
 } // namespace containercp::storage

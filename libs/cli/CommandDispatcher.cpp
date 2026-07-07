@@ -600,8 +600,9 @@ int CommandDispatcher::run(int argc, char* argv[]) {
             std::cout << "Domain not found: " << argv[5] << "\n";
             return 1;
         }
-        containercp::access::AccessUserManager& mgr = services.access_users();
-        mgr.create(argv[4], domain->site_id, argv[5]);
+        containercp::access::AccessUserManager& umgr = services.access_users();
+        uint64_t uid = umgr.create(argv[4]);
+        services.access_grants().create(uid, domain->site_id, containercp::access::Permission::READ_WRITE);
         containercp::core::Application::instance().save();
         std::string password = containercp::utils::PasswordGenerator::generate();
         std::cout << "Access user created:\n"
@@ -617,7 +618,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
             std::cout << "No access users.\n";
         } else {
             for (const auto& u : users) {
-                std::cout << u.id << " " << u.username << " " << u.domain
+                std::cout << u.id << " " << u.username
                           << " " << (u.enabled ? "enabled" : "disabled") << "\n";
             }
         }
@@ -631,9 +632,14 @@ int CommandDispatcher::run(int argc, char* argv[]) {
             return 1;
         }
         std::cout << "Username: " << u->username << "\n"
-                  << "Domain: " << u->domain << "\n"
                   << "Auth: " << u->auth_type << "\n"
-                  << "Enabled: " << (u->enabled ? "yes" : "no") << "\n";
+                  << "Enabled: " << (u->enabled ? "yes" : "no") << "\n"
+                  << "Grants:\n";
+        auto grants = services.access_grants().find_by_user(u->id);
+        for (const auto& g : grants) {
+            std::cout << "  Site ID: " << g->site_id
+                      << " Permission: " << containercp::access::permission_to_string(g->permission) << "\n";
+        }
         return 0;
     }
 

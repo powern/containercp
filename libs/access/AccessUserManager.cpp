@@ -2,13 +2,11 @@
 
 namespace containercp::access {
 
-uint64_t AccessUserManager::create(const std::string& username, uint64_t site_id, const std::string& domain) {
+uint64_t AccessUserManager::create(const std::string& username) {
     AccessUser u;
     u.id = next_id_++;
     u.name = username;
     u.username = username;
-    u.site_id = site_id;
-    u.domain = domain;
     u.auth_type = "password";
     u.enabled = true;
     users_.push_back(std::move(u));

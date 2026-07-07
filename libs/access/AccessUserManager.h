@@ -11,7 +11,7 @@ namespace containercp::access {
 
 class AccessUserManager {
 public:
-    uint64_t create(const std::string& username, uint64_t site_id, const std::string& domain);
+    uint64_t create(const std::string& username);
     bool remove(uint64_t id);
     AccessUser* find(const std::string& username);
     AccessUser* find(uint64_t id);

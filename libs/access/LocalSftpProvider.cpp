@@ -8,7 +8,7 @@ LocalSftpProvider::LocalSftpProvider(logger::Logger& logger)
 }
 
 core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
-    logger_.info("LocalSftpProvider: Creating user " + user.username + " for " + user.domain);
+    logger_.info("LocalSftpProvider: Creating user " + user.username);
     return {true, ""};
 }
 

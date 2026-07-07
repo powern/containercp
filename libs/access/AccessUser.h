@@ -10,9 +10,8 @@ namespace containercp::access {
 
 struct AccessUser : core::Resource {
     std::string username;
-    uint64_t site_id = 0;
-    std::string domain;
     std::string auth_type = "password";
+    std::string password_hash;
     bool enabled = true;
 };
 

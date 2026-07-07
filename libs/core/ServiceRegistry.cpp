@@ -76,6 +76,11 @@ ServiceRegistry::ServiceRegistry()
         access_users_.set_users(loaded_access);
     }
 
+    auto loaded_grants = storage_.load_access_grants();
+    if (!loaded_grants.empty()) {
+        access_grants_.set_grants(loaded_grants);
+    }
+
     auto loaded_sites = storage_.load_sites();
     if (!loaded_sites.empty()) {
         sites_.set_sites(loaded_sites);
@@ -122,6 +127,10 @@ access::AccessUserManager& ServiceRegistry::access_users() {
     return access_users_;
 }
 
+access::AccessGrantManager& ServiceRegistry::access_grants() {
+    return access_grants_;
+}
+
 access::AccessProvider& ServiceRegistry::access_provider() {
     return access_provider_;
 }
@@ -157,6 +166,7 @@ void ServiceRegistry::save() {
     storage_.save_ssl_certificates(ssl_.list());
     storage_.save_mail_domains(mail_.list());
     storage_.save_access_users(access_users_.list());
+    storage_.save_access_grants(access_grants_.list());
 }
 
 } // namespace containercp::core

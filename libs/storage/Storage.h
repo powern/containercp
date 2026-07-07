@@ -1,6 +1,7 @@
 #ifndef CONTAINERCP_STORAGE_STORAGE_H
 #define CONTAINERCP_STORAGE_STORAGE_H
 
+#include "access/AccessGrant.h"
 #include "access/AccessUser.h"
 #include "backup/Backup.h"
 #include "database/Database.h"
@@ -51,6 +52,9 @@ public:
     void save_access_users(const std::vector<access::AccessUser>& users);
     std::vector<access::AccessUser> load_access_users();
 
+    void save_access_grants(const std::vector<access::AccessGrant>& grants);
+    std::vector<access::AccessGrant> load_access_grants();
+
 private:
     std::string nodes_file() const;
     std::string sites_file() const;
@@ -62,6 +66,7 @@ private:
     std::string ssl_certificates_file() const;
     std::string mail_domains_file() const;
     std::string access_users_file() const;
+    std::string access_grants_file() const;
 
     std::string db_path_;
 };

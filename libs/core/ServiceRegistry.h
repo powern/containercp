@@ -1,6 +1,7 @@
 #ifndef CONTAINERCP_CORE_SERVICE_REGISTRY_H
 #define CONTAINERCP_CORE_SERVICE_REGISTRY_H
 
+#include "access/AccessGrantManager.h"
 #include "access/AccessUserManager.h"
 #include "access/LocalSftpProvider.h"
 #include "backup/BackupManager.h"
@@ -33,6 +34,7 @@ public:
     database::DatabaseManager& databases();
     backup::BackupManager& backups();
     access::AccessUserManager& access_users();
+    access::AccessGrantManager& access_grants();
     access::AccessProvider& access_provider();
     ssl::SslCertificateManager& ssl();
     mail::MailDomainManager& mail();
@@ -55,6 +57,7 @@ private:
     database::DatabaseManager databases_;
     backup::BackupManager backups_;
     access::AccessUserManager access_users_;
+    access::AccessGrantManager access_grants_;
     access::LocalSftpProvider access_provider_;
     ssl::SslCertificateManager ssl_;
     mail::MailDomainManager mail_;
