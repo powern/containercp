@@ -17,6 +17,7 @@ public:
     std::string database_dir() const;
     std::string sites_dir() const;
     std::string templates_dir() const;
+    std::string users_dir() const;
 
 private:
     Config();

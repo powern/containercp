@@ -43,4 +43,8 @@ std::string Config::templates_dir() const {
     return config_root_ + "/templates/";
 }
 
+std::string Config::users_dir() const {
+    return data_root_ + "/users/";
+}
+
 } // namespace containercp::config

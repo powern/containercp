@@ -9,6 +9,7 @@
 #include "runtime/DockerRuntime.h"
 #include "site/SiteManager.h"
 #include "storage/Storage.h"
+#include "user/UserManager.h"
 
 namespace containercp::core {
 
@@ -18,6 +19,7 @@ public:
     logger::Logger& logger();
     ResourceManager& nodes();
     site::SiteManager& sites();
+    user::UserManager& users();
     filesystem::Filesystem& filesystem();
     runtime::Runtime& runtime();
     provider::HostingProvider& hosting_provider();
@@ -31,6 +33,7 @@ private:
     logger::Logger& logger_;
     ResourceManager nodes_;
     site::SiteManager sites_;
+    user::UserManager users_;
     storage::Storage storage_;
     filesystem::Filesystem filesystem_;
     runtime::DockerRuntime runtime_;

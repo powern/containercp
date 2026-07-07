@@ -19,6 +19,10 @@ std::string Storage::sites_file() const {
     return db_path_ + "sites.db";
 }
 
+std::string Storage::users_file() const {
+    return db_path_ + "users.db";
+}
+
 void Storage::save_nodes(const std::vector<node::Node>& nodes) {
     std::ofstream file(nodes_file());
     for (const auto& n : nodes) {
@@ -73,6 +77,38 @@ std::vector<site::Site> Storage::load_sites() {
         sites.push_back(std::move(s));
     }
     return sites;
+}
+
+void Storage::save_users(const std::vector<user::User>& users) {
+    std::ofstream file(users_file());
+    for (const auto& u : users) {
+        file << u.id << "|" << u.username << "|" << u.uid << "|"
+             << u.home_directory << "|" << u.shell << "|" << (u.enabled ? "1" : "0") << "\n";
+    }
+}
+
+std::vector<user::User> Storage::load_users() {
+    std::vector<user::User> users;
+    std::ifstream file(users_file());
+    if (!file.is_open()) {
+        return users;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::istringstream ss(line);
+        std::string token;
+        user::User u;
+        if (std::getline(ss, token, '|')) u.id = std::stoull(token);
+        if (std::getline(ss, token, '|')) u.username = token;
+        if (std::getline(ss, token, '|')) u.uid = std::stoull(token);
+        if (std::getline(ss, token, '|')) u.home_directory = token;
+        if (std::getline(ss, token, '|')) u.shell = token;
+        if (std::getline(ss, token, '|')) u.enabled = (token == "1");
+        u.name = u.username;
+        users.push_back(std::move(u));
+    }
+    return users;
 }
 
 } // namespace containercp::storage

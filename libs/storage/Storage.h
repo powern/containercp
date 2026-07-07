@@ -3,6 +3,7 @@
 
 #include "node/Node.h"
 #include "site/Site.h"
+#include "user/User.h"
 
 #include <string>
 #include <vector>
@@ -19,9 +20,13 @@ public:
     void save_sites(const std::vector<site::Site>& sites);
     std::vector<site::Site> load_sites();
 
+    void save_users(const std::vector<user::User>& users);
+    std::vector<user::User> load_users();
+
 private:
     std::string nodes_file() const;
     std::string sites_file() const;
+    std::string users_file() const;
 
     std::string db_path_;
 };

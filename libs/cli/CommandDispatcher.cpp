@@ -21,6 +21,10 @@ void print_help() {
         << "  config show     Show configuration\n"
         << "  node list       List nodes\n"
         << "  node show <name> Show node details\n"
+        << "  user create <username> Create user\n"
+        << "  user list           List users\n"
+        << "  user show <username> Show user details\n"
+        << "  user remove <username> Remove user\n"
         << "  site list       List sites\n"
         << "  site create <owner> <domain> Create site\n"
         << "  site start <domain>     Start site stack\n"
@@ -30,6 +34,73 @@ void print_help() {
 
 void print_version() {
     std::cout << "containercp " << VERSION << "\n";
+}
+
+int handle_user_create(const std::string& username) {
+    auto& services = containercp::core::Application::instance().services();
+
+    if (services.users().find(username) != nullptr) {
+        std::cout << "User already exists: " << username << "\n";
+        return 1;
+    }
+
+    std::string home = services.config().users_dir() + username;
+    uint64_t uid = 1000 + services.users().list().size();
+    services.users().create(username, uid, home, "/usr/sbin/nologin");
+    containercp::core::Application::instance().save();
+
+    services.filesystem().create_directory(home + "/sites/");
+    services.filesystem().create_directory(home + "/logs/");
+    services.filesystem().create_directory(home + "/tmp/");
+    services.filesystem().create_directory(home + "/backups/");
+    services.filesystem().create_file(home + "/sites/.gitkeep", "");
+    services.filesystem().create_file(home + "/logs/.gitkeep", "");
+    services.filesystem().create_file(home + "/tmp/.gitkeep", "");
+    services.filesystem().create_file(home + "/backups/.gitkeep", "");
+
+    std::cout << "User created:\n" << username << "\n";
+    return 0;
+}
+
+int handle_user_list() {
+    auto& services = containercp::core::Application::instance().services();
+    auto& users = services.users().list();
+    if (users.empty()) {
+        std::cout << "No users.\n";
+    } else {
+        for (const auto& u : users) {
+            std::cout << u.username << "\n";
+        }
+    }
+    return 0;
+}
+
+int handle_user_show(const std::string& username) {
+    auto& services = containercp::core::Application::instance().services();
+    auto* user = services.users().find(username);
+    if (user == nullptr) {
+        std::cout << "User not found: " << username << "\n";
+        return 1;
+    }
+    std::cout << "Username: " << user->username << "\n"
+              << "UID: " << user->uid << "\n"
+              << "Home: " << user->home_directory << "\n"
+              << "Shell: " << user->shell << "\n"
+              << "Enabled: " << (user->enabled ? "yes" : "no") << "\n";
+    return 0;
+}
+
+int handle_user_remove(const std::string& username) {
+    auto& services = containercp::core::Application::instance().services();
+    auto* user = services.users().find(username);
+    if (user == nullptr) {
+        std::cout << "User not found: " << username << "\n";
+        return 1;
+    }
+    services.users().remove(user->id);
+    containercp::core::Application::instance().save();
+    std::cout << "User removed:\n" << username << "\n";
+    return 0;
 }
 
 int handle_site_create(const std::string& owner, const std::string& domain) {
@@ -148,6 +219,22 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         std::cout << "Name: " << node->name << "\n"
                   << "Type: " << node->type << "\n";
         return 0;
+    }
+
+    if (argc == 4 && arg1 == "user" && std::string(argv[2]) == "create") {
+        return handle_user_create(argv[3]);
+    }
+
+    if (argc == 3 && arg1 == "user" && std::string(argv[2]) == "list") {
+        return handle_user_list();
+    }
+
+    if (argc == 4 && arg1 == "user" && std::string(argv[2]) == "show") {
+        return handle_user_show(argv[3]);
+    }
+
+    if (argc == 4 && arg1 == "user" && std::string(argv[2]) == "remove") {
+        return handle_user_remove(argv[3]);
     }
 
     if (argc == 5 && arg1 == "site" && std::string(argv[2]) == "create") {

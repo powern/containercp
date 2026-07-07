@@ -23,6 +23,18 @@ ServiceRegistry::ServiceRegistry()
         nodes_.set_nodes(loaded_nodes);
     }
 
+    auto loaded_users = storage_.load_users();
+    if (loaded_users.empty()) {
+        users_.create("admin", 1000, config_.users_dir() + "admin", "/usr/sbin/nologin");
+        filesystem_.create_directory(config_.users_dir() + "admin/sites/");
+        filesystem_.create_directory(config_.users_dir() + "admin/logs/");
+        filesystem_.create_directory(config_.users_dir() + "admin/tmp/");
+        filesystem_.create_directory(config_.users_dir() + "admin/backups/");
+        storage_.save_users(users_.list());
+    } else {
+        users_.set_users(loaded_users);
+    }
+
     auto loaded_sites = storage_.load_sites();
     if (!loaded_sites.empty()) {
         sites_.set_sites(loaded_sites);
@@ -45,6 +57,10 @@ site::SiteManager& ServiceRegistry::sites() {
     return sites_;
 }
 
+user::UserManager& ServiceRegistry::users() {
+    return users_;
+}
+
 filesystem::Filesystem& ServiceRegistry::filesystem() {
     return filesystem_;
 }
@@ -60,6 +76,7 @@ provider::HostingProvider& ServiceRegistry::hosting_provider() {
 void ServiceRegistry::save() {
     storage_.save_nodes(nodes_.list());
     storage_.save_sites(sites_.list());
+    storage_.save_users(users_.list());
 }
 
 } // namespace containercp::core
