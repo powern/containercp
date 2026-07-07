@@ -1,5 +1,6 @@
 #include "CommandDispatcher.h"
 #include "core/Application.h"
+#include "domain/DomainManager.h"
 #include "node/Node.h"
 #include "operations/SiteCreateOperation.h"
 
@@ -25,6 +26,9 @@ void print_help() {
         << "  user list           List users\n"
         << "  user show <username> Show user details\n"
         << "  user remove <username> Remove user\n"
+        << "  domain list         List domains\n"
+        << "  domain show <fqdn>  Show domain details\n"
+        << "  domain remove <fqdn> Remove domain\n"
         << "  site list       List sites\n"
         << "  site create <owner> <domain> Create site\n"
         << "  site start <domain>     Start site stack\n"
@@ -112,7 +116,7 @@ int handle_site_create(const std::string& owner, const std::string& domain) {
         return 1;
     }
 
-    containercp::operations::SiteCreateOperation op(services.sites(), services.hosting_provider());
+    containercp::operations::SiteCreateOperation op(services.sites(), services.domains(), services.hosting_provider());
     auto result = op.execute(owner, domain, *node);
 
     if (result.success) {
@@ -235,6 +239,44 @@ int CommandDispatcher::run(int argc, char* argv[]) {
 
     if (argc == 4 && arg1 == "user" && std::string(argv[2]) == "remove") {
         return handle_user_remove(argv[3]);
+    }
+
+    if (argc == 3 && arg1 == "domain" && std::string(argv[2]) == "list") {
+        auto& domains = services.domains().list();
+        if (domains.empty()) {
+            std::cout << "No domains.\n";
+        } else {
+            for (const auto& d : domains) {
+                std::cout << d.fqdn << "\n";
+            }
+        }
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "domain" && std::string(argv[2]) == "show") {
+        auto* domain = services.domains().find(argv[3]);
+        if (domain == nullptr) {
+            std::cout << "Domain not found: " << argv[3] << "\n";
+            return 1;
+        }
+        std::cout << "Domain: " << domain->fqdn << "\n"
+                  << "Site ID: " << domain->site_id << "\n"
+                  << "PHP: " << domain->php_version << "\n"
+                  << "SSL: " << (domain->ssl_enabled ? "yes" : "no") << "\n"
+                  << "Enabled: " << (domain->enabled ? "yes" : "no") << "\n";
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "domain" && std::string(argv[2]) == "remove") {
+        auto* domain = services.domains().find(argv[3]);
+        if (domain == nullptr) {
+            std::cout << "Domain not found: " << argv[3] << "\n";
+            return 1;
+        }
+        services.domains().remove(domain->id);
+        containercp::core::Application::instance().save();
+        std::cout << "Domain removed:\n" << argv[3] << "\n";
+        return 0;
     }
 
     if (argc == 5 && arg1 == "site" && std::string(argv[2]) == "create") {

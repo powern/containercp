@@ -1,6 +1,7 @@
 #ifndef CONTAINERCP_STORAGE_STORAGE_H
 #define CONTAINERCP_STORAGE_STORAGE_H
 
+#include "domain/Domain.h"
 #include "node/Node.h"
 #include "site/Site.h"
 #include "user/User.h"
@@ -23,10 +24,14 @@ public:
     void save_users(const std::vector<user::User>& users);
     std::vector<user::User> load_users();
 
+    void save_domains(const std::vector<domain::Domain>& domains);
+    std::vector<domain::Domain> load_domains();
+
 private:
     std::string nodes_file() const;
     std::string sites_file() const;
     std::string users_file() const;
+    std::string domains_file() const;
 
     std::string db_path_;
 };

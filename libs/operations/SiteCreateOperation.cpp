@@ -2,8 +2,9 @@
 
 namespace containercp::operations {
 
-SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, provider::HostingProvider& provider)
+SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, domain::DomainManager& domains, provider::HostingProvider& provider)
     : sites_(sites)
+    , domains_(domains)
     , provider_(provider)
 {
 }
@@ -28,6 +29,8 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
     site.node_id = node.id;
 
     sites_.create(domain, owner, node.id);
+
+    domains_.create(domain, 0, site.id);
 
     return provider_.create_site(site);
 }

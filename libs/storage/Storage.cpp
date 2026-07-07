@@ -23,6 +23,10 @@ std::string Storage::users_file() const {
     return db_path_ + "users.db";
 }
 
+std::string Storage::domains_file() const {
+    return db_path_ + "domains.db";
+}
+
 void Storage::save_nodes(const std::vector<node::Node>& nodes) {
     std::ofstream file(nodes_file());
     for (const auto& n : nodes) {
@@ -109,6 +113,40 @@ std::vector<user::User> Storage::load_users() {
         users.push_back(std::move(u));
     }
     return users;
+}
+
+void Storage::save_domains(const std::vector<domain::Domain>& domains) {
+    std::ofstream file(domains_file());
+    for (const auto& d : domains) {
+        file << d.id << "|" << d.fqdn << "|" << d.owner_id << "|"
+             << d.site_id << "|" << d.php_version << "|"
+             << (d.ssl_enabled ? "1" : "0") << "|" << (d.enabled ? "1" : "0") << "\n";
+    }
+}
+
+std::vector<domain::Domain> Storage::load_domains() {
+    std::vector<domain::Domain> domains;
+    std::ifstream file(domains_file());
+    if (!file.is_open()) {
+        return domains;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::istringstream ss(line);
+        std::string token;
+        domain::Domain d;
+        if (std::getline(ss, token, '|')) d.id = std::stoull(token);
+        if (std::getline(ss, token, '|')) d.fqdn = token;
+        if (std::getline(ss, token, '|')) d.owner_id = std::stoull(token);
+        if (std::getline(ss, token, '|')) d.site_id = std::stoull(token);
+        if (std::getline(ss, token, '|')) d.php_version = token;
+        if (std::getline(ss, token, '|')) d.ssl_enabled = (token == "1");
+        if (std::getline(ss, token, '|')) d.enabled = (token == "1");
+        d.name = d.fqdn;
+        domains.push_back(std::move(d));
+    }
+    return domains;
 }
 
 } // namespace containercp::storage

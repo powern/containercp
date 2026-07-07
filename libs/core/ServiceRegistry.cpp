@@ -35,6 +35,11 @@ ServiceRegistry::ServiceRegistry()
         users_.set_users(loaded_users);
     }
 
+    auto loaded_domains = storage_.load_domains();
+    if (!loaded_domains.empty()) {
+        domains_.set_domains(loaded_domains);
+    }
+
     auto loaded_sites = storage_.load_sites();
     if (!loaded_sites.empty()) {
         sites_.set_sites(loaded_sites);
@@ -61,6 +66,10 @@ user::UserManager& ServiceRegistry::users() {
     return users_;
 }
 
+domain::DomainManager& ServiceRegistry::domains() {
+    return domains_;
+}
+
 filesystem::Filesystem& ServiceRegistry::filesystem() {
     return filesystem_;
 }
@@ -77,6 +86,7 @@ void ServiceRegistry::save() {
     storage_.save_nodes(nodes_.list());
     storage_.save_sites(sites_.list());
     storage_.save_users(users_.list());
+    storage_.save_domains(domains_.list());
 }
 
 } // namespace containercp::core

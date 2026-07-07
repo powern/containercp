@@ -3,6 +3,7 @@
 
 #include "config/Config.h"
 #include "core/ResourceManager.h"
+#include "domain/DomainManager.h"
 #include "filesystem/Filesystem.h"
 #include "logger/Logger.h"
 #include "provider/DockerComposeProvider.h"
@@ -20,6 +21,7 @@ public:
     ResourceManager& nodes();
     site::SiteManager& sites();
     user::UserManager& users();
+    domain::DomainManager& domains();
     filesystem::Filesystem& filesystem();
     runtime::Runtime& runtime();
     provider::HostingProvider& hosting_provider();
@@ -34,6 +36,7 @@ private:
     ResourceManager nodes_;
     site::SiteManager sites_;
     user::UserManager users_;
+    domain::DomainManager domains_;
     storage::Storage storage_;
     filesystem::Filesystem filesystem_;
     runtime::DockerRuntime runtime_;
