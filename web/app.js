@@ -193,7 +193,7 @@ function initApp() {
         <div class="topbar-right">
           <span style="font-size:12px;color:var(--text2);margin-right:8px;" id="userDisplay"></span>
           <button class="btn btn-sm" onclick="doLogout()" style="margin-right:8px;font-size:11px;">Logout</button>
-          <span class="version-badge" id="versionBadge">v0.1.0</span>
+          <span class="version-badge" id="versionBadge">...</span>
           <span class="status-dot" id="statusDot"></span>
           <span class="status-label" id="statusLabel">Connected</span>
           <button class="theme-btn" id="themeToggle" title="Toggle theme">
@@ -220,6 +220,7 @@ function initApp() {
   $('themeToggle').addEventListener('click', toggleTheme);
 
   updateStatus();
+  loadVersion();
   setInterval(updateStatus, 30000);
   navigate('dashboard');
 }
@@ -672,6 +673,20 @@ function toggleTheme() {
   html.setAttribute('data-theme', isDark ? 'light' : 'dark');
   const val = $('themeValue');
   if (val) val.textContent = isDark ? 'Light' : 'Dark';
+}
+
+/* ===== VERSION ===== */
+async function loadVersion() {
+  try {
+    const res = await api('/api/version');
+    if (res.success && res.data && res.data.version) {
+      const v = $('versionBadge');
+      if (v) v.textContent = 'v' + res.data.version;
+    }
+  } catch(e) {
+    const v = $('versionBadge');
+    if (v) v.textContent = 'version unknown';
+  }
 }
 
 /* ===== STATUS ===== */
