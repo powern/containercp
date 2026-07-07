@@ -1,5 +1,6 @@
 #include "CommandDispatcher.h"
 #include "config/Config.h"
+#include "logger/Logger.h"
 #include "node/Node.h"
 
 #include <iostream>
@@ -66,7 +67,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
     if (argc == 4 && arg1 == "node" && std::string(argv[2]) == "show") {
         auto node = node::find_node(argv[3]);
         if (node.name.empty()) {
-            std::cerr << "Error: node \"" << argv[3] << "\" not found\n";
+            logger::Logger::error("node \"" + std::string(argv[3]) + "\" not found");
             return 1;
         }
         std::cout << "Name: " << node.name << "\n"
@@ -74,7 +75,8 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         return 0;
     }
 
-    std::cerr << "Error: unknown command\n\n";
+    logger::Logger::error("unknown command");
+    std::cout << "\n";
     print_help();
     return 1;
 }
