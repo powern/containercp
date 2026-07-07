@@ -1,4 +1,5 @@
 #include "CommandDispatcher.h"
+#include "config/Config.h"
 #include "node/Node.h"
 
 #include <iostream>
@@ -16,6 +17,7 @@ void print_help() {
         << "Commands:\n"
         << "  --help       Show help\n"
         << "  --version    Show version\n"
+        << "  config show     Show configuration\n"
         << "  node list       List nodes\n"
         << "  node show <name> Show node details\n";
 }
@@ -49,6 +51,15 @@ int CommandDispatcher::run(int argc, char* argv[]) {
     if (argc == 3 && arg1 == "node" && std::string(argv[2]) == "list") {
         auto node = node::get_default_node();
         std::cout << node.name << "\n";
+        return 0;
+    }
+
+    if (argc == 3 && arg1 == "config" && std::string(argv[2]) == "show") {
+        auto& cfg = config::Config::instance();
+        std::cout << "SourceRoot : " << cfg.source_root() << "\n"
+                  << "ConfigRoot : " << cfg.config_root() << "\n"
+                  << "DataRoot   : " << cfg.data_root() << "\n"
+                  << "LogRoot    : " << cfg.log_root() << "\n";
         return 0;
     }
 
