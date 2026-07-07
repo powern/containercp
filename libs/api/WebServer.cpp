@@ -179,13 +179,17 @@ void WebServer::handle_client(int client_fd, WebServer* server) {
 
     Request req = server->parse_request(raw);
 
-    // Auth routes (no session required for login/logout)
+    // Public routes (no session required)
     if (req.path == "/ui-api/auth/login") {
         server->handle_auth_login(raw, client_fd);
         return;
     }
     if (req.path == "/ui-api/auth/logout") {
         server->handle_auth_logout(raw, client_fd);
+        return;
+    }
+    if (req.path == "/ui-api/health" || req.path == "/api/health") {
+        server->proxy_to_api(raw, client_fd);
         return;
     }
 

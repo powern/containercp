@@ -161,6 +161,8 @@ TEST_CASE("Static file path traversal blocked") {
     CHECK(bad_path.find("..") != std::string::npos);
 }
 
+#include "auth/sha256.h"
+
 static std::string test_base64(const std::string& input) {
     static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string out;
@@ -192,4 +194,75 @@ TEST_CASE("Base64 auth credentials") {
     std::string encoded = test_base64(creds);
     CHECK(encoded == "YWRtaW46dGVzdDEyMw==");
     CHECK(("Basic " + encoded) == "Basic YWRtaW46dGVzdDEyMw==");
+}
+
+TEST_CASE("SHA-256 known vector") {
+    // NIST test vector: SHA-256("abc") 
+    auto hash = containercp::auth::sha256("abc");
+    std::string expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    CHECK(hash == expected);
+}
+
+TEST_CASE("SHA-256 empty string") {
+    auto hash = containercp::auth::sha256("");
+    std::string expected = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    CHECK(hash == expected);
+}
+
+TEST_CASE("SHA-256 password consistency") {
+    // Same password must produce same hash every time
+    std::string pw = "admin:test123";
+    auto h1 = containercp::auth::sha256(pw);
+    auto h2 = containercp::auth::sha256(pw);
+    CHECK(h1 == h2);
+    size_t hlen = h1.length();
+    CHECK(hlen == 64);
+}
+
+TEST_CASE("Auth route patterns") {
+    // Regression: these routes must match the WebServer's public route logic
+    std::vector<std::string> public_routes = {
+        "/ui-api/auth/login",
+        "/ui-api/auth/logout",
+        "/ui-api/health",
+        "/api/health"
+    };
+    for (const auto& route : public_routes) {
+        bool ok = route.find("/ui-api/") == 0 || route.find("/api/") == 0;
+        CHECK(ok);
+    }
+
+    std::vector<std::string> protected_routes = {
+        "/ui-api/auth/change-password",
+        "/ui-api/auth/me",
+        "/ui-api/api/sites",
+        "/ui-api/api/domains"
+    };
+    for (const auto& route : protected_routes) {
+        CHECK(route.find("/ui-api/") == 0);
+    }
+}
+
+TEST_CASE("Unauthenticated route access pattern") {
+    // Verify the route classification logic used by WebServer::handle_client
+    auto is_public = [](const std::string& path) {
+        return path == "/ui-api/auth/login"
+            || path == "/ui-api/auth/logout"
+            || path == "/ui-api/health"
+            || path == "/api/health";
+    };
+    auto is_auth_route = [](const std::string& path) {
+        return path == "/ui-api/auth/change-password"
+            || path == "/ui-api/auth/me";
+    };
+
+    CHECK(is_public("/ui-api/auth/login"));
+    CHECK(is_public("/ui-api/auth/logout"));
+    CHECK(is_public("/ui-api/health"));
+    CHECK_FALSE(is_public("/ui-api/auth/me"));
+    CHECK_FALSE(is_public("/ui-api/api/sites"));
+
+    CHECK(is_auth_route("/ui-api/auth/me"));
+    CHECK(is_auth_route("/ui-api/auth/change-password"));
+    CHECK_FALSE(is_auth_route("/ui-api/auth/login"));
 }

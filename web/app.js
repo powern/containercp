@@ -11,14 +11,21 @@ async function api(path, opts) {
   if (sessionToken) {
     opts.headers['X-Session-Token'] = sessionToken;
   }
-  try {
-    const res = await fetch(API_BASE + path, opts);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    return await res.json();
-  } catch (e) {
-    toast('Network error: ' + e.message, 'error');
-    throw e;
+  const res = await fetch(API_BASE + path, opts);
+  if (res.status === 401) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.error || 'Unauthorized');
+    err.status = 401;
+    err.login_required = body.login_required;
+    throw err;
   }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.error || 'HTTP ' + res.status);
+    err.status = res.status;
+    throw err;
+  }
+  return await res.json();
 }
 
 async function apiPost(path, body) {
@@ -87,7 +94,11 @@ async function doLogin() {
       renderLogin(res.error || 'Login failed');
     }
   } catch(e) {
-    renderLogin('Connection error. Is the daemon running?');
+    if (e.status === 401) {
+      renderLogin('Invalid username or password');
+    } else {
+      renderLogin('Authentication service unavailable. Is the daemon running?');
+    }
   }
 }
 
@@ -221,22 +232,16 @@ async function checkAuth() {
   }
   try {
     const res = await api('/auth/me');
-    if (res.success && res.data) {
-      currentUser = {username: res.data.username, must_change_password: res.data.must_change_password};
-      if (res.data.must_change_password) {
-        renderChangePassword();
-      } else {
-        initApp();
-      }
+    currentUser = {username: res.data.username, must_change_password: res.data.must_change_password};
+    if (res.data.must_change_password) {
+      renderChangePassword();
     } else {
-      localStorage.removeItem('session_token');
-      sessionToken = null;
-      renderLogin();
+      initApp();
     }
   } catch(e) {
     localStorage.removeItem('session_token');
     sessionToken = null;
-    renderLogin();
+    renderLogin(e.status === 401 ? null : 'Session expired. Please log in again.');
   }
 }
 
