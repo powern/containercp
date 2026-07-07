@@ -1,4 +1,5 @@
 #include "DockerComposeProvider.h"
+#include "docker/EnvGenerator.h"
 #include "filesystem/SiteLayout.h"
 
 namespace containercp::provider {
@@ -15,6 +16,9 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
 
     filesystem::SiteLayout layout(fs_, site_dir);
     layout.create();
+
+    docker::EnvGenerator env(fs_, site_dir);
+    env.generate(site.domain, site.owner);
 
     docker::ComposeGenerator gen(fs_, cfg_.config_root() + "/templates/");
     gen.generate(site.domain, site.owner, site_dir + "docker-compose.yml");
