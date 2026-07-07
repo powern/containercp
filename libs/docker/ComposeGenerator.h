@@ -12,7 +12,7 @@ class ComposeGenerator {
 public:
     ComposeGenerator(filesystem::Filesystem& fs, const std::string& template_dir);
 
-    bool generate(const std::string& domain, const std::string& owner, const std::string& output_path);
+    bool generate(const std::string& domain, const std::string& owner, const std::string& php_image, const std::string& output_path);
 
 private:
     std::string get_or_create_template();

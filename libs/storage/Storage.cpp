@@ -27,6 +27,10 @@ std::string Storage::domains_file() const {
     return db_path_ + "domains.db";
 }
 
+std::string Storage::php_versions_file() const {
+    return db_path_ + "php_versions.db";
+}
+
 void Storage::save_nodes(const std::vector<node::Node>& nodes) {
     std::ofstream file(nodes_file());
     for (const auto& n : nodes) {
@@ -147,6 +151,37 @@ std::vector<domain::Domain> Storage::load_domains() {
         domains.push_back(std::move(d));
     }
     return domains;
+}
+
+void Storage::save_php_versions(const std::vector<php::PhpVersion>& versions) {
+    std::ofstream file(php_versions_file());
+    for (const auto& pv : versions) {
+        file << pv.id << "|" << pv.version << "|" << pv.image << "|"
+             << (pv.enabled ? "1" : "0") << "|" << (pv.default_version ? "1" : "0") << "\n";
+    }
+}
+
+std::vector<php::PhpVersion> Storage::load_php_versions() {
+    std::vector<php::PhpVersion> versions;
+    std::ifstream file(php_versions_file());
+    if (!file.is_open()) {
+        return versions;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::istringstream ss(line);
+        std::string token;
+        php::PhpVersion pv;
+        if (std::getline(ss, token, '|')) pv.id = std::stoull(token);
+        if (std::getline(ss, token, '|')) pv.version = token;
+        if (std::getline(ss, token, '|')) pv.image = token;
+        if (std::getline(ss, token, '|')) pv.enabled = (token == "1");
+        if (std::getline(ss, token, '|')) pv.default_version = (token == "1");
+        pv.name = pv.version;
+        versions.push_back(std::move(pv));
+    }
+    return versions;
 }
 
 } // namespace containercp::storage

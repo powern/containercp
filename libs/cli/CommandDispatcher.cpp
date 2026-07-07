@@ -29,6 +29,9 @@ void print_help() {
         << "  domain list         List domains\n"
         << "  domain show <fqdn>  Show domain details\n"
         << "  domain remove <fqdn> Remove domain\n"
+        << "  php list            List PHP versions\n"
+        << "  php show <version>  Show PHP version details\n"
+        << "  php default         Show default PHP version\n"
         << "  site list       List sites\n"
         << "  site create <owner> <domain> Create site\n"
         << "  site start <domain>     Start site stack\n"
@@ -264,6 +267,44 @@ int CommandDispatcher::run(int argc, char* argv[]) {
                   << "PHP: " << domain->php_version << "\n"
                   << "SSL: " << (domain->ssl_enabled ? "yes" : "no") << "\n"
                   << "Enabled: " << (domain->enabled ? "yes" : "no") << "\n";
+        return 0;
+    }
+
+    if (argc == 3 && arg1 == "php" && std::string(argv[2]) == "list") {
+        auto& versions = services.php_versions().list();
+        if (versions.empty()) {
+            std::cout << "No PHP versions.\n";
+        } else {
+            for (const auto& pv : versions) {
+                std::cout << pv.version;
+                if (pv.default_version) std::cout << " (default)";
+                std::cout << "\n";
+            }
+        }
+        return 0;
+    }
+
+    if (argc == 4 && arg1 == "php" && std::string(argv[2]) == "show") {
+        auto* pv = services.php_versions().find(argv[3]);
+        if (pv == nullptr) {
+            std::cout << "PHP version not found: " << argv[3] << "\n";
+            return 1;
+        }
+        std::cout << "Version: " << pv->version << "\n"
+                  << "Image: " << pv->image << "\n"
+                  << "Enabled: " << (pv->enabled ? "yes" : "no") << "\n"
+                  << "Default: " << (pv->default_version ? "yes" : "no") << "\n";
+        return 0;
+    }
+
+    if (argc == 3 && arg1 == "php" && std::string(argv[2]) == "default") {
+        auto* pv = services.php_versions().get_default();
+        if (pv == nullptr) {
+            std::cout << "No default PHP version.\n";
+            return 1;
+        }
+        std::cout << "Version: " << pv->version << "\n"
+                  << "Image: " << pv->image << "\n";
         return 0;
     }
 

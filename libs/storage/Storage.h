@@ -3,6 +3,7 @@
 
 #include "domain/Domain.h"
 #include "node/Node.h"
+#include "php/PhpVersion.h"
 #include "site/Site.h"
 #include "user/User.h"
 
@@ -27,11 +28,15 @@ public:
     void save_domains(const std::vector<domain::Domain>& domains);
     std::vector<domain::Domain> load_domains();
 
+    void save_php_versions(const std::vector<php::PhpVersion>& versions);
+    std::vector<php::PhpVersion> load_php_versions();
+
 private:
     std::string nodes_file() const;
     std::string sites_file() const;
     std::string users_file() const;
     std::string domains_file() const;
+    std::string php_versions_file() const;
 
     std::string db_path_;
 };

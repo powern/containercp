@@ -6,6 +6,7 @@
 #include "domain/DomainManager.h"
 #include "filesystem/Filesystem.h"
 #include "logger/Logger.h"
+#include "php/PhpVersionManager.h"
 #include "provider/DockerComposeProvider.h"
 #include "runtime/DockerRuntime.h"
 #include "site/SiteManager.h"
@@ -22,6 +23,7 @@ public:
     site::SiteManager& sites();
     user::UserManager& users();
     domain::DomainManager& domains();
+    php::PhpVersionManager& php_versions();
     filesystem::Filesystem& filesystem();
     runtime::Runtime& runtime();
     provider::HostingProvider& hosting_provider();
@@ -37,6 +39,7 @@ private:
     site::SiteManager sites_;
     user::UserManager users_;
     domain::DomainManager domains_;
+    php::PhpVersionManager php_versions_;
     storage::Storage storage_;
     filesystem::Filesystem filesystem_;
     runtime::DockerRuntime runtime_;

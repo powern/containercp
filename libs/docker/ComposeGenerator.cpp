@@ -31,7 +31,7 @@ ComposeGenerator::ComposeGenerator(filesystem::Filesystem& fs, const std::string
         "      - \"containercp.domain={{DOMAIN}}\"\n"
         "\n"
         "  php:\n"
-        "    image: php:8.4-fpm\n"
+        "    image: {{PHP_IMAGE}}\n"
         "    container_name: {{DOMAIN}}-php\n"
         "    restart: unless-stopped\n"
         "    volumes:\n"
@@ -103,9 +103,9 @@ std::string ComposeGenerator::get_or_create_template() {
     return fs_.read_file(template_path);
 }
 
-bool ComposeGenerator::generate(const std::string& domain, const std::string& owner, const std::string& output_path) {
+bool ComposeGenerator::generate(const std::string& domain, const std::string& owner, const std::string& php_image, const std::string& output_path) {
     std::string template_content = get_or_create_template();
-    std::string rendered = engine_.render(template_content, domain, owner);
+    std::string rendered = engine_.render(template_content, domain, owner, php_image);
     return fs_.create_file(output_path, rendered);
 }
 

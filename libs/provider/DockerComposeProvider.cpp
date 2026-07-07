@@ -4,9 +4,10 @@
 
 namespace containercp::provider {
 
-DockerComposeProvider::DockerComposeProvider(filesystem::Filesystem& fs, config::Config& cfg, runtime::Runtime& rt)
+DockerComposeProvider::DockerComposeProvider(filesystem::Filesystem& fs, config::Config& cfg, php::PhpVersionManager& php, runtime::Runtime& rt)
     : fs_(fs)
     , cfg_(cfg)
+    , php_(php)
     , rt_(rt)
 {
 }
@@ -20,8 +21,11 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
     docker::EnvGenerator env(fs_, site_dir);
     env.generate(site.domain, site.owner);
 
+    auto* php_version = php_.get_default();
+    std::string php_image = php_version ? php_version->image : "php:8.4-fpm";
+
     docker::ComposeGenerator gen(fs_, cfg_.templates_dir());
-    gen.generate(site.domain, site.owner, site_dir + "docker-compose.yml");
+    gen.generate(site.domain, site.owner, php_image, site_dir + "docker-compose.yml");
 
     std::string nginx_cfg =
         "server {\n"

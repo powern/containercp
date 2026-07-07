@@ -7,7 +7,7 @@ ServiceRegistry::ServiceRegistry()
     , logger_(logger::Logger::instance())
     , storage_(config_.database_dir())
     , runtime_(logger_, config_.sites_dir())
-    , hosting_provider_(filesystem_, config_, runtime_)
+    , hosting_provider_(filesystem_, config_, php_versions_, runtime_)
 {
     auto loaded_nodes = storage_.load_nodes();
     if (loaded_nodes.empty()) {
@@ -33,6 +33,16 @@ ServiceRegistry::ServiceRegistry()
         storage_.save_users(users_.list());
     } else {
         users_.set_users(loaded_users);
+    }
+
+    auto loaded_php = storage_.load_php_versions();
+    if (loaded_php.empty()) {
+        php_versions_.create("8.2", "php:8.2-fpm", false);
+        php_versions_.create("8.3", "php:8.3-fpm", false);
+        php_versions_.create("8.4", "php:8.4-fpm", true);
+        storage_.save_php_versions(php_versions_.list());
+    } else {
+        php_versions_.set_versions(loaded_php);
     }
 
     auto loaded_domains = storage_.load_domains();
@@ -70,6 +80,10 @@ domain::DomainManager& ServiceRegistry::domains() {
     return domains_;
 }
 
+php::PhpVersionManager& ServiceRegistry::php_versions() {
+    return php_versions_;
+}
+
 filesystem::Filesystem& ServiceRegistry::filesystem() {
     return filesystem_;
 }
@@ -87,6 +101,7 @@ void ServiceRegistry::save() {
     storage_.save_sites(sites_.list());
     storage_.save_users(users_.list());
     storage_.save_domains(domains_.list());
+    storage_.save_php_versions(php_versions_.list());
 }
 
 } // namespace containercp::core
