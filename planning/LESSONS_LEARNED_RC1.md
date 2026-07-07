@@ -264,3 +264,27 @@ The fixes are not just code changes. They are process changes:
 
 The project is now stronger for having done this validation.
 Future Epics will benefit from the lessons learned here.
+
+---
+
+## RC1 closure
+
+As of 2025-07-07, the core lifecycle validation has passed on a
+clean Debian 13 (Trixie) Validation VM:
+
+- 128 of 137 checklist items pass (9 stability items deferred)
+- All 13 discovered bugs are fixed
+- The Validation VM is now an established part of the development
+  process
+- Every new Epic will follow the same lifecycle:
+  Architecture Proposal → Implementation → Tests → VM Validation
+
+The lessons from RC1 have permanently changed how the project
+validates:
+
+1. **Real environments catch real bugs** — unit tests alone are
+   never sufficient
+2. **Developer environment bias** must be actively guarded against
+3. **Checklists must reflect operations, not just development**
+4. **Security cannot be deferred without architectural cost**
+5. **Database directories must be created before writing to them**

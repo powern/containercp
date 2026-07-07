@@ -70,9 +70,10 @@ Before planning any new Epic, read these documents IN ORDER:
 ## Version 0.5 — First Production Validation
 
 - [x] Complete Web UI features (wizard, forms, detail pages, CRUD)
-- [ ] Run first Release Candidate (rc1) on clean Debian 12
-- [ ] Run full 114-item validation checklist
-- [ ] Fix discovered issues
+- [x] Run first Release Candidate (rc1) on clean Debian 13 VM
+- [x] Run full 137-item validation checklist — 128 pass, 9 deferred
+- [x] Fix all discovered issues (13 bugs fixed)
+- [ ] Run 24-hour stability test (RC2)
 - [ ] Release v0.5.0-rc2
 - [ ] Final validation
 - [ ] Release v0.5.0

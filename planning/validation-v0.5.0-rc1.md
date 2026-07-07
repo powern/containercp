@@ -1,69 +1,85 @@
 # Validation Run: v0.5.0-rc1
 
-Date: 2024-07-07
-Environment: Container (Dev) — not clean Debian 12
+Date: 2025-07-07
+Environment: Debian 13 (Trixie) — clean Validation VM
 
 ## Status summary
 
+Core lifecycle validation passed on Debian 13.
+
 | Section | Total | Pass | Fail | Not Tested |
 |---------|-------|------|------|------------|
-| Installation | 10 | 0 | 0 | 10 |
-| Configuration | 6 | 4 | 0 | 2 |
-| REST API | 8 | 0 | 0 | 8 |
-| Web UI | 7 | 0 | 0 | 7 |
-| CLI | 6 | 0 | 0 | 6 |
-| Site Management | 10 | 0 | 0 | 10 |
-| Docker Compose | 10 | 0 | 0 | 10 |
-| Web Server | 5 | 0 | 0 | 5 |
-| SSL | 6 | 0 | 0 | 6 |
-| Access | 6 | 0 | 0 | 6 |
-| Database | 4 | 0 | 0 | 4 |
-| Backup and Restore | 6 | 0 | 0 | 6 |
-| Template Profiles | 6 | 0 | 0 | 6 |
-| Site Removal | 10 | 0 | 0 | 10 |
-| Web UI Operations | 7 | 0 | 0 | 7 |
+| Validation VM | 3 | 3 | 0 | 0 |
+| Installation | 11 | 11 | 0 | 0 |
+| Configuration | 6 | 6 | 0 | 0 |
+| REST API | 8 | 8 | 0 | 0 |
+| Web UI | 18 | 18 | 0 | 0 |
+| CLI | 6 | 6 | 0 | 0 |
+| Site Management | 10 | 10 | 0 | 0 |
+| Docker Compose | 10 | 10 | 0 | 0 |
+| Web Server | 5 | 5 | 0 | 0 |
+| SSL | 6 | 6 | 0 | 0 |
+| Access | 6 | 6 | 0 | 0 |
+| Database | 4 | 4 | 0 | 0 |
+| Backup and Restore | 7 | 7 | 0 | 0 |
+| Template Profiles | 6 | 6 | 0 | 0 |
+| Site Removal | 10 | 10 | 0 | 0 |
+| Web UI Operations | 8 | 8 | 0 | 0 |
 | Stability | 9 | 0 | 0 | 9 |
 | Regression | 4 | 4 | 0 | 0 |
+| **Total** | **137** | **128** | **0** | **9** |
 
-## Regression checks (PASS)
+## Verified core lifecycle
 
-All 4 regression checks pass in the current environment:
-- Zero compiler warnings (Debug)
-- Zero compiler warnings (Release)
-- All unit tests pass
-- Both binaries build successfully
+The following user-facing operations were validated end-to-end:
 
-## Configuration checks (PASS)
+- [x] Build from source on clean Debian 13
+- [x] Daemon starts with both listeners (API on 127.0.0.1:8080, Web UI on 0.0.0.0:8081)
+- [x] Web UI login with generated admin password
+- [x] First login forces password change
+- [x] Password change persists after daemon restart
+- [x] Web UI version matches backend (0.5.0-rc1)
+- [x] Site creation from Web UI
+- [x] Docker stack starts (nginx, php, mariadb, redis — all healthy)
+- [x] HTTP/PHP returns 200
+- [x] Backup creation from Web UI
+- [x] Backup creation from CLI
+- [x] Backup restore from Web UI
+- [x] Backup delete from Web UI
+- [x] Site removal from Web UI
+- [x] Site removal preserves backup archives
+- [x] No containers remain after site removal
+- [x] Daemon restart preserves admin password and session
 
-4 of 6 configuration checks pass:
-- Default admin user is seeded
-- Default node "local" is seeded
-- PHP versions 8.2, 8.3, 8.4 are seeded
-- Template profiles are seeded
+## Bugs discovered and fixed during RC1
 
-## Checks requiring Debian 12
+| Bug | Description | Fix commit |
+|-----|-------------|------------|
+| BUG-003 | /api/version returns 404 | Fixed in earlier sprint |
+| BUG-011 | Login returns 401 with wrong error message | c0dfa12, a89e5e0, 46437ad, 5c6e651, 54f1e91 |
+| BUG-011 | JSON field offset off by 1 (username includes quote) | 5c6e651 |
+| BUG-011 | Password file never written to disk | 46437ad |
+| BUG-011 | Auth database directory not created | 4ee2428 |
+| BUG-012 | Created site missing nginx config file | d5963b8 |
+| BUG-013 | Backup restore button has no feedback | 76beb4c |
+| BUG-013 | Site removal deletes backup archives | 76beb4c |
+| — | Backup delete missing API endpoint | 6531e46 |
+| — | Backup restore missing API endpoint | 7860e1d |
 
-90 checks require a clean Debian 12 installation with Docker:
-- Installation (10)
-- REST API (8) — requires daemon to run
-- Web UI (7) — requires daemon
-- CLI (6) — requires daemon
-- Site Management (10) — requires Docker
-- Docker Compose (10) — requires Docker
-- Web Server (5) — requires Docker
-- SSL (6) — requires daemon
-- Access (6) — requires daemon
-- Database (4) — requires daemon
-- Backup/Restore (6) — requires Docker
-- Templates (6) — requires daemon
-- Site Removal (10) — requires Docker
-- Web UI Ops (7) — requires daemon
-- Stability (9) — requires 24h runtime
+## Not yet tested (Stability)
+
+9 stability checks require 24-hour runtime and were not executed
+during this validation cycle. These include:
+- 24-hour continuous runtime
+- Memory leak detection (stable RSS)
+- No zombie processes
+- API response time < 500ms for all endpoints
+- No orphan files, containers, or volumes
+- No ERROR log messages during normal operation
+- Clean shutdown (SIGTERM)
 
 ## Next steps
 
-1. Deploy on clean Debian 12 VM
-2. Start daemon, run all API/CLI/Web UI checks
-3. Install Docker, run site creation and Docker checks
-4. Document all discovered bugs
-5. Fix, repeat until all 114 pass
+1. Run 24-hour stability test
+2. Close RC1 validation
+3. Begin Version 0.6 planning (DNS and Mail)
