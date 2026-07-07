@@ -674,7 +674,11 @@ async function removeBackup(id) {
       toast('Error: ' + (res.error || 'Remove failed'), 'error');
     }
   } catch(e) {
-    toast('Network error', 'error');
+    if (e.status) {
+      toast('Error: ' + e.message, 'error');
+    } else {
+      toast('Network error', 'error');
+    }
   }
 }
 

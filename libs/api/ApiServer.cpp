@@ -504,6 +504,29 @@ bool ApiServer::start() {
         return r;
     });
 
+    router_.add("POST", "/api/backups/remove", [&s](const Request& req) {
+        Response r;
+        std::string id_str = json_extract(req.body, "id");
+        if (id_str.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"id required\"}";
+            return r;
+        }
+        uint64_t id = std::stoull(id_str);
+        auto* b = s.backups().find(id);
+        if (!b) {
+            r.body = "{\"success\":false,\"error\":\"Backup not found\"}";
+            return r;
+        }
+        if (!b->file_path.empty()) {
+            s.backup_provider().remove_backup(b->file_path);
+        }
+        s.backups().remove(id);
+        s.save();
+        r.body = "{\"success\":true,\"data\":{\"message\":\"Backup removed\"}}";
+        return r;
+    });
+
     router_.add("POST", "/api/backups/restore", [&s](const Request& req) {
         Response r;
         std::string id_str = json_extract(req.body, "id");
