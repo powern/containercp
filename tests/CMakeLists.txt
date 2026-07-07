@@ -7,6 +7,7 @@ add_executable(containercp_tests
     test_ssl.cpp
     test_storage.cpp
     test_api.cpp
+    test_daemon.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/Validator.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/StringUtils.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/PasswordGenerator.cpp
@@ -30,6 +31,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/api/Router.cpp
     ${CMAKE_SOURCE_DIR}/libs/api/Response.cpp
     ${CMAKE_SOURCE_DIR}/libs/api/JsonFormatter.cpp
+    ${CMAKE_SOURCE_DIR}/libs/daemon/CommandProtocol.cpp
 )
 
 target_include_directories(containercp_tests PRIVATE

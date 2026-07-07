@@ -6,26 +6,27 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_executable(containercp
-    app/containercp/main.cpp
-    libs/api/ApiServer.cpp
-    libs/api/AuthMiddleware.cpp
-    libs/api/JsonFormatter.cpp
-    libs/api/Response.cpp
-    libs/api/Router.cpp
+# Shared library sources (used by both binaries)
+set(CONTAINERCP_SOURCES
     libs/access/AccessGrant.cpp
     libs/access/AccessGrantManager.cpp
     libs/access/AccessUser.cpp
     libs/access/AccessUserManager.cpp
     libs/access/LocalSftpProvider.cpp
-    libs/cli/CommandDispatcher.cpp
+    libs/api/ApiServer.cpp
+    libs/api/AuthMiddleware.cpp
+    libs/api/JsonFormatter.cpp
+    libs/api/Response.cpp
+    libs/api/Router.cpp
+    libs/backup/Backup.cpp
+    libs/backup/BackupManager.cpp
     libs/config/Config.cpp
     libs/core/Application.cpp
     libs/core/Resource.cpp
     libs/core/ResourceManager.cpp
-    libs/backup/Backup.cpp
-    libs/backup/BackupManager.cpp
     libs/core/ServiceRegistry.cpp
+    libs/daemon/CommandProtocol.cpp
+    libs/daemon/DaemonApp.cpp
     libs/database/Database.cpp
     libs/database/DatabaseManager.cpp
     libs/domain/Domain.cpp
@@ -58,6 +59,31 @@ add_executable(containercp
     libs/user/UserManager.cpp
     libs/utils/PasswordGenerator.cpp
     libs/utils/StringUtils.cpp
+    libs/utils/Validator.cpp
+)
+
+# Daemon binary
+add_executable(containercpd
+    app/containercpd/main.cpp
+    ${CONTAINERCP_SOURCES}
+)
+
+target_include_directories(containercpd PRIVATE
+    libs
+)
+
+target_compile_options(containercpd PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+)
+
+# CLI client binary (thin)
+add_executable(containercp
+    app/containercp/main.cpp
+    libs/cli/CommandDispatcher.cpp
+    libs/daemon/CommandProtocol.cpp
+    libs/daemon/UnixSocketClient.cpp
     libs/utils/Validator.cpp
 )
 

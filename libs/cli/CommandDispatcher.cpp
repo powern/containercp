@@ -1,30 +1,43 @@
 #include "CommandDispatcher.h"
-#include "core/Application.h"
-#include "domain/DomainManager.h"
-#include "node/Node.h"
-#include "operations/SiteCreateOperation.h"
-#include "operations/SiteRemoveOperation.h"
-#include "utils/PasswordGenerator.h"
+#include "daemon/CommandProtocol.h"
+#include "daemon/UnixSocketClient.h"
 #include "utils/Validator.h"
 
-#include <chrono>
-#include <fstream>
-#include <iomanip>
 #include <iostream>
-#include <sstream>
 #include <string>
 
-static bool confirm_action(const std::string& prompt) {
-    std::cout << prompt << "\n"
-              << "Are you sure? [y/N] ";
-    std::string line;
-    std::getline(std::cin, line);
-    return line == "y" || line == "Y" || line == "yes" || line == "YES";
-}
+#include <iostream>
+#include <string>
 
 namespace {
 
 constexpr const char* VERSION = "0.1.0";
+constexpr const char* SOCKET_PATH = "/srv/containercp/containercpd.sock";
+
+std::string send_command(const std::string& cmd_line) {
+    containercp::daemon::UnixSocketClient client(SOCKET_PATH);
+    if (!client.connect()) {
+        return "ERROR|Cannot connect to ContainerCP daemon. Is containercpd running?";
+    }
+    return client.send_and_receive(cmd_line);
+}
+
+int print_response(const std::string& response, bool print_success_msg = false) {
+    if (containercp::daemon::Command::is_success(response)) {
+        std::string msg = containercp::daemon::Command::message(response);
+        if (!msg.empty()) {
+            if (print_success_msg) {
+                std::cout << msg << "\n";
+            } else {
+                std::cout << msg;
+                if (msg.back() != '\n') std::cout << "\n";
+            }
+        }
+        return 0;
+    }
+    std::cout << containercp::daemon::Command::message(response) << "\n";
+    return 1;
+}
 
 void print_help() {
     std::cout
@@ -47,222 +60,27 @@ void print_help() {
         << "  php list            List PHP versions\n"
         << "  php show <version>  Show PHP version details\n"
         << "  php default         Show default PHP version\n"
-        << "  backup create <domain>  Create backup\n"
-        << "  backup list            List backups\n"
-        << "  backup show <id>       Show backup details\n"
-        << "  backup remove <id>     Remove backup\n"
-        << "  ssl list               List SSL certificates\n"
-        << "  ssl show <domain>      Show SSL certificate\n"
-        << "  ssl enable <domain>    Enable SSL for domain\n"
-        << "  ssl disable <domain>   Disable SSL for domain\n"
-        << "  mail list              List mail domains\n"
-        << "  mail show <domain>     Show mail domain\n"
-        << "  mail enable <domain>   Enable mail for domain\n"
-        << "  mail disable <domain>  Disable mail for domain\n"
         << "  database list       List databases\n"
         << "  database show <name> Show database details\n"
         << "  database remove <name> Remove database\n"
+        << "  backup list            List backups\n"
+        << "  ssl list               List SSL certificates\n"
+        << "  ssl show <domain>      Show SSL certificate\n"
+        << "  mail list              List mail domains\n"
+        << "  proxy list          List proxy configs\n"
+        << "  proxy show <domain> Show proxy config\n"
+        << "  access user list                       List access users\n"
+        << "  access grant list                      List grants\n"
         << "  site list       List sites\n"
         << "  site create <owner> <domain> Create site\n"
         << "  site remove <domain>     Remove site\n"
         << "  site start <domain>     Start site stack\n"
         << "  site stop <domain>      Stop site stack\n"
-        << "  site status <domain>    Show site status\n"
-        << "  access user create <username> <domain> Create access user\n"
-        << "  access user list                       List access users\n"
-        << "  access user show <username>            Show access user\n"
-        << "  access user enable <username>          Enable access user\n"
-        << "  access user disable <username>         Disable access user\n"
-        << "  access user remove <username>          Remove access user\n"
-        << "  access grant create <username> <domain> <permission> Create grant\n"
-        << "  access grant list                      List grants\n"
-        << "  access grant remove <id>               Remove grant\n"
-        << "  proxy list          List proxy configs\n"
-        << "  proxy show <domain> Show proxy config\n"
-        << "  proxy create <domain> Create proxy\n"
-        << "  proxy remove <domain> Remove proxy\n"
-        << "  proxy enable <domain> Enable proxy\n"
-        << "  proxy disable <domain> Disable proxy\n"
-        << "  proxy reload        Reload proxy\n"
-        << "  ssl request <domain>    Request SSL certificate\n"
-        << "  ssl renew <domain>      Renew SSL certificate\n"
-        << "  ssl revoke <domain>     Revoke SSL certificate\n";
+        << "  site status <domain>    Show site status\n";
 }
 
 void print_version() {
     std::cout << "containercp " << VERSION << "\n";
-}
-
-int handle_user_create(const std::string& username) {
-    auto& services = containercp::core::Application::instance().services();
-
-    {
-        std::string msg = containercp::utils::Validator::validate_username(username);
-        if (!msg.empty()) {
-            std::cout << msg << "\n";
-            return 1;
-        }
-    }
-
-    if (services.users().find(username) != nullptr) {
-        std::cout << "User already exists: " << username << "\n";
-        return 1;
-    }
-
-    std::string home = services.config().users_dir() + username;
-    uint64_t uid = 1000 + services.users().list().size();
-    services.users().create(username, uid, home, "/usr/sbin/nologin");
-    containercp::core::Application::instance().save();
-
-    services.filesystem().create_directory(home + "/sites/");
-    services.filesystem().create_directory(home + "/logs/");
-    services.filesystem().create_directory(home + "/tmp/");
-    services.filesystem().create_directory(home + "/backups/");
-    services.filesystem().create_file(home + "/sites/.gitkeep", "");
-    services.filesystem().create_file(home + "/logs/.gitkeep", "");
-    services.filesystem().create_file(home + "/tmp/.gitkeep", "");
-    services.filesystem().create_file(home + "/backups/.gitkeep", "");
-
-    std::cout << "User created:\n" << username << "\n";
-    return 0;
-}
-
-int handle_user_list() {
-    auto& services = containercp::core::Application::instance().services();
-    auto& users = services.users().list();
-    if (users.empty()) {
-        std::cout << "No users.\n";
-    } else {
-        for (const auto& u : users) {
-            std::cout << u.username << "\n";
-        }
-    }
-    return 0;
-}
-
-int handle_user_show(const std::string& username) {
-    auto& services = containercp::core::Application::instance().services();
-    auto* user = services.users().find(username);
-    if (user == nullptr) {
-        std::cout << "User not found: " << username << "\n";
-        return 1;
-    }
-    std::cout << "Username: " << user->username << "\n"
-              << "UID: " << user->uid << "\n"
-              << "Home: " << user->home_directory << "\n"
-              << "Shell: " << user->shell << "\n"
-              << "Enabled: " << (user->enabled ? "yes" : "no") << "\n";
-    return 0;
-}
-
-int handle_user_remove(const std::string& username) {
-    auto& services = containercp::core::Application::instance().services();
-    auto* user = services.users().find(username);
-    if (user == nullptr) {
-        std::cout << "User not found: " << username << "\n";
-        return 1;
-    }
-    services.users().remove(user->id);
-    containercp::core::Application::instance().save();
-    std::cout << "User removed:\n" << username << "\n";
-    return 0;
-}
-
-int handle_site_create(const std::string& owner, const std::string& domain, bool dry_run) {
-    auto& services = containercp::core::Application::instance().services();
-
-    auto* node = services.nodes().find("local");
-    if (node == nullptr) {
-        services.logger().error("no node available");
-        return 1;
-    }
-
-    containercp::operations::SiteCreateOperation op(services.sites(), services.domains(), services.databases(), services.reverse_proxies(), services.hosting_provider());
-    auto result = op.execute(owner, domain, *node, dry_run);
-
-    if (result.success) {
-        if (dry_run) {
-            return 0;
-        }
-        containercp::core::Application::instance().save();
-        std::cout << "Site created:\n" << domain << "\n";
-    } else {
-        std::cout << result.message << "\n";
-    }
-    return result.success ? 0 : 1;
-}
-
-int handle_site_remove(const std::string& domain, bool force) {
-    auto& services = containercp::core::Application::instance().services();
-
-    if (!force) {
-        if (!confirm_action("WARNING: This will permanently remove " + domain + " and all its data.")) {
-            std::cout << "Aborted.\n";
-            return 1;
-        }
-    }
-
-    containercp::operations::SiteRemoveOperation op(
-        services.sites(), services.domains(), services.databases(),
-        services.backups(), services.ssl(), services.mail(),
-        services.reverse_proxies(),
-        services.filesystem(), services.config(), services.runtime());
-
-    auto result = op.execute(domain);
-
-    if (result.success) {
-        containercp::core::Application::instance().save();
-        std::cout << "Site removed:\n" << domain << "\n";
-    } else {
-        std::cout << result.message << "\n";
-    }
-    return result.success ? 0 : 1;
-}
-
-int handle_site_start(const std::string& domain) {
-    auto& services = containercp::core::Application::instance().services();
-    auto* site = services.sites().find(domain);
-    if (site == nullptr) {
-        std::cout << "Site not found: " << domain << "\n";
-        return 1;
-    }
-    auto result = services.hosting_provider().start_site(*site);
-    if (result.success) {
-        std::cout << "Site started:\n" << domain << "\n";
-    } else {
-        std::cout << result.message << "\n";
-    }
-    return result.success ? 0 : 1;
-}
-
-int handle_site_stop(const std::string& domain) {
-    auto& services = containercp::core::Application::instance().services();
-    auto* site = services.sites().find(domain);
-    if (site == nullptr) {
-        std::cout << "Site not found: " << domain << "\n";
-        return 1;
-    }
-    auto result = services.hosting_provider().stop_site(*site);
-    if (result.success) {
-        std::cout << "Site stopped:\n" << domain << "\n";
-    } else {
-        std::cout << result.message << "\n";
-    }
-    return result.success ? 0 : 1;
-}
-
-int handle_site_status(const std::string& domain) {
-    auto& services = containercp::core::Application::instance().services();
-    auto* site = services.sites().find(domain);
-    if (site == nullptr) {
-        std::cout << "Site not found: " << domain << "\n";
-        return 1;
-    }
-    auto result = services.hosting_provider().status(*site);
-    if (!result.success) {
-        std::cout << result.message << "\n";
-    }
-    return result.success ? 0 : 1;
 }
 
 } // anonymous namespace
@@ -270,8 +88,6 @@ int handle_site_status(const std::string& domain) {
 namespace containercp::cli {
 
 int CommandDispatcher::run(int argc, char* argv[]) {
-    auto& services = core::Application::instance().services();
-
     if (argc == 1) {
         print_help();
         return 0;
@@ -290,640 +106,108 @@ int CommandDispatcher::run(int argc, char* argv[]) {
     }
 
     if (argc == 3 && arg1 == "node" && std::string(argv[2]) == "list") {
-        for (const auto& node : services.nodes().list()) {
-            std::cout << node.name << "\n";
-        }
-        return 0;
-    }
-
-    if (argc == 3 && arg1 == "config" && std::string(argv[2]) == "show") {
-        auto& cfg = services.config();
-        std::cout << "SourceRoot : " << cfg.source_root() << "\n"
-                  << "ConfigRoot : " << cfg.config_root() << "\n"
-                  << "DataRoot   : " << cfg.data_root() << "\n"
-                  << "LogRoot    : " << cfg.log_root() << "\n";
-        return 0;
+        return print_response(send_command("node-list"));
     }
 
     if (argc == 4 && arg1 == "node" && std::string(argv[2]) == "show") {
-        auto* node = services.nodes().find(argv[3]);
-        if (node == nullptr) {
-            services.logger().error("node \"" + std::string(argv[3]) + "\" not found");
-            return 1;
-        }
-        std::cout << "Name: " << node->name << "\n"
-                  << "Type: " << node->type << "\n";
-        return 0;
+        return print_response(send_command("node-show|" + std::string(argv[3])));
+    }
+
+    if (argc == 3 && arg1 == "config" && std::string(argv[2]) == "show") {
+        return print_response(send_command("config-show"));
     }
 
     if (argc == 4 && arg1 == "user" && std::string(argv[2]) == "create") {
-        return handle_user_create(argv[3]);
+        const std::string username = argv[3];
+        std::string msg = utils::Validator::validate_username(username);
+        if (!msg.empty()) {
+            std::cout << msg << "\n";
+            return 1;
+        }
+        return print_response(send_command("user-create|" + username));
     }
 
     if (argc == 3 && arg1 == "user" && std::string(argv[2]) == "list") {
-        return handle_user_list();
+        return print_response(send_command("user-list"));
     }
 
     if (argc == 4 && arg1 == "user" && std::string(argv[2]) == "show") {
-        return handle_user_show(argv[3]);
+        return print_response(send_command("user-show|" + std::string(argv[3])));
     }
 
     if (argc == 4 && arg1 == "user" && std::string(argv[2]) == "remove") {
-        return handle_user_remove(argv[3]);
+        return print_response(send_command("user-remove|" + std::string(argv[3])));
     }
 
     if (argc == 3 && arg1 == "domain" && std::string(argv[2]) == "list") {
-        auto& domains = services.domains().list();
-        if (domains.empty()) {
-            std::cout << "No domains.\n";
-        } else {
-            for (const auto& d : domains) {
-                std::cout << d.fqdn << "\n";
-            }
-        }
-        return 0;
+        return print_response(send_command("domain-list"));
     }
 
     if (argc == 4 && arg1 == "domain" && std::string(argv[2]) == "show") {
-        auto* domain = services.domains().find(argv[3]);
-        if (domain == nullptr) {
-            std::cout << "Domain not found: " << argv[3] << "\n";
-            return 1;
-        }
-        std::cout << "Domain: " << domain->fqdn << "\n"
-                  << "Site ID: " << domain->site_id << "\n"
-                  << "PHP: " << domain->php_version << "\n"
-                  << "SSL: " << (domain->ssl_enabled ? "yes" : "no") << "\n"
-                  << "Enabled: " << (domain->enabled ? "yes" : "no") << "\n";
-        return 0;
-    }
-
-    if (argc == 3 && arg1 == "php" && std::string(argv[2]) == "list") {
-        auto& versions = services.php_versions().list();
-        if (versions.empty()) {
-            std::cout << "No PHP versions.\n";
-        } else {
-            for (const auto& pv : versions) {
-                std::cout << pv.version;
-                if (pv.default_version) std::cout << " (default)";
-                std::cout << "\n";
-            }
-        }
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "php" && std::string(argv[2]) == "show") {
-        auto* pv = services.php_versions().find(argv[3]);
-        if (pv == nullptr) {
-            std::cout << "PHP version not found: " << argv[3] << "\n";
-            return 1;
-        }
-        std::cout << "Version: " << pv->version << "\n"
-                  << "Image: " << pv->image << "\n"
-                  << "Enabled: " << (pv->enabled ? "yes" : "no") << "\n"
-                  << "Default: " << (pv->default_version ? "yes" : "no") << "\n";
-        return 0;
-    }
-
-    if (argc == 3 && arg1 == "php" && std::string(argv[2]) == "default") {
-        auto* pv = services.php_versions().get_default();
-        if (pv == nullptr) {
-            std::cout << "No default PHP version.\n";
-            return 1;
-        }
-        std::cout << "Version: " << pv->version << "\n"
-                  << "Image: " << pv->image << "\n";
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "backup" && std::string(argv[2]) == "create") {
-        auto* site = services.sites().find(argv[3]);
-        if (site == nullptr) {
-            std::cout << "Site not found: " << argv[3] << "\n";
-            return 1;
-        }
-        auto now = std::chrono::system_clock::now();
-        auto tt = std::chrono::system_clock::to_time_t(now);
-        std::ostringstream ts;
-        ts << std::put_time(std::gmtime(&tt), "%Y-%m-%dT%H:%M:%SZ");
-        std::string created_at = ts.str();
-        std::string backup_path = services.config().sites_dir() + site->domain + "/backups/" + created_at + ".backup";
-        services.filesystem().create_file(backup_path, "");
-        std::ifstream f(backup_path, std::ios::ate | std::ios::binary);
-        uint64_t size = f.tellg();
-        f.close();
-        services.backups().create(site->id, 0, created_at + ".backup", size, created_at);
-        containercp::core::Application::instance().save();
-        std::cout << "Backup created:\n" << created_at << ".backup\n";
-        return 0;
-    }
-
-    if (argc == 3 && arg1 == "backup" && std::string(argv[2]) == "list") {
-        auto& backups = services.backups().list();
-        if (backups.empty()) {
-            std::cout << "No backups.\n";
-        } else {
-            for (const auto& b : backups) {
-                std::cout << b.id << " " << b.filename << " " << b.status << "\n";
-            }
-        }
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "backup" && std::string(argv[2]) == "show") {
-        uint64_t id = std::stoull(argv[3]);
-        auto* b = services.backups().find(id);
-        if (b == nullptr) {
-            std::cout << "Backup not found: " << id << "\n";
-            return 1;
-        }
-        std::cout << "ID: " << b->id << "\n"
-                  << "Site ID: " << b->site_id << "\n"
-                  << "File: " << b->filename << "\n"
-                  << "Type: " << b->type << "\n"
-                  << "Size: " << b->size << "\n"
-                  << "Created: " << b->created_at << "\n"
-                  << "Status: " << b->status << "\n";
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "backup" && std::string(argv[2]) == "remove") {
-        uint64_t id = std::stoull(argv[3]);
-        auto* b = services.backups().find(id);
-        if (b == nullptr) {
-            std::cout << "Backup not found: " << id << "\n";
-            return 1;
-        }
-        services.backups().remove(b->id);
-        containercp::core::Application::instance().save();
-        std::cout << "Backup removed:\n" << id << "\n";
-        return 0;
-    }
-
-    if (argc == 3 && arg1 == "ssl" && std::string(argv[2]) == "list") {
-        auto& certs = services.ssl().list();
-        if (certs.empty()) {
-            std::cout << "No SSL certificates.\n";
-        } else {
-            for (const auto& c : certs) {
-                std::cout << c.domain << " [" << c.status << "]\n";
-            }
-        }
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "ssl" && std::string(argv[2]) == "show") {
-        auto* c = services.ssl().find_by_domain(argv[3]);
-        if (c == nullptr) {
-            std::cout << "SSL not found: " << argv[3] << "\n";
-            return 1;
-        }
-        std::cout << "Domain: " << c->domain << "\n"
-                  << "Provider: " << c->provider << "\n"
-                  << "Cert: " << c->certificate_path << "\n"
-                  << "Key: " << c->key_path << "\n"
-                  << "Expires: " << c->expires_at << "\n"
-                  << "Status: " << c->status << "\n"
-                  << "Auto-renew: " << (c->auto_renew ? "yes" : "no") << "\n"
-                  << "Enabled: " << (c->enabled ? "yes" : "no") << "\n";
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "ssl" && std::string(argv[2]) == "enable") {
-        if (services.ssl().find_by_domain(argv[3]) != nullptr) {
-            std::cout << "SSL already enabled for " << argv[3] << "\n";
-            return 1;
-        }
-        std::string cert = services.config().sites_dir() + argv[3] + "/ssl/fullchain.pem";
-        std::string key = services.config().sites_dir() + argv[3] + "/ssl/privkey.pem";
-        services.ssl().create(0, argv[3], cert, key);
-        containercp::core::Application::instance().save();
-        std::cout << "SSL enabled:\n" << argv[3] << "\n";
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "ssl" && std::string(argv[2]) == "disable") {
-        auto* c = services.ssl().find_by_domain(argv[3]);
-        if (c == nullptr) {
-            std::cout << "SSL not found: " << argv[3] << "\n";
-            return 1;
-        }
-        services.ssl().remove(c->id);
-        containercp::core::Application::instance().save();
-        std::cout << "SSL disabled:\n" << argv[3] << "\n";
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "ssl" && std::string(argv[2]) == "request") {
-        if (services.ssl().find_by_domain(argv[3]) != nullptr) {
-            std::cout << "Certificate already exists for " << argv[3] << "\n";
-            return 1;
-        }
-        std::string cert = services.config().sites_dir() + argv[3] + "/ssl/fullchain.pem";
-        std::string key = services.config().sites_dir() + argv[3] + "/ssl/privkey.pem";
-        services.ssl().create(0, argv[3], cert, key);
-        auto result = services.cert_provider().request(argv[3]);
-        if (result.success) {
-            auto* c = services.ssl().find_by_domain(argv[3]);
-            if (c != nullptr) c->status = "active";
-        }
-        containercp::core::Application::instance().save();
-        std::cout << "SSL certificate requested:\n" << argv[3] << "\n";
-        return result.success ? 0 : 1;
-    }
-
-    if (argc == 4 && arg1 == "ssl" && std::string(argv[2]) == "renew") {
-        auto* c = services.ssl().find_by_domain(argv[3]);
-        if (c == nullptr) {
-            std::cout << "Certificate not found: " << argv[3] << "\n";
-            return 1;
-        }
-        auto result = services.cert_provider().renew(argv[3]);
-        if (result.success) {
-            c->status = "active";
-        }
-        containercp::core::Application::instance().save();
-        std::cout << "SSL certificate renewed:\n" << argv[3] << "\n";
-        return result.success ? 0 : 1;
-    }
-
-    if (argc == 4 && arg1 == "ssl" && std::string(argv[2]) == "revoke") {
-        auto* c = services.ssl().find_by_domain(argv[3]);
-        if (c == nullptr) {
-            std::cout << "Certificate not found: " << argv[3] << "\n";
-            return 1;
-        }
-        services.cert_provider().revoke(argv[3]);
-        services.ssl().remove(c->id);
-        containercp::core::Application::instance().save();
-        std::cout << "SSL certificate revoked:\n" << argv[3] << "\n";
-        return 0;
-    }
-
-    if (argc == 3 && arg1 == "mail" && std::string(argv[2]) == "list") {
-        auto& domains = services.mail().list();
-        if (domains.empty()) {
-            std::cout << "No mail domains.\n";
-        } else {
-            for (const auto& m : domains) {
-                std::cout << m.domain << " [" << m.status << "]\n";
-            }
-        }
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "mail" && std::string(argv[2]) == "show") {
-        auto* m = services.mail().find_by_domain(argv[3]);
-        if (m == nullptr) {
-            std::cout << "Mail domain not found: " << argv[3] << "\n";
-            return 1;
-        }
-        std::cout << "Domain: " << m->domain << "\n"
-                  << "Status: " << m->status << "\n"
-                  << "Enabled: " << (m->enabled ? "yes" : "no") << "\n";
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "mail" && std::string(argv[2]) == "enable") {
-        if (services.mail().find_by_domain(argv[3]) != nullptr) {
-            std::cout << "Mail already enabled for " << argv[3] << "\n";
-            return 1;
-        }
-        services.mail().create(0, argv[3], 0);
-        containercp::core::Application::instance().save();
-        std::cout << "Mail enabled:\n" << argv[3] << "\n";
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "mail" && std::string(argv[2]) == "disable") {
-        auto* m = services.mail().find_by_domain(argv[3]);
-        if (m == nullptr) {
-            std::cout << "Mail domain not found: " << argv[3] << "\n";
-            return 1;
-        }
-        services.mail().remove(m->id);
-        containercp::core::Application::instance().save();
-        std::cout << "Mail disabled:\n" << argv[3] << "\n";
-        return 0;
-    }
-
-    if (argc == 3 && arg1 == "database" && std::string(argv[2]) == "list") {
-        auto& databases = services.databases().list();
-        if (databases.empty()) {
-            std::cout << "No databases.\n";
-        } else {
-            for (const auto& d : databases) {
-                std::cout << d.db_name << "\n";
-            }
-        }
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "database" && std::string(argv[2]) == "show") {
-        auto* db = services.databases().find(argv[3]);
-        if (db == nullptr) {
-            std::cout << "Database not found: " << argv[3] << "\n";
-            return 1;
-        }
-        std::cout << "Name: " << db->db_name << "\n"
-                  << "User: " << db->db_user << "\n"
-                  << "Engine: " << db->engine << "\n"
-                  << "Version: " << db->version << "\n"
-                  << "Site ID: " << db->site_id << "\n"
-                  << "Enabled: " << (db->enabled ? "yes" : "no") << "\n";
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "database" && std::string(argv[2]) == "remove") {
-        auto* db = services.databases().find(argv[3]);
-        if (db == nullptr) {
-            std::cout << "Database not found: " << argv[3] << "\n";
-            return 1;
-        }
-        services.databases().remove(db->id);
-        containercp::core::Application::instance().save();
-        std::cout << "Database removed:\n" << argv[3] << "\n";
-        return 0;
+        return print_response(send_command("domain-show|" + std::string(argv[3])));
     }
 
     if (argc == 4 && arg1 == "domain" && std::string(argv[2]) == "remove") {
-        auto* domain = services.domains().find(argv[3]);
-        if (domain == nullptr) {
-            std::cout << "Domain not found: " << argv[3] << "\n";
-            return 1;
-        }
-        services.domains().remove(domain->id);
-        containercp::core::Application::instance().save();
-        std::cout << "Domain removed:\n" << argv[3] << "\n";
-        return 0;
+        return print_response(send_command("domain-remove|" + std::string(argv[3])));
     }
 
-    if (argc == 5 && arg1 == "access" && std::string(argv[2]) == "user" && std::string(argv[3]) == "enable") {
-        auto* u = services.access_users().find(argv[4]);
-        if (u == nullptr) {
-            std::cout << "Access user not found: " << argv[4] << "\n";
-            return 1;
-        }
-        u->enabled = true;
-        containercp::core::Application::instance().save();
-        std::cout << "Access user enabled:\n" << argv[4] << "\n";
-        return 0;
+    if (argc == 3 && arg1 == "php" && std::string(argv[2]) == "list") {
+        return print_response(send_command("php-list"));
     }
 
-    if (argc == 5 && arg1 == "access" && std::string(argv[2]) == "user" && std::string(argv[3]) == "disable") {
-        auto* u = services.access_users().find(argv[4]);
-        if (u == nullptr) {
-            std::cout << "Access user not found: " << argv[4] << "\n";
-            return 1;
-        }
-        u->enabled = false;
-        containercp::core::Application::instance().save();
-        std::cout << "Access user disabled:\n" << argv[4] << "\n";
-        return 0;
+    if (argc == 4 && arg1 == "php" && std::string(argv[2]) == "show") {
+        return print_response(send_command("php-show|" + std::string(argv[3])));
     }
 
-    if (argc == 5 && arg1 == "access" && std::string(argv[2]) == "user" && std::string(argv[3]) == "remove") {
-        auto* u = services.access_users().find(argv[4]);
-        if (u == nullptr) {
-            std::cout << "Access user not found: " << argv[4] << "\n";
-            return 1;
-        }
-        auto grants = services.access_grants().find_by_user(u->id);
-        for (auto* g : grants) {
-            services.access_grants().remove(g->id);
-        }
-        services.access_users().remove(u->id);
-        containercp::core::Application::instance().save();
-        std::cout << "Access user removed:\n" << argv[4] << "\n";
-        return 0;
-    }
-
-    if (argc == 7 && arg1 == "access" && std::string(argv[2]) == "grant" && std::string(argv[3]) == "create") {
-        auto* u = services.access_users().find(argv[4]);
-        if (u == nullptr) {
-            std::cout << "Access user not found: " << argv[4] << "\n";
-            return 1;
-        }
-        auto* domain = services.domains().find(argv[5]);
-        if (domain == nullptr) {
-            std::cout << "Domain not found: " << argv[5] << "\n";
-            return 1;
-        }
-        containercp::access::Permission perm = containercp::access::Permission::READ_WRITE;
-        std::string perm_str = argv[6];
-        if (perm_str == "read_only") perm = containercp::access::Permission::READ_ONLY;
-        else if (perm_str == "deploy") perm = containercp::access::Permission::DEPLOY;
-        services.access_grants().create(u->id, domain->site_id, perm);
-        containercp::core::Application::instance().save();
-        std::cout << "Grant created:\n"
-                  << "User: " << argv[4] << "\n"
-                  << "Domain: " << argv[5] << "\n"
-                  << "Permission: " << perm_str << "\n";
-        return 0;
-    }
-
-    if (argc == 5 && arg1 == "access" && std::string(argv[2]) == "grant" && std::string(argv[3]) == "remove") {
-        uint64_t gid = std::stoull(argv[4]);
-        if (services.access_grants().find(gid) == nullptr) {
-            std::cout << "Grant not found: " << gid << "\n";
-            return 1;
-        }
-        services.access_grants().remove(gid);
-        containercp::core::Application::instance().save();
-        std::cout << "Grant removed:\n" << gid << "\n";
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "access" && std::string(argv[2]) == "grant" && std::string(argv[3]) == "list") {
-        auto& grants = services.access_grants().list();
-        if (grants.empty()) {
-            std::cout << "No grants.\n";
-        } else {
-            for (const auto& g : grants) {
-                std::cout << g.id << " user=" << g.access_user_id
-                          << " site=" << g.site_id
-                          << " perm=" << containercp::access::permission_to_string(g.permission) << "\n";
-            }
-        }
-        return 0;
-    }
-
-    if (argc == 6 && arg1 == "access" && std::string(argv[2]) == "user" && std::string(argv[3]) == "create") {
-        auto* domain = services.domains().find(argv[5]);
-        if (domain == nullptr) {
-            std::cout << "Domain not found: " << argv[5] << "\n";
-            return 1;
-        }
-        containercp::access::AccessUserManager& umgr = services.access_users();
-        uint64_t uid = umgr.create(argv[4]);
-        services.access_grants().create(uid, domain->site_id, containercp::access::Permission::READ_WRITE);
-        containercp::core::Application::instance().save();
-        std::string password = containercp::utils::PasswordGenerator::generate();
-        std::cout << "Access user created:\n"
-                  << "Username: " << argv[4] << "\n"
-                  << "Password: " << password << "\n"
-                  << "Domain: " << argv[5] << "\n";
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "access" && std::string(argv[2]) == "user" && std::string(argv[3]) == "list") {
-        auto& users = services.access_users().list();
-        if (users.empty()) {
-            std::cout << "No access users.\n";
-        } else {
-            for (const auto& u : users) {
-                std::cout << u.id << " " << u.username
-                          << " " << (u.enabled ? "enabled" : "disabled") << "\n";
-            }
-        }
-        return 0;
-    }
-
-    if (argc == 5 && arg1 == "access" && std::string(argv[2]) == "user" && std::string(argv[3]) == "show") {
-        auto* u = services.access_users().find(argv[4]);
-        if (u == nullptr) {
-            std::cout << "Access user not found: " << argv[4] << "\n";
-            return 1;
-        }
-        std::cout << "Username: " << u->username << "\n"
-                  << "Auth: " << u->auth_type << "\n"
-                  << "Enabled: " << (u->enabled ? "yes" : "no") << "\n"
-                  << "Grants:\n";
-        auto grants = services.access_grants().find_by_user(u->id);
-        for (const auto& g : grants) {
-            std::cout << "  Site ID: " << g->site_id
-                      << " Permission: " << containercp::access::permission_to_string(g->permission) << "\n";
-        }
-        return 0;
-    }
-
-    if (argc == 3 && arg1 == "proxy" && std::string(argv[2]) == "list") {
-        auto& proxies = services.reverse_proxies().list();
-        if (proxies.empty()) {
-            std::cout << "No proxy configs.\n";
-        } else {
-            for (const auto& p : proxies) {
-                std::cout << p.id << " " << p.domain << " " << p.status << "\n";
-            }
-        }
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "proxy" && std::string(argv[2]) == "show") {
-        auto* p = services.reverse_proxies().find_by_domain(argv[3]);
-        if (p == nullptr) {
-            std::cout << "Proxy not found: " << argv[3] << "\n";
-            return 1;
-        }
-        std::cout << "Domain: " << p->domain << "\n"
-                  << "Site ID: " << p->site_id << "\n"
-                  << "Provider: " << p->provider << "\n"
-                  << "Upstream: " << p->upstream << "\n"
-                  << "Config: " << p->config_path << "\n"
-                  << "Enabled: " << (p->enabled ? "yes" : "no") << "\n"
-                  << "Status: " << p->status << "\n";
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "proxy" && std::string(argv[2]) == "create") {
-        auto* domain = services.domains().find(argv[3]);
-        if (domain == nullptr) {
-            std::cout << "Domain not found: " << argv[3] << "\n";
-            return 1;
-        }
-        std::string upstream = "http://127.0.0.1:80";
-        std::string config_path = services.config().proxy_dir() + "sites/" + argv[3] + ".conf";
-        services.reverse_proxies().create(argv[3], domain->site_id, config_path, upstream);
-        containercp::core::Application::instance().save();
-        std::cout << "Proxy created:\n" << argv[3] << "\n";
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "proxy" && std::string(argv[2]) == "remove") {
-        auto* p = services.reverse_proxies().find_by_domain(argv[3]);
-        if (p == nullptr) {
-            std::cout << "Proxy not found: " << argv[3] << "\n";
-            return 1;
-        }
-        services.reverse_proxies().remove(p->id);
-        containercp::core::Application::instance().save();
-        std::cout << "Proxy removed:\n" << argv[3] << "\n";
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "proxy" && std::string(argv[2]) == "enable") {
-        auto* p = services.reverse_proxies().find_by_domain(argv[3]);
-        if (p == nullptr) {
-            std::cout << "Proxy not found: " << argv[3] << "\n";
-            return 1;
-        }
-        p->enabled = true;
-        containercp::core::Application::instance().save();
-        std::cout << "Proxy enabled:\n" << argv[3] << "\n";
-        return 0;
-    }
-
-    if (argc == 4 && arg1 == "proxy" && std::string(argv[2]) == "disable") {
-        auto* p = services.reverse_proxies().find_by_domain(argv[3]);
-        if (p == nullptr) {
-            std::cout << "Proxy not found: " << argv[3] << "\n";
-            return 1;
-        }
-        p->enabled = false;
-        containercp::core::Application::instance().save();
-        std::cout << "Proxy disabled:\n" << argv[3] << "\n";
-        return 0;
-    }
-
-    if (argc == 3 && arg1 == "proxy" && std::string(argv[2]) == "reload") {
-        auto result = services.proxy_provider().reload();
-        if (result.success) {
-            std::cout << "Proxy reloaded.\n";
-        } else {
-            std::cout << result.message << "\n";
-        }
-        return result.success ? 0 : 1;
-    }
-
-    if (argc >= 5 && arg1 == "site" && std::string(argv[2]) == "create") {
-        bool dry_run = (argc == 6 && std::string(argv[5]) == "--dry-run");
-        return handle_site_create(argv[3], argv[4], dry_run);
-    }
-
-    if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "remove") {
-        return handle_site_remove(argv[3], false);
-    }
-
-    if (argc == 5 && arg1 == "site" && std::string(argv[2]) == "remove" && std::string(argv[4]) == "--force") {
-        return handle_site_remove(argv[3], true);
-    }
-
-    if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "start") {
-        return handle_site_start(argv[3]);
-    }
-
-    if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "stop") {
-        return handle_site_stop(argv[3]);
-    }
-
-    if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "status") {
-        return handle_site_status(argv[3]);
+    if (argc == 3 && arg1 == "php" && std::string(argv[2]) == "default") {
+        return print_response(send_command("php-default"));
     }
 
     if (argc == 3 && arg1 == "site" && std::string(argv[2]) == "list") {
-        auto& sites = services.sites().list();
-        if (sites.empty()) {
-            std::cout << "No sites.\n";
-        } else {
-            for (const auto& site : sites) {
-                std::cout << site.domain << "\n";
-            }
-        }
-        return 0;
+        return print_response(send_command("site-list"));
     }
 
-    services.logger().error("unknown command");
-    std::cout << "\n";
+    if (argc == 3 && arg1 == "database" && std::string(argv[2]) == "list") {
+        return print_response(send_command("database-list"));
+    }
+
+    if (argc == 4 && arg1 == "database" && std::string(argv[2]) == "show") {
+        return print_response(send_command("database-show|" + std::string(argv[3])));
+    }
+
+    if (argc == 4 && arg1 == "database" && std::string(argv[2]) == "remove") {
+        return print_response(send_command("database-remove|" + std::string(argv[3])));
+    }
+
+    if (argc == 3 && arg1 == "backup" && std::string(argv[2]) == "list") {
+        return print_response(send_command("backup-list"));
+    }
+
+    if (argc == 3 && arg1 == "ssl" && std::string(argv[2]) == "list") {
+        return print_response(send_command("ssl-list"));
+    }
+
+    if (argc == 4 && arg1 == "ssl" && std::string(argv[2]) == "show") {
+        return print_response(send_command("ssl-show|" + std::string(argv[3])));
+    }
+
+    if (argc == 3 && arg1 == "mail" && std::string(argv[2]) == "list") {
+        return print_response(send_command("mail-list"));
+    }
+
+    if (argc == 3 && arg1 == "proxy" && std::string(argv[2]) == "list") {
+        return print_response(send_command("proxy-list"));
+    }
+
+    if (argc == 4 && arg1 == "access" && std::string(argv[2]) == "user" && std::string(argv[3]) == "list") {
+        return print_response(send_command("access-user-list"));
+    }
+
+    if (argc == 4 && arg1 == "access" && std::string(argv[2]) == "grant" && std::string(argv[3]) == "list") {
+        return print_response(send_command("access-grant-list"));
+    }
+
+    std::cout << "Error: unknown command\n\n";
     print_help();
     return 1;
 }
