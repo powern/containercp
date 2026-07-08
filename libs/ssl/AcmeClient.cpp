@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstring>
 #include <curl/curl.h>
+#include <memory>
 #include <fstream>
 #include <openssl/bio.h>
 #include <openssl/ec.h>
@@ -19,15 +20,18 @@ namespace containercp::ssl {
 // ============================================================
 // libcurl write callback
 // ============================================================
-static size_t write_cb(char* data, size_t size, size_t nmemb, std::string* buf) {
+static size_t write_cb(char* data, size_t size, size_t nmemb, void* buf) {
+    if (!data || !buf) return 0;
     size_t total = size * nmemb;
-    buf->append(data, total);
+    std::string* sbuf = static_cast<std::string*>(buf);
+    sbuf->append(data, total);
     return total;
 }
 
-static size_t header_cb(char* data, size_t size, size_t nmemb, std::string* buf) {
+static size_t header_cb(char* data, size_t size, size_t nmemb, void* buf) {
+    if (!data || !buf) return 0;
     size_t total = size * nmemb;
-    buf->append(data, total);
+    static_cast<std::string*>(buf)->append(data, total);
     return total;
 }
 
@@ -133,17 +137,19 @@ static std::string http_post(const std::string& url, const std::string& body,
     CURL* curl = curl_easy_init();
     if (!curl) return "";
 
-    std::string resp_body;
+    std::string* resp_body = new std::string();
+    std::string* hdrs = new std::string();
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body.size());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp_body);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, resp_body);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response_headers);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, hdrs);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "ContainerCP/0.5");
+    curl_easy_setopt(curl, CURLOPT_CAINFO, "/etc/ssl/certs/ca-certificates.crt");
 
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, ("Content-Type: " + content_type).c_str());
@@ -152,7 +158,6 @@ static std::string http_post(const std::string& url, const std::string& body,
 
     CURLcode res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
-        resp_body = "curl error: " + std::string(curl_easy_strerror(res));
         status_code = 0;
     } else {
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status_code);
@@ -160,38 +165,38 @@ static std::string http_post(const std::string& url, const std::string& body,
 
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
-    return resp_body;
+    response_headers = *hdrs;
+    std::string result = *resp_body;
+    delete hdrs;
+    delete resp_body;
+    return result;
 }
 
-static std::string http_get(const std::string& url, std::string& response_headers, int& status_code) {
+static std::string http_get(const std::string& url, int& status_code) {
     CURL* curl = curl_easy_init();
     if (!curl) return "";
 
-    std::string resp_body;
+    auto body = std::make_shared<std::string>();
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp_body);
-    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response_headers);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "ContainerCP/0.5");
+    curl_easy_setopt(curl, CURLOPT_CAINFO, "/etc/ssl/certs/ca-certificates.crt");
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, body.get());
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, write_cb);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, body.get());
 
     CURLcode res = curl_easy_perform(curl);
-    if (res != CURLE_OK) {
-        resp_body = "curl error: " + std::string(curl_easy_strerror(res));
-        status_code = 0;
-    } else {
+    if (res == CURLE_OK) {
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status_code);
+    } else {
+        status_code = 0;
     }
 
     curl_easy_cleanup(curl);
-    return resp_body;
+    return *body;
 }
-
-// ============================================================
-// Nonce extraction from response headers
-// ============================================================
 static std::string extract_nonce(const std::string& headers) {
     auto pos = headers.find("Replay-Nonce: ");
     if (pos == std::string::npos) {
@@ -380,11 +385,11 @@ static std::string http_head(const std::string& url, std::string& response_heade
     CURL* curl = curl_easy_init();
     if (!curl) return "";
 
-    std::string resp_body;
+    auto hdrs = std::make_shared<std::string>();
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
-    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response_headers);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, write_cb);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, hdrs.get());
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "ContainerCP/0.5");
 
@@ -396,7 +401,8 @@ static std::string http_head(const std::string& url, std::string& response_heade
     }
 
     curl_easy_cleanup(curl);
-    return resp_body;
+    response_headers = *hdrs;
+    return std::string();
 }
 
 // ============================================================
@@ -439,9 +445,8 @@ AcmeClient::Response AcmeClient::acme_get(const std::string& url) {
 core::OperationResult AcmeClient::discover_directory() {
     logger_.info("ACME", "Discovering directory at " + directory_url_);
 
-    std::string resp_headers;
     int status = 0;
-    std::string body = http_get(directory_url_, resp_headers, status);
+    std::string body = http_get(directory_url_, status);
 
     if (status != 200 || body.empty()) {
         return {false, "Failed to fetch ACME directory: HTTP " + std::to_string(status)};
