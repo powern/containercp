@@ -59,7 +59,7 @@ set(CONTAINERCP_SOURCES
     libs/ssl/SslCertificate.cpp
     libs/ssl/SslCertificateManager.cpp
     libs/ssl/LetsEncryptProvider.cpp
-    libs/ssl/CustomCertificateProvider.cpp
+    libs/ssl/PemCertificateProvider.cpp
     libs/ssl/HTTP01ChallengeProvider.cpp
     libs/storage/Storage.cpp
     libs/template/TemplateEngine.cpp

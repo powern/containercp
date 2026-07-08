@@ -22,9 +22,11 @@
 #include "runtime/PortManager.h"
 #include "ssl/CertificateProvider.h"
 #include "ssl/LetsEncryptProvider.h"
-#include "ssl/CustomCertificateProvider.h"
+#include "ssl/PemCertificateProvider.h"
 #include "ssl/HTTP01ChallengeProvider.h"
 #include "ssl/SslCertificateManager.h"
+
+#include <memory>
 #include "profile/ProfileManager.h"
 #include "provider/DockerComposeProvider.h"
 #include "runtime/DockerRuntime.h"
@@ -58,7 +60,7 @@ public:
     ssl::SslCertificateManager& ssl();
     ssl::CertificateProvider& cert_provider();
     ssl::CertificateProvider& cert_provider_by_name(const std::string& name);
-    std::unordered_map<std::string, ssl::CertificateProvider*> certificate_providers();
+    std::unordered_map<std::string, std::shared_ptr<ssl::CertificateProvider>> certificate_providers();
     mail::MailDomainManager& mail();
     filesystem::Filesystem& filesystem();
     runtime::Runtime& runtime();
@@ -93,9 +95,9 @@ private:
     proxy::NginxProxyProvider proxy_provider_;
     ssl::SslCertificateManager ssl_;
     ssl::HTTP01ChallengeProvider http01_challenge_;
-    ssl::LetsEncryptProvider cert_provider_;
-    ssl::CustomCertificateProvider custom_cert_provider_;
-    std::unordered_map<std::string, ssl::CertificateProvider*> cert_providers_;
+    std::shared_ptr<ssl::LetsEncryptProvider> cert_provider_;
+    std::shared_ptr<ssl::PemCertificateProvider> pem_cert_provider_;
+    std::unordered_map<std::string, std::shared_ptr<ssl::CertificateProvider>> cert_providers_;
     mail::MailDomainManager mail_;
     storage::Storage storage_;
     auth::AuthUserManager auth_users_;

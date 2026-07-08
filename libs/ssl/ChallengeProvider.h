@@ -21,6 +21,8 @@ public:
                                            const std::string& token) = 0;
 
     virtual core::OperationResult verify(const std::string& domain) = 0;
+
+    virtual core::OperationResult can_validate(const std::string& domain) = 0;
 };
 
 } // namespace containercp::ssl

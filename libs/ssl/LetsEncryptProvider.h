@@ -18,7 +18,9 @@ public:
     core::OperationResult revoke(const std::string& domain) override;
     core::OperationResult status(const std::string& domain) override;
 
+    std::string provider_id() const override;
     std::string provider_name() const override;
+    bool supports_auto_renew() const override;
 
     std::string certificate_path(const std::string& domain) const override;
     std::string key_path(const std::string& domain) const override;

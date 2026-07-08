@@ -23,6 +23,8 @@ public:
 
     core::OperationResult verify(const std::string& domain) override;
 
+    core::OperationResult can_validate(const std::string& domain) override;
+
 private:
     logger::Logger& logger_;
 };

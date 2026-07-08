@@ -7,6 +7,8 @@
 
 namespace containercp::ssl {
 
+inline constexpr const char* ACME_CHALLENGE_PATH = "/.well-known/acme-challenge/";
+
 class CertificateProvider {
 public:
     virtual ~CertificateProvider() = default;
@@ -16,7 +18,9 @@ public:
     virtual core::OperationResult revoke(const std::string& domain) = 0;
     virtual core::OperationResult status(const std::string& domain) = 0;
 
+    virtual std::string provider_id() const = 0;
     virtual std::string provider_name() const = 0;
+    virtual bool supports_auto_renew() const = 0;
     virtual bool supports_dns_challenge() const { return false; }
     virtual core::OperationResult request_dns(const std::string& domain) {
         (void)domain;

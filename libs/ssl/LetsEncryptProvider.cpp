@@ -31,8 +31,16 @@ core::OperationResult LetsEncryptProvider::status(const std::string& domain) {
     return {true, ""};
 }
 
-std::string LetsEncryptProvider::provider_name() const {
+std::string LetsEncryptProvider::provider_id() const {
     return "letsencrypt";
+}
+
+std::string LetsEncryptProvider::provider_name() const {
+    return "Let's Encrypt";
+}
+
+bool LetsEncryptProvider::supports_auto_renew() const {
+    return true;
 }
 
 std::string LetsEncryptProvider::certificate_path(const std::string& domain) const {

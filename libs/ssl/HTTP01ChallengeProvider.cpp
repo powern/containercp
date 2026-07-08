@@ -39,4 +39,12 @@ core::OperationResult HTTP01ChallengeProvider::verify(
     return {true, ""};
 }
 
+core::OperationResult HTTP01ChallengeProvider::can_validate(
+    const std::string& domain)
+{
+    logger_.info("HTTP-01", "Placeholder: preflight check for " + domain);
+    (void)domain;
+    return {true, ""};
+}
+
 } // namespace containercp::ssl
