@@ -680,62 +680,88 @@ core::OperationResult AcmeClient::get_authorization(const std::string& authz_url
         return {false, "Authorization fetch failed: HTTP " + std::to_string(resp.status_code)};
     }
 
+    // Log full response for debugging
+    logger_.info("ACME-DBG", "authz body: " + resp.body);
+
     authz.url = authz_url;
-    authz.domain = find_json_string(resp.body, "identifier");
-    // Try to get the domain from the value field of the identifier object
+
+    // Extract domain from the "identifier" object's "value" field
     {
-        auto val_pos = resp.body.find("\"value\":\"");
-        if (val_pos != std::string::npos) {
-            val_pos += 9;
-            auto end = resp.body.find('"', val_pos);
-            if (end != std::string::npos) {
-                authz.domain = resp.body.substr(val_pos, end - val_pos);
+        auto val_key = resp.body.find("\"identifier\"");
+        if (val_key != std::string::npos) {
+            auto val_val = resp.body.find("\"value\":\"", val_key);
+            if (val_val != std::string::npos) {
+                val_val += 9; // skip "value":"
+                auto end = resp.body.find('"', val_val);
+                if (end != std::string::npos) {
+                    authz.domain = resp.body.substr(val_val, end - val_val);
+                }
             }
         }
     }
-    if (authz.domain.empty()) {
-        authz.domain = find_json_string(resp.body, "value");
-    }
     authz.status = find_json_string(resp.body, "status");
 
-    // Parse challenges
+    // Parse challenges array robustly
     {
-        auto ch_start = resp.body.find("\"challenges\":[");
-        if (ch_start != std::string::npos) {
-            ch_start += 14;
+        auto ch_key = resp.body.find("\"challenges\"");
+        if (ch_key == std::string::npos) {
+            return {false, "Authorization response missing challenges"};
+        }
+        auto colon = resp.body.find(':', ch_key);
+        if (colon == std::string::npos) {
+            return {false, "Authorization malformed: no colon after challenges"};
+        }
+        auto bracket = resp.body.find('[', colon);
+        if (bracket == std::string::npos) {
+            return {false, "Authorization malformed: no array in challenges"};
+        }
+
+        // Parse each JSON object in the challenges array
+        size_t pos = bracket + 1;
+        while (pos < resp.body.size()) {
+            // Find opening brace of a challenge object
+            auto brace = resp.body.find('{', pos);
+            if (brace == std::string::npos) break;
+
+            // Check if we've passed the closing bracket
+            auto close_bracket = resp.body.find(']', pos);
+            if (close_bracket != std::string::npos && brace > close_bracket) break;
+
+            // Find matching closing brace (track depth)
             int depth = 0;
-            size_t i = ch_start;
-            while (i < resp.body.size()) {
-                if (resp.body[i] == '{') {
-                    if (depth == 0) {
-                        size_t obj_start = i;
-                        int obj_depth = 0;
-                        size_t j = i;
-                        while (j < resp.body.size()) {
-                            if (resp.body[j] == '{') obj_depth++;
-                            if (resp.body[j] == '}') { obj_depth--; if (obj_depth == 0) break; }
-                            j++;
-                        }
-                        std::string chal_str = resp.body.substr(obj_start, j - obj_start + 1);
-                        Challenge ch;
-                        ch.url = find_json_string(chal_str, "url");
-                        ch.type = find_json_string(chal_str, "type");
-                        ch.token = find_json_string(chal_str, "token");
-                        ch.status = find_json_string(chal_str, "status");
-                        if (!ch.type.empty()) {
-                            authz.challenges.push_back(ch);
-                        }
-                        i = j;
-                    }
+            size_t end_brace = brace;
+            for (size_t k = brace; k < resp.body.size(); ++k) {
+                if (resp.body[k] == '{') depth++;
+                if (resp.body[k] == '}') {
+                    depth--;
+                    if (depth == 0) { end_brace = k; break; }
                 }
-                if (resp.body[i] == ']') break;
-                i++;
             }
+            if (end_brace <= brace) break;
+
+            // Extract the challenge JSON object
+            std::string chal_str = resp.body.substr(brace, end_brace - brace + 1);
+
+            Challenge ch;
+            ch.url = find_json_string(chal_str, "url");
+            ch.type = find_json_string(chal_str, "type");
+            ch.token = find_json_string(chal_str, "token");
+            ch.status = find_json_string(chal_str, "status");
+            if (!ch.type.empty()) {
+                authz.challenges.push_back(ch);
+            }
+
+            pos = end_brace + 1;
         }
     }
 
     logger_.info("ACME", "Authorization for " + authz.domain + ": status=" + authz.status
                  + " challenges=" + std::to_string(authz.challenges.size()));
+
+    if (authz.challenges.empty()) {
+        return {false, "No challenges found in authorization response"};
+    }
+
     return {true, ""};
 }
 
