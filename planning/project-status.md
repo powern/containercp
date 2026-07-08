@@ -217,7 +217,7 @@
 | SSL-005: Proxy integration (attach certs, reload, redirect) | ✅ | Step 5 complete |
 | SSL-006: RenewalScheduler | ✅ | Step 6 complete |
 | SSL-006: RenewalScheduler | ⬜ | Step 6 |
-| SSL-007: Web UI SSL page | ⬜ | Step 7 |
+| SSL-007: Web UI SSL page | ✅ | Step 7 complete (minimal) |
 | SSL-008: Real server validation | ⬜ | Step 8 |
 
 ## Version 0.6 — DNS and Mail (Planned, after v0.5.0)

@@ -6,7 +6,29 @@ Format: date | commit | summary
 
 ---
 
-## 2025-07-08 | `(this commit)` | SSL Step 6: automatic renewal scheduler
+## 2025-07-08 | `(this commit)` | SSL Step 7: minimal production GUI
+
+### Updated: SSL Web UI page (`web/app.js`)
+- Complete rewrite of the SSL page to use the new REST API
+- Table shows ALL sites with: Domain, Status, HTTPS, Provider, Expires, Auto Renew
+- Status badges: HTTP_ONLY (info), ACTIVE (green), ERROR (red), DISABLED (gray), ISSUING (yellow)
+- Action buttons per SSL state:
+  - HTTP_ONLY/ERROR → [Issue Certificate]
+  - ACTIVE + HTTPS ON → [Disable HTTPS], [Renew], [Toggle Redirect]
+  - ACTIVE + HTTPS OFF → [Enable HTTPS], [Renew]
+  - DISABLED → [Enable HTTPS]
+- All actions call path-based REST endpoints (`/api/ssl/<domain>/<action>`)
+- Site detail SSL card is clickable — navigates to SSL page
+- `navigateTo()` helper for programmatic page navigation
+- Error messages parsed correctly from new `{code, message, details}` format
+
+### Files changed
+- `web/app.js` — rewrite of SSL page, action functions, status badges
+- `CHANGELOG.md` — this entry
+
+---
+
+## 2025-07-08 | `492558a` | SSL Step 6: automatic renewal scheduler
 
 ### New: RenewalScheduler (`libs/ssl/RenewalScheduler.h/.cpp`)
 - Fully automatic certificate renewal inside the daemon process

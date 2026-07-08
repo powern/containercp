@@ -5,6 +5,8 @@ let currentUser = null;
 let currentPage = 'dashboard';
 let searchTerm = '';
 
+function navigateTo(page) { navigate(page); }
+
 async function api(path, opts) {
   opts = opts || {};
   opts.headers = opts.headers || {};
@@ -507,11 +509,14 @@ async function loadSiteDetail(p, siteId) {
     const related = [
       {label:'Domains',items:(domains.data||[]).filter(d=>d.site_id==site.id).map(d=>d.domain),color:'#3b82f6'},
       {label:'Databases',items:(databases.data||[]).filter(d=>d.site_id==site.id).map(d=>d.name),color:'#8b5cf6'},
-      {label:'SSL',items:(ssl.data||[]).filter(c=>c.site_id==site.id).map(c=>c.status),color:'#ec4899'},
+      {label:'SSL',link:'ssl',items:(ssl.data||[]).filter(c=>c.site_id==site.id).map(c=>c.status + (c.https_enabled?' (ON)':'')),color:'#ec4899'},
       {label:'Proxy',items:(proxy.data||[]).filter(p=>p.site_id==site.id).map(p=>p.status),color:'#06b6d4'},
       {label:'Backups',items:(backups.data||[]).filter(b=>b.site_id==site.id).map(b=>b.filename),color:'#f97316'}
     ];
-    rel.innerHTML = related.map(r => `<div class="card"><h3>${r.label}</h3><div class="count${r.items.length===0?' zero':''}">${r.items.length || 0}</div><div style="font-size:11px;color:var(--text3);margin-top:4px;">${r.items.slice(0,2).join(', ')}${r.items.length>2?'...':''}</div></div>`).join('');
+    rel.innerHTML = related.map(r => {
+      const clickable = r.link ? ` onclick="navigateTo('${r.link}')" style="cursor:pointer"` : '';
+      return `<div class="card"${clickable}><h3>${r.label}</h3><div class="count${r.items.length===0?' zero':''}">${r.items.length || 0}</div><div style="font-size:11px;color:var(--text3);margin-top:4px;">${r.items.slice(0,2).join(', ')}${r.items.length>2?'...':''}</div></div>`;
+    }).join('');
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load site</div>'; }
 }
 
@@ -564,32 +569,111 @@ async function removeDatabase(name) {
 }
 
 /* ===== SSL ===== */
+
+// Helper: perform SSL action on a domain using path-based REST API
+async function sslAction(domain, action, body) {
+  try {
+    const res = await apiPost('/api/ssl/' + encodeURIComponent(domain) + '/' + action, body || {});
+    if (res.success) {
+      toast('SSL ' + action + ' completed', 'success');
+    } else {
+      const msg = (res.error && res.error.message) || res.error || 'Unknown error';
+      toast('Error: ' + msg, 'error');
+    }
+  } catch(e) {
+    toast('Network error: ' + e.message, 'error');
+  }
+  loadSsl($('page'));
+}
+
+async function issueSsl(domain) {
+  toast('Issuing certificate for ' + domain + '...', 'info');
+  await sslAction(domain, 'issue');
+}
+async function renewSsl(domain) {
+  await sslAction(domain, 'renew');
+}
+async function toggleSsl(domain, enable) {
+  await sslAction(domain, enable ? 'enable' : 'disable');
+}
+async function toggleRedirect(domain, enable) {
+  await sslAction(domain, enable ? 'redirect/enable' : 'redirect/disable');
+}
+
+// Status badge helper
+function sslStatusBadge(status) {
+  const map = {
+    'HTTP_ONLY': 'badge-info',
+    'issuing': 'badge-warn',
+    'active': 'badge-ok',
+    'error': 'badge-err',
+    'disabled': 'badge-err'
+  };
+  return `<span class="badge ${map[status] || 'badge-err'}">${esc(status)}</span>`;
+}
+
+// Action buttons based on SSL state
+function sslActions(r) {
+  const d = esc(r.domain);
+  let html = '';
+
+  if (r.status === 'HTTP_ONLY' || r.status === 'error') {
+    html += `<button class="btn-icon" onclick="issueSsl('${d}')" title="Issue Certificate">&#9679; Issue</button>`;
+  }
+  if (r.status === 'active') {
+    if (r.https_enabled) {
+      html += `<button class="btn-icon" onclick="toggleSsl('${d}',false)" title="Disable HTTPS">&#9646;&#9646; HTTPS</button>`;
+    } else {
+      html += `<button class="btn-icon" onclick="toggleSsl('${d}',true)" title="Enable HTTPS">&#9654; HTTPS</button>`;
+    }
+    html += `<button class="btn-icon" onclick="renewSsl('${d}')" title="Renew Certificate">&#8635; Renew</button>`;
+    if (r.https_enabled) {
+      if (r.redirect_enabled) {
+        html += `<button class="btn-icon" onclick="toggleRedirect('${d}',false)" title="Disable Redirect">&#8592; No Redirect</button>`;
+      } else {
+        html += `<button class="btn-icon" onclick="toggleRedirect('${d}',true)" title="Enable Redirect">&#8594; Redirect</button>`;
+      }
+    }
+  }
+  if (r.status === 'disabled') {
+    html += `<button class="btn-icon" onclick="toggleSsl('${d}',true)" title="Enable HTTPS">&#9654; HTTPS</button>`;
+  }
+
+  return html || '<span class="badge badge-info">No actions</span>';
+}
+
+// Format ISO date to short display
+function fmtDate(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', {year:'numeric', month:'short', day:'numeric'});
+  } catch(e) { return iso; }
+}
+
 async function loadSsl(p) {
   try {
     const data = await api('/api/ssl');
     p.innerHTML = `<div class="page-header"><h1>SSL Certificates</h1></div>`;
-    p.innerHTML += tb('All Certificates');
+    p.innerHTML += tb('All Sites');
     window.renderTable = () => {
       const tbl = $('ssl-table');
       if (!tbl) return;
       tbl.innerHTML = buildTable([
-        {label:'Domain',html:r=>esc(r.domain)},{label:'Provider',html:r=>esc(r.provider)},
-        {label:'Status',html:r=>{let m={active:'badge-ok',requested:'badge-warn',placeholder:'badge-info',disabled:'badge-err'};return `<span class="badge ${m[r.status]||'badge-err'}">${esc(r.status)}</span>`;}},
-        {label:'Actions',html:r=>`<button class="btn-icon" onclick="toggleSsl('${esc(r.domain)}',${!r.enabled})" title="${r.enabled?'Disable':'Enable'}">${r.enabled?'&#9646;&#9646;':'&#9654;'}</button><button class="btn-icon" style="color:var(--red)" onclick="removeSsl('${esc(r.domain)}')">&#10005;</button>`}
-      ], data.data||[]);
+        {label:'Domain', html:r=>`<a href="#" onclick="loadSite('${esc(r.domain)}');return false">${esc(r.domain)}</a>`},
+        {label:'Status', html:r=>sslStatusBadge(r.status)},
+        {label:'HTTPS', html:r=>r.https_enabled?'<span class="badge badge-ok">ON</span>':'<span class="badge badge-err">OFF</span>'},
+        {label:'Provider', html:r=>esc(r.provider_id)||'—'},
+        {label:'Expires', html:r=>fmtDate(r.expires_at)},
+        {label:'Auto Renew', html:r=>r.auto_renew?'<span class="badge badge-ok">Yes</span>':'<span class="badge badge-info">No</span>'},
+        {label:'Actions', html:r=>sslActions(r)}
+      ], (data.data||[]));
     };
     p.innerHTML += `<div id="ssl-table"></div>`;
     window.renderTable();
-  } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load SSL</div>'; }
-}
-
-async function toggleSsl(domain, enable) {
-  const ep = enable ? '/api/ssl/enable' : '/api/ssl/disable';
-  try { const res = await apiPost(ep,{domain}); if(res.success){toast('SSL '+(enable?'enabled':'disabled'),'success');loadSsl($('page'));}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
-}
-async function removeSsl(domain) {
-  if (!confirm('Remove SSL certificate?')) return;
-  try { const res = await apiPost('/api/ssl/remove',{domain}); if(res.success){toast('SSL removed','success');loadSsl($('page'));}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
+  } catch(e) {
+    p.innerHTML = '<div class="empty-state">Failed to load SSL</div>';
+  }
 }
 
 /* ===== PROXY ===== */
