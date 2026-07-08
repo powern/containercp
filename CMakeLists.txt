@@ -92,6 +92,12 @@ target_compile_options(containercpd PRIVATE
     -Wpedantic
 )
 
+target_link_libraries(containercpd PRIVATE
+    curl
+    ssl
+    crypto
+)
+
 # CLI client binary (thin)
 add_executable(containercp
     app/containercp/main.cpp

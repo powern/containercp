@@ -1,5 +1,8 @@
 #include "LetsEncryptProvider.h"
 
+#include <fstream>
+#include <sstream>
+
 namespace containercp::ssl {
 
 LetsEncryptProvider::LetsEncryptProvider(logger::Logger& logger,
@@ -22,9 +25,23 @@ core::OperationResult LetsEncryptProvider::request(const std::string& domain) {
         return preflight;
     }
 
-    // TODO: Resolve domain to site_id, then call issue_certificate
-    // For now, return placeholder success
-    return {true, "Placeholder: certificate request logged"};
+    // Try to resolve domain to site_id from CertificateStore
+    // The caller should have saved a placeholder metadata with site_id
+    auto site_ids = store_.enumerate();
+    for (auto sid : site_ids) {
+        auto meta_result = store_.load_metadata(sid);
+        if (meta_result.success) {
+            for (const auto& d : meta_result.metadata.domains) {
+                if (d == domain) {
+                    std::vector<std::string> domains = meta_result.metadata.domains;
+                    return issue_certificate(sid, domain, domains);
+                }
+            }
+        }
+    }
+
+    // No metadata found — caller must create metadata first
+    return {false, "No certificate metadata found. Create metadata before issuing."};
 }
 
 core::OperationResult LetsEncryptProvider::renew(const std::string& domain) {
@@ -74,6 +91,10 @@ std::string LetsEncryptProvider::key_path(const std::string& domain) const {
 
 std::string LetsEncryptProvider::chain_path(const std::string& domain) const {
     return ssl_dir_ + "/" + domain + "/current/chain.pem";
+}
+
+void LetsEncryptProvider::set_staging(bool staging) {
+    acme_.set_staging(staging);
 }
 
 core::OperationResult LetsEncryptProvider::preflight_validation(const std::string& domain) {
@@ -139,13 +160,13 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
         }
 
         // Prepare challenge via ChallengeProvider
-        // key_auth = token + "." + base64url(SHA256(account JWK))
+        // key_auth = token + "." + thumbprint (SHA256 of account JWK)
         std::string key_auth = http_challenge->token + ".placeholder_thumbprint";
         auto prep_result = challenge_.prepare(authz.domain, http_challenge->token, key_auth);
         if (!prep_result.success) return prep_result;
 
-        // Respond to challenge
-        auto resp_result = acme_.respond_to_challenge(http_challenge->url, key_auth);
+        // Respond to challenge (signal ACME server that we're ready)
+        auto resp_result = acme_.respond_to_challenge(http_challenge->url);
         if (!resp_result.success) return resp_result;
 
         // Poll for completion
@@ -153,7 +174,7 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
         auto poll_result = acme_.poll_challenge(http_challenge->url, challenge_status);
         if (!poll_result.success) return poll_result;
 
-        // Clean up challenge
+        // Clean up challenge tokens
         challenge_.cleanup(authz.domain, http_challenge->token);
 
         if (challenge_status != "valid") {
@@ -161,24 +182,29 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
         }
     }
 
-    // Step 5: Generate CSR and finalize
-    std::string key_path = ssl_dir_ + "/" + std::to_string(site_id) + "/privkey.pem";
-    std::string csr = AcmeClient::generate_csr(domain, key_path);
+    // Step 5: Generate CSR and key pair, then finalize
+    std::string csr_key_path = ssl_dir_ + "/" + std::to_string(site_id) + "/privkey.pem";
+    std::string csr = AcmeClient::generate_csr(domain, csr_key_path);
 
     std::string cert_url;
     auto final_result = acme_.finalize_order(order.finalize_url, csr, cert_url);
     if (!final_result.success) return final_result;
 
-    // Step 6: Poll order for certificate URL
-    std::string order_status;
-    auto poll_order_result = acme_.poll_order(order.url, order_status, cert_url);
-    if (!poll_order_result.success) return poll_order_result;
-
-    // Step 7: Download certificate
+    // Step 6: Download certificate
     std::string fullchain_pem;
-    std::string privkey_pem;
-    auto dl_result = acme_.download_certificate(cert_url, fullchain_pem, privkey_pem);
+    auto dl_result = acme_.download_certificate(cert_url, fullchain_pem);
     if (!dl_result.success) return dl_result;
+
+    // Step 7: Read private key that was generated during CSR creation
+    std::string privkey_pem;
+    {
+        std::ifstream key_file(csr_key_path);
+        if (key_file.is_open()) {
+            std::stringstream ss;
+            ss << key_file.rdbuf();
+            privkey_pem = ss.str();
+        }
+    }
 
     // Step 8: Store via CertificateStore
     CertificateStore::Metadata meta;

@@ -763,6 +763,18 @@ bool ApiServer::start() {
                 return r;
             }
 
+            // Save placeholder metadata so the provider can resolve site_id
+            containercp::ssl::CertificateStore::Metadata meta;
+            meta.site_id = site_id;
+            meta.provider_id = provider_id;
+            meta.status = "issuing";
+            meta.domains = {domain};
+            meta.auto_renew = true;
+            meta.challenge_type = "http-01";
+            meta.created_at = containercp::ssl::CertificateStore::timestamp_utc();
+            meta.updated_at = meta.created_at;
+            s.cert_store().save_metadata(site_id, meta);
+
             std::vector<std::string> steps = {"Validating domain...", "Requesting certificate...",
                                                "Waiting for ACME validation...", "Finalizing..."};
             uint64_t job_id = s.jobs().create("ssl-issue", steps);

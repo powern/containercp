@@ -1,11 +1,73 @@
+#define OPENSSL_SUPPRESS_DEPRECATED
+
 #include "AcmeClient.h"
+
+#include <cctype>
+#include <cstring>
+#include <curl/curl.h>
+#include <fstream>
+#include <openssl/bio.h>
+#include <openssl/ec.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <sstream>
+#include <thread>
 
 namespace containercp::ssl {
 
+// ============================================================
+// libcurl write callback
+// ============================================================
+static size_t write_cb(char* data, size_t size, size_t nmemb, std::string* buf) {
+    size_t total = size * nmemb;
+    buf->append(data, total);
+    return total;
+}
+
+static size_t header_cb(char* data, size_t size, size_t nmemb, std::string* buf) {
+    size_t total = size * nmemb;
+    buf->append(data, total);
+    return total;
+}
+
+// ============================================================
+// Base64url encoding
+// ============================================================
+static const char b64url[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+std::string AcmeClient::url64(const std::string& data) {
+    std::string out;
+    size_t len = data.size();
+    for (size_t i = 0; i < len; i += 3) {
+        unsigned char b0 = (unsigned char)data[i];
+        unsigned char b1 = (i + 1 < len) ? (unsigned char)data[i + 1] : 0;
+        unsigned char b2 = (i + 2 < len) ? (unsigned char)data[i + 2] : 0;
+        out += b64url[b0 >> 2];
+        out += b64url[((b0 << 4) | (b1 >> 4)) & 0x3f];
+        if (i + 1 < len) out += b64url[((b1 << 2) | (b2 >> 6)) & 0x3f];
+        if (i + 2 < len) out += b64url[b2 & 0x3f];
+    }
+    return out;
+}
+
+std::string AcmeClient::sha256_base64(const std::string& data) {
+    unsigned char hash[32];
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr);
+    EVP_DigestUpdate(ctx, data.data(), data.size());
+    EVP_DigestFinal_ex(ctx, hash, nullptr);
+    EVP_MD_CTX_free(ctx);
+    return url64(std::string((char*)hash, 32));
+}
+
+// ============================================================
+// Constructor
+// ============================================================
 AcmeClient::AcmeClient(logger::Logger& logger)
     : logger_(logger)
 {
-    directory_url_ = "https://acme-v02.api.letsencrypt.org/directory";
+    directory_url_ = "https://acme-staging-v02.api.letsencrypt.org/directory";
 }
 
 void AcmeClient::set_staging(bool staging) {
@@ -17,143 +79,639 @@ void AcmeClient::set_staging(bool staging) {
     }
 }
 
+// ============================================================
+// Manual JSON string extraction (no dependencies)
+// ============================================================
+std::string AcmeClient::find_json_string(const std::string& json, const std::string& key) const {
+    std::string search = "\"" + key + "\":\"";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) {
+        search = "\"" + key + "\": \"";
+        pos = json.find(search);
+        if (pos == std::string::npos) return "";
+    }
+    pos += search.size();
+    std::string result;
+    while (pos < json.size() && json[pos] != '"') {
+        if (json[pos] == '\\' && pos + 1 < json.size()) {
+            ++pos;
+            if (json[pos] == 'n') result += '\n';
+            else result += json[pos];
+        } else {
+            result += json[pos];
+        }
+        ++pos;
+    }
+    return result;
+}
+
+// Extract first string from a JSON array value
+std::string AcmeClient::find_json_string_array(const std::string& json, const std::string& key) const {
+    std::string search = "\"" + key + "\":[\"";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) {
+        search = "\"" + key + "\": [\"";
+        pos = json.find(search);
+        if (pos == std::string::npos) return "";
+    }
+    pos += search.size();
+    std::string result;
+    while (pos < json.size() && json[pos] != '"') {
+        if (json[pos] == '\\' && pos + 1 < json.size()) { ++pos; result += json[pos]; }
+        else result += json[pos];
+        ++pos;
+    }
+    return result;
+}
+
+// ============================================================
+// libcurl helpers
+// ============================================================
+static std::string http_post(const std::string& url, const std::string& body,
+                              const std::string& content_type, std::string& response_headers,
+                              int& status_code) {
+    CURL* curl = curl_easy_init();
+    if (!curl) return "";
+
+    std::string resp_body;
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body.size());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp_body);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response_headers);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "ContainerCP/0.5");
+
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, ("Content-Type: " + content_type).c_str());
+    headers = curl_slist_append(headers, "Accept: application/json");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        resp_body = "curl error: " + std::string(curl_easy_strerror(res));
+        status_code = 0;
+    } else {
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status_code);
+    }
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    return resp_body;
+}
+
+static std::string http_get(const std::string& url, std::string& response_headers, int& status_code) {
+    CURL* curl = curl_easy_init();
+    if (!curl) return "";
+
+    std::string resp_body;
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp_body);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response_headers);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "ContainerCP/0.5");
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        resp_body = "curl error: " + std::string(curl_easy_strerror(res));
+        status_code = 0;
+    } else {
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status_code);
+    }
+
+    curl_easy_cleanup(curl);
+    return resp_body;
+}
+
+// ============================================================
+// Nonce extraction from response headers
+// ============================================================
+static std::string extract_nonce(const std::string& headers) {
+    auto pos = headers.find("Replay-Nonce: ");
+    if (pos == std::string::npos) {
+        pos = headers.find("replay-nonce: ");
+        if (pos == std::string::npos) return "";
+    }
+    pos += 14; // "Replay-Nonce: ".length()
+    auto end = headers.find("\r\n", pos);
+    if (end == std::string::npos) return headers.substr(pos);
+    return headers.substr(pos, end - pos);
+}
+
+// ============================================================
+// Account key management
+// ============================================================
+std::string AcmeClient::generate_account_key(const std::string& key_path) {
+    EVP_PKEY* pkey = EVP_PKEY_new();
+    EC_KEY* ec = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
+    EC_KEY_generate_key(ec);
+    EVP_PKEY_assign_EC_KEY(pkey, ec);
+
+    BIO* bio = BIO_new(BIO_s_file());
+    BIO_write_filename(bio, const_cast<char*>(key_path.c_str()));
+    PEM_write_bio_PrivateKey(bio, pkey, nullptr, nullptr, 0, nullptr, nullptr);
+    BIO_free(bio);
+
+    // Get raw public key bytes for JWK thumbprint
+    BIO* pub_bio = BIO_new(BIO_s_mem());
+    PEM_write_bio_PUBKEY(pub_bio, pkey);
+    char* pem_data = nullptr;
+    long pem_len = BIO_get_mem_data(pub_bio, &pem_data);
+
+    // Clean up
+    EVP_PKEY_free(pkey);
+    BIO_free(pub_bio);
+
+    return std::string(pem_data, pem_len);
+}
+
+// ============================================================
+// CSR generation
+// ============================================================
+std::string AcmeClient::generate_csr(const std::string& domain, const std::string& key_path) {
+    // Generate a new key pair for the certificate
+    EVP_PKEY* pkey = EVP_PKEY_new();
+    EC_KEY* ec = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
+    EC_KEY_generate_key(ec);
+    EVP_PKEY_assign_EC_KEY(pkey, ec);
+
+    // Save the key to the specified path
+    BIO* key_bio = BIO_new(BIO_s_file());
+    BIO_write_filename(key_bio, const_cast<char*>(key_path.c_str()));
+    PEM_write_bio_PrivateKey(key_bio, pkey, nullptr, nullptr, 0, nullptr, nullptr);
+    BIO_free(key_bio);
+
+    // Build the DN and SAN extension
+    X509_REQ* req = X509_REQ_new();
+    X509_REQ_set_version(req, 0);
+
+    // Subject: CN = domain
+    X509_NAME* name = X509_NAME_new();
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                                (unsigned char*)domain.c_str(), -1, -1, 0);
+    X509_REQ_set_subject_name(req, name);
+
+    // Set public key
+    X509_REQ_set_pubkey(req, pkey);
+
+    // CSR uses CN for domain; most CAs accept this
+
+    // Sign the CSR
+    X509_REQ_sign(req, pkey, EVP_sha256());
+
+    // PEM encode
+    BIO* csr_bio = BIO_new(BIO_s_mem());
+    PEM_write_bio_X509_REQ(csr_bio, req);
+    char* csr_data = nullptr;
+    long csr_len = BIO_get_mem_data(csr_bio, &csr_data);
+
+    std::string csr_pem(csr_data, csr_len);
+
+    X509_REQ_free(req);
+    X509_NAME_free(name);
+    EVP_PKEY_free(pkey);
+    BIO_free(csr_bio);
+
+    return csr_pem;
+}
+
+// ============================================================
+// JWS signing (ES256)
+// ============================================================
+std::string AcmeClient::sign_jws(const std::string& payload, const std::string& url, bool use_kid) {
+    // Load account key
+    BIO* key_bio = BIO_new(BIO_s_file());
+    if (BIO_read_filename(key_bio, account_key_path_.c_str()) <= 0) {
+        BIO_free(key_bio);
+        return "";
+    }
+    EVP_PKEY* pkey = PEM_read_bio_PrivateKey(key_bio, nullptr, nullptr, nullptr);
+    BIO_free(key_bio);
+    if (!pkey) return "";
+
+    // Get EC key to extract raw public key coordinates
+    EC_KEY* ec = EVP_PKEY_get1_EC_KEY(pkey);
+    const EC_GROUP* group = EC_KEY_get0_group(ec);
+    const EC_POINT* point = EC_KEY_get0_public_key(ec);
+
+    BIGNUM* x = BN_new();
+    BIGNUM* y = BN_new();
+    EC_POINT_get_affine_coordinates_GFp(group, point, x, y, nullptr);
+
+    // Convert to raw 32-byte big-endian
+    char x_raw[32] = {0};
+    char y_raw[32] = {0};
+    BN_bn2binpad(x, (unsigned char*)x_raw, 32);
+    BN_bn2binpad(y, (unsigned char*)y_raw, 32);
+
+    // Build JWK
+    std::string x_b64 = url64(std::string(x_raw, 32));
+    std::string y_b64 = url64(std::string(y_raw, 32));
+
+    // JWK thumbprint: SHA256 of {"crv":"P-256","kty":"EC","x":"...","y":"..."}
+    std::string jwk_str = "{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"" + x_b64 + "\",\"y\":\"" + y_b64 + "\"}";
+    std::string thumbprint = sha256_base64(jwk_str);
+
+    // Build protected header
+    std::string protected_header;
+    std::string nonce = get_nonce();
+    if (use_kid && !account_.kid.empty()) {
+        protected_header = "{\"alg\":\"ES256\",\"kid\":\"" + account_.kid + "\",\"nonce\":\"" + nonce + "\",\"url\":\"" + url + "\"}";
+    } else {
+        protected_header = "{\"alg\":\"ES256\",\"jwk\":{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"" + x_b64 + "\",\"y\":\"" + y_b64 + "\"},\"nonce\":\"" + nonce + "\",\"url\":\"" + url + "\"}";
+    }
+
+    std::string protected_b64 = url64(protected_header);
+    std::string payload_b64 = url64(payload);
+
+    // Sign "protected_b64.payload_b64"
+    std::string signing_input = protected_b64 + "." + payload_b64;
+
+    unsigned char sig[72];
+    size_t sig_len = 0;
+    EVP_MD_CTX* md_ctx = EVP_MD_CTX_new();
+    EVP_PKEY_CTX* pctx = nullptr;
+    EVP_DigestSignInit(md_ctx, &pctx, EVP_sha256(), nullptr, pkey);
+    EVP_DigestSignUpdate(md_ctx, signing_input.data(), signing_input.size());
+    EVP_DigestSignFinal(md_ctx, sig, &sig_len);
+    EVP_MD_CTX_free(md_ctx);
+
+    std::string sig_raw((char*)sig, sig_len);
+    std::string sig_b64 = url64(sig_raw);
+
+    BN_free(x);
+    BN_free(y);
+    EC_KEY_free(ec);
+    EVP_PKEY_free(pkey);
+
+    return "{\"protected\":\"" + protected_b64 + "\",\"payload\":\"" + payload_b64 + "\",\"signature\":\"" + sig_b64 + "\"}";
+}
+
+// ============================================================
+// Http HEAD for nonce fetching
+// ============================================================
+static std::string http_head(const std::string& url, std::string& response_headers, int& status_code) {
+    CURL* curl = curl_easy_init();
+    if (!curl) return "";
+
+    std::string resp_body;
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response_headers);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "ContainerCP/0.5");
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        status_code = 0;
+    } else {
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status_code);
+    }
+
+    curl_easy_cleanup(curl);
+    return resp_body;
+}
+
+// ============================================================
+// ACME HTTP methods
+// ============================================================
+std::string AcmeClient::get_nonce() {
+    std::string resp_headers;
+    int status = 0;
+    http_head(new_nonce_url_, resp_headers, status);
+    std::string nonce = extract_nonce(resp_headers);
+    return nonce;
+}
+
+AcmeClient::Response AcmeClient::acme_post(const std::string& url, const std::string& payload) {
+    std::string jws = sign_jws(payload, url, true);
+    if (jws.empty()) {
+        // Try with JKU (new account registration)
+        jws = sign_jws(payload, url, false);
+    }
+
+    std::string resp_headers;
+    int status = 0;
+    std::string body = http_post(url, jws, "application/jose+json", resp_headers, status);
+
+    Response r;
+    r.status_code = status;
+    r.body = body;
+    r.nonce = extract_nonce(resp_headers);
+    return r;
+}
+
+AcmeClient::Response AcmeClient::acme_get(const std::string& url) {
+    // POST-as-GET: POST with empty payload signed
+    return acme_post(url, "");
+}
+
+// ============================================================
+// ACME Directory discovery
+// ============================================================
 core::OperationResult AcmeClient::discover_directory() {
     logger_.info("ACME", "Discovering directory at " + directory_url_);
-    // TODO: HTTP GET directory_url_, parse JSON response, set new_nonce_url_,
-    // new_account_url_, new_order_url_
-    return {true, ""};
-}
 
-core::OperationResult AcmeClient::load_or_create_account(const std::string& account_key_path) {
-    logger_.info("ACME", "Loading or creating account key at " + account_key_path);
-    (void)account_key_path;
-    // TODO: Check if account key file exists. If not, generate P-256 key.
-    // Load existing key or create new one.
-    // Register with ACME server via newAccount endpoint.
-    return {true, ""};
-}
+    std::string resp_headers;
+    int status = 0;
+    std::string body = http_get(directory_url_, resp_headers, status);
 
-core::OperationResult AcmeClient::create_order(const std::vector<std::string>& domains,
-                                                Order& order) {
-    std::string domain_str;
-    for (size_t i = 0; i < domains.size(); ++i) {
-        if (i > 0) domain_str += ", ";
-        domain_str += domains[i];
+    if (status != 200 || body.empty()) {
+        return {false, "Failed to fetch ACME directory: HTTP " + std::to_string(status)};
     }
-    logger_.info("ACME", "Creating order for domains: " + domain_str);
-    (void)order;
-    // TODO:
-    // 1. POST newOrder with identifiers
-    // 2. Parse response: status, authorizations[], finalize URL
-    // 3. Return Order struct
+
+    new_nonce_url_ = find_json_string(body, "newNonce");
+    new_account_url_ = find_json_string(body, "newAccount");
+    new_order_url_ = find_json_string(body, "newOrder");
+
+    if (new_nonce_url_.empty() || new_account_url_.empty() || new_order_url_.empty()) {
+        return {false, "ACME directory response missing required URLs"};
+    }
+
+    logger_.info("ACME", "Directory discovered: newNonce=" + new_nonce_url_);
     return {true, ""};
 }
 
-core::OperationResult AcmeClient::get_authorization(const std::string& authz_url,
-                                                     Authorization& authz) {
-    logger_.info("ACME", "Getting authorization from " + authz_url);
-    (void)authz;
-    // TODO:
-    // 1. POST-as-GET to authz_url
-    // 2. Parse response: domain, status, challenges[]
-    // 3. Return Authorization struct
+// ============================================================
+// Account management
+// ============================================================
+core::OperationResult AcmeClient::load_or_create_account(const std::string& key_path) {
+    account_key_path_ = key_path;
+
+    // Check if key exists
+    std::ifstream key_file(key_path);
+    if (!key_file.good()) {
+        logger_.info("ACME", "Generating new account key at " + key_path);
+        generate_account_key(key_path);
+    }
+
+    // Load the public key info for JWK
+    BIO* key_bio = BIO_new(BIO_s_file());
+    if (BIO_read_filename(key_bio, key_path.c_str()) <= 0) {
+        BIO_free(key_bio);
+        return {false, "Failed to read account key"};
+    }
+    EVP_PKEY* pkey = PEM_read_bio_PrivateKey(key_bio, nullptr, nullptr, nullptr);
+    BIO_free(key_bio);
+    if (!pkey) {
+        return {false, "Failed to parse account key"};
+    }
+    EVP_PKEY_free(pkey);
+
+    // Create account via newAccount (sign without kid, use JWK)
+    std::string payload = "{\"termsOfServiceAgreed\":true}";
+    std::string jws = sign_jws(payload, new_account_url_, false);
+
+    std::string resp_headers;
+    int status = 0;
+    std::string body = http_post(new_account_url_, jws, "application/jose+json", resp_headers, status);
+
+    if (status == 201 || status == 200) {
+        // Extract account URL from Location header or body
+        auto loc = resp_headers.find("Location: ");
+        if (loc == std::string::npos) loc = resp_headers.find("location: ");
+        if (loc != std::string::npos) {
+            loc += 10;
+            auto end = resp_headers.find("\r\n", loc);
+            account_.url = resp_headers.substr(loc, end - loc);
+        }
+        account_.kid = account_.url;
+        logger_.info("ACME", "Account registered: " + account_.url);
+        return {true, ""};
+    }
+
+    return {false, "Account registration failed: HTTP " + std::to_string(status) + " " + body};
+}
+
+// ============================================================
+// Order creation
+// ============================================================
+core::OperationResult AcmeClient::create_order(const std::vector<std::string>& domains, Order& order) {
+    std::string ids = "[";
+    for (size_t i = 0; i < domains.size(); ++i) {
+        if (i > 0) ids += ",";
+        ids += "{\"type\":\"dns\",\"value\":\"" + domains[i] + "\"}";
+    }
+    ids += "]";
+    std::string payload = "{\"identifiers\":" + ids + "}";
+
+    auto resp = acme_post(new_order_url_, payload);
+    if (resp.status_code != 201) {
+        return {false, "Order creation failed: HTTP " + std::to_string(resp.status_code) + " " + resp.body};
+    }
+
+    order.url = "";
+    // The order URL is in the Location header from the POST response
+    // Actually for ACME, the URL is not in the body but in the Location header
+    // We need to find it differently
+    // For POST-as-GET, the body contains the order details
+
+    // Parse response body
+    order.status = find_json_string(resp.body, "status");
+    order.finalize_url = find_json_string(resp.body, "finalize");
+
+    // Parse authorizations array
+    {
+        auto authz_start = resp.body.find("\"authorizations\":[");
+        if (authz_start != std::string::npos) {
+            authz_start += 18;
+            while (authz_start < resp.body.size()) {
+                auto quote = resp.body.find('"', authz_start);
+                if (quote == std::string::npos || quote >= resp.body.find(']', authz_start)) break;
+                auto end = resp.body.find('"', quote + 1);
+                if (end == std::string::npos) break;
+                order.authorizations.push_back(resp.body.substr(quote + 1, end - quote - 1));
+                authz_start = end + 1;
+            }
+        }
+    }
+
+    logger_.info("ACME", "Order created: status=" + order.status
+                 + " authorizations=" + std::to_string(order.authorizations.size()));
     return {true, ""};
 }
 
-core::OperationResult AcmeClient::respond_to_challenge(const std::string& challenge_url,
-                                                        const std::string& key_authorization) {
-    logger_.info("ACME", "Responding to challenge at " + challenge_url);
-    (void)key_authorization;
-    // TODO:
-    // 1. POST to challenge_url with keyAuthorization
-    // 2. Return result
+// ============================================================
+// Authorization
+// ============================================================
+core::OperationResult AcmeClient::get_authorization(const std::string& authz_url, Authorization& authz) {
+    auto resp = acme_get(authz_url);
+    if (resp.status_code != 200) {
+        return {false, "Authorization fetch failed: HTTP " + std::to_string(resp.status_code)};
+    }
+
+    authz.url = authz_url;
+    authz.domain = find_json_string(resp.body, "identifier");
+    // Try to get the domain from the value field of the identifier object
+    {
+        auto val_pos = resp.body.find("\"value\":\"");
+        if (val_pos != std::string::npos) {
+            val_pos += 9;
+            auto end = resp.body.find('"', val_pos);
+            if (end != std::string::npos) {
+                authz.domain = resp.body.substr(val_pos, end - val_pos);
+            }
+        }
+    }
+    if (authz.domain.empty()) {
+        authz.domain = find_json_string(resp.body, "value");
+    }
+    authz.status = find_json_string(resp.body, "status");
+
+    // Parse challenges
+    {
+        auto ch_start = resp.body.find("\"challenges\":[");
+        if (ch_start != std::string::npos) {
+            ch_start += 14;
+            int depth = 0;
+            size_t i = ch_start;
+            while (i < resp.body.size()) {
+                if (resp.body[i] == '{') {
+                    if (depth == 0) {
+                        size_t obj_start = i;
+                        int obj_depth = 0;
+                        size_t j = i;
+                        while (j < resp.body.size()) {
+                            if (resp.body[j] == '{') obj_depth++;
+                            if (resp.body[j] == '}') { obj_depth--; if (obj_depth == 0) break; }
+                            j++;
+                        }
+                        std::string chal_str = resp.body.substr(obj_start, j - obj_start + 1);
+                        Challenge ch;
+                        ch.url = find_json_string(chal_str, "url");
+                        ch.type = find_json_string(chal_str, "type");
+                        ch.token = find_json_string(chal_str, "token");
+                        ch.status = find_json_string(chal_str, "status");
+                        if (!ch.type.empty()) {
+                            authz.challenges.push_back(ch);
+                        }
+                        i = j;
+                    }
+                }
+                if (resp.body[i] == ']') break;
+                i++;
+            }
+        }
+    }
+
+    logger_.info("ACME", "Authorization for " + authz.domain + ": status=" + authz.status
+                 + " challenges=" + std::to_string(authz.challenges.size()));
     return {true, ""};
 }
 
-core::OperationResult AcmeClient::poll_challenge(const std::string& challenge_url,
-                                                  std::string& status, int max_retries) {
-    logger_.info("ACME", "Polling challenge at " + challenge_url);
-    (void)status;
-    (void)max_retries;
-    // TODO:
-    // 1. Loop: POST-as-GET to challenge_url
-    // 2. Check status: "valid" → success, "invalid" → failure
-    // 3. Sleep and retry if "pending" or "processing"
-    // 4. Return after max_retries with timeout
+// ============================================================
+// Challenge response
+// ============================================================
+core::OperationResult AcmeClient::respond_to_challenge(const std::string& challenge_url) {
+    auto resp = acme_post(challenge_url, "{}");
+    if (resp.status_code != 200) {
+        return {false, "Challenge response failed: HTTP " + std::to_string(resp.status_code) + " " + resp.body};
+    }
+    logger_.info("ACME", "Challenge response sent");
     return {true, ""};
 }
 
-core::OperationResult AcmeClient::poll_authorization(const std::string& authz_url,
-                                                      std::string& status, int max_retries) {
-    logger_.info("ACME", "Polling authorization at " + authz_url);
-    (void)status;
-    (void)max_retries;
-    // TODO: Same as poll_challenge but for authorization level
+// ============================================================
+// Polling
+// ============================================================
+core::OperationResult AcmeClient::poll_challenge(const std::string& challenge_url, std::string& status, int max_retries) {
+    for (int i = 0; i < max_retries; ++i) {
+        auto resp = acme_get(challenge_url);
+        if (resp.status_code != 200) {
+            return {false, "Poll failed: HTTP " + std::to_string(resp.status_code)};
+        }
+
+        status = find_json_string(resp.body, "status");
+        logger_.info("ACME", "Challenge poll #" + std::to_string(i + 1) + ": " + status);
+
+        if (status == "valid") return {true, ""};
+        if (status == "invalid") {
+            auto error = find_json_string(resp.body, "error");
+            return {false, "Challenge failed: " + error};
+        }
+
+        // Sleep 2 seconds between polls
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+    }
+
+    return {false, "Challenge did not become valid within timeout"};
+}
+
+// ============================================================
+// Finalize order
+// ============================================================
+core::OperationResult AcmeClient::finalize_order(const std::string& finalize_url, const std::string& csr_pem, std::string& cert_url) {
+    // CSR must be base64url encoded (DER format inside PEM, then url64)
+    // Extract DER from PEM
+    std::string csr_der;
+    {
+        auto start = csr_pem.find("-----BEGIN CERTIFICATE REQUEST-----");
+        if (start == std::string::npos) start = csr_pem.find("-----BEGIN NEW CERTIFICATE REQUEST-----");
+        if (start == std::string::npos) return {false, "Invalid CSR format"};
+        auto end = csr_pem.find("-----END");
+        if (end == std::string::npos) return {false, "Invalid CSR format"};
+        std::string b64 = csr_pem.substr(start + (csr_pem[start + 5] == 'N' ? 40 : 35), end - start - (csr_pem[start + 5] == 'N' ? 40 : 35));
+
+        // Remove whitespace from base64
+        std::string clean;
+        for (char c : b64) {
+            if (c != '\n' && c != '\r' && c != ' ') clean += c;
+        }
+
+        // Decode base64 to DER
+        BIO* b64_bio = BIO_new(BIO_f_base64());
+        BIO* mem = BIO_new_mem_buf(clean.data(), clean.size());
+        BIO* chain = BIO_push(b64_bio, mem);
+
+        char der_buf[8192];
+        int der_len = BIO_read(chain, der_buf, sizeof(der_buf));
+
+        if (der_len > 0) {
+            csr_der = std::string(der_buf, der_len);
+        }
+
+        BIO_free_all(chain);
+    }
+
+    if (csr_der.empty()) return {false, "Failed to decode CSR"};
+
+    std::string csr_b64 = url64(csr_der);
+    std::string payload = "{\"csr\":\"" + csr_b64 + "\"}";
+
+    auto resp = acme_post(finalize_url, payload);
+    if (resp.status_code != 200) {
+        return {false, "Finalize failed: HTTP " + std::to_string(resp.status_code) + " " + resp.body};
+    }
+
+    cert_url = find_json_string(resp.body, "certificate");
+    logger_.info("ACME", "Order finalized");
     return {true, ""};
 }
 
-core::OperationResult AcmeClient::finalize_order(const std::string& finalize_url,
-                                                  const std::string& csr_pem,
-                                                  std::string& certificate_url) {
-    logger_.info("ACME", "Finalizing order at " + finalize_url);
-    (void)csr_pem;
-    (void)certificate_url;
-    // TODO:
-    // 1. POST to finalize_url with CSR
-    // 2. Parse response: status, certificate URL
-    // 3. If status is "valid", return certificate URL
+// ============================================================
+// Certificate download
+// ============================================================
+core::OperationResult AcmeClient::download_certificate(const std::string& cert_url, std::string& fullchain_pem) {
+    if (cert_url.empty()) {
+        return {false, "Certificate URL is empty"};
+    }
+
+    // POST-as-GET to download
+    auto resp = acme_get(cert_url);
+    if (resp.status_code != 200) {
+        return {false, "Certificate download failed: HTTP " + std::to_string(resp.status_code)};
+    }
+
+    fullchain_pem = resp.body;
+    logger_.info("ACME", "Certificate downloaded (size=" + std::to_string(fullchain_pem.size()) + ")");
     return {true, ""};
-}
-
-core::OperationResult AcmeClient::poll_order(const std::string& order_url,
-                                              std::string& status,
-                                              std::string& certificate_url,
-                                              int max_retries) {
-    logger_.info("ACME", "Polling order at " + order_url);
-    (void)status;
-    (void)certificate_url;
-    (void)max_retries;
-    // TODO: Same as poll_challenge but for order level
-    return {true, ""};
-}
-
-core::OperationResult AcmeClient::download_certificate(const std::string& cert_url,
-                                                        std::string& fullchain_pem,
-                                                        std::string& privkey_pem) {
-    logger_.info("ACME", "Downloading certificate from " + cert_url);
-    (void)fullchain_pem;
-    (void)privkey_pem;
-    // TODO:
-    // 1. POST-as-GET to cert_url
-    // 2. Return fullchain PEM body
-    // (privkey is generated locally from CSR, not downloaded)
-    return {true, ""};
-}
-
-std::string AcmeClient::generate_csr(const std::string& domain,
-                                      const std::string& key_path) {
-    (void)domain;
-    (void)key_path;
-    // TODO: Generate PKCS#10 CSR using OpenSSL
-    return "";
-}
-
-std::string AcmeClient::generate_account_key(const std::string& key_path) {
-    (void)key_path;
-    // TODO: Generate P-256 EC private key using OpenSSL
-    return "";
-}
-
-std::string AcmeClient::url64(const std::string& data) {
-    (void)data;
-    // TODO: Base64url encode (RFC 4648 without padding)
-    return "";
-}
-
-std::string AcmeClient::sha256_base64(const std::string& data) {
-    (void)data;
-    // TODO: SHA-256 digest + base64url encode
-    return "";
 }
 
 } // namespace containercp::ssl

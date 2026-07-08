@@ -59,4 +59,10 @@ target_compile_options(containercp_tests PRIVATE
     -Wpedantic
 )
 
+target_link_libraries(containercp_tests PRIVATE
+    curl
+    ssl
+    crypto
+)
+
 add_test(NAME containercp_tests COMMAND containercp_tests)

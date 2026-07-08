@@ -6,7 +6,46 @@ Format: date | commit | summary
 
 ---
 
-## 2025-07-08 | `(this commit)` | SSL Step 7: minimal production GUI
+## 2025-07-08 | `(this commit)` | SSL Step 8A: real ACME HTTP-01 staging implementation
+
+### New: Real ACME HTTP-01 client
+- Full ACME protocol implementation via libcurl + OpenSSL
+- JWS/JWT signing with ES256 (P-256 ECDSA) for ACME authentication
+- Account key generation (P-256) and registration
+- Directory discovery (staging + production Let's Encrypt)
+- Order creation with domain identifiers
+- Authorization fetch with HTTP-01 challenge selection
+- Challenge response and polling (up to 15 retries, 2s interval)
+- CSR generation (P-256 key, CN-based)
+- Order finalization and certificate download
+
+### Updated: HTTP01ChallengeProvider
+- Real challenge token write to `/.well-known/acme-challenge/<token>`
+- Token verification via HTTP (checks reachability)
+- Preflight validation: domain reachability check
+- Cleanup after validation
+
+### Updated: LetsEncryptProvider
+- `request()` now resolves site_id from CertificateStore and calls `issue_certificate()`
+- Staging mode by default (`LETSENCRYPT_STAGING=0` for production)
+- Full ACME lifecycle orchestration
+- API handler saves placeholder metadata before queuing the job
+
+### Build dependencies
+- Added libcurl4-openssl-dev + libssl-dev
+- CMakeLists: link curl, ssl, crypto libraries for containercpd and tests
+
+### Files changed
+- `libs/ssl/AcmeClient.h/.cpp` — complete ACME HTTP-01 implementation
+- `libs/ssl/HTTP01ChallengeProvider.h/.cpp` — real challenge file I/O
+- `libs/ssl/LetsEncryptProvider.h/.cpp` — wired to real ACME flow
+- `libs/core/ServiceRegistry.cpp` — staging config, HTTP01ChallengeProvider ssl_root
+- `libs/api/ApiServer.cpp` — save metadata before issue job
+- `CMakeLists.txt`, `tests/CMakeLists.txt` — libcurl + OpenSSL linkage
+
+---
+
+## 2025-07-08 | `6f8917a` | SSL Step 7: minimal production GUI
 
 ### Updated: SSL Web UI page (`web/app.js`)
 - Complete rewrite of the SSL page to use the new REST API

@@ -13,7 +13,7 @@ ServiceRegistry::ServiceRegistry()
     , access_provider_(logger_)
     , proxy_provider_(filesystem_, config_, logger_, ssl_)
     , cert_store_(logger_, config_.data_root() + "/ssl")
-    , http01_challenge_(logger_)
+    , http01_challenge_(logger_, config_.data_root() + "/ssl")
     , cert_provider_(std::make_shared<ssl::LetsEncryptProvider>(logger_, http01_challenge_, cert_store_))
     , pem_cert_provider_(std::make_shared<ssl::PemCertificateProvider>(logger_))
     , storage_(config_.database_dir())
@@ -170,6 +170,10 @@ ServiceRegistry::ServiceRegistry()
 }
 
 void ServiceRegistry::start() {
+    // Configure ACME staging: staging is default; production requires explicit opt-out
+    const char* staging_env = std::getenv("LETSENCRYPT_STAGING");
+    cert_provider_->set_staging(staging_env == nullptr || std::string(staging_env) != "0");
+
     job_executor_.start();
     renewal_scheduler_.start();
 }
