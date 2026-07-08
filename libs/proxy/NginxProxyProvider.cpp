@@ -43,44 +43,18 @@ core::OperationResult NginxProxyProvider::create_proxy(const ReverseProxy& proxy
     auto* cert = ssl_mgr_.find_by_domain(proxy.domain);
     bool has_ssl = (cert != nullptr && cert->https_enabled && cert->status == "active");
 
-    std::ostringstream conf;
-    if (has_ssl) {
-        conf << "server {\n"
-             << "    listen 443 ssl;\n"
-             << "    server_name " << proxy.domain << ";\n"
-             << "    ssl_certificate " << cert->certificate_path << ";\n"
-             << "    ssl_certificate_key " << cert->key_path << ";\n"
-             << "\n"
-             << "    location / {\n"
-             << "        proxy_pass http://" << upstream << ";\n"
-             << "        proxy_set_header Host $host;\n"
-             << "        proxy_set_header X-Real-IP $remote_addr;\n"
-             << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
-             << "        proxy_set_header X-Forwarded-Proto https;\n"
-             << "    }\n"
-             << "}\n"
-             << "\n"
-             << "server {\n"
-             << "    listen 80;\n"
-             << "    server_name " << proxy.domain << ";\n"
-             << "    return 301 https://$host$request_uri;\n"
-             << "}\n";
-    } else {
-        conf << "server {\n"
-             << "    listen 80;\n"
-             << "    server_name " << proxy.domain << ";\n"
-             << "\n"
-             << "    location / {\n"
-             << "        proxy_pass http://" << upstream << ";\n"
-             << "        proxy_set_header Host $host;\n"
-             << "        proxy_set_header X-Real-IP $remote_addr;\n"
-             << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
-             << "        proxy_set_header X-Forwarded-Proto $scheme;\n"
-             << "    }\n"
-             << "}\n";
+    ProxyConfigBuilder::Params cfg_params;
+    cfg_params.domain = proxy.domain;
+    cfg_params.upstream = upstream;
+    cfg_params.https = has_ssl;
+    cfg_params.redirect = has_ssl; // legacy: existing sites with SSL get redirect
+    if (has_ssl && cert) {
+        cfg_params.cert_path = cert->certificate_path;
+        cfg_params.key_path = cert->key_path;
     }
 
-    fs_.create_file(path, conf.str());
+    std::string config = config_builder_.build(cfg_params);
+    fs_.create_file(path, config);
     logger_.info("PROXY", "Created config for " + proxy.domain);
     return {true, ""};
 }
@@ -137,39 +111,18 @@ core::OperationResult NginxProxyProvider::attach_certificate(const std::string& 
         upstream = "site-0-web:80";
     }
 
-    std::ostringstream conf;
-    // HTTP block (always present)
-    conf << "server {\n"
-         << "    listen 80;\n"
-         << "    server_name " << domain << ";\n"
-         << "    location / {\n"
-         << "        proxy_pass http://" << upstream << ";\n"
-         << "        proxy_set_header Host $host;\n"
-         << "        proxy_set_header X-Real-IP $remote_addr;\n"
-         << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
-         << "        proxy_set_header X-Forwarded-Proto $scheme;\n"
-         << "    }\n"
-         << "}\n";
+    ProxyConfigBuilder::Params params;
+    params.domain = domain;
+    params.upstream = upstream;
+    params.https = true;
+    params.cert_path = cert_path;
+    params.key_path = key_path;
 
-    // HTTPS block
-    conf << "server {\n"
-         << "    listen 443 ssl;\n"
-         << "    server_name " << domain << ";\n"
-         << "    ssl_certificate " << cert_path << ";\n"
-         << "    ssl_certificate_key " << key_path << ";\n"
-         << "\n"
-         << "    location / {\n"
-         << "        proxy_pass http://" << upstream << ";\n"
-         << "        proxy_set_header Host $host;\n"
-         << "        proxy_set_header X-Real-IP $remote_addr;\n"
-         << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
-         << "        proxy_set_header X-Forwarded-Proto https;\n"
-         << "    }\n"
-         << "}\n";
+    std::string config = config_builder_.build(params);
 
     // Transactional write: write to temp file, validate, rename
     std::string tmp_path = path + ".attach_tmp";
-    fs_.create_file(tmp_path, conf.str());
+    fs_.create_file(tmp_path, config);
 
     if (!validate_nginx_config(tmp_path)) {
         std::filesystem::remove(tmp_path);
@@ -220,23 +173,11 @@ core::OperationResult NginxProxyProvider::detach_certificate(const std::string& 
     }
 
     // Build pure HTTP config
-    std::ostringstream conf;
-    conf << "server {\n"
-         << "    listen 80;\n"
-         << "    server_name " << domain << ";\n"
-         << "\n"
-         << "    location / {\n"
-         << "        proxy_pass http://" << upstream << ";\n"
-         << "        proxy_set_header Host $host;\n"
-         << "        proxy_set_header X-Real-IP $remote_addr;\n"
-         << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
-         << "        proxy_set_header X-Forwarded-Proto $scheme;\n"
-         << "    }\n"
-         << "}\n";
+    std::string config = config_builder_.build_http_block(domain, upstream);
 
     // Transactional write
     std::string tmp_path = path + ".detach_tmp";
-    fs_.create_file(tmp_path, conf.str());
+    fs_.create_file(tmp_path, config);
 
     if (!validate_nginx_config(tmp_path)) {
         std::filesystem::remove(tmp_path);

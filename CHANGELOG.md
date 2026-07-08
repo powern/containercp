@@ -6,7 +6,43 @@ Format: date | commit | summary
 
 ---
 
-## 2025-07-08 | `(this commit)` | SSL Step 5: JobExecutor + transactional HTTPS proxy integration
+## 2025-07-08 | `(this commit)` | SSL Step 6: automatic renewal scheduler
+
+### New: RenewalScheduler (`libs/ssl/RenewalScheduler.h/.cpp`)
+- Fully automatic certificate renewal inside the daemon process
+- Periodic background thread (default: 24h interval)
+- Scans all certificates, renews due ones via JobExecutor
+- Skips: HTTP_ONLY sites, disabled HTTPS, auto_renew=false, ERROR state,
+  providers without auto-renew support
+- Exponential backoff on failure (1h, 2h, 4h, 8h, 16h, 24h, 24h...)
+- After 7 consecutive failures, status → ERROR with clear message
+- Updates metadata.json after success/failure (renew_attempts, last_error)
+- Manages next_attempt timestamp for backoff tracking
+- Structured log events: renewal scheduled/started/succeeded/failed/skipped
+- `check_now()` for manual/forced immediate check
+
+### Improvements
+- Explicit ServiceRegistry::start()/shutdown() lifecycle:
+  `services.start()` called after daemon init
+  `services.shutdown()` called before daemon exit
+  JobExecutor and RenewalScheduler shut down cleanly in order
+- ProxyConfigBuilder helper class extracts nginx config generation:
+  build_http_block, build_https_block, build_redirect_block, build()
+  NginxProxyProvider delegates to ProxyConfigBuilder
+  Future: HSTS, HTTP/2, HTTP/3, OCSP, mTLS
+
+### Files changed
+- `libs/ssl/RenewalScheduler.h/.cpp` — new automatic renewal scheduler
+- `libs/core/ServiceRegistry.h/.cpp` — wired RenewalScheduler, start/shutdown
+- `app/containercpd/main.cpp` — services.start()/shutdown() calls
+- `libs/proxy/ProxyConfigBuilder.h/.cpp` — new config generation helper
+- `libs/proxy/NginxProxyProvider.h/.cpp` — uses ProxyConfigBuilder
+- `libs/proxy/ProxyProvider.h` — unused parameter warnings fixed
+- `CMakeLists.txt` — added new sources
+
+---
+
+## 2025-07-08 | `31e8820` | SSL Step 5: JobExecutor + transactional HTTPS proxy integration
 
 ### New: JobExecutor (`libs/jobs/JobExecutor.h/.cpp`)
 - Reusable background task executor with worker pool

@@ -215,7 +215,7 @@
 | SSL-003: REST API endpoints | ✅ | Step 3 complete |
 | SSL-004: AcmeClient + LetsEncryptProvider (ACME engine) | ✅ | Step 4 complete |
 | SSL-005: Proxy integration (attach certs, reload, redirect) | ✅ | Step 5 complete |
-| SSL-006: RenewalScheduler | ⬜ | Step 6 (next) |
+| SSL-006: RenewalScheduler | ✅ | Step 6 complete |
 | SSL-006: RenewalScheduler | ⬜ | Step 6 |
 | SSL-007: Web UI SSL page | ⬜ | Step 7 |
 | SSL-008: Real server validation | ⬜ | Step 8 |

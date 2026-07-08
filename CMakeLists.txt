@@ -51,6 +51,7 @@ set(CONTAINERCP_SOURCES
     libs/php/PhpVersionManager.cpp
     libs/provider/DockerComposeProvider.cpp
     libs/proxy/NginxProxyProvider.cpp
+    libs/proxy/ProxyConfigBuilder.cpp
     libs/proxy/ReverseProxy.cpp
     libs/proxy/ReverseProxyManager.cpp
     libs/runtime/DockerRuntime.cpp
@@ -63,6 +64,7 @@ set(CONTAINERCP_SOURCES
     libs/ssl/AcmeClient.cpp
     libs/ssl/CertificateStore.cpp
     libs/ssl/PemCertificateProvider.cpp
+    libs/ssl/RenewalScheduler.cpp
     libs/ssl/HTTP01ChallengeProvider.cpp
     libs/storage/Storage.cpp
     libs/template/TemplateEngine.cpp

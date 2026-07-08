@@ -1,6 +1,7 @@
 #ifndef CONTAINERCP_JOBS_JOB_EXECUTOR_H
 #define CONTAINERCP_JOBS_JOB_EXECUTOR_H
 
+#include "jobs/Job.h"
 #include "jobs/JobManager.h"
 
 #include <condition_variable>

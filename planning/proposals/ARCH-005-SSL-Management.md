@@ -1079,18 +1079,23 @@ only orchestrates the lifecycle. ChallengeProvider handles transport.
 - HTTPS config never breaks HTTP — HTTP block always present
 - Certificate files kept on disk after disable
 - No nginx-specific SSL logic outside `NginxProxyProvider`
+- ProxyConfigBuilder helper extracts config generation from string building
+  - build_http_block(), build_https_block(), build_redirect_block()
+  - Param-based build() for combined HTTP+HTTPS+redirect
+  - Future: HSTS, HTTP/2, HTTP/3, OCSP, mTLS
 - JobExecutor replaces detached `std::thread` for all async work
   - Configurable worker pool (2), bounded queue (64)
   - Graceful shutdown with pending task cancellation
 
-### Step 6 — RenewalScheduler
-- Implement `RenewalScheduler` with 24-hour interval
-- Enumerate active certificates due for renewal
-- Call `CertificateProvider::renew()` for each due cert
-- Track `renew_attempts`, disable after 7 consecutive failures
-- Log summary after each check cycle
-- Start scheduler in daemon `main.cpp`
-- Commit and push
+### Step 6 — RenewalScheduler (Complete)
+- Implemented `RenewalScheduler` with 24-hour background thread
+- Scans all certificates, renews due ones via JobExecutor
+- Skips HTTP_ONLY, disabled, auto_renew=false, ERROR, unsupported providers
+- Exponential backoff: 1h, 2h, 4h, 8h, 16h, 24h...
+- After 7 consecutive failures, status → ERROR
+- Updates metadata.json (renew_attempts, last_error)
+- Structured log events for all operations
+- Integrated with ServiceRegistry::start()/shutdown() lifecycle
 
 ### Step 7 — GUI
 - Redesign SSL page: show ALL sites with state column

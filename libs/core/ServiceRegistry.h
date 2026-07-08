@@ -26,6 +26,7 @@
 #include "ssl/LetsEncryptProvider.h"
 #include "ssl/PemCertificateProvider.h"
 #include "ssl/HTTP01ChallengeProvider.h"
+#include "ssl/RenewalScheduler.h"
 #include "ssl/SslCertificateManager.h"
 
 #include <memory>
@@ -65,6 +66,7 @@ public:
     ssl::CertificateProvider& cert_provider();
     ssl::CertificateProvider& cert_provider_by_name(const std::string& name);
     std::unordered_map<std::string, std::shared_ptr<ssl::CertificateProvider>> certificate_providers();
+    ssl::RenewalScheduler& renewal_scheduler();
     mail::MailDomainManager& mail();
     filesystem::Filesystem& filesystem();
     runtime::Runtime& runtime();
@@ -73,6 +75,8 @@ public:
     auth::AuthUserManager& auth_users();
     auth::AuthService& auth();
     storage::Storage& storage();
+    void start();
+    void shutdown();
     void save();
     void reload_profiles();
 
@@ -106,6 +110,7 @@ private:
     mail::MailDomainManager mail_;
     storage::Storage storage_;
     jobs::JobExecutor job_executor_;
+    ssl::RenewalScheduler renewal_scheduler_;
     auth::AuthUserManager auth_users_;
     auth::AuthService auth_;
     filesystem::Filesystem filesystem_;

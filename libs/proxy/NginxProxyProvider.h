@@ -2,6 +2,7 @@
 #define CONTAINERCP_PROXY_NGINX_PROXY_PROVIDER_H
 
 #include "proxy/ProxyProvider.h"
+#include "proxy/ProxyConfigBuilder.h"
 #include "config/Config.h"
 #include "filesystem/Filesystem.h"
 #include "logger/Logger.h"
@@ -39,6 +40,7 @@ private:
     config::Config& cfg_;
     logger::Logger& logger_;
     ssl::SslCertificateManager& ssl_mgr_;
+    ProxyConfigBuilder config_builder_;
 };
 
 } // namespace containercp::proxy

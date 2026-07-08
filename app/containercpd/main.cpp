@@ -181,6 +181,7 @@ int main(int argc, char* argv[]) {
     }
 
     containercp::daemon::DaemonApp daemon(services);
+    services.start();
 
     while (true) {
         struct sockaddr_un client_addr{};
@@ -203,5 +204,6 @@ int main(int argc, char* argv[]) {
 
     ::close(server_fd);
     ::unlink(socket_path.c_str());
+    services.shutdown();
     return 0;
 }

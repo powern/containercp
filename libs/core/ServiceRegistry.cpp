@@ -18,6 +18,7 @@ ServiceRegistry::ServiceRegistry()
     , pem_cert_provider_(std::make_shared<ssl::PemCertificateProvider>(logger_))
     , storage_(config_.database_dir())
     , job_executor_(jobs_, 2, 64)
+    , renewal_scheduler_(logger_, cert_store_, jobs_, job_executor_, cert_providers_)
     , auth_(*this)
     , runtime_(logger_, config_.sites_dir())
     , hosting_provider_(filesystem_, config_, php_versions_, runtime_, profiles_)
@@ -166,7 +167,16 @@ ServiceRegistry::ServiceRegistry()
     cert_providers_["pem"] = pem_cert_provider_;
 
     auth_.initialize();
+}
+
+void ServiceRegistry::start() {
     job_executor_.start();
+    renewal_scheduler_.start();
+}
+
+void ServiceRegistry::shutdown() {
+    renewal_scheduler_.shutdown();
+    job_executor_.shutdown();
 }
 
 config::Config& ServiceRegistry::config() {
@@ -263,6 +273,10 @@ ssl::CertificateProvider& ServiceRegistry::cert_provider_by_name(const std::stri
 
 std::unordered_map<std::string, std::shared_ptr<ssl::CertificateProvider>> ServiceRegistry::certificate_providers() {
     return cert_providers_;
+}
+
+ssl::RenewalScheduler& ServiceRegistry::renewal_scheduler() {
+    return renewal_scheduler_;
 }
 
 mail::MailDomainManager& ServiceRegistry::mail() {
