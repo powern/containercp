@@ -1,5 +1,6 @@
 #include "LetsEncryptProvider.h"
 
+#include <chrono>
 #include <curl/curl.h>
 #include <fstream>
 #include <sstream>
@@ -291,10 +292,22 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
     meta.issued_at = CertificateStore::timestamp_utc();
     meta.created_at = meta.issued_at;
     meta.updated_at = meta.issued_at;
-    // Set renew_after to 30 days before expiry (ACME certs last 90 days)
-    // For staging, we don't know the exact expiry, so default to 60 days
-    // In production, this would be parsed from the certificate
-    meta.renew_after = meta.issued_at; // Will be updated when expiry is known
+    // ACME certificates are valid for 90 days. Set expires_at and renew_after
+    // so the scheduler renews 30 days before expiry.
+    {
+        auto now = std::chrono::system_clock::now();
+        auto exp_tp = now + std::chrono::hours(90 * 24);
+        auto renew_tp = now + std::chrono::hours(60 * 24);
+        auto fmt = [](time_t tt) {
+            struct tm tm_buf;
+            gmtime_r(&tt, &tm_buf);
+            char buf[24];
+            strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
+            return std::string(buf);
+        };
+        meta.expires_at = fmt(std::chrono::system_clock::to_time_t(exp_tp));
+        meta.renew_after = fmt(std::chrono::system_clock::to_time_t(renew_tp));
+    }
 
     auto save_result = store_.save_all(site_id, meta, fullchain_pem, privkey_pem, "");
     if (!save_result.success) return err("save: " + save_result.message);

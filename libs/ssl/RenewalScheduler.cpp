@@ -87,13 +87,45 @@ void RenewalScheduler::check_now() {
             continue;
         }
 
-        // Check if renewal is due
-        if (!meta.renew_after.empty()) {
-            // Compare renew_after with current time
-            if (meta.renew_after > CertificateStore::timestamp_utc()) {
-                skipped++;
-                continue;
+        // Determine domain name for logging
+        std::string domain = meta.domains.empty() ? std::to_string(site_id) : meta.domains[0];
+
+        // Skip if expires_at is not set (newly issued, no expiry known)
+        if (meta.expires_at.empty()) {
+            logger_.info("Renewal", domain + ": expires_at not set, skipping renewal");
+            skipped++;
+            continue;
+        }
+
+        // Calculate days until expiry
+        int days_until_expiry = 999;
+        {
+            struct tm tm = {};
+            int y, M, d, h, m, s;
+            if (sscanf(meta.expires_at.c_str(), "%d-%d-%dT%d:%d:%dZ", &y, &M, &d, &h, &m, &s) == 6) {
+                tm.tm_year = y - 1900;
+                tm.tm_mon = M - 1;
+                tm.tm_mday = d;
+                tm.tm_hour = h;
+                tm.tm_min = m;
+                tm.tm_sec = s;
+                time_t exp_time = timegm(&tm);
+                time_t now = time(nullptr);
+                double diff = difftime(exp_time, now);
+                days_until_expiry = (int)(diff / 86400.0);
             }
+        }
+
+        const int renewal_window_days = 30;
+        logger_.info("Renewal", domain + ": expires_at=" + meta.expires_at
+                     + " days_until_expiry=" + std::to_string(days_until_expiry)
+                     + " window=" + std::to_string(renewal_window_days) + "d");
+
+        // Only renew if within renewal window
+        if (days_until_expiry > renewal_window_days) {
+            logger_.info("Renewal", domain + ": not due yet, skipping");
+            skipped++;
+            continue;
         }
 
         // Check if we're in a backoff period
@@ -111,7 +143,6 @@ void RenewalScheduler::check_now() {
         checked++;
 
         // Enqueue renewal via JobExecutor
-        std::string domain = meta.domains.empty() ? std::to_string(site_id) : meta.domains[0];
         std::string provider_id = meta.provider_id;
 
         std::vector<std::string> steps = {"Checking certificate...", "Renewing...", "Finalizing..."};
