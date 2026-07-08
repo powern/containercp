@@ -53,15 +53,36 @@ core::OperationResult LetsEncryptProvider::request(const std::string& domain) {
 }
 
 core::OperationResult LetsEncryptProvider::renew(const std::string& domain) {
-    logger_.info("LetsEncrypt", "Certificate renewal for " + domain);
+    logger_.info("LetsEncrypt", domain + ": certificate renewal started");
 
-    // Renew follows same flow as initial request
+    // Preflight
     auto preflight = preflight_validation(domain);
     if (!preflight.success) {
-        return preflight;
+        return {false, domain + ": " + preflight.message};
     }
 
-    return {true, "Placeholder: certificate renewal logged"};
+    // Resolve site_id from CertificateStore
+    auto site_ids = store_.enumerate();
+    for (auto sid : site_ids) {
+        auto meta_result = store_.load_metadata(sid);
+        if (meta_result.success) {
+            for (const auto& d : meta_result.metadata.domains) {
+                if (d == domain) {
+                    std::vector<std::string> domains_list = meta_result.metadata.domains;
+                    logger_.info("LetsEncrypt", domain + ": found site_id=" + std::to_string(sid));
+                    auto result = issue_certificate(sid, domain, domains_list);
+                    if (result.success) {
+                        logger_.info("LetsEncrypt", domain + ": renewal completed");
+                    } else {
+                        logger_.error("LetsEncrypt", domain + ": renewal failed: " + result.message);
+                    }
+                    return result;
+                }
+            }
+        }
+    }
+
+    return {false, domain + ": No certificate metadata found for renewal"};
 }
 
 core::OperationResult LetsEncryptProvider::revoke(const std::string& domain) {

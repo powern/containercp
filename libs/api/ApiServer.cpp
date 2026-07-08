@@ -808,6 +808,7 @@ bool ApiServer::start() {
         }
 
         if (action == "renew") {
+            // Load existing metadata to get provider_id
             auto load_result = s.cert_store().load_metadata(site_id);
             std::string provider_id = "letsencrypt";
             if (load_result.success) {
@@ -819,6 +820,17 @@ bool ApiServer::start() {
                 r.body = json_error("INVALID_PROVIDER", "Unknown provider: " + provider_id);
                 return r;
             }
+
+            // Save updated metadata with renewing status
+            containercp::ssl::CertificateStore::Metadata meta;
+            meta.site_id = site_id;
+            meta.provider_id = provider_id;
+            meta.status = "issuing";
+            meta.domains = {domain};
+            meta.auto_renew = true;
+            meta.challenge_type = "http-01";
+            meta.updated_at = containercp::ssl::CertificateStore::timestamp_utc();
+            s.cert_store().save_metadata(site_id, meta);
 
             std::vector<std::string> steps = {"Validating domain...", "Renewing certificate...",
                                                "Finalizing..."};
