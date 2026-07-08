@@ -10,7 +10,8 @@ public:
     std::string render(const std::string& template_content,
                        const std::string& domain,
                        const std::string& owner,
-                       const std::string& php_image) const;
+                       const std::string& php_image,
+                       const std::string& site_id = "") const;
 
     std::string render_web(const std::string& template_content,
                            const std::string& domain,

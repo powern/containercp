@@ -12,11 +12,12 @@ class EnvGenerator {
 public:
     EnvGenerator(filesystem::Filesystem& fs, const std::string& site_dir);
 
+    // nginx_port is deprecated — kept for backward compat only
     bool generate(const std::string& domain, const std::string& owner,
-                  uint16_t nginx_port = 80);
+                  uint16_t nginx_port = 0);
     bool generate(const std::string& domain, const std::string& owner,
                   const std::string& db_name, const std::string& db_user,
-                  const std::string& db_password, uint16_t nginx_port = 80);
+                  const std::string& db_password, uint16_t nginx_port = 0);
 
 private:
     filesystem::Filesystem& fs_;

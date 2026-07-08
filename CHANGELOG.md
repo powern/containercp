@@ -8,77 +8,100 @@ Format: date | commit | summary
 
 ## 2025-07-08 | `763ffb1` | Multi-site port conflict fix & documentation audit
 
+---
+
+## 2025-07-08 | `(this commit)` | Docker network based multi-site hosting (ARCH-004)
+
 ### What changed
 
-**Architecture: multi-site hosting support**
+**Architecture: replace host-port allocation with Docker network routing**
 
-- `libs/runtime/PortManager.h/.cpp` — new: dynamic port allocation starting from 9000, scans existing sites on daemon restart to reclaim ports
-- `libs/docker/EnvGenerator.h/.cpp` — added `nginx_port` parameter, `NGINX_PORT` in .env is now unique per site
-- `libs/provider/DockerComposeProvider.h/.cpp` — passes allocated port to EnvGenerator
-- `libs/provider/HostingProvider.h` — updated `create_site` signature to accept port
-- `libs/operations/SiteCreateOperation.h/.cpp` — allocates port, calls proxy provider after success, releases on rollback
-- `libs/operations/SiteRemoveOperation.h/.cpp` — releases port, removes proxy config
-- `libs/proxy/NginxProxyProvider.h/.cpp` — `reload()` now executes `docker exec nginx -s reload`; manages central proxy container lifecycle (create on startup, remove on shutdown)
-- `libs/proxy/ProxyProvider.h` — added `ensure_central_proxy()` / `remove_central_proxy()` virtual methods (default no-op)
-- `libs/core/ServiceRegistry.h/.cpp` — exposes `PortManager`, scans existing sites on startup
-- `libs/daemon/DaemonApp.cpp` — wires new dependencies to operations
-- `libs/api/ApiServer.cpp` — wires new dependencies to operations
-- `app/containercpd/main.cpp` — creates database directory on startup, ensures central proxy, removes proxy on shutdown
-- `CMakeLists.txt` — adds PortManager.cpp
+- `planning/proposals/ARCH-004-DockerNetworkMultiSite.md` — new architecture proposal
 
-**Bug fix: database directory not created on startup**
+**Compose generation (libs/docker/ComposeGenerator.h/.cpp)**
 
-- `app/containercpd/main.cpp` — `/srv/containercp/database/` now created before any service writes to it. Previously all persistence silently failed on fresh install.
+- New template: no `ports:` section for site web containers (no host port publishing)
+- Container naming changed from `{{DOMAIN}}-nginx` to `site-{{SITE_ID}}-web`
+- Web container attached to both `containercp-public` (shared) and `containercp-site-<id>` (private)
+- Backend services (php/db/redis) attached only to `containercp-site-<id>`
+- `containercp-public` declared as `external: true` (created by proxy manager)
+- Template always overwritten on startup to stay in sync with binary
 
-**Bug fix: central proxy detection**
+**TemplateEngine (libs/template/)**
 
-- `libs/proxy/NginxProxyProvider.cpp` — `central_proxy_running()` now uses `docker inspect` exit code instead of `docker ps --filter` (which always returned exit 0 even when container was missing).
+- Added `{{SITE_ID}}` template variable support for container naming
 
-**Documentation audit (13 files)**
+**EnvGenerator (libs/docker/EnvGenerator.h/.cpp)**
 
-- `AGENTS.md` — reflects RC1 completion, updates milestone to RC2/stability
-- `planning/PRODUCT_VISION.md` — v1.0 target Debian 12 -> 13, checklist 114 -> 137
-- `planning/product-roadmap.md` — acceptance criteria Debian 12 -> 13
-- `planning/product-validation.md` — removed duplicate summary table, added Multi-Site Hosting section (146 items total)
-- `planning/TEST_ENVIRONMENT.md` — checklist count 126 -> 146
-- `planning/backlog.md` — Sprint 6 Access items marked completed
-- `README.md` — validation count, Debian version, dual-port listener description
-- `INSTALL.md` — fixed Debian codename errors, port descriptions, binary size
-- `docs/WEB-UI.md` — fixed stale build path
-- `planning/proposals/ARCH-001/002/003` — status Draft -> Implemented
-- `planning/v0.5-completion-review.md` — updated to reflect RC1 actual results
+- Removed `NGINX_PORT` from generated `.env` (no longer needed)
+- `nginx_port` parameter deprecated but kept for backward compat
 
-**New documents**
+**Central proxy (libs/proxy/NginxProxyProvider.h/.cpp)**
 
-- `planning/bugs/BUG-014-multi-site-port-conflict.md` — bug report
-- `planning/multi-site-validation.md` — architecture report
+- `ensure_central_proxy()` creates `containercp-public` Docker network
+- Proxy container uses `--network containercp-public` + `-p 80:80 -p 443:443` (not `--network host`)
+- Proxy routes to `site-<id>-web:80` via Docker DNS instead of `127.0.0.1:<port>`
+- Proxy container is never removed on normal daemon shutdown — survives restart
+- `create_proxy()` now generates config with `proxy_pass http://site-<id>-web:80`
+
+**Site operations (libs/operations/)**
+
+- `SiteCreateOperation` — no longer allocates host ports; uses `site-<id>-web:80` as upstream
+- `SiteRemoveOperation` — no longer releases ports; removes private Docker network by filter
+- Both operations no longer depend on `PortManager`
+
+**HostingProvider / DockerComposeProvider (libs/provider/)**
+
+- `create_site()` signature reverted to no port parameter
+- Passes `site_id` to ComposeGenerator for proper container naming
+
+**Daemon lifecycle (app/containercpd/main.cpp)**
+
+- Central proxy is NOT removed on shutdown (persists across restarts)
+
+**SiteLayout (libs/filesystem/SiteLayout.cpp)**
+
+- Added `logs/apache/` and `config/apache/` directories (Apache2 default backend)
+
+**Apache2 as default (libs/core/ServiceRegistry.cpp)**
+
+- Default WEB_SERVER profile changed from `nginx-php-default` to `apache-php-default`
+- Nginx profiles remain available through profile selection
+
+**PortManager (libs/runtime/PortManager.h/.cpp)**
+
+- Deprecated — no longer used for new sites
+- Kept for backward compat
+- To be removed in a future cleanup
 
 ### Why it changed
 
-ContainerCP could not host more than one site (RC1 blocker). Every site's nginx container hardcoded host port 80. No central reverse proxy existed. The NginxProxyProvider was a no-op. Database persistence silently failed on fresh installs.
+The RC1 multi-site fix used temporary host-port allocation (9000+) requiring
+port scanning on restart. The proper production architecture uses Docker
+network routing: shared `containercp-public` network, per-site private
+networks, and Docker DNS resolution.
 
 ### User-visible behavior
 
-- Multiple sites can coexist on one server
-- Each site gets a unique port (starting at 9000)
-- A central nginx proxy binds host port 80 and routes by Host header
-- Sites survive daemon restart
-- Site removal cleans up proxy config
-- No port conflicts when creating the second, third, etc. site
+- Central proxy survives daemon restart (no downtime during maintenance)
+- Site containers no longer publish host ports
+- Apache2 is default backend web server for new sites
+- Nginx remains available via profile selection
+- Backend services (db/redis/php) isolated on private per-site networks
 
 ### Validation
 
-- 2 sites created (multi-one.local, multi-two.local)
-- Both return HTTP 200 through proxy on port 80
-- Both survive daemon restart (verified with `pkill` + restart)
-- Removal of one site does not affect the other
-- Proxy config and port released on removal
-- All unit tests pass (0 failures)
-- Zero compiler warnings (Debug + Release)
+- 2 sites created, both HTTP 200 through proxy on port 80
+- Site containers show no host ports in `docker ps`
+- `containercp-public` contains proxy + all site web containers
+- Private networks contain backend services only
+- Proxy survives `pkill -9` — sites remain reachable
+- Daemon restart restores management without affecting running sites
+- Site removal cleans up private network and proxy config
+- All unit tests pass, zero compiler warnings
 
 ### Risks
 
-- Port 9000+ range may conflict with other services on the host. If needed, the start port can be changed in `PortManager` constructor.
-- The central proxy container (`containercp-proxy`) is removed on daemon shutdown. On `kill -9` it may remain running; on next startup it is reused.
-- Port allocation is in-memory only; on restart, `scan_existing_sites()` reads `.env` files from `/srv/containercp/sites/*/` to reclaim ports.
-- The proxy config for a newly created site may not be immediately active if nginx reload fails; site is still accessible directly on its unique port.
+- Existing sites with host-port allocation retain old compose template
+- Fresh site creation uses new template (always overwritten on disk)
+- Deprecated PortManager not yet removed — cleanup planned

@@ -10,7 +10,6 @@
 #include "proxy/ProxyProvider.h"
 #include "proxy/ReverseProxyManager.h"
 #include "provider/HostingProvider.h"
-#include "runtime/PortManager.h"
 #include "site/SiteManager.h"
 
 #include <cstdint>
@@ -24,7 +23,6 @@ public:
                         database::DatabaseManager& databases,
                         proxy::ReverseProxyManager& proxies,
                         proxy::ProxyProvider& proxy_provider,
-                        runtime::PortManager& port_manager,
                         filesystem::Filesystem& fs, config::Config& cfg,
                         provider::HostingProvider& provider);
 
@@ -36,7 +34,6 @@ private:
     database::DatabaseManager& databases_;
     proxy::ReverseProxyManager& proxies_;
     proxy::ProxyProvider& proxy_provider_;
-    runtime::PortManager& port_manager_;
     filesystem::Filesystem& fs_;
     config::Config& cfg_;
     provider::HostingProvider& provider_;

@@ -52,11 +52,27 @@ allocated.
   database directory on startup, remove proxy on shutdown
 - `CMakeLists.txt` — add PortManager.cpp
 
-## Validation results
+## RC1 fix (commit 763ffb1, superseded)
 
-- Two sites (multi-one.local, multi-two.local) created successfully
-- Each gets unique port (9000, 9001)
-- Central proxy container routes traffic by Host header
-- Both sites return HTTP 200 through proxy on port 80
-- Sites survive daemon restart (persistence verified)
-- Site removal cleans up proxy config and releases port
+Initial fix used PortManager with host port allocation (9000+). Superseded
+by ARCH-004 Docker network based routing.
+
+## Final fix (ARCH-004, current)
+
+Replaced host-port allocation with Docker network routing:
+- Shared `containercp-public` bridge network
+- Per-site private `containercp-site-<id>` networks
+- Proxy routes via Docker DNS to `site-<id>-web:80`
+- No host ports consumed per site
+- PortManager deprecated
+
+## Validation results (final architecture)
+
+- Two sites created (multi-one.local, multi-two.local)
+- Both return HTTP 200 through proxy on port 80
+- Site containers show no host ports in `docker ps`
+- `containercp-public` contains proxy + all site web containers
+- Private networks contain backend services only
+- Proxy survives daemon kill — sites remain reachable
+- Daemon restart restores management without affecting running sites
+- Site removal cleans up private network

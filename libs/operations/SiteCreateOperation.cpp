@@ -11,7 +11,6 @@ SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, domain::Domai
                                          database::DatabaseManager& databases,
                                          proxy::ReverseProxyManager& proxies,
                                          proxy::ProxyProvider& proxy_provider,
-                                         runtime::PortManager& port_manager,
                                          filesystem::Filesystem& fs, config::Config& cfg,
                                          provider::HostingProvider& provider)
     : sites_(sites)
@@ -19,7 +18,6 @@ SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, domain::Domai
     , databases_(databases)
     , proxies_(proxies)
     , proxy_provider_(proxy_provider)
-    , port_manager_(port_manager)
     , fs_(fs)
     , cfg_(cfg)
     , provider_(provider)
@@ -41,20 +39,13 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
         return {false, "Site already exists."};
     }
 
-    uint16_t nginx_port = port_manager_.allocate();
-    if (nginx_port == 0) {
-        return {false, "No available port for site."};
-    }
-
     if (dry_run) {
         std::cout << "[Dry Run] Would create site: " << domain << "\n";
         std::cout << "[Dry Run] Would create domain: " << domain << "\n";
         std::cout << "[Dry Run] Would create database: " << utils::StringUtils::sanitize(domain) << "_db\n";
-        std::cout << "[Dry Run] Would generate docker-compose.yml\n";
+        std::cout << "[Dry Run] Would generate docker-compose.yml with Docker network routing\n";
         std::cout << "[Dry Run] Would create directory: /srv/containercp/sites/" << domain << "/\n";
-        std::cout << "[Dry Run] Would start Docker stack\n";
-        std::cout << "[Dry Run] Would allocate nginx port: " << nginx_port << "\n";
-        port_manager_.release(nginx_port);
+        std::cout << "[Dry Run] Would start Docker stack (no host ports)\n";
         return {true, ""};
     }
 
@@ -78,11 +69,9 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
     site.db_user = db_user;
     site.db_password = db_password;
 
-    auto result = provider_.create_site(site, nginx_port);
+    auto result = provider_.create_site(site);
 
     if (!result.success) {
-        // Rollback: release port
-        port_manager_.release(nginx_port);
         // Rollback: remove filesystem
         fs_.remove_directory(cfg_.sites_dir() + domain + "/");
         // Rollback: remove proxy config if it exists
@@ -104,8 +93,8 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
         return {false, result.message + " Created resources have been rolled back."};
     }
 
-    // Create proxy config pointing to this site's nginx port
-    std::string upstream = "127.0.0.1:" + std::to_string(nginx_port);
+    // Create proxy config pointing to site web container via Docker network
+    std::string upstream = "site-" + std::to_string(site.id) + "-web:80";
     proxy::ReverseProxy rp;
     rp.domain = domain;
     rp.site_id = site.id;

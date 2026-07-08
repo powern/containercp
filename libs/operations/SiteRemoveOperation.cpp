@@ -1,7 +1,6 @@
 #include "SiteRemoveOperation.h"
 
 #include <cstdlib>
-#include <fstream>
 #include <sstream>
 #include <vector>
 
@@ -12,7 +11,6 @@ SiteRemoveOperation::SiteRemoveOperation(site::SiteManager& sites, domain::Domai
                                          ssl::SslCertificateManager& ssl, mail::MailDomainManager& mail,
                                          proxy::ReverseProxyManager& proxies,
                                          proxy::ProxyProvider& proxy_provider,
-                                         runtime::PortManager& port_manager,
                                          filesystem::Filesystem& fs, config::Config& cfg, runtime::Runtime& rt)
     : sites_(sites)
     , domains_(domains)
@@ -22,7 +20,6 @@ SiteRemoveOperation::SiteRemoveOperation(site::SiteManager& sites, domain::Domai
     , mail_(mail)
     , proxies_(proxies)
     , proxy_provider_(proxy_provider)
-    , port_manager_(port_manager)
     , fs_(fs)
     , cfg_(cfg)
     , rt_(rt)
@@ -37,32 +34,18 @@ core::OperationResult SiteRemoveOperation::execute(const std::string& domain) {
 
     uint64_t site_id = site->id;
 
-    // Read port from .env before removing
-    uint16_t nginx_port = 0;
-    {
-        std::string env_path = cfg_.sites_dir() + domain + "/.env";
-        std::ifstream env_file(env_path);
-        if (env_file.is_open()) {
-            std::string line;
-            while (std::getline(env_file, line)) {
-                if (line.find("NGINX_PORT=") == 0) {
-                    try {
-                        nginx_port = static_cast<uint16_t>(
-                            std::stoul(line.substr(11)));
-                    } catch (...) {
-                    }
-                    break;
-                }
-            }
-        }
-    }
-
     rt_.remove_site(domain);
 
-    // Remove proxy config BEFORE removing directory (proxy_provider_ reads config from directory)
+    // Remove proxy config BEFORE removing site directory
     proxy_provider_.remove_proxy(domain);
 
     fs_.remove_directory(cfg_.sites_dir() + domain + "/");
+
+    // Remove the per-site private Docker network (find by name pattern,
+    // since Docker Compose prefixes network names with project name)
+    std::string net_filter = "containercp-site-" + std::to_string(site_id);
+    std::string net_cmd = "docker network rm $(docker network ls -q --filter name=" + net_filter + ") > /dev/null 2>&1";
+    std::system(net_cmd.c_str());
 
     auto* rp = proxies_.find_by_domain(domain);
     if (rp != nullptr) {
@@ -94,11 +77,6 @@ core::OperationResult SiteRemoveOperation::execute(const std::string& domain) {
 
     // Backups are preserved after site removal — archive files and
     // records remain in /srv/containercp/backups/ for later inspection.
-
-    // Release the nginx port
-    if (nginx_port > 0) {
-        port_manager_.release(nginx_port);
-    }
 
     proxy_provider_.reload();
 

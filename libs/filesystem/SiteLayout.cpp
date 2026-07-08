@@ -13,10 +13,12 @@ bool SiteLayout::create() {
         "www",
         "public",
         "logs/nginx",
+        "logs/apache",
         "tmp",
         "ssl",
         "backups",
         "config/nginx",
+        "config/apache",
         "compose",
     };
 

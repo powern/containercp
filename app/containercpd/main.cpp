@@ -113,6 +113,7 @@ int main(int argc, char* argv[]) {
 
     ::close(server_fd);
     ::unlink(socket_path.c_str());
-    services.proxy_provider().remove_central_proxy();
+    // Central proxy is NOT removed on shutdown — it must survive daemon restart.
+    // Only explicit reset/uninstall should remove it.
     return 0;
 }

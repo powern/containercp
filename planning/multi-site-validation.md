@@ -118,109 +118,86 @@ Internet
 └─────────────────────────────────────┘
 ```
 
-## Required architecture
+## Final architecture (ARCH-004)
+
+Implemented: 2025-07-08
 
 ```
 Internet
     │
     ▼
-┌─ port 80 ───────────────────────────┐
-│  Central Proxy (nginx container)     │  ← Only binds host port 80/443
-│  │                                   │
-│  ├─ Host header: multi-one.local     │
-│  │  → proxy_pass http://127.0.0.1:8081 │
-│  │                                   │
-│  ├─ Host header: multi-two.local     │
-│  │  → proxy_pass http://127.0.0.1:8082 │
-│  │                                   │
-│  └─ Host header: ...                 │
-└──────────────────────────────────────┘
-    │                          │
-    ▼                          ▼
-┌──────────────┐    ┌──────────────┐
-│ Site A nginx  │    │ Site B nginx  │
-│ port 8081     │    │ port 8082     │
-│ (internal)    │    │ (internal)    │
-└──────────────┘    └──────────────┘
+host:80/443
+    │
+    ▼
+┌──────────────────────────────────────────┐
+│ containercp-proxy (nginx:alpine)         │
+│ network: containercp-public              │
+│ ports: 80:80, 443:443                    │
+│ reads: /srv/containercp/proxy/sites/     │
+│ never removed on daemon shutdown         │
+└──────────┬───────────────────────────────┘
+           │ Docker DNS
+     ┌─────┴─────┐
+     ▼           ▼
+┌──────────┐ ┌──────────┐
+│ site-1-web│ │ site-2-web│
+│:80       │ │:80       │
+│ network: │ │ network: │
+│  public  │ │  public  │
+│  +site-1 │ │  +site-2 │
+└────┬─────┘ └────┬─────┘
+     │            │
+     ▼            ▼
+┌──────────┐ ┌──────────┐
+│ site-1   │ │ site-2   │
+│ private  │ │ private  │
+│ network  │ │ network  │
+│  - php   │ │  - php   │
+│  - db    │ │  - db    │
+│  - redis │ │  - redis │
+└──────────┘ └──────────┘
 ```
 
-## Required changes
+## Key design decisions
 
-### 1. Dynamic port allocation
-- **New:** `libs/runtime/PortManager` — allocates unique host ports for
-  per-site nginx containers
-- **Modified:** `libs/docker/EnvGenerator` — accepts port parameter
-  instead of hardcoding 80
-- **Modified:** `libs/provider/DockerComposeProvider` — passes allocated
-  port to EnvGenerator
-- **Modified:** `libs/operations/SiteCreateOperation` — stores port and
-  passes it to proxy creation
+1. **Shared public network** (`containercp-public`):
+   - Created by `ensure_central_proxy()` on daemon startup
+   - Proxy + all site web containers join this network
+   - Docker DNS resolves `site-<id>-web:80` from proxy
 
-### 2. Central reverse proxy container
-- **New:** Manage a central nginx container (`containercp-proxy`) that:
-  - Binds host port 80 (and 443 for SSL)
-  - Uses `network_mode: host` (simplest: can reach all host-bound ports)
-  - Reads configs from `/srv/containercp/proxy/sites/*.conf`
-  - Is created on daemon startup if missing
-  - Is removed on daemon shutdown
-- **Modified:** `NginxProxyProvider::reload()` — call `docker exec
-  containercp-proxy nginx -s reload`
-- **Modified:** `NginxProxyProvider::create_proxy()` — write config
-  pointing to `127.0.0.1:<site_port>` with correct `server_name`
+2. **Per-site private networks** (`containercp-site-<id>`):
+   - Created by Docker Compose inline
+   - Backend services (php/db/redis) are ONLY on private network
+   - Web container bridges public + private networks
 
-### 3. Wire proxy creation into site lifecycle
-- **Modified:** `SiteCreateOperation` — after successful site creation,
-  call `NginxProxyProvider::create_proxy()` with the allocated port as
-  upstream, and trigger proxy reload
-- **Modified:** `SiteRemoveOperation` — call
-  `NginxProxyProvider::remove_proxy()` and trigger proxy reload
-- **Modified:** `ServiceRegistry` or daemon main — start central proxy
-  on boot
+3. **No host ports for site containers**:
+   - Compose template has no `ports:` section
+   - Only proxy publishes host ports (80, 443)
 
-### 4. Remove host port from per-site nginx
-- Once central proxy is operational, per-site nginx containers should
-  NOT bind host ports. With host-network proxy, they do need to publish
-  ports for the proxy to reach them. Alternative: use a shared Docker
-  network so the proxy can reach containers by name without host ports.
+4. **Apache2 default backend**:
+   - Default WEB_SERVER profile: `apache-php-default`
+   - Nginx remains selectable via profile system
 
-## Files requiring changes
+5. **PortManager deprecated**:
+   - No host ports allocated per site
+   - Kept for backward compat only
+
+## Files changed (ARCH-004)
 
 | File | Change |
 |------|--------|
-| `libs/docker/EnvGenerator.h` | Add port parameter to `generate()` |
-| `libs/docker/EnvGenerator.cpp` | Use port param instead of `NGINX_PORT=80` |
-| `libs/provider/DockerComposeProvider.h` | Accept port allocation dependency |
-| `libs/provider/DockerComposeProvider.cpp` | Pass port to EnvGenerator |
-| `libs/operations/SiteCreateOperation.h` | Accept ProxyProvider not just Manager |
-| `libs/operations/SiteCreateOperation.cpp` | Call proxy creation with port |
-| `libs/proxy/NginxProxyProvider.h` | Add port to create_proxy signature |
-| `libs/proxy/NginxProxyProvider.cpp` | Implement proper reload, accept port |
-| `libs/runtime/PortManager.h` | New file |
-| `libs/runtime/PortManager.cpp` | New file |
-| `libs/runtime/CMakeLists.txt` | Add PortManager |
-| `libs/daemon/main.cpp` | Start central proxy on boot |
-| `libs/core/ServiceRegistry.h/cpp` | Expose ProxyProvider, manage central proxy |
-
-## Validation plan
-
-1. Build and start daemon
-2. Verify central proxy container is created on startup
-3. `curl http://127.0.0.1/` → returns 404 or central proxy status (no sites yet)
-4. Create multi-one.local → site starts, proxy config written, proxy reloaded
-5. `curl -H "Host: multi-one.local" http://127.0.0.1/` → returns site content
-6. Create multi-two.local → site starts, own port, proxy config written
-7. `curl -H "Host: multi-two.local" http://127.0.0.1/` → returns site content
-8. Remove multi-one.local → proxy config removed, remaining site still works
-9. Daemon restart → central proxy recreated, all sites still work
-10. Both sites survive daemon restart
-
-## Severity
-
-**RC1 Blocker.** ContainerCP cannot host more than one site. This
-breaks the core hosting workflow for any production use case.
-
-## Existing validation gap
-
-The RC1 validation checklist (`product-validation.md`) does not include
-a multi-site test. Items 53-72 test single site creation but never test
-creating a second site. This must be added to the validation checklist.
+| libs/template/TemplateEngine.h/.cpp | Add SITE_ID to render() |
+| libs/docker/ComposeGenerator.h/.cpp | New template: no ports, network routing, site-ID naming |
+| libs/docker/EnvGenerator.h/.cpp | Remove NGINX_PORT generation (deprecate) |
+| libs/provider/DockerComposeProvider.h/.cpp | Remove port parameter, pass site_id |
+| libs/provider/HostingProvider.h | Revert create_site signature |
+| libs/proxy/NginxProxyProvider.h/.cpp | Network routing, persistent proxy, public network |
+| libs/proxy/ProxyProvider.h | Default virtual methods |
+| libs/operations/SiteCreateOperation.h/.cpp | Remove PortManager, use site_id upstream |
+| libs/operations/SiteRemoveOperation.h/.cpp | Remove PortManager, clean private network |
+| libs/daemon/DaemonApp.cpp | Remove PortManager from constructors |
+| libs/api/ApiServer.cpp | Remove PortManager from constructors |
+| app/containercpd/main.cpp | Don't remove proxy on shutdown |
+| libs/filesystem/SiteLayout.cpp | Add config/apache directory |
+| libs/core/ServiceRegistry.cpp | Apache2 default backend |
+| planning/proposals/ARCH-004-DockerNetworkMultiSite.md | New architecture proposal |

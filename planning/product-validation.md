@@ -232,36 +232,38 @@ Validation: ContainerCP can be built and installed on a clean Debian 13 (Trixie)
 |---|-------|--------|-------|
 | 125 | Create first site (multi-one.local) | [ ] | |
 | 126 | Create second site (multi-two.local) — succeeds without port conflict | [ ] | |
-| 127 | Second site nginx bound to unique host port (not 80) | [ ] | |
-| 128 | Central reverse proxy container running on port 80 | [ ] | |
-| 129 | `curl -H "Host: multi-one.local" http://127.0.0.1/` returns site content | [ ] | |
-| 130 | `curl -H "Host: multi-two.local" http://127.0.0.1/` returns site content | [ ] | |
-| 131 | Both sites survive daemon restart | [ ] | |
-| 132 | Removing first site does not affect second site | [ ] | |
-| 133 | Proxy config cleaned up after site removal | [ ] | |
+| 127 | Site containers do NOT publish host ports in `docker ps` | [ ] | |
+| 128 | Central reverse proxy container running, publishes host 80/443 | [ ] | |
+| 129 | `containercp-public` network exists with proxy + all site web containers | [ ] | |
+| 130 | Per-site private network exists (backend services only) | [ ] | |
+| 131 | `curl -H "Host: multi-one.local" http://127.0.0.1/` returns site content | [ ] | |
+| 132 | `curl -H "Host: multi-two.local" http://127.0.0.1/` returns site content | [ ] | |
+| 133 | Both sites survive daemon restart (proxy stays up) | [ ] | |
+| 134 | Removing first site does not affect second site | [ ] | |
+| 135 | Proxy config and private network cleaned up after site removal | [ ] | |
 
 ## Stability
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 134 | Daemon runs continuously for 24 hours | [ ] | |
-| 135 | No memory leaks detected (stable RSS) | [ ] | |
-| 136 | No zombie processes | [ ] | |
-| 137 | API responds within 500ms for all endpoints | [ ] | |
-| 138 | No orphan files in `/srv/containercp/` | [ ] | |
-| 139 | No orphan Docker containers | [ ] | |
-| 140 | No orphan Docker volumes | [ ] | |
-| 141 | Daemon logs contain no ERROR messages during normal operation | [ ] | |
-| 142 | Clean shutdown (SIGTERM) | [ ] | |
+| 136 | Daemon runs continuously for 24 hours | [ ] | |
+| 137 | No memory leaks detected (stable RSS) | [ ] | |
+| 138 | No zombie processes | [ ] | |
+| 139 | API responds within 500ms for all endpoints | [ ] | |
+| 140 | No orphan files in `/srv/containercp/` | [ ] | |
+| 141 | No orphan Docker containers | [ ] | |
+| 142 | No orphan Docker volumes | [ ] | |
+| 143 | Daemon logs contain no ERROR messages during normal operation | [ ] | |
+| 144 | Clean shutdown (SIGTERM) | [ ] | |
 
 ## Regression
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 143 | All unit tests pass (`ctest`) | [ ] | |
-| 144 | Zero compiler warnings (Debug) | [ ] | |
-| 145 | Zero compiler warnings (Release) | [ ] | |
-| 146 | No new warnings introduced | [ ] | |
+| 145 | All unit tests pass (`ctest`) | [ ] | |
+| 146 | Zero compiler warnings (Debug) | [ ] | |
+| 147 | Zero compiler warnings (Release) | [ ] | |
+| 148 | No new warnings introduced | [ ] | |
 
 ---
 
@@ -285,10 +287,10 @@ Validation: ContainerCP can be built and installed on a clean Debian 13 (Trixie)
 | Template Profiles | 6 | 0 | 0 | 6 |
 | Site Removal | 10 | 0 | 0 | 10 |
 | Web UI Operations | 8 | 0 | 0 | 8 |
-| Multi-Site Hosting | 9 | 0 | 0 | 9 |
+| Multi-Site Hosting | 11 | 0 | 0 | 11 |
 | Stability | 9 | 0 | 0 | 9 |
 | Regression | 4 | 0 | 0 | 4 |
-| **Total** | **146** | **0** | **0** | **146** |
+| **Total** | **148** | **0** | **0** | **148** |
 
 ---
 

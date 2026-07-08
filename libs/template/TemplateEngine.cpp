@@ -13,11 +13,13 @@ static void replace_all(std::string& result, const std::string& from, const std:
 std::string TemplateEngine::render(const std::string& template_content,
                                     const std::string& domain,
                                     const std::string& owner,
-                                    const std::string& php_image) const {
+                                    const std::string& php_image,
+                                    const std::string& site_id) const {
     std::string result = template_content;
     replace_all(result, "{{DOMAIN}}", domain);
     replace_all(result, "{{OWNER}}", owner);
     replace_all(result, "{{PHP_IMAGE}}", php_image);
+    replace_all(result, "{{SITE_ID}}", site_id);
     return result;
 }
 

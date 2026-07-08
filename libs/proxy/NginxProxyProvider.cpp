@@ -36,11 +36,8 @@ core::OperationResult NginxProxyProvider::create_proxy(const ReverseProxy& proxy
     std::string path = config_path(proxy.domain);
     fs_.create_directory(cfg_.data_root() + "/proxy/sites/");
 
-    std::string port = "80";
-    auto pos = proxy.upstream.find_last_of(':');
-    if (pos != std::string::npos) {
-        port = proxy.upstream.substr(pos + 1);
-    }
+    // Upstream is now a Docker service name, e.g. "site-3-web:80"
+    std::string upstream = proxy.upstream.empty() ? "site-0-web:80" : proxy.upstream;
 
     auto* cert = ssl_mgr_.find_by_domain(proxy.domain);
     bool has_ssl = (cert != nullptr && cert->enabled && cert->status == "active");
@@ -54,7 +51,7 @@ core::OperationResult NginxProxyProvider::create_proxy(const ReverseProxy& proxy
              << "    ssl_certificate_key " << cert->key_path << ";\n"
              << "\n"
              << "    location / {\n"
-             << "        proxy_pass http://127.0.0.1:" << port << ";\n"
+             << "        proxy_pass http://" << upstream << ";\n"
              << "        proxy_set_header Host $host;\n"
              << "        proxy_set_header X-Real-IP $remote_addr;\n"
              << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
@@ -73,7 +70,7 @@ core::OperationResult NginxProxyProvider::create_proxy(const ReverseProxy& proxy
              << "    server_name " << proxy.domain << ";\n"
              << "\n"
              << "    location / {\n"
-             << "        proxy_pass http://127.0.0.1:" << port << ";\n"
+             << "        proxy_pass http://" << upstream << ";\n"
              << "        proxy_set_header Host $host;\n"
              << "        proxy_set_header X-Real-IP $remote_addr;\n"
              << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
@@ -126,8 +123,12 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
     fs_.create_directory(cfg_.data_root() + "/proxy/");
     fs_.create_directory(cfg_.data_root() + "/proxy/sites/");
 
-    // Also write a fallback default config so nginx has something to serve
-    // when no sites are configured (to avoid errors in the nginx container)
+    // Ensure the shared public network exists
+    std::string net_cmd = "docker network inspect containercp-public > /dev/null 2>&1"
+        " || docker network create containercp-public > /dev/null 2>&1";
+    std::system(net_cmd.c_str());
+
+    // Write a fallback default config so nginx has something to serve
     std::string default_conf_path = cfg_.data_root() + "/proxy/sites/00-default.conf";
     if (!fs_.exists(default_conf_path)) {
         std::ostringstream conf;
@@ -140,7 +141,9 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
     }
 
     std::string cmd = "docker run -d --name " + proxy_name()
-        + " --restart unless-stopped --network host"
+        + " --restart unless-stopped"
+        + " --network containercp-public"
+        + " -p 80:80 -p 443:443"
         + " -v " + cfg_.data_root() + "/proxy/sites/:/etc/nginx/conf.d/"
         + " nginx:alpine > /dev/null 2>&1";
 
@@ -149,10 +152,12 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
         logger_.error("NginxProxyProvider: Failed to create central proxy container");
         return {false, "Failed to create central proxy container"};
     }
-    logger_.info("NginxProxyProvider: Central proxy container created");
+    logger_.info("NginxProxyProvider: Central proxy container created on containercp-public");
     return {true, ""};
 }
 
+// remove_central_proxy is preserved for cleanup but NOT called on normal shutdown.
+// The proxy container survives daemon restart. Only explicit reset should remove it.
 core::OperationResult NginxProxyProvider::remove_central_proxy() {
     std::string cmd = "docker rm -f " + proxy_name() + " > /dev/null 2>&1";
     std::system(cmd.c_str());

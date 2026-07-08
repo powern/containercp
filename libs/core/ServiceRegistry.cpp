@@ -63,7 +63,7 @@ ServiceRegistry::ServiceRegistry()
         } else {
             auto tmpl = template_engine::default_web_templates();
             for (auto& [name, content] : tmpl) {
-                bool is_default = (name == "nginx-php-default");
+                bool is_default = (name == "apache-php-default");
                 std::string path = config_.web_templates_dir() + name + ".conf.template";
                 filesystem_.create_directory(config_.web_templates_dir());
                 if (!filesystem_.exists(path)) {

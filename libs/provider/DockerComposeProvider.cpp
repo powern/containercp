@@ -16,7 +16,7 @@ DockerComposeProvider::DockerComposeProvider(filesystem::Filesystem& fs, config:
 {
 }
 
-core::OperationResult DockerComposeProvider::create_site(site::Site& site, uint16_t nginx_port) {
+core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
     auto check = rt_.check_compose();
     if (!check.success) {
         return check;
@@ -29,16 +29,18 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site, uint1
 
     docker::EnvGenerator env(fs_, site_dir);
     if (site.db_name.empty()) {
-        env.generate(site.domain, site.owner, nginx_port);
+        env.generate(site.domain, site.owner);
     } else {
-        env.generate(site.domain, site.owner, site.db_name, site.db_user, site.db_password, nginx_port);
+        env.generate(site.domain, site.owner, site.db_name, site.db_user, site.db_password);
     }
 
     auto* php_version = php_.get_default();
     std::string php_image = php_version ? php_version->image : "php:8.4-fpm";
 
+    std::string site_id = std::to_string(site.id);
+
     docker::ComposeGenerator gen(fs_, cfg_.templates_dir());
-    gen.generate(site.domain, site.owner, php_image, site_dir + "docker-compose.yml");
+    gen.generate(site.domain, site.owner, php_image, site_dir + "docker-compose.yml", site_id);
 
     // Generate web server config from default WEB_SERVER profile
     std::string nginx_config_path = site_dir + "config/nginx/default.conf";
