@@ -20,12 +20,19 @@ std::string TemplateEngine::render(const std::string& template_content,
                                     const std::string& web_log_dir,
                                     const std::string& web_doc_root,
                                     const std::string& web_local_config,
-                                    const std::string& web_local_log) const {
+                                    const std::string& web_local_log,
+                                    const std::string& web_server_cmd) const {
     std::string result = template_content;
 
     std::string web_health_cmd = "nginx";
     if (web_server_image.find("httpd") != std::string::npos) {
         web_health_cmd = "httpd";
+    }
+
+    // Build command line: for nginx use default, for httpd inject extra config include
+    std::string cmd_line;
+    if (!web_server_cmd.empty()) {
+        cmd_line = "    command: " + web_server_cmd + "\n";
     }
 
     replace_all(result, "{{DOMAIN}}", domain);
@@ -39,6 +46,7 @@ std::string TemplateEngine::render(const std::string& template_content,
     replace_all(result, "{{WEB_HEALTH_CMD}}", web_health_cmd);
     replace_all(result, "{{WEB_LOCAL_CONFIG}}", web_local_config);
     replace_all(result, "{{WEB_LOCAL_LOG}}", web_local_log);
+    replace_all(result, "{{WEB_SERVER_CMD}}", cmd_line);
     return result;
 }
 

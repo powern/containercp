@@ -48,6 +48,7 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
     std::string web_doc_root = "/var/www/html";
     std::string web_local_config = "config/nginx";
     std::string web_local_log = "logs/nginx";
+    std::string web_server_cmd = "";
     if (web_server_type == "apache") {
         web_server_image = "httpd:alpine";
         web_config_dir = "/usr/local/apache2/conf/extra";
@@ -55,12 +56,14 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
         web_doc_root = "/usr/local/apache2/htdocs";
         web_local_config = "config/apache";
         web_local_log = "logs/apache";
+        // httpd:alpine does not include conf/extra/* by default — inject the directive
+        web_server_cmd = "[\"httpd-foreground\", \"-c\", \"IncludeOptional conf/extra/*.conf\"]";
     }
 
     docker::ComposeGenerator gen(fs_, cfg_.templates_dir());
     gen.generate(site.domain, site.owner, php_image, site_dir + "docker-compose.yml",
                  site_id, web_server_image, web_config_dir, web_log_dir, web_doc_root,
-                 web_local_config, web_local_log);
+                 web_local_config, web_local_log, web_server_cmd);
 
     // Generate web server config from default WEB_SERVER profile
     std::string config_dir = site_dir + "config/" + web_server_type + "/";

@@ -17,7 +17,8 @@ public:
                        const std::string& web_log_dir = "/var/log/nginx",
                        const std::string& web_doc_root = "/var/www/html",
                        const std::string& web_local_config = "config/nginx",
-                       const std::string& web_local_log = "logs/nginx") const;
+                       const std::string& web_local_log = "logs/nginx",
+                       const std::string& web_server_cmd = "") const;
 
     std::string render_web(const std::string& template_content,
                            const std::string& domain,

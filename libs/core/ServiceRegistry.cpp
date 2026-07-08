@@ -49,37 +49,50 @@ ServiceRegistry::ServiceRegistry()
         php_versions_.create("8.2", "php:8.2-fpm", false);
         php_versions_.create("8.3", "php:8.3-fpm", false);
         php_versions_.create("8.4", "php:8.4-fpm", true);
-    storage_.save_php_versions(php_versions_.list());
-
-    // Migrate legacy template_profiles.db to profiles.db
-    auto loaded_profiles = storage_.load_profiles();
-    if (loaded_profiles.empty()) {
-        auto migrated = storage_.migrate_template_profiles();
-        if (!migrated.empty()) {
-            profiles_.set_profiles(migrated);
-            storage_.save_profiles(profiles_.list());
-            // Remove old file after migration
-            std::filesystem::remove(config_.database_dir() + "template_profiles.db");
-        } else {
-            auto tmpl = template_engine::default_web_templates();
-            for (auto& [name, content] : tmpl) {
-                bool is_default = (name == "apache-php-default");
-                std::string path = config_.web_templates_dir() + name + ".conf.template";
-                filesystem_.create_directory(config_.web_templates_dir());
-                if (!filesystem_.exists(path)) {
-                    filesystem_.create_file(path, content);
-                }
-                profiles_.create(name, profile::ProfileType::WEB_SERVER,
-                                 name.find("apache") != std::string::npos ? "apache" : "nginx",
-                                 path, name, is_default);
-            }
-            storage_.save_profiles(profiles_.list());
-        }
-    } else {
-        profiles_.set_profiles(loaded_profiles);
-    }
+        storage_.save_php_versions(php_versions_.list());
     } else {
         php_versions_.set_versions(loaded_php);
+    }
+
+    // Load or seed web server profiles (independent of PHP version state)
+    {
+        auto loaded_profiles = storage_.load_profiles();
+        if (loaded_profiles.empty()) {
+            auto migrated = storage_.migrate_template_profiles();
+            if (!migrated.empty()) {
+                profiles_.set_profiles(migrated);
+                std::filesystem::remove(config_.database_dir() + "template_profiles.db");
+            } else {
+                auto tmpl = template_engine::default_web_templates();
+                for (auto& [name, content] : tmpl) {
+                    bool is_default = (name == "apache-php-default");
+                    std::string path = config_.web_templates_dir() + name + ".conf.template";
+                    filesystem_.create_directory(config_.web_templates_dir());
+                    if (!filesystem_.exists(path)) {
+                        filesystem_.create_file(path, content);
+                    }
+                    profiles_.create(name, profile::ProfileType::WEB_SERVER,
+                                     name.find("apache") != std::string::npos ? "apache" : "nginx",
+                                     path, name, is_default);
+                }
+            }
+        } else {
+            profiles_.set_profiles(loaded_profiles);
+        }
+
+        // Enforce apache-php-default as the only default WEB_SERVER profile.
+        // This ensures existing installs that upgraded from old profiles.db
+        // (which had nginx-php-default as default) are corrected.
+        {
+            auto profiles = profiles_.list();
+            for (auto& p : profiles) {
+                bool should_be_default = (p.profile_name == "apache-php-default"
+                                          && p.type == profile::ProfileType::WEB_SERVER);
+                p.default_profile = should_be_default;
+            }
+            profiles_.set_profiles(profiles);
+        }
+        storage_.save_profiles(profiles_.list());
     }
 
     auto loaded_domains = storage_.load_domains();

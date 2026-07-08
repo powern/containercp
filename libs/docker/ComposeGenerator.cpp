@@ -11,6 +11,7 @@ ComposeGenerator::ComposeGenerator(filesystem::Filesystem& fs, const std::string
         "    image: {{WEB_SERVER_IMAGE}}\n"
         "    container_name: site-{{SITE_ID}}-web\n"
         "    restart: unless-stopped\n"
+        "{{WEB_SERVER_CMD}}"
         "    volumes:\n"
         "      - ./public:{{WEB_DOC_ROOT}}\n"
         "      - ./{{WEB_LOCAL_LOG}}:{{WEB_LOG_DIR}}\n"
@@ -108,11 +109,12 @@ bool ComposeGenerator::generate(const std::string& domain, const std::string& ow
                                  const std::string& web_log_dir,
                                  const std::string& web_doc_root,
                                  const std::string& web_local_config,
-                                 const std::string& web_local_log) {
+                                 const std::string& web_local_log,
+                                 const std::string& web_server_cmd) {
     std::string template_content = get_or_create_template();
     std::string rendered = engine_.render(template_content, domain, owner, php_image, site_id,
         web_server_image, web_config_dir, web_log_dir, web_doc_root,
-        web_local_config, web_local_log);
+        web_local_config, web_local_log, web_server_cmd);
     return fs_.create_file(output_path, rendered);
 }
 

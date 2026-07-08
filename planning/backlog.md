@@ -110,3 +110,5 @@ Before planning any new Epic, read these documents IN ORDER:
 - [ ] Mail server support
 - [ ] DNS server integration
 - [ ] README update
+- [ ] Install/update scripts: systemd service, install.sh, update.sh, dev-rebuild.sh, clean-validation-vm.sh
+- [ ] Apache httpd PHP-FPM integration (mod_proxy_fcgi in httpd:alpine)
