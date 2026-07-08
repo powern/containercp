@@ -7,7 +7,10 @@ set -euo pipefail
 #   git pull
 #   cmake configure
 #   cmake build
-#   restart systemd service
+#   stop systemd service
+#   copy binaries
+#   start systemd service
+#   verify health endpoint
 #
 # Usage:
 #   ./scripts/update.sh
@@ -15,6 +18,7 @@ set -euo pipefail
 INSTALL_DIR="/opt/containercp"
 BIN_DIR="/usr/local/bin"
 SERVICE="containercpd"
+API_PORT="${CONTAINERCP_API_PORT:-8080}"
 
 echo "[SYSTEM] ContainerCP Updater"
 echo "[SYSTEM] ========================================"
@@ -38,20 +42,39 @@ cmake -S "$INSTALL_DIR" -B "$INSTALL_DIR/build-release" -DCMAKE_BUILD_TYPE=Relea
 echo "[SYSTEM] Building..."
 cmake --build "$INSTALL_DIR/build-release"
 
-# --- 4. Install binaries ---
+# --- 4. Stop service before installing ---
+echo "[SYSTEM] Stopping containercpd..."
+systemctl stop "$SERVICE" 2>/dev/null || true
+
+# --- 5. Install binaries ---
 echo "[SYSTEM] Installing updated binaries..."
 cp "$INSTALL_DIR/build-release/containercpd" "$BIN_DIR/containercpd"
 cp "$INSTALL_DIR/build-release/containercp" "$BIN_DIR/containercp"
 chmod 755 "$BIN_DIR/containercpd" "$BIN_DIR/containercp"
 
-# --- 5. Restart service ---
-echo "[SYSTEM] Restarting containercpd..."
+# --- 6. Start service ---
+echo "[SYSTEM] Starting containercpd..."
 systemctl daemon-reload
-systemctl restart "$SERVICE"
+systemctl start "$SERVICE"
 
-sleep 2
+# --- 7. Wait for daemon and verify health ---
+echo "[SYSTEM] Waiting for daemon to become ready..."
+for i in $(seq 1 10); do
+    sleep 1
+    if curl -sf "http://127.0.0.1:${API_PORT}/api/health" >/dev/null 2>&1; then
+        echo "[SYSTEM] Health check passed."
+        break
+    fi
+    if [ "$i" -eq 10 ]; then
+        echo "[WARN] Health check did not pass within 10 seconds."
+        echo "       Check: journalctl -u containercpd -f"
+    fi
+done
+
+# --- 8. Show status ---
 if systemctl is-active --quiet "$SERVICE"; then
     echo "[SYSTEM] Update complete. containercpd is running."
+    systemctl status "$SERVICE" --no-pager 2>&1 | head -20
 else
     echo "[WARN] containercpd may not have started. Check: journalctl -u containercpd -f"
 fi

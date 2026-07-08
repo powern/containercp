@@ -6,6 +6,34 @@ Format: date | commit | summary
 
 ---
 
+## 2025-07-08 | `(this commit)` | Fix update script service restart flow
+
+### Fixed: update.sh binary overwrite while running (`scripts/update.sh`)
+- Stop `containercpd` service **before** copying updated binaries to
+  `/usr/local/bin/` to prevent "Text file busy" error
+- Added health check loop after service start (polls `/api/health` up to 10s)
+- Added `systemctl status` output on successful update
+- Cleaned up redundant `systemctl daemon-reload` ordering
+
+### Fixed: Logged messages not visible in journald (`libs/logger/Logger.cpp`)
+- Changed `"\n"` to `std::endl` in all Logger output methods to force flush
+  after every line
+- Previously under systemd (when stdout is a pipe, not a TTY), the C++ stream
+  buffer was never flushed, hiding application logs from `journalctl -u containercpd`
+- Now `[INFO] [SYSTEM] Listening on...` and all category-based log messages
+  appear immediately in journald
+
+### Files changed
+- `scripts/update.sh` — stop before copy, health check, status output
+- `libs/logger/Logger.cpp` — `std::endl` instead of `"\n"` for all output
+- `CHANGELOG.md` — this entry
+
+### Validation
+- Build: zero compiler warnings
+- Tests: 69/69 passed, 289/289 assertions
+
+---
+
 ## 2025-07-08 | `(this commit)` | RC2 — Stability & Production Foundation
 
 ### New: Installation script (`scripts/install.sh`)
