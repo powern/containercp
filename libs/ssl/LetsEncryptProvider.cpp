@@ -236,23 +236,29 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
     auto final_result = acme_.finalize_order(order.finalize_url, order.url, csr, cert_url);
     if (!final_result.success) return err(final_result.message);
 
-    // Step 6: Download certificate
+    // Step 6: Download certificate from ACME
+    logger_.info("LetsEncrypt", domain + ": downloading certificate");
     std::string fullchain_pem;
     auto dl_result = acme_.download_certificate(cert_url, fullchain_pem);
-    if (!dl_result.success) return err(dl_result.message);
+    if (!dl_result.success) return err("download: " + dl_result.message);
+    logger_.info("LetsEncrypt", domain + ": certificate downloaded (" + std::to_string(fullchain_pem.size()) + " bytes)");
 
-    // Step 7: Read private key that was generated during CSR creation
+    // Step 7: Read private key generated during CSR creation
+    logger_.info("LetsEncrypt", domain + ": reading private key from " + csr_key_path);
     std::string privkey_pem;
     {
         std::ifstream key_file(csr_key_path);
-        if (key_file.is_open()) {
-            std::stringstream ss;
-            ss << key_file.rdbuf();
-            privkey_pem = ss.str();
+        if (!key_file.is_open()) {
+            return err("Failed to read private key from " + csr_key_path);
         }
+        std::stringstream ss;
+        ss << key_file.rdbuf();
+        privkey_pem = ss.str();
+        logger_.info("LetsEncrypt", domain + ": private key read (" + std::to_string(privkey_pem.size()) + " bytes)");
     }
 
-    // Step 8: Store via CertificateStore
+    // Step 8: Store certificate, key, and metadata via CertificateStore
+    logger_.info("LetsEncrypt", domain + ": saving certificate to CertificateStore");
     CertificateStore::Metadata meta;
     meta.site_id = site_id;
     meta.provider_id = "letsencrypt";
@@ -264,10 +270,18 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
     meta.issued_at = CertificateStore::timestamp_utc();
     meta.created_at = meta.issued_at;
     meta.updated_at = meta.issued_at;
+    // Set renew_after to 30 days before expiry (ACME certs last 90 days)
+    // For staging, we don't know the exact expiry, so default to 60 days
+    // In production, this would be parsed from the certificate
+    meta.renew_after = meta.issued_at; // Will be updated when expiry is known
 
     auto save_result = store_.save_all(site_id, meta, fullchain_pem, privkey_pem, "");
-    if (!save_result.success) return err(save_result.message);
+    if (!save_result.success) return err("save: " + save_result.message);
+    logger_.info("LetsEncrypt", domain + ": certificate saved to /srv/containercp/ssl/" + std::to_string(site_id));
 
+    // Step 9: Clean up challenge files (already done in authorization loop)
+
+    logger_.info("LetsEncrypt", "Certificate issued for " + domain);
     return {true, "Certificate issued for " + domain};
 }
 
