@@ -124,33 +124,104 @@ existence — a site always works over HTTP regardless of SSL state.
 
 ### Overview
 
-SSL lifecycle lives entirely in `LetsEncryptProvider`. The proxy
-provider only attaches existing certificates to nginx config and
-reloads.
+SSL is a capability of the **Site** model, not the Proxy. Every site
+has an SSL state (HTTP_ONLY by default). The system is built around a
+generic `CertificateProvider` interface. REST API, GUI, and daemon
+depend only on `CertificateProvider`, never on a concrete
+implementation. Future providers are pluggable without changing
+business logic.
+
+```
+Site
+ ├── Backend (Apache/Nginx)
+ ├── Database (MariaDB)
+ ├── Proxy (nginx config + cert attachment)
+ └── SSL ← CertificateProvider (abstract)
+               ↑
+        ┌──────┴──────┐
+        │             │
+  LetsEncrypt    CustomCertificate
+  Provider       Provider
+     │
+  ┌──┴──┐
+  │     │
+HTTP01  DNS01
+ChallengeProvider (future)
+```
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                 LetsEncryptProvider                  │
-│  ┌────────────┐  ┌──────────────┐  ┌─────────────┐ │
-│  │ AcmeClient │  │ CertStore    │  │Renewal      │ │
-│  │ (HTTP-01)  │  │ (disk I/O)   │  │Scheduler    │ │
-│  └────────────┘  └──────────────┘  └─────────────┘ │
-│         │               │               │           │
-│         ▼               ▼               ▼           │
-│  ACME API          /srv/containercp/   timer       │
-│  (libcurl)         ssl/<domain>/       check       │
+│              CertificateProvider (abstract)          │
+│  request() / renew() / revoke() / status()          │
+│  provider_name() / certificate_path()               │
 └─────────────────────────────────────────────────────┘
+         ↑                          ↑
+┌────────┴──────────┐    ┌─────────┴──────────┐
+│ LetsEncryptProvider│    │CustomCertificate   │
+│  ┌──────────────┐  │    │Provider            │
+│  │ Challenge    │  │    │ (import PEM,       │
+│  │ Provider     │  │    │  manage files)     │
+│  │ (abstract)   │  │    └────────────────────┘
+│  └──────┬───────┘  │
+│         │          │
+│  ┌──────┴──────┐   │
+│  │HTTP01       │   │
+│  │Challenge    │   │
+│  │Provider     │   │
+│  └─────────────┘   │
+│                    │
+│  Future: DNS01     │
+│  ChallengeProvider │
+└────────────────────┘
          │
          │ attach_certificate / detach_certificate
          ▼
 ┌─────────────────────────────────────────────────────┐
-│              NginxProxyProvider                      │
-│  - generate HTTPS server block                       │
-│  - add ssl_certificate / ssl_certificate_key         │
-│  - add HTTP→HTTPS redirect (optional)                │
-│  - reload nginx                                      │
+│              ProxyProvider (abstract)                │
+│  - generate server config (nginx, future: Caddy,    │
+│    Traefik, HAProxy)                                 │
+│  - attach certificates to HTTPS listener            │
+│  - reload proxy                                     │
 └─────────────────────────────────────────────────────┘
 ```
+
+### CertificateProvider abstraction (sole dependency)
+
+The entire system is designed around `CertificateProvider`. No code
+outside the provider implementations references `LetsEncryptProvider`,
+`CloudflareProvider`, or any concrete class by name. Providers are
+registered in `ServiceRegistry` by string key and selected per-site.
+
+```
+ServiceRegistry::certificate_providers()
+    → map<string, CertificateProvider*>
+    → {"letsencrypt": ..., "custom": ...}
+```
+
+REST API handlers, CLI handlers, and RenewalScheduler all call
+`CertificateProvider` methods. Adding a new provider means:
+1. Implement the interface
+2. Register it in ServiceRegistry
+3. No business logic changes
+
+### SSL belongs to Site model
+
+SSL state is part of the Site aggregate:
+
+```
+Site {
+    string domain;
+    BackendType backend;
+    SslState ssl_state;  // HTTP_ONLY | ISSUING | ACTIVE | ERROR | DISABLED
+    optional<SslCertificate> certificate;
+}
+```
+
+This ownership means:
+- SSL tab in site detail shows the certificate
+- Site removal cleans up SSL files
+- Domain changes on a site trigger certificate invalidation
+- Site listing includes SSL state
 
 ### Site creation behavior
 
@@ -163,6 +234,30 @@ This means:
 - `SiteCreateOperation` does NOT touch SSL at all.
 - The SSL page in Web UI shows HTTP_ONLY for every site that has no certificate.
 - No delayed creation, no background issuance.
+
+### SAN / multi-domain preparation
+
+Today every site has one domain. Future versions will support multiple
+domains per site (e.g., `example.com`, `www.example.com`,
+`api.example.com`). The SSL architecture is designed for this from the
+start:
+
+- `SslCertificate.domains[]` stores all domains covered by the
+  certificate (the primary domain + SAN entries).
+- `metadata.json.domains[]` persists the domain list.
+- The ACME order requests a SAN certificate for all listed domains.
+- The nginx `server_name` directive lists all domains.
+
+When a site's domain list changes:
+1. The current certificate is detected as stale (domains differ).
+2. The status transitions to `error` with `last_error =
+   "Certificate does not cover current domains. Reissue required."`.
+3. HTTPS continues working until the old cert expires, but the GUI
+   prompts the user to reissue.
+4. The user clicks "Reissue" and a new SAN certificate is obtained.
+
+This design means no breaking change when multi-domain per site is
+implemented — the data model already supports it.
 
 ### ACME HTTP-01 flow (Issue)
 
@@ -230,6 +325,11 @@ extended:
 | `last_error` | string | `""` | Last ACME error message |
 | `https_enabled` | bool | `false` | Whether HTTPS is currently active |
 | `redirect_enabled` | bool | `false` | Whether HTTP→HTTPS redirect is active |
+| `domains` | string (comma-separated) | `""` | All domains covered by certificate (SAN) |
+| `challenge_type` | string | `""` | Challenge used: "http-01" or "dns-01" |
+| `last_validation` | string (ISO-8601) | `""` | Last successful preflight validation |
+| `renew_attempts` | int | `0` | Consecutive failed renewal attempts |
+| `version` | int | `1` | Metadata schema version for forward compat |
 
 ### Status values
 
@@ -270,8 +370,20 @@ Existing methods remain unchanged. New methods:
 | `stop()` | Stop background thread |
 | `check()` | Scan all certs, renew due ones |
 
-The scheduler runs inside the daemon process. It uses a simple
-timer (e.g., check every 6 hours). No external cron dependency.
+The scheduler runs inside the daemon process. It checks every 24 hours.
+No external cron dependency. The daemon is already long-running, so the
+scheduler is a simple `std::thread` with a `sleep_until` loop.
+
+Scheduler logic:
+1. Enumerate all certificates with status `active` and `auto_renew == true`.
+2. For each, compare current date with `renew_after`.
+3. If due, call `CertificateProvider::renew(domain)`.
+4. On success: update metadata, reset `renew_attempts` to 0.
+5. On failure: increment `renew_attempts`, set `last_error`, log warning.
+   Old certificate is kept and continues working.
+6. If `renew_attempts >= 7` (one week of daily failures), transition
+   status to `error` and disable HTTPS. Site reverts to HTTP-only.
+7. Log summary: "Renewal check complete: N active, M renewed, F failed".
 
 ## Storage
 
@@ -280,7 +392,7 @@ timer (e.g., check every 6 hours). No external cron dependency.
 Extended pipe-delimited format:
 
 ```
-id|domain_id|domain|provider|certificate_path|key_path|chain_path|issued_at|expires_at|renew_after|status|auto_renew|https_enabled|redirect_enabled|last_error
+id|domain_id|domain|provider|certificate_path|key_path|chain_path|issued_at|expires_at|renew_after|status|auto_renew|https_enabled|redirect_enabled|domains|challenge_type|last_error|last_validation|renew_attempts|version
 ```
 
 ### Disk storage: `/srv/containercp/ssl/<domain>/`
@@ -299,6 +411,7 @@ id|domain_id|domain|provider|certificate_path|key_path|chain_path|issued_at|expi
 
 ```json
 {
+    "version": 1,
     "domain": "example.com",
     "provider": "letsencrypt",
     "status": "active",
@@ -308,9 +421,18 @@ id|domain_id|domain|provider|certificate_path|key_path|chain_path|issued_at|expi
     "auto_renew": true,
     "https_enabled": true,
     "redirect_enabled": false,
-    "last_error": ""
+    "domains": ["example.com", "www.example.com"],
+    "challenge_type": "http-01",
+    "last_error": "",
+    "last_validation": "2025-07-08T11:55:00Z",
+    "renew_attempts": 0,
+    "renewal_failed": false
 }
 ```
+
+The `version` field enables forward-compatible schema changes.
+Future readers must tolerate unknown fields. Writers always include
+all known fields.
 
 ## Providers
 
@@ -341,6 +463,62 @@ public:
 };
 ```
 
+### ChallengeProvider (abstract)
+
+ACME challenge logic is extracted into its own interface so the
+challenge method (HTTP-01, DNS-01) is decoupled from certificate
+lifecycle orchestration.
+
+```cpp
+class ChallengeProvider {
+public:
+    virtual ~ChallengeProvider() = default;
+
+    virtual std::string type() const = 0;  // "http-01" | "dns-01"
+
+    // Prepare the challenge (write token file, create DNS record)
+    virtual OperationResult prepare(const std::string& domain,
+                                     const std::string& token,
+                                     const std::string& key_authorization) = 0;
+
+    // Clean up after challenge
+    virtual OperationResult cleanup(const std::string& domain,
+                                     const std::string& token) = 0;
+
+    // Verify the challenge is in place and reachable
+    virtual OperationResult verify(const std::string& domain) = 0;
+};
+```
+
+- `HTTP01ChallengeProvider` writes tokens to
+  `/srv/containercp/ssl/<domain>/.well-known/acme-challenge/` and
+  verifies they are served through the central proxy on port 80.
+- `DNS01ChallengeProvider` (future) creates DNS TXT records via API
+  and verifies propagation.
+- `LetsEncryptProvider` holds a `ChallengeProvider` reference and
+  delegates challenge steps. The orchestration logic is identical
+  regardless of challenge type.
+
+### Preflight validation
+
+Before contacting the ACME server, `LetsEncryptProvider` runs
+preflight checks to fail fast with meaningful errors:
+
+| Check | Failure message |
+|-------|----------------|
+| Domain resolves to a public IP | `Domain does not resolve to a public IP address` |
+| Domain is not localhost | `Cannot issue certificate for localhost` |
+| Domain does not end with .local | `Cannot issue certificate for .local domains` |
+| Domain does not end with .test | `Cannot issue certificate for .test domains` |
+| Port 80 is reachable on public IP | `Port 80 is not reachable from the internet` |
+| ACME challenge path is accessible | `ACME challenge directory is not accessible` |
+| Certificate does not already exist and is active | `Valid certificate already exists, use /renew` |
+| Domains have not changed since last issue | `Domains changed since last issue, must reissue` |
+
+If any check fails, the provider returns `OperationResult{false,
+"message"}` immediately. The ACME server is never contacted. This
+saves rate limits and gives the user actionable feedback.
+
 ### LetsEncryptProvider (real ACME HTTP-01)
 
 - ACME directory URL: `https://acme-v02.api.letsencrypt.org/directory`
@@ -348,15 +526,13 @@ public:
   (enable via `LETSENCRYPT_STAGING=1` env var for testing)
 - Account key stored at `/srv/containercp/ssl/account.pem`
 - EC private key generated on first use (P-256 for ACME JWT)
-- HTTP-01 challenge:
-  - Token + key authorization written to `/.well-known/acme-challenge/` directory
-  - Central nginx proxy serves this path from disk
-  - Challenge directory cleaned up after validation (success or failure)
+- Delegates challenge to `ChallengeProvider` (currently HTTP01ChallengeProvider)
 - Certificate files written to `/srv/containercp/ssl/<domain>/`
 - Uses libcurl for ACME HTTPS calls
 - JWT signed with ES256 (ECDSA P-256) using OpenSSL
 - Minimal JSON parser (built-in, no external dependency)
-- Retry: 3 attempts with exponential backoff (1s, 3s, 9s)
+- ACME retry: 3 attempts with exponential backoff (1s, 3s, 9s)
+- Preflight validation runs before every ACME request
 
 ### ProxyProvider interface (extended)
 
@@ -725,6 +901,48 @@ This allows the LetsEncryptProvider to write challenge tokens to
 `/srv/containercp/ssl/<domain>/.well-known/acme-challenge/<token>`
 and have them served immediately on port 80.
 
+### Future reverse proxy compatibility
+
+Business logic must not contain nginx-specific SSL code. The
+`ProxyProvider` interface abstracts all proxy operations:
+
+```cpp
+class ProxyProvider {
+    virtual OperationResult attach_certificate(const std::string& domain,
+                                                const std::string& cert_path,
+                                                const std::string& key_path) = 0;
+    virtual OperationResult detach_certificate(const std::string& domain) = 0;
+};
+```
+
+Future proxy implementations:
+
+| Proxy | Class | Status |
+|-------|-------|--------|
+| nginx | `NginxProxyProvider` | Current, implements SSL config |
+| Caddy | `CaddyProxyProvider` | Future: uses Caddyfile for SSL |
+| Traefik | `TraefikProxyProvider` | Future: uses Traefik labels/config |
+| HAProxy | `HAProxyProxyProvider` | Future: uses HAProxy PEM + bind |
+
+Each implementation handles SSL config in its own format.
+`CertificateProvider` and `RenewalScheduler` are unchanged.
+
+### Automatic certificate invalidation
+
+When domains attached to a site change (currently single domain,
+future multi-domain), the certificate becomes stale.
+
+Detection:
+- On daemon startup and after any site domain change, compare
+  `SslCertificate.domains` against the site's current domains.
+- If they differ and status is `active`, transition to `error` with:
+  `"Certificate does not match current domains. Reissue required."`.
+- HTTPS continues working with the old certificate until the user
+  reissues or the cert expires, whichever comes first.
+
+This ensures the platform never silently uses an incomplete
+certificate. The GUI shows a clear warning and prompts reissue.
+
 ## Configuration
 
 | Variable | Default | Description |
@@ -732,7 +950,126 @@ and have them served immediately on port 80.
 | `CONTAINERCP_SSL_DIR` | `/srv/containercp/ssl` | Certificate storage root |
 | `CONTAINERCP_ACME_EMAIL` | (unset) | Email for Let's Encrypt account registration |
 | `LETSENCRYPT_STAGING` | (unset) | When set, use ACME staging directory |
-| `CONTAINERCP_RENEWAL_INTERVAL` | `6` | Hours between renewal checks |
+| `CONTAINERCP_RENEWAL_INTERVAL` | `24` | Hours between renewal checks |
+
+## Implementation Order
+
+The implementation follows 8 sequential steps. Each step must compile,
+include backend + GUI where applicable, be committed, pushed, and
+validated on a real server before the next step begins.
+
+```
+Step 1: CertificateProvider abstraction + interfaces
+    ↓
+Step 2: Storage + metadata
+    ↓
+Step 3: REST API
+    ↓
+Step 4: LetsEncryptProvider (real ACME HTTP-01)
+    ↓
+Step 5: Proxy integration
+    ↓
+Step 6: RenewalScheduler
+    ↓
+Step 7: GUI
+    ↓
+Step 8: Real server validation
+```
+
+### Step 1 — CertificateProvider abstraction
+- Define `CertificateProvider` abstract interface
+- Define `ChallengeProvider` abstract interface
+- Define `HTTP01ChallengeProvider` concrete class (placeholder that
+  logs, no real ACME yet)
+- Define `CustomCertificateProvider` concrete class (manages files)
+- Register providers in `ServiceRegistry` by string key
+- Update `SslCertificate` with new fields (domains, challenge_type,
+  last_validation, renew_attempts, version)
+- Update `SslCertificateManager` with extended methods
+- Unit tests for state transitions
+- Commit and push
+
+### Step 2 — Storage + metadata
+- Implement `CertificateStore` class for disk I/O
+- Read/write `fullchain.pem`, `privkey.pem`, `chain.pem`
+- Read/write `metadata.json` with all fields (version, domains[],
+  challenge_type, last_validation, renew_attempts, etc.)
+- Read existing `ssl_certificates.db` on startup with backward compat
+- Unit tests for file I/O and metadata parse/serialize
+- Commit and push
+
+### Step 3 — REST API
+- Implement all `/ssl/` endpoints on `CertificateProvider` (abstract)
+- `GET /ssl` — list all sites with SSL state
+- `GET /ssl/<domain>` — certificate details
+- `POST /ssl/<domain>/issue` — trigger issuance
+- `POST /ssl/<domain>/renew` — trigger renewal
+- `POST /ssl/<domain>/enable` — enable HTTPS
+- `POST /ssl/<domain>/disable` — disable HTTPS
+- `POST /ssl/<domain>/redirect/enable` — enable redirect
+- `POST /ssl/<domain>/redirect/disable` — disable redirect
+- `GET /ssl/<domain>/status` — quick status
+- `GET /ssl/providers` — list providers
+- All route through `CertificateProvider`, never a concrete class
+- Commit and push
+
+### Step 4 — LetsEncryptProvider (ACME HTTP-01)
+- Implement `HTTP01ChallengeProvider` with real token write/serve
+- Implement `LetsEncryptProvider` with ACME protocol
+- Implement preflight validation (DNS, port 80, .local/.test checks)
+- ACME account key generation (P-256)
+- libcurl integration for ACME HTTPS calls
+- JWT signing with ES256
+- Minimal JSON parser for ACME responses
+- Certificate download to `/srv/containercp/ssl/<domain>/`
+- `metadata.json` write after successful issue
+- Retry with exponential backoff
+- Lock file for concurrent issue prevention
+- Staging mode via `LETSENCRYPT_STAGING=1`
+- Commit and push
+
+### Step 5 — Proxy integration
+- Implement `ProxyProvider::attach_certificate()` in
+  `NginxProxyProvider` — generate HTTPS nginx config with
+  `ssl_certificate` + `ssl_certificate_key` + optional redirect
+- Implement `ProxyProvider::detach_certificate()` — remove SSL config,
+  revert to HTTP
+- Add `/.well-known/acme-challenge/` location to central proxy config
+- Call `attach_certificate` after successful issue/renew
+- Call `detach_certificate` on disable
+- No nginx-specific SSL logic outside `NginxProxyProvider`
+- Commit and push
+
+### Step 6 — RenewalScheduler
+- Implement `RenewalScheduler` with 24-hour interval
+- Enumerate active certificates due for renewal
+- Call `CertificateProvider::renew()` for each due cert
+- Track `renew_attempts`, disable after 7 consecutive failures
+- Log summary after each check cycle
+- Start scheduler in daemon `main.cpp`
+- Commit and push
+
+### Step 7 — GUI
+- Redesign SSL page: show ALL sites with state column
+- State badges with colors (HTTP_ONLY gray, ACTIVE green, ERROR red,
+  DISABLED gray, ISSUING blue)
+- Context-dependent action buttons per state
+- Per-domain detail view with expiration, days remaining, last error
+- HTTPS toggle (enable/disable)
+- Redirect toggle
+- Auto-renew toggle
+- Dashboard card with SSL metrics
+- Site detail page SSL tab integration
+- Error display (never blocks site)
+- Commit and push
+
+### Step 8 — Real server validation
+- Build with zero compiler warnings
+- All tests pass
+- Deploy on real Debian 13 with a real domain
+- Run full validation plan (see Validation Plan section)
+- Fix issues, commit, push
+- Return to Step 1 if architecture changes needed
 
 ## Migration Strategy
 
@@ -838,7 +1175,12 @@ on the SSL page with their original status.
 ## Required files
 
 ### New files
-- `libs/ssl/AcmeClient.h/.cpp` — ACME protocol HTTP-01 implementation
+- `libs/ssl/CertificateProvider.h` — abstract interface (moved from existing placeholder)
+- `libs/ssl/ChallengeProvider.h` — abstract ACME challenge interface
+- `libs/ssl/HTTP01ChallengeProvider.h/.cpp` — HTTP-01 challenge implementation
+- `libs/ssl/AcmeClient.h/.cpp` — ACME protocol HTTP-01 implementation (JWT, JSON, libcurl)
+- `libs/ssl/LetsEncryptProvider.h/.cpp` — real ACME certificate lifecycle (replaces placeholder)
+- `libs/ssl/CustomCertificateProvider.h/.cpp` — manages existing PEM files
 - `libs/ssl/RenewalScheduler.h/.cpp` — background renewal scheduler
 - `libs/ssl/CertificateStore.h/.cpp` — disk I/O for cert files + metadata.json
 - `libs/ssl/SslCertificateView.h/.cpp` — view model combining site + ssl state
