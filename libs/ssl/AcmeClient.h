@@ -51,7 +51,7 @@ public:
     core::OperationResult get_authorization(const std::string& authz_url, Authorization& authz);
     core::OperationResult respond_to_challenge(const std::string& challenge_url);
     core::OperationResult poll_challenge(const std::string& challenge_url, std::string& status, int max_retries = 15);
-    core::OperationResult finalize_order(const std::string& finalize_url, const std::string& csr_pem, std::string& cert_url);
+    core::OperationResult finalize_order(const std::string& finalize_url, const std::string& order_url, const std::string& csr_pem, std::string& cert_url);
     core::OperationResult download_certificate(const std::string& cert_url, std::string& fullchain_pem);
 
     static std::string generate_account_key(const std::string& key_path);

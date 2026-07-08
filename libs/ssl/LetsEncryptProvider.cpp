@@ -233,7 +233,7 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
     std::string csr = AcmeClient::generate_csr(domain, csr_key_path);
 
     std::string cert_url;
-    auto final_result = acme_.finalize_order(order.finalize_url, csr, cert_url);
+    auto final_result = acme_.finalize_order(order.finalize_url, order.url, csr, cert_url);
     if (!final_result.success) return err(final_result.message);
 
     // Step 6: Download certificate

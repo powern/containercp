@@ -871,21 +871,18 @@ core::OperationResult AcmeClient::poll_challenge(const std::string& challenge_ur
 // ============================================================
 // Finalize order
 // ============================================================
-core::OperationResult AcmeClient::finalize_order(const std::string& finalize_url, const std::string& csr_pem, std::string& cert_url) {
-    logger_.info("ACME-DBG", "finalize: csr_pem.size=" + std::to_string(csr_pem.size()));
+core::OperationResult AcmeClient::finalize_order(const std::string& finalize_url, const std::string& order_url, const std::string& csr_pem, std::string& cert_url) {
+    logger_.info("ACME-DBG", "finalize: csr_pem.size=" + std::to_string(csr_pem.size())
+                 + " finalize_url=" + finalize_url + " order_url=" + order_url);
 
-    // Use OpenSSL to read PEM CSR and convert to DER
+    // Step 1: Convert CSR PEM to DER then base64url (RFC 8555 section 7.4)
     BIO* pem_bio = BIO_new_mem_buf(csr_pem.data(), csr_pem.size());
     if (!pem_bio) return {false, "Failed to create PEM BIO for CSR"};
 
     X509_REQ* req = PEM_read_bio_X509_REQ(pem_bio, nullptr, nullptr, nullptr);
     BIO_free(pem_bio);
-    if (!req) {
-        logger_.info("ACME-DBG", "finalize: PEM_read_bio_X509_REQ failed");
-        return {false, "Failed to decode CSR"};
-    }
+    if (!req) return {false, "Failed to decode CSR"};
 
-    // Convert to DER
     int der_len = i2d_X509_REQ(req, nullptr);
     if (der_len <= 0) { X509_REQ_free(req); return {false, "Failed to get CSR DER length"}; }
 
@@ -893,66 +890,68 @@ core::OperationResult AcmeClient::finalize_order(const std::string& finalize_url
     unsigned char* der_ptr = der_buf.data();
     int der_len2 = i2d_X509_REQ(req, &der_ptr);
     X509_REQ_free(req);
-
     if (der_len2 <= 0) return {false, "Failed to convert CSR to DER"};
 
     std::string csr_b64 = url64(std::string((char*)der_buf.data(), der_len2));
-    logger_.info("ACME-DBG", "finalize: csr_b64.size=" + std::to_string(csr_b64.size()));
-
     std::string payload = "{\"csr\":\"" + csr_b64 + "\"}";
-    logger_.info("ACME-DBG", "finalize: payload.size=" + std::to_string(payload.size()));
 
+    // Step 2: POST finalize URL exactly ONCE (RFC 8555 section 7.4)
+    logger_.info("ACME-DBG", "finalize: POST " + finalize_url);
     auto resp = acme_post(finalize_url, payload);
-    logger_.info("ACME-DBG", "finalize response status=" + std::to_string(resp.status_code)
-                 + " location=" + resp.location + " body=" + resp.body);
+    logger_.info("ACME-DBG", "finalize response: http=" + std::to_string(resp.status_code)
+                 + " body=" + resp.body);
 
     if (resp.status_code != 200) {
         return {false, "Finalize failed: HTTP " + std::to_string(resp.status_code) + " " + resp.body};
     }
 
-    // Parse order status from finalize response
+    // Step 3: Parse order status from the finalize response
     std::string order_status = find_json_string(resp.body, "status");
-    logger_.info("ACME-DBG", "finalize order_status=" + order_status);
+    logger_.info("ACME", "Order status after finalize: " + order_status);
 
     if (order_status == "valid") {
         cert_url = find_json_string(resp.body, "certificate");
-        logger_.info("ACME", "Order finalized, cert_url=" + cert_url);
-        if (cert_url.empty()) return {false, "Order valid but no certificate URL in response"};
+        logger_.info("ACME", "Certificate URL: " + cert_url);
+        if (cert_url.empty()) return {false, "Order valid but no certificate URL"};
         return {true, ""};
     }
 
+    // Step 4: If processing, poll the ORDER URL (not finalize!) per RFC 8555 section 7.4.1
     if (order_status == "processing") {
-        logger_.info("ACME", "Order is processing, polling for certificate...");
-        // Need the order URL to poll. Use the location from the newOrder response
-        // if available, or construct from the finalize URL
-        // The order URL should have been captured in create_order
-
-        // We store the order URL in the Order struct passed from create_order
-        // For now, poll the finalize URL as a POST-as-GET (acme_get)
+        if (order_url.empty()) {
+            return {false, "Order URL is required for polling but was not captured"};
+        }
+        logger_.info("ACME", "Order processing, polling " + order_url);
         for (int i = 0; i < 30; ++i) {
             std::this_thread::sleep_for(std::chrono::seconds(2));
-            auto poll_resp = acme_post(finalize_url, "");
-            logger_.info("ACME-DBG", "finalize poll #" + std::to_string(i+1)
-                         + " status=" + std::to_string(poll_resp.status_code)
+            // POST-as-GET to order URL (RFC 8555 section 6.5: GET-as-POST)
+            auto poll_resp = acme_post(order_url, "");
+            logger_.info("ACME-DBG", "poll #" + std::to_string(i+1)
+                         + " http=" + std::to_string(poll_resp.status_code)
+                         + " status=" + find_json_string(poll_resp.body, "status")
                          + " body=" + poll_resp.body);
 
             if (poll_resp.status_code != 200) {
-                return {false, "Order poll failed: HTTP " + std::to_string(poll_resp.status_code)};
+                return {false, "Order poll HTTP " + std::to_string(poll_resp.status_code)};
             }
 
             order_status = find_json_string(poll_resp.body, "status");
             if (order_status == "valid") {
                 cert_url = find_json_string(poll_resp.body, "certificate");
-                logger_.info("ACME", "Order finalized via poll, cert_url=" + cert_url);
+                logger_.info("ACME", "Certificate URL: " + cert_url);
                 if (cert_url.empty()) return {false, "Order valid but no certificate URL"};
                 return {true, ""};
             }
             if (order_status == "invalid") {
-                auto error = find_json_string(poll_resp.body, "error");
-                return {false, "Order invalid: " + error};
+                return {false, "Order invalid: " + find_json_string(poll_resp.body, "error")};
             }
+            // "pending" or "processing" — continue polling
         }
         return {false, "Order did not become valid within timeout"};
+    }
+
+    if (order_status == "invalid") {
+        return {false, "Order invalid: " + find_json_string(resp.body, "error")};
     }
 
     return {false, "Unexpected order status: " + order_status};
