@@ -54,7 +54,7 @@ ServiceRegistry::ServiceRegistry()
         php_versions_.set_versions(loaded_php);
     }
 
-    // Load or seed web server profiles (independent of PHP version state)
+        // Load or seed web server profiles (independent of PHP version state)
     {
         auto loaded_profiles = storage_.load_profiles();
         if (loaded_profiles.empty()) {
@@ -68,9 +68,10 @@ ServiceRegistry::ServiceRegistry()
                     bool is_default = (name == "apache-php-default");
                     std::string path = config_.web_templates_dir() + name + ".conf.template";
                     filesystem_.create_directory(config_.web_templates_dir());
-                    if (!filesystem_.exists(path)) {
-                        filesystem_.create_file(path, content);
-                    }
+                    // Always overwrite template files to stay in sync with binary.
+                    // This ensures template fixes in web_templates.h take effect
+                    // even when the disk files already exist from a previous version.
+                    filesystem_.create_file(path, content);
                     profiles_.create(name, profile::ProfileType::WEB_SERVER,
                                      name.find("apache") != std::string::npos ? "apache" : "nginx",
                                      path, name, is_default);
@@ -78,6 +79,14 @@ ServiceRegistry::ServiceRegistry()
             }
         } else {
             profiles_.set_profiles(loaded_profiles);
+            // Even when profiles are loaded from disk, refresh the template files
+            // on disk to ensure they match the current binary version.
+            auto tmpl = template_engine::default_web_templates();
+            filesystem_.create_directory(config_.web_templates_dir());
+            for (auto& [name, content] : tmpl) {
+                std::string path = config_.web_templates_dir() + name + ".conf.template";
+                filesystem_.create_file(path, content);
+            }
         }
 
         // Enforce apache-php-default as the only default WEB_SERVER profile.
