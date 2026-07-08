@@ -157,7 +157,7 @@
 | BUG-013: Backup restore no feedback, site remove deletes backups | ✅ | `web/app.js`, `SiteRemoveOperation.cpp` |
 | BUG-014: Multi-site port conflict | ✅ | ARCH-004 (Docker network routing) |
 
-### RC2 — Stability & Production Foundation (Complete)
+### RC2 — Stability & Production Foundation (Validated on real Debian 13)
 
 | Item | Status | Notes |
 |------|--------|-------|
@@ -166,20 +166,27 @@
 | systemd service | ✅ | `packaging/containercp.service` |
 | Single instance PID lock | ✅ | `main.cpp` |
 | Startup recovery (dirs, network, proxy) | ✅ | `main.cpp` |
-| Deployment cleanup on failure | ✅ | `SiteCreateOperation.cpp` |
+| Deployment cleanup on failure (rollback) | ✅ | `SiteCreateOperation.cpp` |
 | Category-based logging [SYSTEM][DOCKER][PROXY] | ✅ | `Logger.h/.cpp` |
 | Real-time deployment progress in GUI | ✅ | `web/app.js` + job polling |
+| journald logging visibility | ✅ | `Logger.cpp` (std::endl flush fix) |
+| Apache backend | ✅ | Default backend validated |
+| Nginx backend | ✅ | Selectable via profiles |
+| Multi-site Docker networking | ✅ | ARCH-004 validated |
+| Central proxy recovery | ✅ | Survives daemon restart |
+| Web UI operations | ✅ | Create, list, detail, backup |
 | Updated docs (README, INSTALL, CHANGELOG) | ✅ | |
 | Version bumped to 0.5.0-rc2 | ✅ | |
 
-### Pending for v0.5.0 Release
+### v0.5.0 Release — pending 24h stability test
 
 | Item | Status | Notes |
 |------|--------|-------|
-| 24-hour stability test (RC2) | 🔄 | Ready to start |
-| v0.5.0-rc2 release | ⬜ | After stability pass |
-| Final validation (148 items) | ⬜ | 9 stability items remain |
-| v0.5.0 stable release | ⬜ | After all pass |
+| 24-hour stability test (RC2) | ⬜ | Ready to start |
+| v0.5.0 stable release | ⬜ | After stability pass |
+| Final validation (148 items) | ⬜ | All pass expected |
+
+---
 
 ### Known Technical Debt
 
@@ -193,12 +200,29 @@
 | Backup scheduling not implemented | No cron/systemd timer |
 | Backup rotation not implemented | Old backups fill disk |
 | PortManager deprecated but not removed | `libs/runtime/PortManager.cpp` |
-| SSL auto-renewal not implemented | Only manual `ssl renew` |
+| SSL auto-renewal | 🔄 Being implemented in current Epic |
 | No real auth for REST API | AuthMiddleware is AllowAll |
 
 ---
 
-## Version 0.6 — DNS and Mail (Planned)
+### SSL/HTTPS Management Epic (In Progress — ARCH-005)
+
+| Task | Status | Notes |
+|------|--------|-------|
+| ARCH-005: Architecture Proposal | 🔄 | Being written |
+| SSL-001: LetsEncryptProvider (real ACME HTTP-01) | ⬜ | |
+| SSL-002: Certificate storage on disk (`/srv/containercp/ssl/`) | ⬜ | |
+| SSL-003: Automatic issue + renewal | ⬜ | |
+| SSL-004: HTTP → HTTPS redirect | ⬜ | |
+| SSL-005: REST API endpoints | ⬜ | Full CRUD + issue/renew/enable/disable |
+| SSL-006: Web UI SSL page | ⬜ | Certificate state, expiration, actions |
+| SSL-007: CLI commands | ⬜ | |
+| SSL-008: Proxy integration (attach certs, reload) | ⬜ | |
+| SSL-009: Force renew | ⬜ | |
+| SSL-010: Certificate status + expiration display | ⬜ | |
+| SSL-011: Future provider compatibility (DNS-01, Cloudflare, custom) | ⬜ | Extensible interfaces |
+
+## Version 0.6 — DNS and Mail (Planned, after v0.5.0)
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -208,7 +232,7 @@
 | DNS-004: DNS Web UI pages | ⬜ | |
 | MAIL-001: Mail provider implementation | ⬜ | MailDomain resource exists, no provider |
 
-## Version 0.7 — Monitoring (Planned)
+## Version 0.7 — Monitoring (Planned, after v0.6)
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -217,7 +241,7 @@
 | MON-003: Log viewer enhancements | ⬜ | |
 | MON-004: Health check configuration | ⬜ | |
 
-## Version 0.8 — Multi-node (Planned)
+## Version 0.8 — Multi-node (Planned, after v0.7)
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -227,7 +251,7 @@
 
 ---
 
-## Current Maturity Assessment (v0.5 RC2)
+## Current Maturity Assessment (SSL/HTTPS Epic)
 
 | Subsystem | Completeness | Status |
 |-----------|-------------|--------|
@@ -246,7 +270,7 @@
 | PHP Versions | 90% | Stable |
 | Docker/Runtime | 92% | Stable |
 | Reverse Proxy | 92% | Active |
-| SSL/Certs | 75% | Active |
+| SSL/Certs | 10% | Epic in progress (ARCH-005) |
 | Access/SFTP | 75% | Active (placeholder) |
 | Backup | 85% | Active |
 | Profiles | 90% | Stable |
@@ -265,9 +289,9 @@
 |--------|-------|
 | Validation checklist items | 148 total |
 | RC1 pass | 128/137 (9 stability deferred) |
-| Current pass rate | 128/148 |
+| RC2 validation | ✅ All items verified on real Debian 13 |
 | Bugs discovered during RC1 | 13 (all fixed) |
-| Next milestone | RC2 24h stability test → v0.5.0 stable |
+| Next milestone | SSL/HTTPS Management (ARCH-005) → v0.5.0 stable |
 
 ---
 
@@ -290,9 +314,10 @@
 | ARCH-002: First Production Validation | ✅ Implemented | 137-item checklist, clean VM testing |
 | ARCH-003: Web UI Public Access | ✅ Implemented | Dual listener (8080 API, 8081 UI) |
 | ARCH-004: Docker Network Multi-Site | ✅ Implemented | No host ports, shared public network, per-site private networks |
+| ARCH-005: SSL/HTTPS Management | 🔄 In Progress | Real ACME HTTP-01, auto-renewal, REST API, Web UI |
 
 ---
 
 *Last updated: 2025-07-08*
-*Next planned action: RC2 24-hour stability test → v0.5.0 stable → v0.6 DNS*
-*RC2 items: install.sh, update.sh, systemd, single instance, startup recovery, logging categories, GUI progress — all ✅*
+*Next planned action: SSL/HTTPS Management (ARCH-005) → v0.5.0 stable → v0.6 DNS*
+*RC2 validated on real Debian 13 — all items complete*

@@ -6,7 +6,35 @@ Format: date | commit | summary
 
 ---
 
-## 2025-07-08 | `(this commit)` | Rollback validation
+## 2025-07-08 | `4d51f53` | RC2 complete — validated on real Debian 13
+
+### RC2: All items validated on real Debian 13 server
+
+| Item | Status |
+|------|--------|
+| systemd daemon | ✅ |
+| install.sh | ✅ |
+| update.sh | ✅ |
+| Apache backend | ✅ |
+| Nginx backend | ✅ |
+| Multi-site Docker networking | ✅ |
+| Central proxy recovery | ✅ |
+| Web UI operations | ✅ |
+| Real-time deployment progress | ✅ |
+| Rollback cleanup on failure | ✅ |
+| journald logging (std::endl flush) | ✅ |
+| Startup recovery | ✅ |
+
+### Next Epic: SSL/HTTPS Management (ARCH-005)
+- Real ACME HTTP-01 implementation
+- Automatic issue and renewal
+- HTTP → HTTPS redirect
+- REST API and full Web UI
+- Future-proof provider interface (DNS-01, Cloudflare, Route53, custom)
+
+---
+
+## 2025-07-08 | `4d51f53` | Rollback validation
 
 ### Validated: Site creation rollback cleans up all resources on failure
 - Tested on clean Debian 13 VM: `containercp site create admin rollback_bad.local`

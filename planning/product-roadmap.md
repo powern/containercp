@@ -119,8 +119,7 @@ Tests              Growing        60%
 
 **Release Candidates:**
 - v0.5.0-rc1 — first validation on Debian 13 (Trixie) — **passed**
-- v0.5.0-rc2 — (future) 24-hour stability validation
-- v0.5.0-rc3 — (future) final validation
+- v0.5.0-rc2 — validated on real Debian 13 — **all items complete**
 - v0.5.0 — (future) stable release
 
 **First Production Validation milestone:**
@@ -134,19 +133,34 @@ ARCH-004 (Docker network routing) was implemented and validated on 2025-07-08,
 replacing the temporary host-port allocation. Full multi-site hosting now works
 with proper container isolation and zero host port consumption per site.
 
+RC2 validated on real Debian 13 on 2025-07-08: systemd, install.sh, update.sh,
+Apache/Nginx backends, multi-site networking, central proxy recovery, Web UI,
+progress reporting, rollback cleanup, journald logging, startup recovery.
+
 See `planning/validation-v0.5.0-rc1.md` for RC1 results.
+
+**Current Epic:** SSL/HTTPS Management (ARCH-005)
+
+Real ACME HTTP-01 implementation with automatic issue, renewal, HTTP→HTTPS
+redirect, REST API, and full Web UI. Replaces the placeholder LetsEncryptProvider.
+
+See `planning/proposals/ARCH-005-SSL-Management.md` for the architecture proposal.
 
 **Acceptance criteria for v0.5.0:**
 - [x] Zero compiler warnings (Debug + Release)
 - [x] Core lifecycle validated on clean Debian 13 VM
-- [x] 128 checklist items pass (9 stability items deferred)
-- [x] All unit tests pass
+- [x] RC1 validated (128/137 pass, 9 deferred)
+- [x] RC2 validated on real Debian 13 (all items complete)
 - [x] Multi-site hosting with Docker network routing validated
 - [x] Apache2 default backend with Web UI selector
-- [ ] 24-hour stability test passes
+- [x] Rollback cleanup on failure validated
+- [ ] SSL/HTTPS management with ACME HTTP-01
+- [ ] Auto-renewal of certificates
+- [ ] HTTP → HTTPS redirect
+- [ ] SSL Web UI page
 - [ ] No orphan resources after cleanup
 
-## Version 0.6 — DNS and Mail
+## Version 0.6 — DNS and Mail (after v0.5.0)
 
 **Planned features:**
 - DNS resource and provider
