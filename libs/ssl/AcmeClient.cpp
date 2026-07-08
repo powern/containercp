@@ -501,26 +501,41 @@ core::OperationResult AcmeClient::load_or_create_account(const std::string& key_
     auto body_sp = std::make_shared<std::string>();
     auto hdrs_sp = std::make_shared<std::string>();
     http_post(new_account_url_, jws, "application/jose+json", body_sp, hdrs_sp, status);
-    logger_.info("ACME-DBG", "11: after http_post, status=" + std::to_string(status));
-
-    std::string& body = *body_sp;
+    logger_.info("ACME-DBG", "11: after http_post status=" + std::to_string(status)
+                 + " body_size=" + std::to_string(body_sp->size()));
 
     if (status == 201 || status == 200) {
-        logger_.info("ACME-DBG", "12a: account registered, parsing location");
-        auto loc = hdrs_sp->find("Location: ");
-        if (loc == std::string::npos) loc = hdrs_sp->find("location: ");
-        if (loc != std::string::npos) {
-            loc += 10;
-            auto end = hdrs_sp->find("\r\n", loc);
-            account_.url = hdrs_sp->substr(loc, end - loc);
+        logger_.info("ACME-DBG", "12a: account registered success");
+        // Extract account URL from Location header
+        std::string loc_header;
+        auto loc_pos = hdrs_sp->find("Location: ");
+        if (loc_pos != std::string::npos) {
+            loc_pos += 10;
+            auto end = hdrs_sp->find("\r\n", loc_pos);
+            if (end != std::string::npos) {
+                loc_header = hdrs_sp->substr(loc_pos, end - loc_pos);
+            }
         }
-        account_.kid = account_.url;
+        if (loc_header.empty()) {
+            loc_pos = hdrs_sp->find("location: ");
+            if (loc_pos != std::string::npos) {
+                loc_pos += 10;
+                auto end = hdrs_sp->find("\r\n", loc_pos);
+                if (end != std::string::npos) {
+                    loc_header = hdrs_sp->substr(loc_pos, end - loc_pos);
+                }
+            }
+        }
+        account_.url = loc_header;
+        account_.kid = loc_header;
         logger_.info("ACME", "Account registered: " + account_.url);
         return {true, ""};
     }
-    logger_.info("ACME-DBG", "12b: account failed, status=" + std::to_string(status));
 
-    return {false, "Account registration failed: HTTP " + std::to_string(status) + " " + body};
+    std::string error_msg = "Account registration failed: HTTP "
+                          + std::to_string(status) + " " + *body_sp;
+    logger_.info("ACME-DBG", "12b: account failed, error=" + error_msg);
+    return {false, error_msg};
 }
 
 // ============================================================
