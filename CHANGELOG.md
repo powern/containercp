@@ -6,6 +6,27 @@ Format: date | commit | summary
 
 ---
 
+## 2025-07-08 | `(this commit)` | Rollback validation
+
+### Validated: Site creation rollback cleans up all resources on failure
+- Tested on clean Debian 13 VM: `containercp site create admin rollback_bad.local`
+- Validation rejected with: "Label contains invalid character: _"
+- After failed creation, verified no orphan resources remain:
+  - No site record in database
+  - No Docker containers running
+  - No Docker networks left behind
+  - No site directory on disk
+  - No proxy config files
+- Rollback cleanup confirmed working for all resource types
+
+### Files changed
+- `CHANGELOG.md` — this entry
+
+### Validation
+- Tested on clean Debian 13 Validation VM
+
+---
+
 ## 2025-07-08 | `(this commit)` | Fix update script service restart flow
 
 ### Fixed: update.sh binary overwrite while running (`scripts/update.sh`)
