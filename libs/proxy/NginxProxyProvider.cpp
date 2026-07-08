@@ -79,53 +79,50 @@ core::OperationResult NginxProxyProvider::disable_proxy(const std::string& domai
 }
 
 core::OperationResult NginxProxyProvider::attach_certificate(const std::string& domain,
-                                                              const std::string& cert_path,
-                                                              const std::string& key_path) {
+                                                               const std::string& cert_path,
+                                                               const std::string& key_path) {
     std::string path = config_path(domain);
     if (!fs_.exists(path)) {
         return {false, "Proxy config not found for " + domain};
     }
 
-    // Read existing HTTP config
-    std::ifstream in(path);
-    if (!in.is_open()) {
-        return {false, "Cannot read existing config for " + domain};
-    }
-    std::string existing((std::istreambuf_iterator<char>(in)), {});
-    in.close();
-
-    // Build HTTPS config with redirect (existing HTTP block becomes redirect)
+    // Normalize upstream: extract from existing config, strip scheme and leading slashes
     std::string upstream;
     {
-        // Extract upstream from existing config
-        auto pos = existing.find("proxy_pass http://");
+        std::ifstream in(path);
+        if (!in.is_open()) {
+            return {false, "Cannot read existing config for " + domain};
+        }
+        std::string existing((std::istreambuf_iterator<char>(in)), {});
+        in.close();
+
+        // Find proxy_pass directive
+        auto pos = existing.find("proxy_pass ");
         if (pos != std::string::npos) {
-            pos += 18; // length of "proxy_pass http://"
+            pos += 12; // "proxy_pass "
+            // Strip http:// if present
+            if (existing.compare(pos, 7, "http://") == 0) pos += 7;
+            // Strip leading slashes (e.g., "///site-4-web:80")
+            while (pos < existing.size() && existing[pos] == '/') pos++;
             auto end = existing.find(";", pos);
             if (end != std::string::npos) {
                 upstream = existing.substr(pos, end - pos);
+                // Trim whitespace
+                while (!upstream.empty() && (upstream.back() == ' ' || upstream.back() == '\t'))
+                    upstream.pop_back();
             }
         }
     }
+
     if (upstream.empty()) {
+        // Default: use a reasonable fallback
         upstream = "site-0-web:80";
+        logger_.warning("PROXY", domain + ": upstream not found in config, using default: " + upstream);
     }
 
-    // Clean leading slash if present (from old buggy extraction)
-    if (!upstream.empty() && upstream[0] == '/') {
-        upstream = upstream.substr(1);
-    }
+    logger_.info("PROXY", domain + ": resolved upstream=" + upstream);
 
-    ProxyConfigBuilder::Params params;
-    params.domain = domain;
-    params.upstream = upstream;
-    params.https = true;
-    params.cert_path = cert_path;
-    params.key_path = key_path;
-
-    logger_.info("PROXY", domain + ": attaching cert cert_path=" + cert_path + " key_path=" + key_path);
-
-    // Verify certificate files exist
+    // Verify certificate files exist before generating config
     if (!fs_.exists(cert_path)) {
         return {false, domain + ": Certificate file not found: " + cert_path};
     }
@@ -133,27 +130,36 @@ core::OperationResult NginxProxyProvider::attach_certificate(const std::string& 
         return {false, domain + ": Private key file not found: " + key_path};
     }
 
-    std::string config = config_builder_.build(params);
+    // Build complete new config (HTTP + HTTPS blocks)
+    ProxyConfigBuilder::Params params;
+    params.domain = domain;
+    params.upstream = upstream;
+    params.https = true;
+    params.cert_path = cert_path;
+    params.key_path = key_path;
 
-    // Transactional write: write to temp file, validate, rename
+    std::string config = config_builder_.build(params);
+    logger_.info("PROXY", domain + ": generated config (" + std::to_string(config.size()) + " bytes)");
+
+    // Transactional write: write to temp file, validate with nginx -t, then rename
     std::string tmp_path = path + ".attach_tmp";
     fs_.create_file(tmp_path, config);
 
     if (!validate_nginx_config(tmp_path)) {
         std::filesystem::remove(tmp_path);
-        return {false, "Generated nginx config is invalid"};
+        return {false, domain + ": Generated nginx config is invalid"};
     }
 
-    // Replace original config with new one
+    // Atomic replace
     std::filesystem::rename(tmp_path, path);
 
     // Reload nginx
     auto reload_result = reload();
     if (!reload_result.success) {
-        return {false, "Config updated but nginx reload failed: " + reload_result.message};
+        return {false, domain + ": Config written but nginx reload failed: " + reload_result.message};
     }
 
-    logger_.info("PROXY", "Attached certificate for " + domain);
+    logger_.info("PROXY", "HTTPS enabled for " + domain);
     return {true, ""};
 }
 
@@ -174,24 +180,24 @@ core::OperationResult NginxProxyProvider::detach_certificate(const std::string& 
     // Extract upstream from existing config
     std::string upstream;
     {
-        auto pos = existing.find("proxy_pass http://");
+        auto pos = existing.find("proxy_pass ");
         if (pos != std::string::npos) {
-            pos += 18; // length of "proxy_pass http://"
+            pos += 12; // "proxy_pass "
+            if (existing.compare(pos, 7, "http://") == 0) pos += 7;
+            while (pos < existing.size() && existing[pos] == '/') pos++;
             auto end = existing.find(";", pos);
             if (end != std::string::npos) {
                 upstream = existing.substr(pos, end - pos);
+                while (!upstream.empty() && (upstream.back() == ' ' || upstream.back() == '\t'))
+                    upstream.pop_back();
             }
         }
     }
     if (upstream.empty()) {
         upstream = "site-0-web:80";
     }
-    // Clean leading slash if present (from old buggy extraction)
-    if (!upstream.empty() && upstream[0] == '/') {
-        upstream = upstream.substr(1);
-    }
 
-    logger_.info("PROXY", domain + ": detaching certificate");
+    logger_.info("PROXY", domain + ": detaching certificate, upstream=" + upstream);
 
     // Build pure HTTP config
     std::string config = config_builder_.build_http_block(domain, upstream);
