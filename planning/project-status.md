@@ -212,7 +212,7 @@
 | ARCH-005: Architecture Proposal | ✅ | Approved |
 | SSL-001: CertificateProvider abstraction | ✅ | Step 1 complete |
 | SSL-002: CertificateStore (provider-independent storage) | ✅ | Step 2 complete |
-| SSL-003: REST API endpoints | ⬜ | Step 3 (next) |
+| SSL-003: REST API endpoints | ✅ | Step 3 complete |
 | SSL-004: LetsEncryptProvider (real ACME HTTP-01) | ⬜ | Step 4 |
 | SSL-005: Proxy integration (attach certs, reload, redirect) | ⬜ | Step 5 |
 | SSL-006: RenewalScheduler | ⬜ | Step 6 |

@@ -1023,20 +1023,23 @@ Step 8: Real server validation
 - Unit tests for file I/O and metadata parse/serialize
 - Commit and push
 
-### Step 3 — REST API
-- Implement all `/ssl/` endpoints on `CertificateProvider` (abstract)
-- `GET /ssl` — list all sites with SSL state
-- `GET /ssl/<domain>` — certificate details
-- `POST /ssl/<domain>/issue` — trigger issuance
-- `POST /ssl/<domain>/renew` — trigger renewal
-- `POST /ssl/<domain>/enable` — enable HTTPS
-- `POST /ssl/<domain>/disable` — disable HTTPS
-- `POST /ssl/<domain>/redirect/enable` — enable redirect
-- `POST /ssl/<domain>/redirect/disable` — disable redirect
-- `GET /ssl/<domain>/status` — quick status
-- `GET /ssl/providers` — list providers
+### Step 3 — REST API (Complete)
+- Implemented all `/api/ssl/` endpoints on `CertificateProvider` (abstract)
+- `GET /api/ssl` — list all sites with SSL state (including HTTP_ONLY)
+- `GET /api/ssl/<domain>` — certificate details
+- `GET /api/ssl/<domain>/status` — quick status check
+- `POST /api/ssl/<domain>/issue` — async certificate issuance via provider
+- `POST /api/ssl/<domain>/renew` — async renewal via stored provider
+- `POST /api/ssl/<domain>/enable` — enable HTTPS with state validation
+- `POST /api/ssl/<domain>/disable` — disable HTTPS, keep files
+- `POST /api/ssl/<domain>/redirect/enable` — enable redirect (requires HTTPS)
+- `POST /api/ssl/<domain>/redirect/disable` — disable redirect
+- `GET /api/ssl/providers` — list providers from ServiceRegistry
+- Consistent JSON error format with code/message/details
+- Issue/renew return job_id with async status
+- Private key content/paths never exposed in responses
+- Router extended with add_prefix() for domain-based path matching
 - All route through `CertificateProvider`, never a concrete class
-- Commit and push
 
 ### Step 4 — LetsEncryptProvider (ACME HTTP-01)
 - Implement `HTTP01ChallengeProvider` with real token write/serve

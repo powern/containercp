@@ -6,7 +6,43 @@ Format: date | commit | summary
 
 ---
 
-## 2025-07-08 | `(this commit)` | Fix: atomic current/next symlink layout + MetadataLoadResult
+## 2025-07-08 | `(this commit)` | SSL Step 3: certificate management REST API
+
+### New: SSL REST API endpoints
+- `GET /api/ssl` — lists ALL sites (including HTTP_ONLY) with SSL state
+- `GET /api/ssl/providers` — lists available certificate providers
+- `GET /api/ssl/<domain>` — full certificate details for a domain
+- `GET /api/ssl/<domain>/status` — quick status check
+- `POST /api/ssl/<domain>/issue` — async certificate issuance via provider
+- `POST /api/ssl/<domain>/renew` — async renewal via stored provider
+- `POST /api/ssl/<domain>/enable` — enable HTTPS for active certificate
+- `POST /api/ssl/<domain>/disable` — disable HTTPS, keep certificate files
+- `POST /api/ssl/<domain>/redirect/enable` — enable HTTP→HTTPS redirect
+- `POST /api/ssl/<domain>/redirect/disable` — disable redirect
+
+### API design features
+- Consistent JSON error format: `{"success":false,"error":{"code":"...","message":"...","details":{}}}`
+- HTTP status codes: 200 success, 400 invalid, 404 not found, 409 state conflict
+- Issue/renew return `job_id` with async status (jobs exist but ACME is placeholder until Step 4)
+- Missing metadata for existing sites → `HTTP_ONLY` status, not error
+- Corrupted metadata → `ERROR` status with descriptive message
+- Enable fails safely (409) if no valid certificate exists
+- Redirect enable fails (409) if HTTPS is not active
+- Provider selection via `provider_id` in request body (default: "letsencrypt")
+- Private key content/paths never exposed in responses
+
+### Router enhancement
+- `Router::add_prefix(method, prefix, handler)` — prefix-based route matching
+- Exact routes take priority over prefix routes (checked in order)
+
+### Files changed
+- `libs/api/ApiServer.cpp` — all SSL endpoints, json_error helper, ssl_domain_from_path
+- `libs/api/Router.h/.cpp` — add_prefix method for prefix-based routing
+- `tests/test_api.cpp` — Router prefix tests, SSL response format tests, CertificateStore integration test
+
+---
+
+## 2025-07-08 | `a82abce` | Fix: atomic current/next symlink layout + MetadataLoadResult
 
 ### Fixed: save_all now uses symlink-based atomic swap
 - Storage layout changed to versioned directory with atomic symlink:

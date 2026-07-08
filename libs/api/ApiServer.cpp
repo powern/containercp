@@ -1,8 +1,12 @@
 #include "ApiServer.h"
 #include "api/JsonFormatter.h"
 #include "core/Version.h"
+#include "jobs/JobManager.h"
 #include "operations/SiteCreateOperation.h"
 #include "operations/SiteRemoveOperation.h"
+
+#include "ssl/CertificateStore.h"
+#include "ssl/CertificateProvider.h"
 
 #include <arpa/inet.h>
 #include <chrono>
@@ -206,6 +210,26 @@ bool ApiServer::start() {
 
     auto& s = services_;
 
+    // Helper: extract domain from path after /api/ssl/
+    auto ssl_domain_from_path = [](const std::string& path) -> std::string {
+        // path is like /api/ssl/example.com or /api/ssl/example.com/issue
+        std::string prefix = "/api/ssl/";
+        if (path.compare(0, prefix.size(), prefix) != 0) return "";
+        std::string rest = path.substr(prefix.size());
+        auto slash = rest.find('/');
+        if (slash == std::string::npos) return rest;
+        return rest.substr(0, slash);
+    };
+
+    // Helper: build standard JSON error response
+    auto json_error = [](const std::string& code, const std::string& message) -> std::string {
+        std::ostringstream json;
+        json << "{\"success\":false,\"error\":{\"code\":\""
+             << JsonFormatter::escape(code) << "\",\"message\":\""
+             << JsonFormatter::escape(message) << "\",\"details\":{}}}";
+        return json.str();
+    };
+
     // GET endpoints
     router_.add("GET", "/api/version", [](const Request&) {
         Response r;
@@ -243,9 +267,46 @@ bool ApiServer::start() {
         return r;
     });
 
+    // GET /api/ssl — list all sites with SSL state (including HTTP_ONLY)
     router_.add("GET", "/api/ssl", [&s](const Request&) {
         Response r;
-        r.body = JsonFormatter::success(JsonFormatter::ssl_certificates(s.ssl().list()));
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":[";
+        bool first = true;
+        for (const auto& site : s.sites().list()) {
+            if (!first) json << ",";
+            first = false;
+
+            std::string domain = site.name;
+            auto load_result = s.cert_store().load_metadata(site.id);
+
+            json << "{\"domain\":\"" << JsonFormatter::escape(domain) << "\"";
+
+            if (load_result.success) {
+                const auto& meta = load_result.metadata;
+                json << ",\"site_id\":" << meta.site_id
+                     << ",\"provider_id\":\"" << JsonFormatter::escape(meta.provider_id)
+                     << "\",\"status\":\"" << JsonFormatter::escape(meta.status)
+                     << "\",\"https_enabled\":" << (meta.https_enabled ? "true" : "false")
+                     << ",\"redirect_enabled\":" << (meta.redirect_enabled ? "true" : "false")
+                     << ",\"auto_renew\":" << (meta.auto_renew ? "true" : "false")
+                     << ",\"expires_at\":\"" << JsonFormatter::escape(meta.expires_at)
+                     << "\",\"last_error\":\"" << JsonFormatter::escape(meta.last_error)
+                     << "\"";
+            } else {
+                json << ",\"site_id\":" << site.id
+                     << ",\"provider_id\":\"\""
+                     << ",\"status\":\"HTTP_ONLY\""
+                     << ",\"https_enabled\":false"
+                     << ",\"redirect_enabled\":false"
+                     << ",\"auto_renew\":true"
+                     << ",\"expires_at\":\"\""
+                     << ",\"last_error\":\"\"";
+            }
+            json << "}";
+        }
+        json << "]}";
+        r.body = json.str();
         return r;
     });
 
@@ -564,6 +625,282 @@ bool ApiServer::start() {
             return r;
         }
         r.body = "{\"success\":true,\"data\":{\"message\":\"Backup restored: " + JsonFormatter::escape(b->filename) + "\"}}";
+        return r;
+    });
+
+    // GET /api/ssl/providers — list available providers
+    router_.add("GET", "/api/ssl/providers", [&s](const Request&) {
+        Response r;
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":[";
+        bool first = true;
+        for (const auto& [id, provider] : s.certificate_providers()) {
+            if (!first) json << ",";
+            first = false;
+            json << "{\"id\":\"" << JsonFormatter::escape(id)
+                 << "\",\"name\":\"" << JsonFormatter::escape(provider->provider_name())
+                 << "\",\"supports_auto_renew\":" << (provider->supports_auto_renew() ? "true" : "false")
+                 << ",\"supports_dns\":" << (provider->supports_dns_challenge() ? "true" : "false")
+                 << "}";
+        }
+        json << "]}";
+        r.body = json.str();
+        return r;
+    });
+
+    // GET /api/ssl/<domain> — certificate details
+    router_.add_prefix("GET", "/api/ssl/", [&s, &ssl_domain_from_path, &json_error](const Request& req) {
+        Response r;
+        std::string domain = ssl_domain_from_path(req.path);
+        if (domain.empty()) {
+            r.status_code = 400;
+            r.body = json_error("INVALID_DOMAIN", "Domain is required");
+            return r;
+        }
+
+        // Check if domain resolves to a known site
+        uint64_t site_id = 0;
+        std::string site_domain;
+        for (const auto& site : s.sites().list()) {
+            if (site.name == domain) {
+                site_id = site.id;
+                site_domain = site.name;
+                break;
+            }
+        }
+        if (site_id == 0) {
+            r.status_code = 404;
+            r.body = json_error("NOT_FOUND", "Site not found: " + domain);
+            return r;
+        }
+
+        auto load_result = s.cert_store().load_metadata(site_id);
+        if (!load_result.success && load_result.error != containercp::ssl::CertificateStore::LoadError::NOT_FOUND) {
+            // Corrupted metadata — return ERROR state
+            std::ostringstream json;
+            json << "{\"success\":true,\"data\":{"
+                 << "\"site_id\":" << site_id
+                 << ",\"domain\":\"" << JsonFormatter::escape(site_domain)
+                 << "\",\"status\":\"ERROR\""
+                 << ",\"last_error\":\"" << JsonFormatter::escape(load_result.message)
+                 << "\",\"https_enabled\":false"
+                 << ",\"redirect_enabled\":false"
+                 << "}}";
+            r.body = json.str();
+            return r;
+        }
+
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":{"
+             << "\"site_id\":" << site_id
+             << ",\"domain\":\"" << JsonFormatter::escape(site_domain) << "\"";
+
+        if (load_result.success) {
+            const auto& meta = load_result.metadata;
+            json << ",\"provider_id\":\"" << JsonFormatter::escape(meta.provider_id)
+                 << "\",\"certificate_type\":\"" << JsonFormatter::escape(meta.certificate_type)
+                 << "\",\"status\":\"" << JsonFormatter::escape(meta.status)
+                 << "\",\"issued_at\":\"" << JsonFormatter::escape(meta.issued_at)
+                 << "\",\"expires_at\":\"" << JsonFormatter::escape(meta.expires_at)
+                 << "\",\"renew_after\":\"" << JsonFormatter::escape(meta.renew_after)
+                 << "\",\"https_enabled\":" << (meta.https_enabled ? "true" : "false")
+                 << ",\"redirect_enabled\":" << (meta.redirect_enabled ? "true" : "false")
+                 << ",\"auto_renew\":" << (meta.auto_renew ? "true" : "false")
+                 << ",\"challenge_type\":\"" << JsonFormatter::escape(meta.challenge_type)
+                 << "\",\"issuer\":\"" << JsonFormatter::escape(meta.issuer)
+                 << "\",\"subject\":\"" << JsonFormatter::escape(meta.subject)
+                 << "\",\"fingerprint_sha256\":\"" << JsonFormatter::escape(meta.fingerprint_sha256)
+                 << "\",\"last_validation\":\"" << JsonFormatter::escape(meta.last_validation)
+                 << "\",\"last_error\":\"" << JsonFormatter::escape(meta.last_error)
+                 << "\",\"renew_attempts\":" << meta.renew_attempts;
+        } else {
+            json << ",\"status\":\"HTTP_ONLY\""
+                 << ",\"https_enabled\":false"
+                 << ",\"redirect_enabled\":false"
+                 << ",\"auto_renew\":true";
+        }
+        json << "}}";
+        r.body = json.str();
+        return r;
+    });
+
+    // POST /api/ssl/<domain>/<action> — SSL mutations
+    router_.add_prefix("POST", "/api/ssl/", [&s, &ssl_domain_from_path, &json_error](const Request& req) {
+        Response r;
+        std::string domain = ssl_domain_from_path(req.path);
+        if (domain.empty()) {
+            r.status_code = 400;
+            r.body = json_error("INVALID_DOMAIN", "Domain is required");
+            return r;
+        }
+
+        // Extract action from path: /api/ssl/<domain>/<action> or /api/ssl/<domain>/redirect/<subaction>
+        std::string prefix = "/api/ssl/" + domain + "/";
+        std::string action = req.path.substr(prefix.size());
+
+        // Find site
+        uint64_t site_id = 0;
+        for (const auto& site : s.sites().list()) {
+            if (site.name == domain) {
+                site_id = site.id;
+                break;
+            }
+        }
+        if (site_id == 0) {
+            r.status_code = 404;
+            r.body = json_error("NOT_FOUND", "Site not found: " + domain);
+            return r;
+        }
+
+        if (action == "issue") {
+            std::string provider_id = json_extract(req.body, "provider_id");
+            if (provider_id.empty()) provider_id = "letsencrypt";
+
+            auto& provider = s.cert_provider_by_name(provider_id);
+            auto result = provider.request(domain);
+
+            std::vector<std::string> steps = {"Requesting certificate for " + domain};
+            uint64_t job_id = s.jobs().create("ssl-issue", steps);
+            s.jobs().update(job_id, result.success ? "completed" : "failed", 100, result.message);
+
+            std::ostringstream json;
+            json << "{\"success\":true,\"data\":{"
+                 << "\"job_id\":" << job_id
+                 << ",\"status\":\"" << (result.success ? "completed" : "failed")
+                 << "\",\"message\":\"" << JsonFormatter::escape(result.message)
+                 << "\"}}";
+            r.body = json.str();
+            return r;
+        }
+
+        if (action == "renew") {
+            auto load_result = s.cert_store().load_metadata(site_id);
+            std::string provider_id = "letsencrypt";
+            if (load_result.success) {
+                provider_id = load_result.metadata.provider_id;
+            }
+
+            auto& provider = s.cert_provider_by_name(provider_id);
+            auto result = provider.renew(domain);
+
+            std::vector<std::string> steps = {"Renewing certificate for " + domain};
+            uint64_t job_id = s.jobs().create("ssl-renew", steps);
+            s.jobs().update(job_id, result.success ? "completed" : "failed", 100, result.message);
+
+            std::ostringstream json;
+            json << "{\"success\":true,\"data\":{"
+                 << "\"job_id\":" << job_id
+                 << ",\"status\":\"" << (result.success ? "completed" : "failed")
+                 << "\",\"message\":\"" << JsonFormatter::escape(result.message)
+                 << "\"}}";
+            r.body = json.str();
+            return r;
+        }
+
+        if (action == "enable") {
+            // Check if certificate exists and is valid
+            auto load_result = s.cert_store().load_metadata(site_id);
+            if (!load_result.success) {
+                r.status_code = 409;
+                r.body = json_error("SSL_INVALID_STATE", "No valid certificate. Issue a certificate first.");
+                return r;
+            }
+            if (load_result.metadata.status != "active") {
+                r.status_code = 409;
+                r.body = json_error("SSL_INVALID_STATE", "Certificate is not active. Status: "
+                    + load_result.metadata.status);
+                return r;
+            }
+
+            // Update metadata
+            auto meta = load_result.metadata;
+            meta.https_enabled = true;
+            meta.updated_at = containercp::ssl::CertificateStore::timestamp_utc();
+            s.cert_store().save_metadata(site_id, meta);
+
+            // Update SslCertificateManager
+            auto* cert = s.ssl().find_by_domain(domain);
+            if (cert) {
+                cert->https_enabled = true;
+                s.save();
+            }
+
+            std::ostringstream json;
+            json << "{\"success\":true,\"data\":{"
+                 << "\"domain\":\"" << JsonFormatter::escape(domain)
+                 << "\",\"https_enabled\":true"
+                 << "}}";
+            r.body = json.str();
+            return r;
+        }
+
+        if (action == "disable") {
+            // Disable HTTPS but keep certificate files
+            auto load_result = s.cert_store().load_metadata(site_id);
+            if (load_result.success) {
+                auto meta = load_result.metadata;
+                meta.https_enabled = false;
+                meta.updated_at = containercp::ssl::CertificateStore::timestamp_utc();
+                s.cert_store().save_metadata(site_id, meta);
+            }
+
+            auto* cert = s.ssl().find_by_domain(domain);
+            if (cert) {
+                cert->https_enabled = false;
+                s.save();
+            }
+
+            std::ostringstream json;
+            json << "{\"success\":true,\"data\":{"
+                 << "\"domain\":\"" << JsonFormatter::escape(domain)
+                 << "\",\"https_enabled\":false"
+                 << "}}";
+            r.body = json.str();
+            return r;
+        }
+
+        if (action == "redirect/enable") {
+            auto load_result = s.cert_store().load_metadata(site_id);
+            if (!load_result.success || !load_result.metadata.https_enabled) {
+                r.status_code = 409;
+                r.body = json_error("SSL_INVALID_STATE", "HTTPS must be enabled before enabling redirect");
+                return r;
+            }
+
+            auto meta = load_result.metadata;
+            meta.redirect_enabled = true;
+            meta.updated_at = containercp::ssl::CertificateStore::timestamp_utc();
+            s.cert_store().save_metadata(site_id, meta);
+
+            std::ostringstream json;
+            json << "{\"success\":true,\"data\":{"
+                 << "\"domain\":\"" << JsonFormatter::escape(domain)
+                 << "\",\"redirect_enabled\":true"
+                 << "}}";
+            r.body = json.str();
+            return r;
+        }
+
+        if (action == "redirect/disable") {
+            auto load_result = s.cert_store().load_metadata(site_id);
+            if (load_result.success) {
+                auto meta = load_result.metadata;
+                meta.redirect_enabled = false;
+                meta.updated_at = containercp::ssl::CertificateStore::timestamp_utc();
+                s.cert_store().save_metadata(site_id, meta);
+            }
+
+            std::ostringstream json;
+            json << "{\"success\":true,\"data\":{"
+                 << "\"domain\":\"" << JsonFormatter::escape(domain)
+                 << "\",\"redirect_enabled\":false"
+                 << "}}";
+            r.body = json.str();
+            return r;
+        }
+
+        r.status_code = 404;
+        r.body = json_error("NOT_FOUND", "Unknown SSL action: " + action);
         return r;
     });
 

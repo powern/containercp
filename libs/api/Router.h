@@ -6,7 +6,7 @@
 
 #include <functional>
 #include <string>
-#include <unordered_map>
+#include <vector>
 
 namespace containercp::api {
 
@@ -15,6 +15,7 @@ using RouteHandler = std::function<Response(const Request&)>;
 class Router {
 public:
     void add(const std::string& method, const std::string& path, RouteHandler handler);
+    void add_prefix(const std::string& method, const std::string& prefix, RouteHandler handler);
     Response dispatch(const Request& req) const;
 
 private:
@@ -22,6 +23,7 @@ private:
         std::string method;
         std::string path;
         RouteHandler handler;
+        bool is_prefix = false;
     };
     std::vector<Route> routes_;
 };
