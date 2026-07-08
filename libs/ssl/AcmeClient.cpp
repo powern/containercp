@@ -17,6 +17,7 @@ static bool curl_initialized = ([]() {
 })();
 #include <openssl/bio.h>
 #include <openssl/ec.h>
+#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
@@ -366,16 +367,71 @@ std::string AcmeClient::sign_jws(const std::string& payload, const std::string& 
     // Sign "protected_b64.payload_b64"
     std::string signing_input = protected_b64 + "." + payload_b64;
 
-    unsigned char sig[72];
-    size_t sig_len = 0;
+    unsigned char sig_der[128];
+    size_t sig_der_len = sizeof(sig_der);
     EVP_MD_CTX* md_ctx = EVP_MD_CTX_new();
     EVP_PKEY_CTX* pctx = nullptr;
-    EVP_DigestSignInit(md_ctx, &pctx, EVP_sha256(), nullptr, pkey);
-    EVP_DigestSignUpdate(md_ctx, signing_input.data(), signing_input.size());
-    EVP_DigestSignFinal(md_ctx, sig, &sig_len);
+    if (EVP_DigestSignInit(md_ctx, &pctx, EVP_sha256(), nullptr, pkey) != 1) {
+        fprintf(stderr, "ACME-DBG: EVP_DigestSignInit FAILED\n");
+        EVP_MD_CTX_free(md_ctx);
+        EC_KEY_free(ec);
+        EVP_PKEY_free(pkey);
+        return "";
+    }
+    if (EVP_DigestSignUpdate(md_ctx, signing_input.data(), signing_input.size()) != 1) {
+        fprintf(stderr, "ACME-DBG: EVP_DigestSignUpdate FAILED\n");
+        EVP_MD_CTX_free(md_ctx);
+        EC_KEY_free(ec);
+        EVP_PKEY_free(pkey);
+        return "";
+    }
+    if (EVP_DigestSignFinal(md_ctx, sig_der, &sig_der_len) != 1) {
+        fprintf(stderr, "ACME-DBG: EVP_DigestSignFinal FAILED (err=0x%lx)\n", ERR_get_error());
+        EVP_MD_CTX_free(md_ctx);
+        EC_KEY_free(ec);
+        EVP_PKEY_free(pkey);
+        return "";
+    }
     EVP_MD_CTX_free(md_ctx);
 
-    std::string sig_raw((char*)sig, sig_len);
+    // Convert DER-encoded signature to raw R||S (64 bytes for P-256)
+    // DER format: 30 44 02 20 <R:32> 02 20 <S:32>
+    // May also be: 30 45 02 21 <R:33> 02 20 <S:32> (with leading 00)
+    std::string sig_raw;
+    fprintf(stderr, "ACME-DBG: sig_der_len=%zu sig_der[0]=0x%02x sig_der[1]=0x%02x\n",
+            sig_der_len, (unsigned)sig_der[0], (unsigned)sig_der[1]);
+    if (sig_der_len >= 8 && sig_der[0] == 0x30) {
+        size_t off = 2;
+        // R integer
+        if (off + 2 < sig_der_len && sig_der[off] == 0x02) {
+            size_t r_len = sig_der[off + 1];
+            off += 2;
+            fprintf(stderr, "ACME-DBG: R tag at off=%zu r_len=%zu\n", off-2, r_len);
+            if (r_len == 33) { off++; r_len = 32; }
+            if (off + r_len <= sig_der_len) {
+                sig_raw.append((char*)(sig_der + off), r_len);
+                off += r_len;
+            }
+        } else {
+            fprintf(stderr, "ACME-DBG: R tag NOT FOUND at off=%zu val=0x%02x\n", off, (unsigned)sig_der[off]);
+        }
+        // S integer
+        if (off + 2 < sig_der_len && sig_der[off] == 0x02) {
+            size_t s_len = sig_der[off + 1];
+            off += 2;
+            fprintf(stderr, "ACME-DBG: S tag at off=%zu s_len=%zu\n", off-2, s_len);
+            if (s_len == 33) { off++; s_len = 32; }
+            if (off + s_len <= sig_der_len) {
+                sig_raw.append((char*)(sig_der + off), s_len);
+            }
+        } else {
+            fprintf(stderr, "ACME-DBG: S tag NOT FOUND at off=%zu val=0x%02x\n", off, (unsigned)sig_der[off]);
+        }
+    } else {
+        sig_raw = std::string((char*)sig_der, sig_der_len);
+    }
+    fprintf(stderr, "ACME-DBG: sig_raw_len=%zu\n", sig_raw.size());
+
     std::string sig_b64 = url64(sig_raw);
 
     BN_free(x);
@@ -383,7 +439,13 @@ std::string AcmeClient::sign_jws(const std::string& payload, const std::string& 
     EC_KEY_free(ec);
     EVP_PKEY_free(pkey);
 
-    return "{\"protected\":\"" + protected_b64 + "\",\"payload\":\"" + payload_b64 + "\",\"signature\":\"" + sig_b64 + "\"}";
+    std::string jws = "{\"protected\":\"" + protected_b64 + "\",\"payload\":\"" + payload_b64 + "\",\"signature\":\"" + sig_b64 + "\"}";
+
+    // Debug logging (no private key data)
+    fprintf(stderr, "ACME-DBG: protected_b64_len=%zu payload_b64_len=%zu sig_raw_len=%zu sig_b64_len=%zu jws_len=%zu\n",
+            protected_b64.size(), payload_b64.size(), sig_raw.size(), sig_b64.size(), jws.size());
+
+    return jws;
 }
 
 // ============================================================
