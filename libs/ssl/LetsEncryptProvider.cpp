@@ -135,28 +135,33 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
 {
     logger_.info("LetsEncrypt", "Issuing certificate for " + domain);
 
+    // Helper: prepend domain to error messages
+    auto err = [&](const std::string& msg) -> core::OperationResult {
+        return {false, domain + ": " + msg};
+    };
+
     // Step 1: Discover ACME directory
     auto dir_result = acme_.discover_directory();
-    if (!dir_result.success) return dir_result;
+    if (!dir_result.success) return err(dir_result.message);
 
     // Step 2: Load or create account
     std::string account_key_path = ssl_dir_ + "/account.pem";
     auto acct_result = acme_.load_or_create_account(account_key_path);
-    if (!acct_result.success) return acct_result;
+    if (!acct_result.success) return err(acct_result.message);
 
     // Step 3: Create order
     AcmeClient::Order order;
     auto order_result = acme_.create_order(domains, order);
-    if (!order_result.success) return order_result;
+    if (!order_result.success) return err(order_result.message);
 
     // Step 4: Complete authorizations
     for (const auto& authz_url : order.authorizations) {
         AcmeClient::Authorization authz;
         auto authz_result = acme_.get_authorization(authz_url, authz);
-        if (!authz_result.success) return authz_result;
+        if (!authz_result.success) return err(authz_result.message);
 
         if (authz.domain.empty()) {
-            return {false, "Authorization returned empty domain"};
+            return err("Authorization returned empty domain");
         }
         logger_.info("LetsEncrypt", "Processing authorization for " + authz.domain);
 
@@ -169,15 +174,14 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
             }
         }
         if (!http_challenge) {
-            return {false, "No HTTP-01 challenge available for " + authz.domain};
+            return err("No HTTP-01 challenge available for " + authz.domain);
         }
 
         // Prepare challenge via ChallengeProvider
-        // key_auth = token + "." + thumbprint (SHA256 of account JWK)
         std::string key_auth = acme_.compute_key_authorization(http_challenge->token);
         logger_.info("LetsEncrypt", "key_authorization=" + key_auth);
         auto prep_result = challenge_.prepare(authz.domain, http_challenge->token, key_auth);
-        if (!prep_result.success) return prep_result;
+        if (!prep_result.success) return err(prep_result.message);
 
         // Local verification: fetch challenge via HTTP and compare
         {
@@ -202,12 +206,12 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
 
         // Respond to challenge (signal ACME server that we're ready)
         auto resp_result = acme_.respond_to_challenge(http_challenge->url);
-        if (!resp_result.success) return resp_result;
+        if (!resp_result.success) return err(resp_result.message);
 
         // Poll for completion
         std::string challenge_status;
         auto poll_result = acme_.poll_challenge(http_challenge->url, challenge_status);
-        if (!poll_result.success) return poll_result;
+        if (!poll_result.success) return err(poll_result.message);
 
         // On invalid, log full response
         if (challenge_status == "invalid") {
@@ -220,7 +224,7 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
         challenge_.cleanup(authz.domain, http_challenge->token);
 
         if (challenge_status != "valid") {
-            return {false, "ACME challenge failed for " + authz.domain + ": " + challenge_status};
+            return err("ACME challenge failed: " + challenge_status);
         }
     }
 
@@ -230,12 +234,12 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
 
     std::string cert_url;
     auto final_result = acme_.finalize_order(order.finalize_url, csr, cert_url);
-    if (!final_result.success) return final_result;
+    if (!final_result.success) return err(final_result.message);
 
     // Step 6: Download certificate
     std::string fullchain_pem;
     auto dl_result = acme_.download_certificate(cert_url, fullchain_pem);
-    if (!dl_result.success) return dl_result;
+    if (!dl_result.success) return err(dl_result.message);
 
     // Step 7: Read private key that was generated during CSR creation
     std::string privkey_pem;
@@ -262,7 +266,7 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
     meta.updated_at = meta.issued_at;
 
     auto save_result = store_.save_all(site_id, meta, fullchain_pem, privkey_pem, "");
-    if (!save_result.success) return save_result;
+    if (!save_result.success) return err(save_result.message);
 
     return {true, "Certificate issued for " + domain};
 }

@@ -21,6 +21,7 @@ static bool curl_initialized = ([]() {
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
+#include <openssl/x509.h>
 #include <sstream>
 #include <thread>
 
@@ -858,50 +859,53 @@ core::OperationResult AcmeClient::poll_challenge(const std::string& challenge_ur
 // Finalize order
 // ============================================================
 core::OperationResult AcmeClient::finalize_order(const std::string& finalize_url, const std::string& csr_pem, std::string& cert_url) {
-    // CSR must be base64url encoded (DER format inside PEM, then url64)
-    // Extract DER from PEM
-    std::string csr_der;
-    {
-        auto start = csr_pem.find("-----BEGIN CERTIFICATE REQUEST-----");
-        if (start == std::string::npos) start = csr_pem.find("-----BEGIN NEW CERTIFICATE REQUEST-----");
-        if (start == std::string::npos) return {false, "Invalid CSR format"};
-        auto end = csr_pem.find("-----END");
-        if (end == std::string::npos) return {false, "Invalid CSR format"};
-        std::string b64 = csr_pem.substr(start + (csr_pem[start + 5] == 'N' ? 40 : 35), end - start - (csr_pem[start + 5] == 'N' ? 40 : 35));
+    logger_.info("ACME-DBG", "finalize: csr_pem.size=" + std::to_string(csr_pem.size()));
 
-        // Remove whitespace from base64
-        std::string clean;
-        for (char c : b64) {
-            if (c != '\n' && c != '\r' && c != ' ') clean += c;
-        }
+    // Use OpenSSL to read PEM CSR and convert to DER
+    BIO* pem_bio = BIO_new_mem_buf(csr_pem.data(), csr_pem.size());
+    if (!pem_bio) return {false, "Failed to create PEM BIO for CSR"};
 
-        // Decode base64 to DER
-        BIO* b64_bio = BIO_new(BIO_f_base64());
-        BIO* mem = BIO_new_mem_buf(clean.data(), clean.size());
-        BIO* chain = BIO_push(b64_bio, mem);
-
-        char der_buf[8192];
-        int der_len = BIO_read(chain, der_buf, sizeof(der_buf));
-
-        if (der_len > 0) {
-            csr_der = std::string(der_buf, der_len);
-        }
-
-        BIO_free_all(chain);
+    X509_REQ* req = PEM_read_bio_X509_REQ(pem_bio, nullptr, nullptr, nullptr);
+    BIO_free(pem_bio);
+    if (!req) {
+        logger_.info("ACME-DBG", "finalize: PEM_read_bio_X509_REQ failed");
+        return {false, "Failed to decode CSR: PEM_read_bio_X509_REQ returned NULL"};
     }
 
-    if (csr_der.empty()) return {false, "Failed to decode CSR"};
+    // Convert to DER
+    int der_len = i2d_X509_REQ(req, nullptr);
+    if (der_len <= 0) {
+        X509_REQ_free(req);
+        return {false, "Failed to get CSR DER length"};
+    }
 
+    std::vector<unsigned char> der_buf(der_len);
+    unsigned char* der_ptr = der_buf.data();
+    int der_len2 = i2d_X509_REQ(req, &der_ptr);
+    X509_REQ_free(req);
+
+    if (der_len2 <= 0) {
+        return {false, "Failed to convert CSR to DER"};
+    }
+
+    logger_.info("ACME-DBG", "finalize: csr_der.size=" + std::to_string(der_len2));
+
+    std::string csr_der((char*)der_buf.data(), der_len2);
     std::string csr_b64 = url64(csr_der);
+
+    logger_.info("ACME-DBG", "finalize: csr_b64.size=" + std::to_string(csr_b64.size()));
+
     std::string payload = "{\"csr\":\"" + csr_b64 + "\"}";
+    logger_.info("ACME-DBG", "finalize: payload.size=" + std::to_string(payload.size()));
 
     auto resp = acme_post(finalize_url, payload);
     if (resp.status_code != 200) {
+        logger_.info("ACME-DBG", "finalize failed, body=" + resp.body);
         return {false, "Finalize failed: HTTP " + std::to_string(resp.status_code) + " " + resp.body};
     }
 
     cert_url = find_json_string(resp.body, "certificate");
-    logger_.info("ACME", "Order finalized");
+    logger_.info("ACME", "Order finalized, cert_url=" + cert_url);
     return {true, ""};
 }
 
