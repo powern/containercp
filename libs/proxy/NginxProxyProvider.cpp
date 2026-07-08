@@ -100,7 +100,7 @@ core::OperationResult NginxProxyProvider::attach_certificate(const std::string& 
         // Extract upstream from existing config
         auto pos = existing.find("proxy_pass http://");
         if (pos != std::string::npos) {
-            pos += 17; // length of "proxy_pass http://"
+            pos += 18; // length of "proxy_pass http://"
             auto end = existing.find(";", pos);
             if (end != std::string::npos) {
                 upstream = existing.substr(pos, end - pos);
@@ -109,6 +109,11 @@ core::OperationResult NginxProxyProvider::attach_certificate(const std::string& 
     }
     if (upstream.empty()) {
         upstream = "site-0-web:80";
+    }
+
+    // Clean leading slash if present (from old buggy extraction)
+    if (!upstream.empty() && upstream[0] == '/') {
+        upstream = upstream.substr(1);
     }
 
     ProxyConfigBuilder::Params params;
@@ -171,7 +176,7 @@ core::OperationResult NginxProxyProvider::detach_certificate(const std::string& 
     {
         auto pos = existing.find("proxy_pass http://");
         if (pos != std::string::npos) {
-            pos += 17;
+            pos += 18; // length of "proxy_pass http://"
             auto end = existing.find(";", pos);
             if (end != std::string::npos) {
                 upstream = existing.substr(pos, end - pos);
@@ -180,6 +185,10 @@ core::OperationResult NginxProxyProvider::detach_certificate(const std::string& 
     }
     if (upstream.empty()) {
         upstream = "site-0-web:80";
+    }
+    // Clean leading slash if present (from old buggy extraction)
+    if (!upstream.empty() && upstream[0] == '/') {
+        upstream = upstream.substr(1);
     }
 
     logger_.info("PROXY", domain + ": detaching certificate");
@@ -207,12 +216,25 @@ core::OperationResult NginxProxyProvider::detach_certificate(const std::string& 
     return {true, ""};
 }
 
-bool NginxProxyProvider::validate_nginx_config(const std::string& config_content) const {
-    // For now, write to a temp file in the proxy config directory and run nginx -t
-    (void)config_content;
-    // TODO: Run "docker exec containercp-proxy nginx -t" to validate syntax
-    // For now, assume valid (the config is generated from templates)
-    return true;
+bool NginxProxyProvider::validate_nginx_config(const std::string& /*config_path*/) const {
+    std::string cmd = "docker exec " + proxy_name() + " nginx -t 2>&1";
+    std::string out_file = "/tmp/containercp-nginx-check.txt";
+    std::system((cmd + " > " + out_file + " 2>&1").c_str());
+    std::ifstream out_in(out_file);
+    bool ok = true;
+    if (out_in.is_open()) {
+        std::string line;
+        while (std::getline(out_in, line)) {
+            if (line.find("test failed") != std::string::npos || line.find("emerg") != std::string::npos) {
+                logger_.error("PROXY", "nginx: " + line);
+                ok = false;
+            } else if (line.find("test is successful") != std::string::npos) {
+                logger_.info("PROXY", "nginx config valid");
+            }
+        }
+    }
+    std::remove(out_file.c_str());
+    return ok;
 }
 
 core::OperationResult NginxProxyProvider::reload() {
