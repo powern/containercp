@@ -15,9 +15,9 @@ static size_t http01_write_cb(char* data, size_t size, size_t nmemb, std::string
 namespace containercp::ssl {
 
 HTTP01ChallengeProvider::HTTP01ChallengeProvider(logger::Logger& logger,
-                                                  const std::string& ssl_root)
+                                                  const std::string& sites_root)
     : logger_(logger)
-    , ssl_root_(ssl_root)
+    , sites_root_(sites_root)
 {
 }
 
@@ -26,10 +26,9 @@ std::string HTTP01ChallengeProvider::type() const {
 }
 
 std::string HTTP01ChallengeProvider::challenge_dir(const std::string& domain) const {
-    // Flat challenge directory served by central proxy's location block:
-    //   location /.well-known/acme-challenge/ { root /srv/containercp/ssl; }
-    (void)domain;
-    return ssl_root_ + "/.well-known/acme-challenge";
+    // Challenge files are served by the site web container.
+    // The site directory is mounted at /var/www/html/ inside the container.
+    return sites_root_ + "/" + domain + "/public/.well-known/acme-challenge";
 }
 
 core::OperationResult HTTP01ChallengeProvider::prepare(
