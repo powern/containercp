@@ -689,16 +689,23 @@ core::OperationResult AcmeClient::get_authorization(const std::string& authz_url
     {
         auto val_key = resp.body.find("\"identifier\"");
         if (val_key != std::string::npos) {
-            auto val_val = resp.body.find("\"value\":\"", val_key);
+            auto val_val = resp.body.find("\"value\"", val_key);
             if (val_val != std::string::npos) {
-                val_val += 9; // skip "value":"
-                auto end = resp.body.find('"', val_val);
-                if (end != std::string::npos) {
-                    authz.domain = resp.body.substr(val_val, end - val_val);
+                val_val = resp.body.find('"', val_val + 7); // find the quote after "value":
+                if (val_val != std::string::npos && val_val + 1 < resp.body.size() && resp.body[val_val + 1] == ':') {
+                    val_val = resp.body.find('"', val_val + 2); // find opening quote of the value
+                }
+                if (val_val != std::string::npos && resp.body[val_val] == '"') {
+                    val_val++; // skip opening quote
+                    auto end = resp.body.find('"', val_val);
+                    if (end != std::string::npos) {
+                        authz.domain = resp.body.substr(val_val, end - val_val);
+                    }
                 }
             }
         }
     }
+    logger_.info("ACME-DBG", "authz.identifier.value=" + authz.domain);
     authz.status = find_json_string(resp.body, "status");
 
     // Parse challenges array robustly

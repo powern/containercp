@@ -147,6 +147,11 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
         auto authz_result = acme_.get_authorization(authz_url, authz);
         if (!authz_result.success) return authz_result;
 
+        if (authz.domain.empty()) {
+            return {false, "Authorization returned empty domain"};
+        }
+        logger_.info("LetsEncrypt", "Processing authorization for " + authz.domain);
+
         // Find the HTTP-01 challenge
         AcmeClient::Challenge* http_challenge = nullptr;
         for (auto& ch : authz.challenges) {

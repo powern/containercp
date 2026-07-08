@@ -26,8 +26,10 @@ std::string HTTP01ChallengeProvider::type() const {
 }
 
 std::string HTTP01ChallengeProvider::challenge_dir(const std::string& domain) const {
-    // Write challenge files under the ACME well-known path, served by central proxy
-    return ssl_root_ + "/" + domain + "/.well-known/acme-challenge";
+    // Flat challenge directory served by central proxy's location block:
+    //   location /.well-known/acme-challenge/ { root /srv/containercp/ssl; }
+    (void)domain;
+    return ssl_root_ + "/.well-known/acme-challenge";
 }
 
 core::OperationResult HTTP01ChallengeProvider::prepare(
@@ -35,10 +37,13 @@ core::OperationResult HTTP01ChallengeProvider::prepare(
     const std::string& token,
     const std::string& key_authorization)
 {
+    // Validate domain is not empty
+    if (domain.empty()) {
+        return {false, "Domain cannot be empty for HTTP-01 challenge"};
+    }
+
     // Ensure challenge directory exists
     std::string dir = challenge_dir(domain);
-    std::string parent = ssl_root_ + "/" + domain;
-    ::mkdir(parent.c_str(), 0700);
     ::mkdir(dir.c_str(), 0755);
 
     // Write token file
@@ -50,7 +55,8 @@ core::OperationResult HTTP01ChallengeProvider::prepare(
     file << key_authorization;
     file.close();
 
-    logger_.info("HTTP-01", "Challenge token written to " + path);
+    logger_.info("HTTP-01", "challenge_root=" + dir);
+    logger_.info("HTTP-01", "challenge_file=" + path);
     return {true, ""};
 }
 
