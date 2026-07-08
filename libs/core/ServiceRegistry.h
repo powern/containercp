@@ -21,6 +21,7 @@
 #include "php/PhpVersionManager.h"
 #include "runtime/PortManager.h"
 #include "ssl/CertificateProvider.h"
+#include "ssl/CertificateStore.h"
 #include "ssl/LetsEncryptProvider.h"
 #include "ssl/PemCertificateProvider.h"
 #include "ssl/HTTP01ChallengeProvider.h"
@@ -58,6 +59,7 @@ public:
     proxy::ReverseProxyManager& reverse_proxies();
     proxy::ProxyProvider& proxy_provider();
     ssl::SslCertificateManager& ssl();
+    ssl::CertificateStore& cert_store();
     ssl::CertificateProvider& cert_provider();
     ssl::CertificateProvider& cert_provider_by_name(const std::string& name);
     std::unordered_map<std::string, std::shared_ptr<ssl::CertificateProvider>> certificate_providers();
@@ -94,6 +96,7 @@ private:
     proxy::ReverseProxyManager reverse_proxies_;
     proxy::NginxProxyProvider proxy_provider_;
     ssl::SslCertificateManager ssl_;
+    ssl::CertificateStore cert_store_;
     ssl::HTTP01ChallengeProvider http01_challenge_;
     std::shared_ptr<ssl::LetsEncryptProvider> cert_provider_;
     std::shared_ptr<ssl::PemCertificateProvider> pem_cert_provider_;

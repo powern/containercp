@@ -266,18 +266,19 @@ implemented — the data model already supports it.
 2. SslCertificate resource created (status: ISSUING)
 3. LetsEncryptProvider creates account key (if first run, stored at
    /srv/containercp/ssl/account.pem)
-4. Provider requests new order + authorization from ACME server
-5. ACME returns HTTP-01 challenge token + value
-6. Provider writes challenge file to
-   /srv/containercp/ssl/<domain>/.well-known/acme-challenge/<token>
-7. Central nginx serves /.well-known/acme-challenge/ from
-   /srv/containercp/ssl/<domain>/.well-known/acme-challenge/
-8. ACME server validates → certificate issued
-9. Provider downloads fullchain.pem, privkey.pem, chain.pem
-10. Provider writes metadata.json with status: active
-11. Provider calls ProxyProvider::attach_certificate(domain, cert_path, key_path)
-12. ProxyProvider generates HTTPS server block, reloads nginx
-13. SslCertificate status updated to ACTIVE
+4. Provider runs preflight validation (DNS, port 80, .local check)
+5. Provider requests new order + authorization from ACME server
+6. ACME returns HTTP-01 challenge token + value
+7. Provider delegates to ChallengeProvider::prepare() which writes
+   challenge file to site directory's .well-known/acme-challenge/<token>
+8. Central nginx serves /.well-known/acme-challenge/ from disk
+9. ACME server validates → certificate issued
+10. Provider downloads fullchain.pem, privkey.pem, chain.pem
+11. Provider calls CertificateStore::save_all(site_id, meta, cert, key, chain)
+12. Provider writes metadata.json via CertificateStore (atomic write)
+13. Provider calls ProxyProvider::attach_certificate(domain, cert_path, key_path)
+14. ProxyProvider generates HTTPS server block, reloads nginx
+15. SslCertificate status updated to ACTIVE
 ```
 
 On failure at any step:
@@ -395,44 +396,68 @@ Extended pipe-delimited format:
 id|domain_id|domain|provider|certificate_path|key_path|chain_path|issued_at|expires_at|renew_after|status|auto_renew|https_enabled|redirect_enabled|domains|challenge_type|last_error|last_validation|renew_attempts|version
 ```
 
-### Disk storage: `/srv/containercp/ssl/<domain>/`
+### Disk storage: `/srv/containercp/ssl/<site-id>/`
+
+Storage is keyed by Site ID, not domain name. This allows future
+domain renames without moving certificate storage. The current domain
+is stored in metadata only.
 
 ```
 /srv/containercp/ssl/
 ├── account.pem                        — ACME account private key
-└── <domain>/
-    ├── fullchain.pem                  — full certificate chain
-    ├── privkey.pem                    — private key (mode 600)
-    ├── chain.pem                      — CA chain only
-    └── metadata.json                  — machine-readable metadata
+└── <site-id>/
+    ├── metadata.json                  — single source of truth
+    ├── fullchain.pem                  — full certificate chain (0644)
+    ├── privkey.pem                    — private key (0600)
+    └── chain.pem                      — CA chain only (0644)
 ```
+
+### StorageManager: `CertificateStore`
+
+A dedicated `CertificateStore` class handles all disk I/O. Providers
+never manipulate files directly. Only `CertificateStore` performs:
+
+- `save_metadata(site_id, metadata)` — atomic write with fsync + rename
+- `load_metadata(site_id)` — parse JSON, return Metadata struct
+- `save_fullchain / save_privkey / save_chain` — atomic PEM writes
+- `save_all(site_id, ...)` — batch write all files
+- `load_fullchain / load_privkey / load_chain` — read PEM files
+- `remove_all(site_id)` — delete all files and directory
+- `enumerate()` — scan ssl_root for numeric directories
+- `validate(site_id)` — check files, permissions, metadata integrity
 
 ### metadata.json format
 
 ```json
 {
     "version": 1,
-    "domain": "example.com",
-    "provider": "letsencrypt",
+    "site_id": 1,
+    "provider_id": "letsencrypt",
+    "certificate_type": "pem",
     "status": "active",
+    "domains": ["example.com", "www.example.com"],
     "issued_at": "2025-07-08T12:00:00Z",
     "expires_at": "2025-10-06T12:00:00Z",
     "renew_after": "2025-09-06T12:00:00Z",
-    "auto_renew": true,
     "https_enabled": true,
     "redirect_enabled": false,
-    "domains": ["example.com", "www.example.com"],
+    "auto_renew": true,
     "challenge_type": "http-01",
-    "last_error": "",
     "last_validation": "2025-07-08T11:55:00Z",
+    "last_error": "",
     "renew_attempts": 0,
-    "renewal_failed": false
+    "fingerprint_sha256": "abc123...",
+    "serial_number": "04:AB:CD...",
+    "issuer": "CN=R3, O=Let's Encrypt, C=US",
+    "subject": "CN=example.com",
+    "created_at": "2025-07-08T12:00:00Z",
+    "updated_at": "2025-07-08T12:00:00Z"
 }
 ```
 
-The `version` field enables forward-compatible schema changes.
+The `version` field enables forward-compatible schema migrations.
 Future readers must tolerate unknown fields. Writers always include
-all known fields.
+all known fields. Timestamps use ISO-8601 UTC.
 
 ## Providers
 
@@ -1174,16 +1199,16 @@ on the SSL page with their original status.
 
 ## Required files
 
-### New files
-- `libs/ssl/CertificateProvider.h` — abstract interface (moved from existing placeholder)
-- `libs/ssl/ChallengeProvider.h` — abstract ACME challenge interface
-- `libs/ssl/HTTP01ChallengeProvider.h/.cpp` — HTTP-01 challenge implementation
-- `libs/ssl/AcmeClient.h/.cpp` — ACME protocol HTTP-01 implementation (JWT, JSON, libcurl)
-- `libs/ssl/LetsEncryptProvider.h/.cpp` — real ACME certificate lifecycle (replaces placeholder)
-- `libs/ssl/CustomCertificateProvider.h/.cpp` — manages existing PEM files
-- `libs/ssl/RenewalScheduler.h/.cpp` — background renewal scheduler
-- `libs/ssl/CertificateStore.h/.cpp` — disk I/O for cert files + metadata.json
-- `libs/ssl/SslCertificateView.h/.cpp` — view model combining site + ssl state
+### New files (created)
+- `libs/ssl/CertificateProvider.h` — abstract interface with provider_id, provider_name, supports_auto_renew
+- `libs/ssl/ChallengeProvider.h` — abstract ACME challenge interface with can_validate()
+- `libs/ssl/HTTP01ChallengeProvider.h/.cpp` — HTTP-01 challenge implementation (placeholder, real in Step 4)
+- `libs/ssl/LetsEncryptProvider.h/.cpp` — ACME certificate lifecycle (placeholder, real in Step 4)
+- `libs/ssl/PemCertificateProvider.h/.cpp` — manages PEM certificate files, no auto-renew
+- `libs/ssl/CertificateStore.h/.cpp` — provider-independent disk I/O for cert files + metadata.json
+- `libs/ssl/RenewalScheduler.h/.cpp` — background renewal scheduler (Step 6)
+- `libs/ssl/AcmeClient.h/.cpp` — ACME protocol HTTP-01 implementation (Step 4)
+- `libs/ssl/SslCertificateView.h/.cpp` — view model combining site + ssl state (Step 7)
 
 ### Modified files
 - `libs/ssl/CertificateProvider.h` — extended interface with provider metadata

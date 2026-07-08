@@ -6,6 +6,55 @@ Format: date | commit | summary
 
 ---
 
+## 2025-07-08 | `(this commit)` | SSL Step 2: provider-independent certificate storage
+
+### New: CertificateStore (`libs/ssl/CertificateStore.h/.cpp`)
+- Provider-independent disk storage layer for SSL certificates
+- Storage layout: `/srv/containercp/ssl/<site-id>/` (keyed by site ID,
+  not domain — allows future domain renames without moving storage)
+- Files: `metadata.json`, `fullchain.pem`, `privkey.pem`, `chain.pem`
+
+### Metadata (`metadata.json`)
+- Single source of truth with all fields: version, site_id, provider_id,
+  certificate_type, status, domains[], issued_at, expires_at, renew_after,
+  https_enabled, redirect_enabled, auto_renew, challenge_type,
+  last_validation, last_error, renew_attempts, fingerprint_sha256,
+  serial_number, issuer, subject, created_at, updated_at
+- All timestamps in ISO-8601 UTC
+- Version field (1) enables forward-compatible schema migrations
+
+### Atomic writes
+- All file writes use `.tmp` + fsync + `rename()` pattern
+- No partially-written files after crashes
+- Directory fsync after rename for metadata durability
+
+### File permissions
+- Private key: 0600 (owner read/write only)
+- Certificate files: 0644 (world readable)
+- Directory: 0700
+
+### Validation
+- `CertificateStore::validate(site_id)` checks: missing files, corrupted
+  metadata, invalid JSON, expired certificates, mismatched domains,
+  broken permissions, empty files
+
+### Tests
+- 12 new test cases covering: save/load metadata, save/load cert files,
+  atomic replace, save_all, remove_all, enumerate, validate active cert,
+  validate missing files, invalid JSON, version compatibility,
+  timestamp format, domains helpers
+- 83 total test cases, 361 assertions, all pass
+
+### Files changed
+- `libs/ssl/CertificateStore.h/.cpp` — new files
+- `libs/core/ServiceRegistry.h/.cpp` — wired up CertificateStore
+- `CMakeLists.txt` — added CertificateStore source
+- `tests/test_cert_store.cpp` — 12 new test cases
+- `tests/CMakeLists.txt` — added test source
+- `CHANGELOG.md` — this entry
+
+---
+
 ## 2025-07-08 | `4d51f53` | RC2 complete — validated on real Debian 13
 
 ### RC2: All items validated on real Debian 13 server

@@ -209,18 +209,15 @@
 
 | Task | Status | Notes |
 |------|--------|-------|
-| ARCH-005: Architecture Proposal | 🔄 | Being written |
-| SSL-001: LetsEncryptProvider (real ACME HTTP-01) | ⬜ | |
-| SSL-002: Certificate storage on disk (`/srv/containercp/ssl/`) | ⬜ | |
-| SSL-003: Automatic issue + renewal | ⬜ | |
-| SSL-004: HTTP → HTTPS redirect | ⬜ | |
-| SSL-005: REST API endpoints | ⬜ | Full CRUD + issue/renew/enable/disable |
-| SSL-006: Web UI SSL page | ⬜ | Certificate state, expiration, actions |
-| SSL-007: CLI commands | ⬜ | |
-| SSL-008: Proxy integration (attach certs, reload) | ⬜ | |
-| SSL-009: Force renew | ⬜ | |
-| SSL-010: Certificate status + expiration display | ⬜ | |
-| SSL-011: Future provider compatibility (DNS-01, Cloudflare, custom) | ⬜ | Extensible interfaces |
+| ARCH-005: Architecture Proposal | ✅ | Approved |
+| SSL-001: CertificateProvider abstraction | ✅ | Step 1 complete |
+| SSL-002: CertificateStore (provider-independent storage) | ✅ | Step 2 complete |
+| SSL-003: REST API endpoints | ⬜ | Step 3 (next) |
+| SSL-004: LetsEncryptProvider (real ACME HTTP-01) | ⬜ | Step 4 |
+| SSL-005: Proxy integration (attach certs, reload, redirect) | ⬜ | Step 5 |
+| SSL-006: RenewalScheduler | ⬜ | Step 6 |
+| SSL-007: Web UI SSL page | ⬜ | Step 7 |
+| SSL-008: Real server validation | ⬜ | Step 8 |
 
 ## Version 0.6 — DNS and Mail (Planned, after v0.5.0)
 

@@ -5,6 +5,7 @@ add_executable(containercp_tests
     test_access.cpp
     test_proxy.cpp
     test_ssl.cpp
+    test_cert_store.cpp
     test_storage.cpp
     test_api.cpp
     test_daemon.cpp
@@ -27,6 +28,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/proxy/ReverseProxyManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/ssl/SslCertificate.cpp
     ${CMAKE_SOURCE_DIR}/libs/ssl/SslCertificateManager.cpp
+    ${CMAKE_SOURCE_DIR}/libs/ssl/CertificateStore.cpp
     ${CMAKE_SOURCE_DIR}/libs/ssl/PemCertificateProvider.cpp
     ${CMAKE_SOURCE_DIR}/libs/ssl/HTTP01ChallengeProvider.cpp
     ${CMAKE_SOURCE_DIR}/libs/storage/Storage.cpp

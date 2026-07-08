@@ -12,6 +12,7 @@ ServiceRegistry::ServiceRegistry()
     , backup_provider_(logger_)
     , access_provider_(logger_)
     , proxy_provider_(filesystem_, config_, logger_, ssl_)
+    , cert_store_(logger_, config_.data_root() + "/ssl")
     , http01_challenge_(logger_)
     , cert_provider_(std::make_shared<ssl::LetsEncryptProvider>(logger_, http01_challenge_))
     , pem_cert_provider_(std::make_shared<ssl::PemCertificateProvider>(logger_))
@@ -236,6 +237,10 @@ proxy::ProxyProvider& ServiceRegistry::proxy_provider() {
 
 ssl::SslCertificateManager& ServiceRegistry::ssl() {
     return ssl_;
+}
+
+ssl::CertificateStore& ServiceRegistry::cert_store() {
+    return cert_store_;
 }
 
 ssl::CertificateProvider& ServiceRegistry::cert_provider() {
