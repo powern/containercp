@@ -298,6 +298,52 @@ std::string AcmeClient::generate_csr(const std::string& domain, const std::strin
 // ============================================================
 // JWS signing (ES256)
 // ============================================================
+std::string AcmeClient::compute_thumbprint() {
+    // Load account key
+    BIO* key_bio = BIO_new(BIO_s_file());
+    if (BIO_read_filename(key_bio, account_key_path_.c_str()) <= 0) {
+        BIO_free(key_bio);
+        return "";
+    }
+    EVP_PKEY* pkey = PEM_read_bio_PrivateKey(key_bio, nullptr, nullptr, nullptr);
+    BIO_free(key_bio);
+    if (!pkey) return "";
+
+    EC_KEY* ec = EVP_PKEY_get1_EC_KEY(pkey);
+    if (!ec) { EVP_PKEY_free(pkey); return ""; }
+    const EC_GROUP* group = EC_KEY_get0_group(ec);
+    const EC_POINT* point = EC_KEY_get0_public_key(ec);
+    if (!group || !point) { EC_KEY_free(ec); EVP_PKEY_free(pkey); return ""; }
+
+    BIGNUM* x = BN_new();
+    BIGNUM* y = BN_new();
+    if (!x || !y || !EC_POINT_get_affine_coordinates_GFp(group, point, x, y, nullptr)) {
+        BN_free(x); BN_free(y); EC_KEY_free(ec); EVP_PKEY_free(pkey);
+        return "";
+    }
+
+    char x_raw[32] = {0};
+    char y_raw[32] = {0};
+    BN_bn2binpad(x, (unsigned char*)x_raw, 32);
+    BN_bn2binpad(y, (unsigned char*)y_raw, 32);
+    std::string x_b64 = url64(std::string(x_raw, 32));
+    std::string y_b64 = url64(std::string(y_raw, 32));
+
+    std::string jwk_str = "{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"" + x_b64 + "\",\"y\":\"" + y_b64 + "\"}";
+    std::string thumbprint = sha256_base64(jwk_str);
+
+    BN_free(x); BN_free(y);
+    EC_KEY_free(ec);
+    EVP_PKEY_free(pkey);
+    return thumbprint;
+}
+
+std::string AcmeClient::compute_key_authorization(const std::string& token) {
+    std::string thumbprint = compute_thumbprint();
+    if (thumbprint.empty()) return "";
+    return token + "." + thumbprint;
+}
+
 std::string AcmeClient::sign_jws(const std::string& payload, const std::string& url, bool use_kid) {
     // Load account key
     BIO* key_bio = BIO_new(BIO_s_file());
@@ -348,9 +394,7 @@ std::string AcmeClient::sign_jws(const std::string& payload, const std::string& 
     std::string x_b64 = url64(std::string(x_raw, 32));
     std::string y_b64 = url64(std::string(y_raw, 32));
 
-    // JWK thumbprint: SHA256 of {"crv":"P-256","kty":"EC","x":"...","y":"..."}
-    std::string jwk_str = "{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"" + x_b64 + "\",\"y\":\"" + y_b64 + "\"}";
-    std::string thumbprint = sha256_base64(jwk_str);
+    std::string thumbprint = compute_thumbprint();
 
     // Build protected header
     std::string protected_header;

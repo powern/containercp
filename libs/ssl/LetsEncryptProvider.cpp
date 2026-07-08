@@ -1,9 +1,17 @@
 #include "LetsEncryptProvider.h"
 
+#include <curl/curl.h>
 #include <fstream>
 #include <sstream>
 
 namespace containercp::ssl {
+
+// libcurl write callback for local verification
+static size_t verify_write_cb(char* data, size_t size, size_t nmemb, void* buf) {
+    if (!data || !buf) return 0;
+    static_cast<std::string*>(buf)->append(data, size * nmemb);
+    return size * nmemb;
+}
 
 LetsEncryptProvider::LetsEncryptProvider(logger::Logger& logger,
                                          ChallengeProvider& challenge,
@@ -166,9 +174,31 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
 
         // Prepare challenge via ChallengeProvider
         // key_auth = token + "." + thumbprint (SHA256 of account JWK)
-        std::string key_auth = http_challenge->token + ".placeholder_thumbprint";
+        std::string key_auth = acme_.compute_key_authorization(http_challenge->token);
+        logger_.info("LetsEncrypt", "key_authorization=" + key_auth);
         auto prep_result = challenge_.prepare(authz.domain, http_challenge->token, key_auth);
         if (!prep_result.success) return prep_result;
+
+        // Local verification: fetch challenge via HTTP and compare
+        {
+            std::string challenge_url = "http://" + authz.domain + "/.well-known/acme-challenge/" + http_challenge->token;
+            logger_.info("LetsEncrypt", "Verifying challenge at " + challenge_url);
+            CURL* curl = curl_easy_init();
+            if (curl) {
+                std::string resp_body;
+                curl_easy_setopt(curl, CURLOPT_URL, challenge_url.c_str());
+                curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, verify_write_cb);
+                curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp_body);
+                curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+                CURLcode cr = curl_easy_perform(curl);
+                long http_code = 0;
+                if (cr == CURLE_OK)
+                    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+                curl_easy_cleanup(curl);
+                logger_.info("LetsEncrypt", "Challenge HTTP status=" + std::to_string(http_code)
+                             + " body='" + resp_body + "' expected='" + key_auth + "'");
+            }
+        }
 
         // Respond to challenge (signal ACME server that we're ready)
         auto resp_result = acme_.respond_to_challenge(http_challenge->url);
@@ -178,6 +208,13 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
         std::string challenge_status;
         auto poll_result = acme_.poll_challenge(http_challenge->url, challenge_status);
         if (!poll_result.success) return poll_result;
+
+        // On invalid, log full response
+        if (challenge_status == "invalid") {
+            // Re-fetch challenge status for full details
+            AcmeClient::Authorization debug_authz;
+            acme_.get_authorization(authz.url, debug_authz);
+        }
 
         // Clean up challenge tokens
         challenge_.cleanup(authz.domain, http_challenge->token);

@@ -59,6 +59,8 @@ public:
     static std::string url64(const std::string& data);
     static std::string sha256_base64(const std::string& data);
 
+    std::string compute_key_authorization(const std::string& token);
+
 private:
     struct Response {
         int status_code = 0;
@@ -70,6 +72,7 @@ private:
     std::string find_json_string_array(const std::string& json, const std::string& key) const;
 
     std::string get_nonce();
+    std::string compute_thumbprint();
     std::string sign_jws(const std::string& payload, const std::string& url, bool use_kid = false);
     Response acme_post(const std::string& url, const std::string& payload);
     Response acme_get(const std::string& url);
