@@ -81,6 +81,10 @@ Forbidden without confirmation:
 - Validation VM testing is required before closing any Epic
 - No Epic is considered complete until it has passed validation on the official VM
 - See `planning/TEST_ENVIRONMENT.md` for VM setup
+- **Changelog required** — every completed task or bug fix must add an entry to
+  `CHANGELOG.md` with: date, commit hash, summary, files changed, user-visible
+  behavior, validation result, and known risks. Commit changelog together with the
+  code/docs change.
 
 ## Validation-driven development
 
