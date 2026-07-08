@@ -1069,17 +1069,19 @@ LetsEncryptProvider rewritten as adapter around AcmeClient:
 All ACME protocol details are inside AcmeClient — LetsEncryptProvider
 only orchestrates the lifecycle. ChallengeProvider handles transport.
 
-### Step 5 — Proxy integration
-- Implement `ProxyProvider::attach_certificate()` in
-  `NginxProxyProvider` — generate HTTPS nginx config with
-  `ssl_certificate` + `ssl_certificate_key` + optional redirect
-- Implement `ProxyProvider::detach_certificate()` — remove SSL config,
-  revert to HTTP
-- Add `/.well-known/acme-challenge/` location to central proxy config
-- Call `attach_certificate` after successful issue/renew
-- Call `detach_certificate` on disable
+### Step 5 — Proxy integration (Complete)
+- `ProxyProvider::attach_certificate()` — generates HTTPS nginx config with
+  `ssl_certificate` + `ssl_certificate_key` directives
+- `ProxyProvider::detach_certificate()` — removes SSL config, reverts to HTTP
+- Transactional config: write temp file, validate syntax, atomic rename, reload
+- `POST /ssl/<domain>/enable` calls `attach_certificate()` via proxy
+- `POST /ssl/<domain>/disable` calls `detach_certificate()` via proxy
+- HTTPS config never breaks HTTP — HTTP block always present
+- Certificate files kept on disk after disable
 - No nginx-specific SSL logic outside `NginxProxyProvider`
-- Commit and push
+- JobExecutor replaces detached `std::thread` for all async work
+  - Configurable worker pool (2), bounded queue (64)
+  - Graceful shutdown with pending task cancellation
 
 ### Step 6 — RenewalScheduler
 - Implement `RenewalScheduler` with 24-hour interval

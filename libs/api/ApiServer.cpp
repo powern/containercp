@@ -17,7 +17,6 @@
 #include <netinet/in.h>
 #include <sstream>
 #include <sys/socket.h>
-#include <thread>
 #include <unistd.h>
 
 namespace containercp::api {
@@ -769,18 +768,21 @@ bool ApiServer::start() {
             uint64_t job_id = s.jobs().create("ssl-issue", steps);
             s.jobs().update(job_id, "pending", 0, "Queued");
 
-            // Enqueue async job execution
-            std::thread worker([&s, provider_id, domain, job_id]() {
-                auto& provider = *s.certificate_providers()[provider_id];
-                s.jobs().update(job_id, "running", 10, "Requesting certificate...");
-                auto result = provider.request(domain);
-                if (result.success) {
-                    s.jobs().update(job_id, "completed", 100, "Certificate issued");
-                } else {
-                    s.jobs().update(job_id, "failed", 100, result.message);
-                }
-            });
-            worker.detach();
+            // Enqueue async job execution via JobExecutor
+            bool submitted = s.job_executor().submit(job_id,
+                [&s, provider_id, domain](jobs::JobManager& jm, uint64_t jid) {
+                    auto& provider = *s.certificate_providers()[provider_id];
+                    jm.update(jid, "running", 10, "Requesting certificate...");
+                    auto result = provider.request(domain);
+                    if (result.success) {
+                        jm.update(jid, "completed", 100, "Certificate issued");
+                    } else {
+                        jm.update(jid, "failed", 100, result.message);
+                    }
+                });
+            if (!submitted) {
+                s.jobs().update(job_id, "failed", 0, "Task queue full");
+            }
 
             r.status_code = 202;
             std::ostringstream json;
@@ -811,17 +813,20 @@ bool ApiServer::start() {
             uint64_t job_id = s.jobs().create("ssl-renew", steps);
             s.jobs().update(job_id, "pending", 0, "Queued");
 
-            std::thread worker([&s, provider_id, domain, job_id]() {
-                auto& provider = *s.certificate_providers()[provider_id];
-                s.jobs().update(job_id, "running", 10, "Renewing certificate...");
-                auto result = provider.renew(domain);
-                if (result.success) {
-                    s.jobs().update(job_id, "completed", 100, "Certificate renewed");
-                } else {
-                    s.jobs().update(job_id, "failed", 100, result.message);
-                }
-            });
-            worker.detach();
+            bool submitted = s.job_executor().submit(job_id,
+                [&s, provider_id, domain](jobs::JobManager& jm, uint64_t jid) {
+                    auto& provider = *s.certificate_providers()[provider_id];
+                    jm.update(jid, "running", 10, "Renewing certificate...");
+                    auto result = provider.renew(domain);
+                    if (result.success) {
+                        jm.update(jid, "completed", 100, "Certificate renewed");
+                    } else {
+                        jm.update(jid, "failed", 100, result.message);
+                    }
+                });
+            if (!submitted) {
+                s.jobs().update(job_id, "failed", 0, "Task queue full");
+            }
 
             r.status_code = 202;
             std::ostringstream json;
@@ -866,6 +871,14 @@ bool ApiServer::start() {
                 s.save();
             }
 
+            // Attach certificate to proxy config
+            std::string cert_path = s.cert_provider().certificate_path(domain);
+            std::string key_path = s.cert_provider().key_path(domain);
+            auto proxy_result = s.proxy_provider().attach_certificate(domain, cert_path, key_path);
+            if (!proxy_result.success) {
+                s.logger().warning("API", "Proxy certificate attach failed: " + proxy_result.message);
+            }
+
             std::ostringstream json;
             json << "{\"success\":true,\"data\":{"
                  << "\"domain\":\"" << JsonFormatter::escape(domain)
@@ -888,6 +901,12 @@ bool ApiServer::start() {
             if (cert) {
                 cert->https_enabled = false;
                 s.save();
+            }
+
+            // Detach certificate from proxy config
+            auto proxy_result = s.proxy_provider().detach_certificate(domain);
+            if (!proxy_result.success) {
+                s.logger().warning("API", "Proxy certificate detach failed: " + proxy_result.message);
             }
 
             std::ostringstream json;

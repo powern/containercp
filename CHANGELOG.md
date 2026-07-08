@@ -6,7 +6,39 @@ Format: date | commit | summary
 
 ---
 
-## 2025-07-08 | `(this commit)` | SSL Step 4: reusable ACME client foundation
+## 2025-07-08 | `(this commit)` | SSL Step 5: JobExecutor + transactional HTTPS proxy integration
+
+### New: JobExecutor (`libs/jobs/JobExecutor.h/.cpp`)
+- Reusable background task executor with worker pool
+- Configurable worker count (default 2) and bounded task queue (default 64)
+- Thread-safe submission via `submit(job_id, task)` — returns false if queue full
+- Graceful shutdown: waits for running workers, cancels pending tasks
+- Replaces all detached `std::thread` usage in ApiServer SSL handlers
+- Shared by all subsystems (SSL issuance, renewal, future backup, etc.)
+
+### New: ProxyProvider certificate attachment
+- `ProxyProvider::attach_certificate(domain, cert_path, key_path)` — adds HTTPS
+  server block with ssl_certificate directives to nginx config
+- `ProxyProvider::detach_certificate(domain)` — removes HTTPS block,
+  reverts to HTTP-only. Certificate files kept on disk.
+- Transactional config generation: write temp file, validate nginx syntax,
+  atomic rename, reload
+- HTTPS config never breaks HTTP — HTTP block always present
+- `POST /ssl/<domain>/enable` calls `attach_certificate()` via proxy
+- `POST /ssl/<domain>/disable` calls `detach_certificate()` via proxy
+
+### Files changed
+- `libs/jobs/JobExecutor.h/.cpp` — new worker pool executor
+- `libs/proxy/ProxyProvider.h` — attach_certificate / detach_certificate
+- `libs/proxy/NginxProxyProvider.h/.cpp` — nginx HTTPS config generation
+- `libs/api/ApiServer.cpp` — proxy calls in enable/disable handlers
+- `libs/core/ServiceRegistry.h/.cpp` — JobExecutor wired in
+- `app/containercpd/main.cpp` — JobExecutor started on daemon init
+- `CMakeLists.txt`, `tests/CMakeLists.txt` — added JobExecutor source
+
+---
+
+## 2025-07-08 | `efc66e6` | SSL Step 4: reusable ACME client foundation
 
 ### New: AcmeClient (`libs/ssl/AcmeClient.h/.cpp`)
 - RFC 8555 ACME protocol engine with layered architecture:

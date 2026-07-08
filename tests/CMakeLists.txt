@@ -45,6 +45,8 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/backup/BackupManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/backup/TarBackupProvider.cpp
     ${CMAKE_SOURCE_DIR}/libs/logger/Logger.cpp
+    ${CMAKE_SOURCE_DIR}/libs/jobs/JobManager.cpp
+    ${CMAKE_SOURCE_DIR}/libs/jobs/JobExecutor.cpp
 )
 
 target_include_directories(containercp_tests PRIVATE

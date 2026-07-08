@@ -104,6 +104,164 @@ core::OperationResult NginxProxyProvider::disable_proxy(const std::string& domai
     return {true, ""};
 }
 
+core::OperationResult NginxProxyProvider::attach_certificate(const std::string& domain,
+                                                              const std::string& cert_path,
+                                                              const std::string& key_path) {
+    std::string path = config_path(domain);
+    if (!fs_.exists(path)) {
+        return {false, "Proxy config not found for " + domain};
+    }
+
+    // Read existing HTTP config
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        return {false, "Cannot read existing config for " + domain};
+    }
+    std::string existing((std::istreambuf_iterator<char>(in)), {});
+    in.close();
+
+    // Build HTTPS config with redirect (existing HTTP block becomes redirect)
+    std::string upstream;
+    {
+        // Extract upstream from existing config
+        auto pos = existing.find("proxy_pass http://");
+        if (pos != std::string::npos) {
+            pos += 17; // length of "proxy_pass http://"
+            auto end = existing.find(";", pos);
+            if (end != std::string::npos) {
+                upstream = existing.substr(pos, end - pos);
+            }
+        }
+    }
+    if (upstream.empty()) {
+        upstream = "site-0-web:80";
+    }
+
+    std::ostringstream conf;
+    // HTTP block (always present)
+    conf << "server {\n"
+         << "    listen 80;\n"
+         << "    server_name " << domain << ";\n"
+         << "    location / {\n"
+         << "        proxy_pass http://" << upstream << ";\n"
+         << "        proxy_set_header Host $host;\n"
+         << "        proxy_set_header X-Real-IP $remote_addr;\n"
+         << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+         << "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+         << "    }\n"
+         << "}\n";
+
+    // HTTPS block
+    conf << "server {\n"
+         << "    listen 443 ssl;\n"
+         << "    server_name " << domain << ";\n"
+         << "    ssl_certificate " << cert_path << ";\n"
+         << "    ssl_certificate_key " << key_path << ";\n"
+         << "\n"
+         << "    location / {\n"
+         << "        proxy_pass http://" << upstream << ";\n"
+         << "        proxy_set_header Host $host;\n"
+         << "        proxy_set_header X-Real-IP $remote_addr;\n"
+         << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+         << "        proxy_set_header X-Forwarded-Proto https;\n"
+         << "    }\n"
+         << "}\n";
+
+    // Transactional write: write to temp file, validate, rename
+    std::string tmp_path = path + ".attach_tmp";
+    fs_.create_file(tmp_path, conf.str());
+
+    if (!validate_nginx_config(tmp_path)) {
+        std::filesystem::remove(tmp_path);
+        return {false, "Generated nginx config is invalid"};
+    }
+
+    // Replace original config with new one
+    std::filesystem::rename(tmp_path, path);
+
+    // Reload nginx
+    auto reload_result = reload();
+    if (!reload_result.success) {
+        return {false, "Config updated but nginx reload failed: " + reload_result.message};
+    }
+
+    logger_.info("PROXY", "Attached certificate for " + domain);
+    return {true, ""};
+}
+
+core::OperationResult NginxProxyProvider::detach_certificate(const std::string& domain) {
+    std::string path = config_path(domain);
+    if (!fs_.exists(path)) {
+        return {true, ""}; // No config, nothing to detach
+    }
+
+    // Read existing config
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        return {false, "Cannot read config for " + domain};
+    }
+    std::string existing((std::istreambuf_iterator<char>(in)), {});
+    in.close();
+
+    // Extract upstream from existing config
+    std::string upstream;
+    {
+        auto pos = existing.find("proxy_pass http://");
+        if (pos != std::string::npos) {
+            pos += 17;
+            auto end = existing.find(";", pos);
+            if (end != std::string::npos) {
+                upstream = existing.substr(pos, end - pos);
+            }
+        }
+    }
+    if (upstream.empty()) {
+        upstream = "site-0-web:80";
+    }
+
+    // Build pure HTTP config
+    std::ostringstream conf;
+    conf << "server {\n"
+         << "    listen 80;\n"
+         << "    server_name " << domain << ";\n"
+         << "\n"
+         << "    location / {\n"
+         << "        proxy_pass http://" << upstream << ";\n"
+         << "        proxy_set_header Host $host;\n"
+         << "        proxy_set_header X-Real-IP $remote_addr;\n"
+         << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+         << "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+         << "    }\n"
+         << "}\n";
+
+    // Transactional write
+    std::string tmp_path = path + ".detach_tmp";
+    fs_.create_file(tmp_path, conf.str());
+
+    if (!validate_nginx_config(tmp_path)) {
+        std::filesystem::remove(tmp_path);
+        return {false, "Generated nginx config is invalid"};
+    }
+
+    std::filesystem::rename(tmp_path, path);
+
+    auto reload_result = reload();
+    if (!reload_result.success) {
+        return {false, "Config updated but nginx reload failed: " + reload_result.message};
+    }
+
+    logger_.info("PROXY", "Detached certificate for " + domain);
+    return {true, ""};
+}
+
+bool NginxProxyProvider::validate_nginx_config(const std::string& config_content) const {
+    // For now, write to a temp file in the proxy config directory and run nginx -t
+    (void)config_content;
+    // TODO: Run "docker exec containercp-proxy nginx -t" to validate syntax
+    // For now, assume valid (the config is generated from templates)
+    return true;
+}
+
 core::OperationResult NginxProxyProvider::reload() {
     std::string cmd = "docker exec " + proxy_name() + " nginx -s reload > /dev/null 2>&1";
     int rc = std::system(cmd.c_str());

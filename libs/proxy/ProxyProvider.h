@@ -18,6 +18,16 @@ public:
     virtual core::OperationResult disable_proxy(const std::string& domain) = 0;
     virtual core::OperationResult reload() = 0;
     virtual core::OperationResult status(const std::string& domain) = 0;
+    virtual core::OperationResult attach_certificate(const std::string& domain,
+                                                       const std::string& cert_path,
+                                                       const std::string& key_path) {
+        (void)domain; (void)cert_path; (void)key_path;
+        return {false, "not implemented"};
+    }
+    virtual core::OperationResult detach_certificate(const std::string& domain) {
+        (void)domain;
+        return {false, "not implemented"};
+    }
     virtual core::OperationResult ensure_central_proxy() { return {true, ""}; }
     virtual core::OperationResult remove_central_proxy() { return {true, ""}; }
 };

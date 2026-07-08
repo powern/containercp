@@ -40,6 +40,7 @@ set(CONTAINERCP_SOURCES
     libs/filesystem/Filesystem.cpp
     libs/filesystem/SiteLayout.cpp
     libs/jobs/JobManager.cpp
+    libs/jobs/JobExecutor.cpp
     libs/logger/Logger.cpp
     libs/mail/MailDomain.cpp
     libs/mail/MailDomainManager.cpp

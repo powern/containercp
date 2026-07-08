@@ -17,6 +17,7 @@ ServiceRegistry::ServiceRegistry()
     , cert_provider_(std::make_shared<ssl::LetsEncryptProvider>(logger_, http01_challenge_, cert_store_))
     , pem_cert_provider_(std::make_shared<ssl::PemCertificateProvider>(logger_))
     , storage_(config_.database_dir())
+    , job_executor_(jobs_, 2, 64)
     , auth_(*this)
     , runtime_(logger_, config_.sites_dir())
     , hosting_provider_(filesystem_, config_, php_versions_, runtime_, profiles_)
@@ -165,6 +166,7 @@ ServiceRegistry::ServiceRegistry()
     cert_providers_["pem"] = pem_cert_provider_;
 
     auth_.initialize();
+    job_executor_.start();
 }
 
 config::Config& ServiceRegistry::config() {
@@ -209,6 +211,10 @@ backup::BackupManager& ServiceRegistry::backups() {
 
 jobs::JobManager& ServiceRegistry::jobs() {
     return jobs_;
+}
+
+jobs::JobExecutor& ServiceRegistry::job_executor() {
+    return job_executor_;
 }
 
 backup::BackupProvider& ServiceRegistry::backup_provider() {

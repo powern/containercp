@@ -9,6 +9,7 @@
 #include "backup/BackupManager.h"
 #include "backup/TarBackupProvider.h"
 #include "jobs/JobManager.h"
+#include "jobs/JobExecutor.h"
 #include "proxy/NginxProxyProvider.h"
 #include "proxy/ReverseProxyManager.h"
 #include "config/Config.h"
@@ -53,6 +54,7 @@ public:
     backup::BackupManager& backups();
     backup::BackupProvider& backup_provider();
     jobs::JobManager& jobs();
+    jobs::JobExecutor& job_executor();
     access::AccessUserManager& access_users();
     access::AccessGrantManager& access_grants();
     access::AccessProvider& access_provider();
@@ -103,6 +105,7 @@ private:
     std::unordered_map<std::string, std::shared_ptr<ssl::CertificateProvider>> cert_providers_;
     mail::MailDomainManager mail_;
     storage::Storage storage_;
+    jobs::JobExecutor job_executor_;
     auth::AuthUserManager auth_users_;
     auth::AuthService auth_;
     filesystem::Filesystem filesystem_;
