@@ -131,22 +131,25 @@ std::string AcmeClient::find_json_string_array(const std::string& json, const st
 // ============================================================
 // libcurl helpers
 // ============================================================
-static std::string http_post(const std::string& url, const std::string& body,
-                              const std::string& content_type, std::string& response_headers,
-                              int& status_code) {
+static void http_post(const std::string& url, const std::string& body_data,
+                       const std::string& content_type,
+                       std::shared_ptr<std::string>& out_body,
+                       std::shared_ptr<std::string>& out_headers,
+                       int& status_code) {
+    curl_global_init(CURL_GLOBAL_ALL);
     CURL* curl = curl_easy_init();
-    if (!curl) return "";
+    if (!curl) return;
 
-    std::string* resp_body = new std::string();
-    std::string* hdrs = new std::string();
+    out_body = std::make_shared<std::string>();
+    out_headers = std::make_shared<std::string>();
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body.size());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body_data.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body_data.size());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, resp_body);
-    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, hdrs);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, out_body.get());
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, write_cb);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, out_headers.get());
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "ContainerCP/0.5");
     curl_easy_setopt(curl, CURLOPT_CAINFO, "/etc/ssl/certs/ca-certificates.crt");
@@ -157,19 +160,14 @@ static std::string http_post(const std::string& url, const std::string& body,
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
     CURLcode res = curl_easy_perform(curl);
-    if (res != CURLE_OK) {
-        status_code = 0;
-    } else {
+    if (res == CURLE_OK) {
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status_code);
+    } else {
+        status_code = 0;
     }
 
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
-    response_headers = *hdrs;
-    std::string result = *resp_body;
-    delete hdrs;
-    delete resp_body;
-    return result;
 }
 
 static std::string http_get(const std::string& url, int& status_code) {
@@ -381,7 +379,7 @@ std::string AcmeClient::sign_jws(const std::string& payload, const std::string& 
 // ============================================================
 // Http HEAD for nonce fetching
 // ============================================================
-static std::string http_head(const std::string& url, std::string& response_headers, int& status_code) {
+static std::string http_head(const std::string& url, int& status_code) {
     CURL* curl = curl_easy_init();
     if (!curl) return "";
 
@@ -401,17 +399,15 @@ static std::string http_head(const std::string& url, std::string& response_heade
     }
 
     curl_easy_cleanup(curl);
-    response_headers = *hdrs;
-    return std::string();
+    return *hdrs;
 }
 
 // ============================================================
 // ACME HTTP methods
 // ============================================================
 std::string AcmeClient::get_nonce() {
-    std::string resp_headers;
     int status = 0;
-    http_head(new_nonce_url_, resp_headers, status);
+    std::string resp_headers = http_head(new_nonce_url_, status);
     std::string nonce = extract_nonce(resp_headers);
     return nonce;
 }
@@ -419,18 +415,18 @@ std::string AcmeClient::get_nonce() {
 AcmeClient::Response AcmeClient::acme_post(const std::string& url, const std::string& payload) {
     std::string jws = sign_jws(payload, url, true);
     if (jws.empty()) {
-        // Try with JKU (new account registration)
         jws = sign_jws(payload, url, false);
     }
 
-    std::string resp_headers;
     int status = 0;
-    std::string body = http_post(url, jws, "application/jose+json", resp_headers, status);
+    auto body = std::make_shared<std::string>();
+    auto hdrs = std::make_shared<std::string>();
+    http_post(url, jws, "application/jose+json", body, hdrs, status);
 
     Response r;
     r.status_code = status;
-    r.body = body;
-    r.nonce = extract_nonce(resp_headers);
+    r.body = *body;
+    r.nonce = extract_nonce(*hdrs);
     return r;
 }
 
@@ -494,18 +490,20 @@ core::OperationResult AcmeClient::load_or_create_account(const std::string& key_
     std::string payload = "{\"termsOfServiceAgreed\":true}";
     std::string jws = sign_jws(payload, new_account_url_, false);
 
-    std::string resp_headers;
     int status = 0;
-    std::string body = http_post(new_account_url_, jws, "application/jose+json", resp_headers, status);
+    auto body_sp = std::make_shared<std::string>();
+    auto hdrs_sp = std::make_shared<std::string>();
+    http_post(new_account_url_, jws, "application/jose+json", body_sp, hdrs_sp, status);
+    std::string& body = *body_sp;
 
     if (status == 201 || status == 200) {
         // Extract account URL from Location header or body
-        auto loc = resp_headers.find("Location: ");
-        if (loc == std::string::npos) loc = resp_headers.find("location: ");
+        auto loc = hdrs_sp->find("Location: ");
+        if (loc == std::string::npos) loc = hdrs_sp->find("location: ");
         if (loc != std::string::npos) {
             loc += 10;
-            auto end = resp_headers.find("\r\n", loc);
-            account_.url = resp_headers.substr(loc, end - loc);
+            auto end = hdrs_sp->find("\r\n", loc);
+            account_.url = hdrs_sp->substr(loc, end - loc);
         }
         account_.kid = account_.url;
         logger_.info("ACME", "Account registered: " + account_.url);
