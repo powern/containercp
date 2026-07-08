@@ -66,6 +66,7 @@ private:
         int status_code = 0;
         std::string body;
         std::string nonce;
+        std::string location;
     };
 
     std::string find_json_string(const std::string& json, const std::string& key) const;

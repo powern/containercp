@@ -534,6 +534,17 @@ AcmeClient::Response AcmeClient::acme_post(const std::string& url, const std::st
     r.status_code = http_resp.status_code;
     r.body = http_resp.body;
     r.nonce = extract_nonce(http_resp.headers);
+
+    // Extract Location header
+    auto loc_pos = http_resp.headers.find("Location: ");
+    if (loc_pos == std::string::npos) loc_pos = http_resp.headers.find("location: ");
+    if (loc_pos != std::string::npos) {
+        loc_pos += 10; // skip "Location: "
+        auto end = http_resp.headers.find("\r\n", loc_pos);
+        if (end != std::string::npos)
+            r.location = http_resp.headers.substr(loc_pos, end - loc_pos);
+    }
+
     return r;
 }
 
@@ -662,10 +673,12 @@ core::OperationResult AcmeClient::create_order(const std::vector<std::string>& d
         return {false, "Order creation failed: HTTP " + std::to_string(resp.status_code) + " " + resp.body};
     }
 
-    // Log full response body for debugging
-    logger_.info("ACME-DBG", "newOrder body: " + resp.body);
+    // Log full response body and Location for debugging
+    logger_.info("ACME-DBG", "newOrder status=" + std::to_string(resp.status_code)
+                 + " location=" + resp.location + " body=" + resp.body);
 
-    order.url = "";
+    order.url = resp.location;
+    logger_.info("ACME-DBG", "order.url=" + order.url);
 
     // Parse response body
     order.status = find_json_string(resp.body, "status");
@@ -869,44 +882,80 @@ core::OperationResult AcmeClient::finalize_order(const std::string& finalize_url
     BIO_free(pem_bio);
     if (!req) {
         logger_.info("ACME-DBG", "finalize: PEM_read_bio_X509_REQ failed");
-        return {false, "Failed to decode CSR: PEM_read_bio_X509_REQ returned NULL"};
+        return {false, "Failed to decode CSR"};
     }
 
     // Convert to DER
     int der_len = i2d_X509_REQ(req, nullptr);
-    if (der_len <= 0) {
-        X509_REQ_free(req);
-        return {false, "Failed to get CSR DER length"};
-    }
+    if (der_len <= 0) { X509_REQ_free(req); return {false, "Failed to get CSR DER length"}; }
 
     std::vector<unsigned char> der_buf(der_len);
     unsigned char* der_ptr = der_buf.data();
     int der_len2 = i2d_X509_REQ(req, &der_ptr);
     X509_REQ_free(req);
 
-    if (der_len2 <= 0) {
-        return {false, "Failed to convert CSR to DER"};
-    }
+    if (der_len2 <= 0) return {false, "Failed to convert CSR to DER"};
 
-    logger_.info("ACME-DBG", "finalize: csr_der.size=" + std::to_string(der_len2));
-
-    std::string csr_der((char*)der_buf.data(), der_len2);
-    std::string csr_b64 = url64(csr_der);
-
+    std::string csr_b64 = url64(std::string((char*)der_buf.data(), der_len2));
     logger_.info("ACME-DBG", "finalize: csr_b64.size=" + std::to_string(csr_b64.size()));
 
     std::string payload = "{\"csr\":\"" + csr_b64 + "\"}";
     logger_.info("ACME-DBG", "finalize: payload.size=" + std::to_string(payload.size()));
 
     auto resp = acme_post(finalize_url, payload);
+    logger_.info("ACME-DBG", "finalize response status=" + std::to_string(resp.status_code)
+                 + " location=" + resp.location + " body=" + resp.body);
+
     if (resp.status_code != 200) {
-        logger_.info("ACME-DBG", "finalize failed, body=" + resp.body);
         return {false, "Finalize failed: HTTP " + std::to_string(resp.status_code) + " " + resp.body};
     }
 
-    cert_url = find_json_string(resp.body, "certificate");
-    logger_.info("ACME", "Order finalized, cert_url=" + cert_url);
-    return {true, ""};
+    // Parse order status from finalize response
+    std::string order_status = find_json_string(resp.body, "status");
+    logger_.info("ACME-DBG", "finalize order_status=" + order_status);
+
+    if (order_status == "valid") {
+        cert_url = find_json_string(resp.body, "certificate");
+        logger_.info("ACME", "Order finalized, cert_url=" + cert_url);
+        if (cert_url.empty()) return {false, "Order valid but no certificate URL in response"};
+        return {true, ""};
+    }
+
+    if (order_status == "processing") {
+        logger_.info("ACME", "Order is processing, polling for certificate...");
+        // Need the order URL to poll. Use the location from the newOrder response
+        // if available, or construct from the finalize URL
+        // The order URL should have been captured in create_order
+
+        // We store the order URL in the Order struct passed from create_order
+        // For now, poll the finalize URL as a POST-as-GET (acme_get)
+        for (int i = 0; i < 30; ++i) {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            auto poll_resp = acme_post(finalize_url, "");
+            logger_.info("ACME-DBG", "finalize poll #" + std::to_string(i+1)
+                         + " status=" + std::to_string(poll_resp.status_code)
+                         + " body=" + poll_resp.body);
+
+            if (poll_resp.status_code != 200) {
+                return {false, "Order poll failed: HTTP " + std::to_string(poll_resp.status_code)};
+            }
+
+            order_status = find_json_string(poll_resp.body, "status");
+            if (order_status == "valid") {
+                cert_url = find_json_string(poll_resp.body, "certificate");
+                logger_.info("ACME", "Order finalized via poll, cert_url=" + cert_url);
+                if (cert_url.empty()) return {false, "Order valid but no certificate URL"};
+                return {true, ""};
+            }
+            if (order_status == "invalid") {
+                auto error = find_json_string(poll_resp.body, "error");
+                return {false, "Order invalid: " + error};
+            }
+        }
+        return {false, "Order did not become valid within timeout"};
+    }
+
+    return {false, "Unexpected order status: " + order_status};
 }
 
 // ============================================================
