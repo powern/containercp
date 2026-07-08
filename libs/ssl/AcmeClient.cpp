@@ -617,34 +617,57 @@ core::OperationResult AcmeClient::create_order(const std::vector<std::string>& d
         return {false, "Order creation failed: HTTP " + std::to_string(resp.status_code) + " " + resp.body};
     }
 
+    // Log full response body for debugging
+    logger_.info("ACME-DBG", "newOrder body: " + resp.body);
+
     order.url = "";
-    // The order URL is in the Location header from the POST response
-    // Actually for ACME, the URL is not in the body but in the Location header
-    // We need to find it differently
-    // For POST-as-GET, the body contains the order details
 
     // Parse response body
     order.status = find_json_string(resp.body, "status");
     order.finalize_url = find_json_string(resp.body, "finalize");
 
-    // Parse authorizations array
+    // Parse authorizations array robustly
+    // Look for "authorizations": then find all quoted strings in the array
     {
-        auto authz_start = resp.body.find("\"authorizations\":[");
-        if (authz_start != std::string::npos) {
-            authz_start += 18;
-            while (authz_start < resp.body.size()) {
-                auto quote = resp.body.find('"', authz_start);
-                if (quote == std::string::npos || quote >= resp.body.find(']', authz_start)) break;
-                auto end = resp.body.find('"', quote + 1);
-                if (end == std::string::npos) break;
-                order.authorizations.push_back(resp.body.substr(quote + 1, end - quote - 1));
-                authz_start = end + 1;
+        // Find the key "authorizations" and the start of its value
+        auto authz_key = resp.body.find("\"authorizations\"");
+        if (authz_key == std::string::npos) {
+            return {false, "Order response missing authorizations"};
+        }
+        auto colon = resp.body.find(':', authz_key);
+        if (colon == std::string::npos) {
+            return {false, "Order response malformed: no colon after authorizations"};
+        }
+        // Find the opening bracket of the array
+        auto bracket = resp.body.find('[', colon);
+        if (bracket == std::string::npos) {
+            return {false, "Order response malformed: no array in authorizations"};
+        }
+        // Find all quoted strings inside the array
+        auto pos = bracket + 1;
+        while (pos < resp.body.size()) {
+            auto quote = resp.body.find('"', pos);
+            if (quote == std::string::npos) break;
+            // Check if we've passed the closing bracket
+            auto close_bracket = resp.body.find(']', pos);
+            if (close_bracket != std::string::npos && quote > close_bracket) break;
+            auto end_quote = resp.body.find('"', quote + 1);
+            if (end_quote == std::string::npos) break;
+            if (end_quote > quote + 1) {
+                order.authorizations.push_back(resp.body.substr(quote + 1, end_quote - quote - 1));
             }
+            pos = end_quote + 1;
         }
     }
 
     logger_.info("ACME", "Order created: status=" + order.status
                  + " authorizations=" + std::to_string(order.authorizations.size()));
+
+    // Validate we have at least one authorization
+    if (order.authorizations.empty()) {
+        return {false, "Order has no authorizations. ACME response may be invalid."};
+    }
+
     return {true, ""};
 }
 
