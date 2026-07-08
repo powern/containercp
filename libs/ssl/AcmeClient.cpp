@@ -28,13 +28,6 @@ static size_t write_cb(char* data, size_t size, size_t nmemb, void* buf) {
     return total;
 }
 
-static size_t header_cb(char* data, size_t size, size_t nmemb, void* buf) {
-    if (!data || !buf) return 0;
-    size_t total = size * nmemb;
-    static_cast<std::string*>(buf)->append(data, total);
-    return total;
-}
-
 // ============================================================
 // Base64url encoding
 // ============================================================
@@ -464,40 +457,56 @@ core::OperationResult AcmeClient::discover_directory() {
 // Account management
 // ============================================================
 core::OperationResult AcmeClient::load_or_create_account(const std::string& key_path) {
+    logger_.info("ACME-DBG", "1: enter load_or_create_account");
     account_key_path_ = key_path;
+    logger_.info("ACME-DBG", "2: key_path=" + key_path);
 
     // Check if key exists
     std::ifstream key_file(key_path);
-    if (!key_file.good()) {
-        logger_.info("ACME", "Generating new account key at " + key_path);
+    bool exists = key_file.good();
+    key_file.close();
+    logger_.info("ACME-DBG", "3: key exists=" + std::to_string(exists));
+
+    if (!exists) {
+        logger_.info("ACME-DBG", "4a: generating new key");
         generate_account_key(key_path);
+        logger_.info("ACME-DBG", "4b: key generated");
     }
 
-    // Load the public key info for JWK
+    logger_.info("ACME-DBG", "5: before PEM_read_PrivateKey");
     BIO* key_bio = BIO_new(BIO_s_file());
     if (BIO_read_filename(key_bio, key_path.c_str()) <= 0) {
+        logger_.info("ACME-DBG", "5-ERR: read failed");
         BIO_free(key_bio);
         return {false, "Failed to read account key"};
     }
     EVP_PKEY* pkey = PEM_read_bio_PrivateKey(key_bio, nullptr, nullptr, nullptr);
     BIO_free(key_bio);
+    logger_.info("ACME-DBG", std::string("6: after PEM_read, pkey=") + (pkey ? "valid" : "null"));
+
     if (!pkey) {
         return {false, "Failed to parse account key"};
     }
     EVP_PKEY_free(pkey);
+    logger_.info("ACME-DBG", "7: pkey freed");
 
     // Create account via newAccount (sign without kid, use JWK)
+    logger_.info("ACME-DBG", "8: before sign_jws");
     std::string payload = "{\"termsOfServiceAgreed\":true}";
     std::string jws = sign_jws(payload, new_account_url_, false);
+    logger_.info("ACME-DBG", "9: after sign_jws, jws.size=" + std::to_string(jws.size()));
 
+    logger_.info("ACME-DBG", "10: before http_post newAccount");
     int status = 0;
     auto body_sp = std::make_shared<std::string>();
     auto hdrs_sp = std::make_shared<std::string>();
     http_post(new_account_url_, jws, "application/jose+json", body_sp, hdrs_sp, status);
+    logger_.info("ACME-DBG", "11: after http_post, status=" + std::to_string(status));
+
     std::string& body = *body_sp;
 
     if (status == 201 || status == 200) {
-        // Extract account URL from Location header or body
+        logger_.info("ACME-DBG", "12a: account registered, parsing location");
         auto loc = hdrs_sp->find("Location: ");
         if (loc == std::string::npos) loc = hdrs_sp->find("location: ");
         if (loc != std::string::npos) {
@@ -509,6 +518,7 @@ core::OperationResult AcmeClient::load_or_create_account(const std::string& key_
         logger_.info("ACME", "Account registered: " + account_.url);
         return {true, ""};
     }
+    logger_.info("ACME-DBG", "12b: account failed, status=" + std::to_string(status));
 
     return {false, "Account registration failed: HTTP " + std::to_string(status) + " " + body};
 }
