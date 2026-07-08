@@ -1041,20 +1041,33 @@ Step 8: Real server validation
 - Router extended with add_prefix() for domain-based path matching
 - All route through `CertificateProvider`, never a concrete class
 
-### Step 4 — LetsEncryptProvider (ACME HTTP-01)
-- Implement `HTTP01ChallengeProvider` with real token write/serve
-- Implement `LetsEncryptProvider` with ACME protocol
-- Implement preflight validation (DNS, port 80, .local/.test checks)
-- ACME account key generation (P-256)
-- libcurl integration for ACME HTTPS calls
-- JWT signing with ES256
-- Minimal JSON parser for ACME responses
-- Certificate download to `/srv/containercp/ssl/<domain>/`
-- `metadata.json` write after successful issue
-- Retry with exponential backoff
-- Lock file for concurrent issue prevention
-- Staging mode via `LETSENCRYPT_STAGING=1`
-- Commit and push
+### Step 4 — AcmeClient + ACME engine layers (Complete)
+
+Created reusable ACME protocol engine (AcmeClient) with layered architecture:
+
+```
+AcmeClient
+  ├── discover_directory()
+  ├── load_or_create_account()    ← P-256 key, JWT, ACME registration
+  ├── create_order()              ← Order with domain identifiers
+  ├── get_authorization()         ← Authorization with challenges
+  ├── respond_to_challenge()      ← Signal readiness to ACME
+  ├── poll_challenge()            ← Wait for validation result
+  ├── poll_authorization()
+  ├── poll_order()
+  ├── finalize_order()            ← Submit CSR
+  └── download_certificate()      ← Retrieve fullchain PEM
+```
+
+LetsEncryptProvider rewritten as adapter around AcmeClient:
+- `issue_certificate()` orchestrates: preflight → account → order → authz
+  → challenge (via ChallengeProvider) → finalize → download → store
+- Preflight validation: reject localhost, .local, .test before ACME
+- Staging mode via `set_staging(true)`
+- HTTP-01 implementation deferred (uses ChallengeProvider abstraction)
+
+All ACME protocol details are inside AcmeClient — LetsEncryptProvider
+only orchestrates the lifecycle. ChallengeProvider handles transport.
 
 ### Step 5 — Proxy integration
 - Implement `ProxyProvider::attach_certificate()` in

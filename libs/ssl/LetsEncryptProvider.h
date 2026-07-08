@@ -3,15 +3,28 @@
 
 #include "ssl/CertificateProvider.h"
 #include "ssl/ChallengeProvider.h"
+#include "ssl/AcmeClient.h"
+#include "ssl/CertificateStore.h"
 #include "logger/Logger.h"
 
 #include <string>
 
 namespace containercp::ssl {
 
+// LetsEncryptProvider is an adapter around AcmeClient.
+//
+// It orchestrates the full ACME lifecycle:
+//   preflight → account → order → authz → challenge → finalize → download → store
+//
+// ChallengeProvider handles the transport-specific challenge serving (HTTP-01).
+// CertificateStore handles all disk I/O (atomic writes, metadata).
+// AcmeClient handles the ACME protocol (JWT, HTTP calls).
+
 class LetsEncryptProvider : public CertificateProvider {
 public:
-    LetsEncryptProvider(logger::Logger& logger, ChallengeProvider& challenge);
+    LetsEncryptProvider(logger::Logger& logger,
+                        ChallengeProvider& challenge,
+                        CertificateStore& store);
 
     core::OperationResult request(const std::string& domain) override;
     core::OperationResult renew(const std::string& domain) override;
@@ -27,8 +40,15 @@ public:
     std::string chain_path(const std::string& domain) const override;
 
 private:
+    core::OperationResult preflight_validation(const std::string& domain);
+    core::OperationResult issue_certificate(uint64_t site_id,
+                                             const std::string& domain,
+                                             const std::vector<std::string>& domains);
+
     logger::Logger& logger_;
     ChallengeProvider& challenge_;
+    CertificateStore& store_;
+    AcmeClient acme_;
     std::string ssl_dir_;
 };
 

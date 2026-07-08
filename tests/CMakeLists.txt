@@ -28,6 +28,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/proxy/ReverseProxyManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/ssl/SslCertificate.cpp
     ${CMAKE_SOURCE_DIR}/libs/ssl/SslCertificateManager.cpp
+    ${CMAKE_SOURCE_DIR}/libs/ssl/AcmeClient.cpp
     ${CMAKE_SOURCE_DIR}/libs/ssl/CertificateStore.cpp
     ${CMAKE_SOURCE_DIR}/libs/ssl/PemCertificateProvider.cpp
     ${CMAKE_SOURCE_DIR}/libs/ssl/HTTP01ChallengeProvider.cpp

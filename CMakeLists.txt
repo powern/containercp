@@ -59,6 +59,7 @@ set(CONTAINERCP_SOURCES
     libs/ssl/SslCertificate.cpp
     libs/ssl/SslCertificateManager.cpp
     libs/ssl/LetsEncryptProvider.cpp
+    libs/ssl/AcmeClient.cpp
     libs/ssl/CertificateStore.cpp
     libs/ssl/PemCertificateProvider.cpp
     libs/ssl/HTTP01ChallengeProvider.cpp

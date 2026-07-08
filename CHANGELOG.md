@@ -6,7 +6,48 @@ Format: date | commit | summary
 
 ---
 
-## 2025-07-08 | `(this commit)` | SSL Step 3: certificate management REST API
+## 2025-07-08 | `(this commit)` | SSL Step 4: reusable ACME client foundation
+
+### New: AcmeClient (`libs/ssl/AcmeClient.h/.cpp`)
+- RFC 8555 ACME protocol engine with layered architecture:
+  - `discover_directory()` — fetch ACME directory URLs
+  - `load_or_create_account()` — manage P-256 account key
+  - `create_order()` — request new certificate order for domains
+  - `get_authorization()` — get domain authorization with challenges
+  - `respond_to_challenge()` — signal readiness to ACME server
+  - `poll_challenge()` / `poll_authorization()` / `poll_order()` — wait for validation
+  - `finalize_order()` — submit CSR and finalize
+  - `download_certificate()` — retrieve fullchain PEM
+  - `generate_csr()` / `generate_account_key()` — OpenSSL helpers (TODO)
+  - `url64()` / `sha256_base64()` — ACME encoding utilities (TODO)
+- Staging mode via `set_staging(true)` — uses acme-staging-v02 endpoint
+
+### Updated: LetsEncryptProvider (adapter pattern)
+- Now holds `AcmeClient`, `ChallengeProvider`, and `CertificateStore` references
+- `request()` / `renew()` call `preflight_validation()` then `issue_certificate()`
+- `issue_certificate()` orchestrates full ACME lifecycle: account → order →
+  authz → challenge (via ChallengeProvider) → finalize → download → store
+- Preflight checks: rejects localhost, .local, .test before ACME contact
+- All ACME protocol logic isolated in AcmeClient — provider is just an adapter
+
+### Improvements
+- Issue/renew jobs are truly async: HTTP 202 + detached worker thread
+- provider_id validated before job creation (400 INVALID_PROVIDER)
+- POST /enable uses CertificateStore::validate() for integrity check
+- POST /redirect/enable requires active cert + HTTPS enabled
+
+### Files changed
+- `libs/ssl/AcmeClient.h/.cpp` — new ACME protocol engine (placeholder methods)
+- `libs/ssl/LetsEncryptProvider.h/.cpp` — rewritten as AcmeClient adapter
+- `libs/core/ServiceRegistry.cpp` — pass CertificateStore to provider
+- `libs/api/ApiServer.cpp` — async job threads, provider_id validation
+- `CMakeLists.txt`, `tests/CMakeLists.txt` — added AcmeClient source
+
+---
+
+## 2025-07-08 | `a45067d` | Improvements: async jobs, provider_id lookup, validate() checks
+
+## 2025-07-08 | `f606dc2` | SSL Step 3: certificate management REST API
 
 ### New: SSL REST API endpoints
 - `GET /api/ssl` — lists ALL sites (including HTTP_ONLY) with SSL state
