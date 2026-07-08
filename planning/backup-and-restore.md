@@ -1,5 +1,7 @@
 # Epic: Backup and Restore
 
+Status: Completed
+
 **Goal:** Implement actual file backup and restore for hosted sites.
 
 ## Scope

@@ -10,9 +10,16 @@ public:
     static Logger& instance();
 
     void info(const std::string& message);
+    void info(const std::string& category, const std::string& message);
+
     void warning(const std::string& message);
+    void warning(const std::string& category, const std::string& message);
+
     void error(const std::string& message);
+    void error(const std::string& category, const std::string& message);
+
     void debug(const std::string& message);
+    void debug(const std::string& category, const std::string& message);
 
 private:
     Logger() = default;

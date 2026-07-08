@@ -4,13 +4,18 @@
 #include "daemon/DaemonApp.h"
 #include "daemon/CommandProtocol.h"
 
+#include <csignal>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <thread>
 #include <unistd.h>
+
+// Path for single-instance PID file
+static const char* PID_FILE = "/srv/containercp/containercpd.pid";
 
 static int parse_arg(int argc, char* argv[], const std::string& name, int default_val) {
     for (int i = 1; i < argc - 1; ++i) {
@@ -27,9 +32,86 @@ static int parse_env(const std::string& name, int default_val) {
     return default_val;
 }
 
+static bool is_process_alive(pid_t pid) {
+    return ::kill(pid, 0) == 0;
+}
+
+static bool acquire_single_instance(const std::string& data_root) {
+    // Create data directory first if it doesn't exist
+    ::mkdir((data_root + "/").c_str(), 0755);
+
+    std::ifstream pid_file(PID_FILE);
+    if (pid_file.is_open()) {
+        pid_t existing_pid = 0;
+        pid_file >> existing_pid;
+        pid_file.close();
+
+        if (existing_pid > 0 && is_process_alive(existing_pid)) {
+            std::cerr << "[ERROR] [SYSTEM] Another daemon instance is already running (PID " << existing_pid << ")." << std::endl;
+            std::cerr << "[ERROR] [SYSTEM] If the daemon crashed, remove " << PID_FILE << " and try again." << std::endl;
+            return false;
+        }
+        // Stale PID file — remove it
+        ::unlink(PID_FILE);
+    }
+
+    // Write our PID
+    std::ofstream out(PID_FILE);
+    if (!out.is_open()) {
+        std::cerr << "[ERROR] [SYSTEM] Failed to write PID file: " << PID_FILE << std::endl;
+        return false;
+    }
+    out << ::getpid();
+    out.close();
+    return true;
+}
+
+static void release_single_instance() {
+    ::unlink(PID_FILE);
+}
+
+static void verify_directories(containercp::filesystem::Filesystem& fs,
+                                const containercp::config::Config& cfg) {
+    auto& log = containercp::logger::Logger::instance();
+
+    struct DirEntry {
+        std::string path;
+        std::string label;
+    };
+
+    DirEntry dirs[] = {
+        {cfg.database_dir(), "Database"},
+        {cfg.sites_dir(), "Sites"},
+        {cfg.data_root() + "/proxy/", "Proxy root"},
+        {cfg.data_root() + "/proxy/sites/", "Proxy sites"},
+        {cfg.data_root() + "/backups/", "Backups"},
+        {cfg.users_dir(), "Users"},
+        {cfg.web_templates_dir(), "Web templates"},
+        {cfg.log_root(), "Log"},
+    };
+
+    for (const auto& d : dirs) {
+        if (!fs.exists(d.path)) {
+            fs.create_directory(d.path);
+            log.info("SYSTEM", "Created directory: " + d.path);
+        }
+    }
+}
+
 int main(int argc, char* argv[]) {
     containercp::core::Application::instance();
     auto& services = containercp::core::Application::instance().services();
+    auto& log = services.logger();
+
+    // Single instance check — must happen before any service starts
+    if (!acquire_single_instance(services.config().data_root())) {
+        return 1;
+    }
+
+    // Ensure PID file is cleaned up on exit
+    struct Cleanup {
+        ~Cleanup() { release_single_instance(); }
+    } cleanup;
 
     // Ensure database directory exists before any services try to write to it
     services.filesystem().create_directory(services.config().database_dir());
@@ -38,6 +120,10 @@ int main(int argc, char* argv[]) {
     int ui_port = parse_env("CONTAINERCP_UI_PORT", parse_arg(argc, argv, "--ui-port", 8081));
 
     const std::string socket_path = services.config().data_root() + "/containercpd.sock";
+
+    // Startup recovery — verify all required directories
+    log.info("SYSTEM", "Verifying required directories...");
+    verify_directories(services.filesystem(), services.config());
 
     // Start REST API server on localhost only (background thread)
     containercp::api::ApiServer api_server(services, api_port);
@@ -59,7 +145,7 @@ int main(int argc, char* argv[]) {
     // Create UNIX socket server
     int server_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_fd < 0) {
-        services.logger().error("Daemon: Failed to create UNIX socket");
+        log.error("SYSTEM", "Failed to create UNIX socket");
         return 1;
     }
 
@@ -68,7 +154,7 @@ int main(int argc, char* argv[]) {
     std::strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
 
     if (::bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        services.logger().error("Daemon: Failed to bind UNIX socket");
+        log.error("SYSTEM", "Failed to bind UNIX socket");
         ::close(server_fd);
         return 1;
     }
@@ -76,19 +162,23 @@ int main(int argc, char* argv[]) {
     ::chmod(socket_path.c_str(), 0666);
 
     if (::listen(server_fd, 5) < 0) {
-        services.logger().error("Daemon: Failed to listen on UNIX socket");
+        log.error("SYSTEM", "Failed to listen on UNIX socket");
         ::close(server_fd);
         return 1;
     }
 
-    services.logger().info("Daemon: Listening on " + socket_path);
-    services.logger().info("Daemon: REST API on 127.0.0.1:" + std::to_string(api_port));
-    services.logger().info("Daemon: Web UI on 0.0.0.0:" + std::to_string(ui_port));
-    services.logger().info("Daemon: Web UI API proxy /ui-api/* -> 127.0.0.1:" + std::to_string(api_port));
-    services.logger().info("Daemon: Web UI login required");
+    log.info("SYSTEM", "Listening on " + socket_path);
+    log.info("SYSTEM", "REST API on 127.0.0.1:" + std::to_string(api_port));
+    log.info("SYSTEM", "Web UI on 0.0.0.0:" + std::to_string(ui_port));
+    log.info("SYSTEM", "Web UI API proxy /ui-api/* -> 127.0.0.1:" + std::to_string(api_port));
+    log.info("SYSTEM", "Web UI login required");
 
-    // Start central reverse proxy container
-    services.proxy_provider().ensure_central_proxy();
+    // Startup recovery — ensure central proxy container and network
+    log.info("SYSTEM", "Ensuring central proxy...");
+    auto proxy_result = services.proxy_provider().ensure_central_proxy();
+    if (!proxy_result.success) {
+        log.error("SYSTEM", "Failed to ensure central proxy: " + proxy_result.message);
+    }
 
     containercp::daemon::DaemonApp daemon(services);
 
@@ -97,7 +187,7 @@ int main(int argc, char* argv[]) {
         socklen_t client_len = sizeof(client_addr);
         int client_fd = ::accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
         if (client_fd < 0) {
-            services.logger().error("Daemon: Accept failed");
+            log.error("SYSTEM", "Accept failed");
             break;
         }
 
@@ -113,7 +203,5 @@ int main(int argc, char* argv[]) {
 
     ::close(server_fd);
     ::unlink(socket_path.c_str());
-    // Central proxy is NOT removed on shutdown — it must survive daemon restart.
-    // Only explicit reset/uninstall should remove it.
     return 0;
 }

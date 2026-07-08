@@ -40,3 +40,6 @@ Two issues discovered during Web UI validation:
 - `web/app.js` — restore button onClick, restoreBackup function,
   removeBackup feedback
 - `libs/operations/SiteRemoveOperation.cpp` — stop deleting backups
+
+## Status
+Resolved

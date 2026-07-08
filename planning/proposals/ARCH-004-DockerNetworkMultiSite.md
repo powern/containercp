@@ -1,6 +1,6 @@
 # ARCH-004: Docker Network Based Multi-Site Hosting
 
-Status: Approved
+Status: Implemented
 
 ## Problem
 

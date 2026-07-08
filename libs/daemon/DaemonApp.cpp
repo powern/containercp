@@ -173,17 +173,29 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         }
         auto* node = s.nodes().find("local");
         if (!node) return Command::error("No node available");
+
+        // Create a job for progress tracking
+        uint64_t job_id = s.jobs().create("site_create", {
+            "Validating parameters", "Creating site record",
+            "Creating domain", "Creating database",
+            "Generating configuration", "Starting containers",
+            "Deployment completed"
+        });
+        s.jobs().update(job_id, "running", 0, "Starting...");
+
         operations::SiteCreateOperation op(s.sites(), s.domains(),
             s.databases(), s.reverse_proxies(),
             s.proxy_provider(),
             s.filesystem(), s.config(), s.hosting_provider());
-        auto result = op.execute(owner, domain, *node);
+        auto result = op.execute(owner, domain, *node, false, "", &s.jobs(), job_id);
         if (result.success) {
             s.save();
+            s.jobs().update(job_id, "completed", 100, "Site created: " + domain);
             return Command::success("Site created: " + domain);
         }
         // Save after rollback to persist cleaned state
         s.save();
+        s.jobs().update(job_id, "failed", 0, result.message);
         return Command::error(result.message);
     }
 

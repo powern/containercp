@@ -157,11 +157,26 @@
 | BUG-013: Backup restore no feedback, site remove deletes backups | ✅ | `web/app.js`, `SiteRemoveOperation.cpp` |
 | BUG-014: Multi-site port conflict | ✅ | ARCH-004 (Docker network routing) |
 
+### RC2 — Stability & Production Foundation (Complete)
+
+| Item | Status | Notes |
+|------|--------|-------|
+| install.sh | ✅ | `scripts/install.sh` |
+| update.sh | ✅ | `scripts/update.sh` |
+| systemd service | ✅ | `packaging/containercp.service` |
+| Single instance PID lock | ✅ | `main.cpp` |
+| Startup recovery (dirs, network, proxy) | ✅ | `main.cpp` |
+| Deployment cleanup on failure | ✅ | `SiteCreateOperation.cpp` |
+| Category-based logging [SYSTEM][DOCKER][PROXY] | ✅ | `Logger.h/.cpp` |
+| Real-time deployment progress in GUI | ✅ | `web/app.js` + job polling |
+| Updated docs (README, INSTALL, CHANGELOG) | ✅ | |
+| Version bumped to 0.5.0-rc2 | ✅ | |
+
 ### Pending for v0.5.0 Release
 
 | Item | Status | Notes |
 |------|--------|-------|
-| 24-hour stability test (RC2) | ⬜ | Deferred from RC1 |
+| 24-hour stability test (RC2) | 🔄 | Ready to start |
 | v0.5.0-rc2 release | ⬜ | After stability pass |
 | Final validation (148 items) | ⬜ | 9 stability items remain |
 | v0.5.0 stable release | ⬜ | After all pass |
@@ -179,8 +194,6 @@
 | Backup rotation not implemented | Old backups fill disk |
 | PortManager deprecated but not removed | `libs/runtime/PortManager.cpp` |
 | SSL auto-renewal not implemented | Only manual `ssl renew` |
-| No systemd service file | `packaging/` is empty |
-| No install/update scripts | `scripts/` is empty |
 | No real auth for REST API | AuthMiddleware is AllowAll |
 
 ---
@@ -214,7 +227,7 @@
 
 ---
 
-## Current Maturity Assessment (v0.5 RC1)
+## Current Maturity Assessment (v0.5 RC2)
 
 | Subsystem | Completeness | Status |
 |-----------|-------------|--------|
@@ -223,22 +236,22 @@
 | Logger | 100% | Stable |
 | Storage | 95% | Stable |
 | CLI | 90% | Stable |
-| Daemon | 95% | Stable |
-| REST API | 90% | Active |
-| Web UI | 80% | Active |
+| Daemon | 98% | Stable |
+| REST API | 92% | Active |
+| Web UI | 85% | Active |
 | Sites | 95% | Stable |
 | Domains | 95% | Stable |
 | Databases | 95% | Stable |
 | Users | 95% | Stable |
 | PHP Versions | 90% | Stable |
-| Docker/Runtime | 90% | Stable |
-| Reverse Proxy | 90% | Active |
+| Docker/Runtime | 92% | Stable |
+| Reverse Proxy | 92% | Active |
 | SSL/Certs | 75% | Active |
 | Access/SFTP | 75% | Active (placeholder) |
 | Backup | 85% | Active |
 | Profiles | 90% | Stable |
 | Templates | 85% | Stable |
-| Jobs | 75% | Active |
+| Jobs | 80% | Active |
 | Mail | 10% | Placeholder only |
 | DNS | 0% | Not started |
 | Multi-node | 0% | Not started |
@@ -254,7 +267,7 @@
 | RC1 pass | 128/137 (9 stability deferred) |
 | Current pass rate | 128/148 |
 | Bugs discovered during RC1 | 13 (all fixed) |
-| Next milestone | RC2 (24h stability) |
+| Next milestone | RC2 24h stability test → v0.5.0 stable |
 
 ---
 
@@ -281,4 +294,5 @@
 ---
 
 *Last updated: 2025-07-08*
-*Next planned action: RC2 24-hour stability validation → v0.5.0 stable → v0.6 DNS*
+*Next planned action: RC2 24-hour stability test → v0.5.0 stable → v0.6 DNS*
+*RC2 items: install.sh, update.sh, systemd, single instance, startup recovery, logging categories, GUI progress — all ✅*

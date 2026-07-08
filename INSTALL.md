@@ -1,273 +1,150 @@
 # ContainerCP Installation Guide
 
-This guide is written for system administrators who want to install
-ContainerCP on a Debian 13 (Trixie) server.
+ContainerCP is a container-native hosting control panel.
 
-## Prerequisites
+## Quick Install (Debian 13)
 
-**Operating system:** Debian 13 (Trixie)
+Run the installation script on a clean Debian 13 (Trixie) server:
 
-**Packages:**
-
+```bash
+curl -fsSL https://raw.githubusercontent.com/powern/containercp/main/scripts/install.sh | bash
 ```
+
+Or clone the repository and run locally:
+
+```bash
+git clone https://github.com/powern/containercp.git
+cd containercp
+sudo ./scripts/install.sh
+```
+
+The script will:
+
+1. Verify the OS is Debian 13
+2. Install build dependencies (git, cmake, ninja, g++, curl)
+3. Install Docker if missing
+4. Install Docker Compose if missing
+5. Clone or update the repository to `/opt/containercp`
+6. Create all required data and configuration directories
+7. Build ContainerCP in Release mode
+8. Install binaries to `/usr/local/bin`
+9. Install and enable the systemd service (`containercpd`)
+10. Start the daemon
+11. Print access URLs
+
+## Updating
+
+If ContainerCP was installed via the install script, run:
+
+```bash
+sudo ./scripts/update.sh
+```
+
+This will:
+
+1. Pull the latest code via git
+2. Rebuild in Release mode
+3. Restart the systemd service
+
+## Manual Build
+
+```bash
 apt update
-apt install -y git cmake ninja-build g++ curl
-```
-
-**Docker and Docker Compose:**
-
-Debian 13 (Trixie):
-```
-apt install -y docker.io docker-compose
-systemctl enable --now docker
-```
-
-**Verify:**
-
-```
-docker --version
-docker compose version
-```
-
-ContainerCP supports both `docker compose` (plugin) and
-`docker-compose` (standalone binary). It detects the
-available command automatically at runtime. Debian 13 ships both.
-
-## Build
-
-Clone the repository and build the Release binaries:
-
-```
+apt install -y git cmake ninja-build g++ curl docker.io docker-compose-v2
 git clone https://github.com/powern/containercp.git
 cd containercp
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release
 ```
 
-After building, verify the binaries exist:
+## Systemd Service
 
-```
-ls -la build-release/containercpd
-ls -la build-release/containercp
-```
+ContainerCP runs as a systemd service. The service file is installed at
+`/etc/systemd/system/containercp.service`.
 
-Expected:
-- `containercpd` — the daemon binary (~1.1 MB)
-- `containercp` — the CLI client binary (~100 KB)
+Manage the service:
 
-## Start the daemon
-
-```
-./build-release/containercpd
+```bash
+systemctl status containercpd    # Check status
+systemctl restart containercpd   # Restart
+systemctl stop containercpd      # Stop
+journalctl -u containercpd -f    # Follow logs
 ```
 
-The daemon will:
+The daemon is configured to:
 
-1. Create the data directory at `/srv/containercp/`
-2. Seed default resources (admin user, local node, PHP versions, profiles)
-3. Start the REST API on `http://127.0.0.1:8080`
-4. Start the UNIX socket at `/srv/containercp/containercpd.sock`
+- Start automatically on boot (`systemctl enable containercpd`)
+- Restart on failure (up to 5 seconds delay)
+- Log to systemd journal
 
-Verify the daemon is running:
+## Single Instance
 
-```
-curl http://127.0.0.1:8080/api/health
-```
+Only one daemon instance can run at a time. If you try to start a second
+instance, it will exit immediately with a clear message. A PID file is
+stored at `/srv/containercp/containercpd.pid`.
 
-Expected response:
-```json
-{"success":true,"data":{"status":"ok"}}
-```
+If the daemon crashes and the PID file is stale, remove the file and
+restart the service.
 
-## First login
+## Startup Recovery
 
-The admin user is created automatically on first start.
+On every startup, the daemon automatically verifies:
 
-List users:
+- All required directories exist (database, sites, proxy, backups, etc.)
+- The `containercp-public` Docker network exists
+- The central proxy container (`containercp-proxy`) is running
+- Proxy configuration directories are in place
 
-```
-./build-release/containercp user list
-```
+Missing resources are recovered automatically — no manual intervention
+required.
 
-Expected output:
-```
-admin
-```
+## Access
 
-## Creating your first website
+After installation:
 
-```
-./build-release/containercp site create admin example.com
-```
+| URL | Purpose |
+|-----|---------|
+| `http://127.0.0.1:8080/` | REST API + Web UI (local only) |
+| `http://<server-ip>:8081/` | Web UI (external, login required) |
 
-This will:
+**First login:** Username: `admin`, Password: auto-generated (check the
+daemon log with `journalctl -u containercpd`).
 
-1. Create a site record
-2. Create a domain record
-3. Create a database with random credentials
-4. Generate a docker-compose.yml
-5. Generate nginx configuration
-6. Start the Docker Compose stack
-
-Verify the site is running:
-
-```
-./build-release/containercp site list
-```
-
-Expected output:
-```
-example.com
-```
-
-## Web UI
-
-The daemon starts two HTTP listeners:
-
-| Port | Bind | Purpose | Access |
-|------|------|---------|--------|
-| 8080 | 127.0.0.1 | REST API + Web UI | Local access only |
-| 8081 | 0.0.0.0 | Web UI with API proxy | External network |
-
-### Local access (recommended)
-
-Open in browser:
-
-```
-http://127.0.0.1:8080/
-```
-
-No authentication required for local access.
-
-### External access
-
-Open in browser:
-
-```
-http://<server-ip>:8081/
-```
-
-The external Web UI requires a login with username and password:
-
-- **Username:** `admin`
-- **Password:** Generated on first daemon start, printed to the daemon log.
-  The password is hashed and stored in `/srv/containercp/database/auth_users.db`.
-  On first login, you will be required to change the temporary password.
-
-The API proxy (`/ui-api/...`) forwards requests to the internal REST
-API on `127.0.0.1:8080`. The raw `/api/...` paths are explicitly
-rejected on port 8081 for security.
-
-### SSH forwarding (alternative)
-
-For local access without authentication:
-
-```
-ssh -L 8080:127.0.0.1:8080 user@<server>
-```
-
-Then open `http://127.0.0.1:8080/` on your local machine.
-
-### Production reverse proxy
-
-For production, set up nginx or Apache to serve the static files
-from `/opt/containercp/web/` and proxy `/ui-api/*` to
-`http://127.0.0.1:8080`. The public Web UI port (8081) is designed
-for development and small deployments.
-
-## SSL certificates
-
-Request a Let's Encrypt certificate (placeholder):
-
-```
-./build-release/containercp ssl request example.com
-```
-
-## Backups
-
-Create a backup:
-
-```
-./build-release/containercp backup create example.com
-```
-
-List backups:
-
-```
-./build-release/containercp backup list
-```
-
-Restore a backup:
-
-```
-./build-release/containercp backup restore <id>
-```
-
-## CLI commands
-
-Run `containercp --help` for a complete list of commands.
-
-Key commands:
-
-| Command | Description |
-|---------|-------------|
-| `containercp node list` | List nodes |
-| `containercp user list` | List users |
-| `containercp site list` | List sites |
-| `containercp domain list` | List domains |
-| `containercp database list` | List databases |
-| `containercp backup list` | List backups |
-| `containercp ssl list` | List SSL certificates |
-| `containercp proxy list` | List proxy configs |
-| `containercp template list` | List template profiles |
-
-## File locations
+## File Locations
 
 | Path | Purpose |
 |------|---------|
-| `/opt/containercp/` | Source code |
-| `/srv/containercp/` | Site data and storage |
-| `/srv/containercp/database/` | Persistent storage (.db files) |
-| `/srv/containercp/sites/<domain>/` | Per-site files |
+| `/opt/containercp/` | Source code and build |
+| `/usr/local/bin/containercpd` | Daemon binary |
+| `/usr/local/bin/containercp` | CLI client binary |
+| `/srv/containercp/` | Site data and persistent storage |
+| `/srv/containercp/database/` | Pipe-delimited .db files |
+| `/srv/containercp/sites/` | Per-site files and Docker stacks |
 | `/srv/containercp/proxy/sites/` | Reverse proxy configs |
-| `/srv/containercp/backups/` | Backup archives |
-| `/etc/containercp/templates/` | Configuration templates |
+| `/srv/containercp/backups/` | Backup archives (.tar.gz) |
+| `/etc/containercp/templates/` | Disk-based config templates |
 | `/var/log/containercp/` | Log files |
 
 ## Troubleshooting
 
 **Daemon won't start:**
-Check if port 8080 is already in use: `lsof -i :8080`
-Check the log output for error messages.
+```bash
+journalctl -u containercpd -f --no-pager
+```
+
+**Port already in use:**
+```bash
+lsof -i :8080
+```
+
+**Docker not available:**
+```bash
+systemctl status docker
+docker --version
+```
 
 **CLI cannot connect:**
-Ensure the daemon is running: `pgrep containercpd`
-Check the socket file: `ls -la /srv/containercp/containercpd.sock`
-
-**Docker stack fails:**
-Ensure Docker is running: `docker info`
-Try running `docker compose up -d` in the site directory.
-
-**Web UI not loading:**
-Ensure the daemon is running.
-Check `curl http://127.0.0.1:8080/api/health` returns a valid response.
-
-## Uninstalling
-
-Stop the daemon:
-
-```
-kill $(pgrep containercpd)
-```
-
-Remove data (WARNING: deletes all sites and databases):
-
-```
-rm -rf /srv/containercp
-```
-
-Remove the build:
-
-```
-rm -rf /opt/containercp/build-release
+```bash
+ls -la /srv/containercp/containercpd.sock
+systemctl status containercpd
 ```

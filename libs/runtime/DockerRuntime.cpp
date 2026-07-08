@@ -77,7 +77,7 @@ core::OperationResult DockerRuntime::run_command(const std::string& site_dir, co
 
     std::string label = use_docker_compose_ ? "docker compose " + compose_cmd
                                             : "docker-compose " + compose_cmd;
-    logger_.info(label + " [" + std::to_string(exit_code) + "]");
+    logger_.info("DOCKER", label + " [" + std::to_string(exit_code) + "]");
 
     if (rc != 0) {
         return {false, "Command failed with exit code " + std::to_string(exit_code)};

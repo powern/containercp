@@ -181,10 +181,13 @@ action.
 
 ## Validation
 
-- [ ] POST /ui-api/auth/login with valid credentials returns 200 + token
-- [ ] POST /ui-api/auth/login with wrong password returns 401
-- [ ] POST /ui-api/auth/login with disabled user returns 401
-- [ ] POST /ui-api/auth/login with missing fields returns 400
-- [ ] Daemon log shows reason for each failed login attempt
-- [ ] Daemon log does not contain the password
-- [ ] After password change, file-based sync stops
+- [x] POST /ui-api/auth/login with valid credentials returns 200 + token
+- [x] POST /ui-api/auth/login with wrong password returns 401
+- [x] POST /ui-api/auth/login with disabled user returns 401
+- [x] POST /ui-api/auth/login with missing fields returns 400
+- [x] Daemon log shows reason for each failed login attempt
+- [x] Daemon log does not contain the password
+- [x] After password change, file-based sync stops
+
+## Status
+Resolved

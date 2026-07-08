@@ -16,7 +16,8 @@ DockerComposeProvider::DockerComposeProvider(filesystem::Filesystem& fs, config:
 {
 }
 
-core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
+core::OperationResult DockerComposeProvider::create_site(site::Site& site, core::ProgressCallback progress) {
+    progress(5, "Checking Docker Compose...");
     auto check = rt_.check_compose();
     if (!check.success) {
         return check;
@@ -24,9 +25,11 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
 
     std::string site_dir = cfg_.sites_dir() + site.domain + "/";
 
+    progress(10, "Creating site directories...");
     filesystem::SiteLayout layout(fs_, site_dir);
     layout.create();
 
+    progress(15, "Generating environment configuration...");
     docker::EnvGenerator env(fs_, site_dir);
     if (site.db_name.empty()) {
         env.generate(site.domain, site.owner);
@@ -39,7 +42,7 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
 
     std::string site_id = std::to_string(site.id);
 
-    // Determine web server type from site field or default profile
+    progress(25, "Determining web server configuration...");
     std::string web_server_type = site.web_server.empty() ? "nginx" : site.web_server;
     auto* profile = prof_.get_default(profile::ProfileType::WEB_SERVER);
     // If site specifies a web server, find a matching profile
@@ -70,11 +73,13 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
         web_server_cmd = "[\"httpd-foreground\", \"-c\", \"IncludeOptional conf/extra/*.conf\"]";
     }
 
+    progress(30, "Generating Docker Compose configuration...");
     docker::ComposeGenerator gen(fs_, cfg_.templates_dir());
     gen.generate(site.domain, site.owner, php_image, site_dir + "docker-compose.yml",
                  site_id, web_server_image, web_config_dir, web_log_dir, web_doc_root,
                  web_local_config, web_local_log, web_server_cmd);
 
+    progress(40, "Generating web server configuration...");
     // Generate web server config from default WEB_SERVER profile
     std::string config_dir = site_dir + "config/" + web_server_type + "/";
     std::string config_path = config_dir + "default.conf";
@@ -151,9 +156,16 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
         return {false, "Failed to generate web server config at " + config_path};
     }
 
+    progress(60, "Creating default index file...");
     fs_.create_file(site_dir + "public/index.php", "<?php\nphpinfo();\n");
 
-    return rt_.create_site_stack(site.domain);
+    progress(70, "Starting Docker stack...");
+    auto result = rt_.create_site_stack(site.domain);
+
+    if (result.success) {
+        progress(100, "Deployment completed.");
+    }
+    return result;
 }
 
 core::OperationResult DockerComposeProvider::remove_site(site::Site& site) {

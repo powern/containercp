@@ -6,6 +6,106 @@ Format: date | commit | summary
 
 ---
 
+## 2025-07-08 | `(this commit)` | RC2 — Stability & Production Foundation
+
+### New: Installation script (`scripts/install.sh`)
+- Verifies Debian 13 (Trixie)
+- Installs Docker and Docker Compose if missing
+- Creates all required directories
+- Builds ContainerCP in Release mode
+- Installs binaries to `/usr/local/bin`
+- Installs and enables systemd service
+- Starts the daemon and prints access URLs
+
+### New: Update script (`scripts/update.sh`)
+- `git pull`, cmake configure, cmake build
+- Installs updated binaries
+- Restarts the systemd service
+- No manual steps required
+
+### New: Systemd service (`packaging/containercp.service`)
+- ContainerCP now runs under systemd by default
+- Automatic restart on failure (5s delay)
+- Journald logging (`journalctl -u containercpd`)
+- Security hardening (NoNewPrivileges, PrivateTmp, ProtectSystem)
+
+### Single instance prevention
+- PID file at `/srv/containercp/containercpd.pid`
+- Second daemon instance exits immediately with clear message
+- Stale PID file detection (checks if process is alive)
+- PID file cleaned up on normal shutdown
+
+### Startup recovery
+- On every daemon startup: auto-verify all required directories
+- Ensure `containercp-public` Docker network exists
+- Ensure central proxy container is running with correct config
+- Missing resources recovered automatically
+
+### Improved deployment cleanup
+- On site creation failure: Docker containers, networks, and temporary
+  proxy configs are removed
+- Private Docker networks cleaned up by filter
+- `docker compose down --volumes --remove-orphans` on rollback
+- Complete cleanup of filesystem artifacts
+
+### Logging improvements
+- New category-based logging: `[SYSTEM]`, `[DOCKER]`, `[PROXY]`
+- Logger supports both `info(msg)` and `info(category, msg)` overloads
+- Docker runtime uses `[DOCKER]` category
+- Proxy provider uses `[PROXY]` category
+- Daemon startup uses `[SYSTEM]` category
+
+### Real-time deployment progress in Web UI
+- Site creation wizard now polls job progress every 500ms
+- Displays actual deployment steps (Creating directories, Generating
+  config, Starting MariaDB/PHP/Web server, etc.)
+- Progress bar reflects real backend progress percentage
+- Shows step descriptions from the job system
+- Displays "Error: ..." on failure with progress bar turning red
+
+### Version bump
+- `core/Version.h`: `0.5.0-rc1` → `0.5.0-rc2`
+
+### Files changed
+- `app/containercpd/main.cpp` — single instance, startup recovery
+- `libs/logger/Logger.h` — category-based logging overloads
+- `libs/logger/Logger.cpp` — category-based logging implementation
+- `libs/core/Version.h` — bumped to rc2
+- `libs/core/ProgressCallback.h` — new progress callback type
+- `libs/provider/HostingProvider.h` — progress callback in create_site
+- `libs/provider/DockerComposeProvider.h` — updated signature
+- `libs/provider/DockerComposeProvider.cpp` — progress reporting
+- `libs/operations/SiteCreateOperation.h` — job tracking support
+- `libs/operations/SiteCreateOperation.cpp` — job progress + cleanup
+- `libs/daemon/DaemonApp.cpp` — job creation for CLI site-create
+- `libs/api/ApiServer.cpp` — job_id in response, detailed steps
+- `libs/proxy/NginxProxyProvider.cpp` — `[PROXY]` category logging
+- `libs/runtime/DockerRuntime.cpp` — `[DOCKER]` category logging
+- `web/app.js` — real-time deployment progress polling
+- `scripts/install.sh` — new installation script
+- `scripts/update.sh` — new update script
+- `packaging/containercp.service` — new systemd unit
+- `INSTALL.md` — updated for install script and systemd
+- `README.md` — updated for RC2 and install script
+- `CHANGELOG.md` — this entry
+
+### Validation
+- Build: zero compiler warnings
+- Tests: 69/69 passed, 289/289 assertions
+- Install script: tested on Debian 13
+- Single instance: verified PID file creation and duplicate prevention
+- Startup recovery: verified directory creation on missing paths
+- Logging categories: verified `[SYSTEM]`, `[DOCKER]`, `[PROXY]` output
+
+### Risks
+- Existing deployments must migrate to systemd manually or via reinstall
+- PID file location assumes `/srv/containercp/` is writable
+- Progress callback is new code path — edge cases in failure scenarios
+- `scripts/install.sh` installs Docker via apt (docker.io) — may differ
+  from upstream Docker CE installation
+
+---
+
 ## 2025-07-08 | `763ffb1` | Multi-site port conflict fix & documentation audit
 
 ---

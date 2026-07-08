@@ -412,21 +412,24 @@ bool ApiServer::start() {
         uint64_t job_id = jobs.create("site_create", {
             "Validating parameters", "Creating site record",
             "Creating domain", "Creating database",
-            "Generating configuration", "Starting containers"
+            "Generating configuration", "Starting MariaDB",
+            "Starting PHP", "Starting Web server",
+            "Creating proxy configuration", "Reloading proxy",
+            "Deployment completed"
         });
-        jobs.update(job_id, "running", 10);
+        jobs.update(job_id, "running", 0);
 
         operations::SiteCreateOperation op(s.sites(), s.domains(),
             s.databases(), s.reverse_proxies(),
             s.proxy_provider(),
             s.filesystem(), s.config(), s.hosting_provider());
-        auto result = op.execute(owner, domain, *node, false, profile);
+        auto result = op.execute(owner, domain, *node, false, profile, &s.jobs(), job_id);
 
         if (result.success) {
             s.save();
             jobs.update(job_id, "completed", 100, "Site created successfully");
             std::ostringstream json;
-            json << "{\"success\":true,\"data\":{\"domain\":\"" << domain << "\",\"message\":\"Site created\"}}";
+            json << "{\"success\":true,\"data\":{\"domain\":\"" << domain << "\",\"job_id\":" << job_id << ",\"message\":\"Site created\"}}";
             r.body = json.str();
         } else {
             // Save after rollback to persist cleaned state

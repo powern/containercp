@@ -2,6 +2,7 @@
 #define CONTAINERCP_PROVIDER_HOSTING_PROVIDER_H
 
 #include "core/OperationResult.h"
+#include "core/ProgressCallback.h"
 #include "site/Site.h"
 
 #include <cstdint>
@@ -12,7 +13,7 @@ class HostingProvider {
 public:
     virtual ~HostingProvider() = default;
 
-    virtual core::OperationResult create_site(site::Site& site) = 0;
+    virtual core::OperationResult create_site(site::Site& site, core::ProgressCallback progress = core::noop_progress) = 0;
     virtual core::OperationResult remove_site(site::Site& site) = 0;
     virtual core::OperationResult start_site(site::Site& site) = 0;
     virtual core::OperationResult stop_site(site::Site& site) = 0;

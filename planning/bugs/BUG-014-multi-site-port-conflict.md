@@ -76,3 +76,6 @@ Replaced host-port allocation with Docker network routing:
 - Proxy survives daemon kill — sites remain reachable
 - Daemon restart restores management without affecting running sites
 - Site removal cleans up private network
+
+## Status
+Resolved

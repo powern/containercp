@@ -81,7 +81,7 @@ core::OperationResult NginxProxyProvider::create_proxy(const ReverseProxy& proxy
     }
 
     fs_.create_file(path, conf.str());
-    logger_.info("NginxProxyProvider: Created config for " + proxy.domain);
+    logger_.info("PROXY", "Created config for " + proxy.domain);
     return {true, ""};
 }
 
@@ -90,17 +90,17 @@ core::OperationResult NginxProxyProvider::remove_proxy(const std::string& domain
     if (fs_.exists(path)) {
         std::filesystem::remove(path);
     }
-    logger_.info("NginxProxyProvider: Removed config for " + domain);
+    logger_.info("PROXY", "Removed config for " + domain);
     return {true, ""};
 }
 
 core::OperationResult NginxProxyProvider::enable_proxy(const std::string& domain) {
-    logger_.info("NginxProxyProvider: Enabled proxy for " + domain);
+    logger_.info("PROXY", "Enabled proxy for " + domain);
     return {true, ""};
 }
 
 core::OperationResult NginxProxyProvider::disable_proxy(const std::string& domain) {
-    logger_.info("NginxProxyProvider: Disabled proxy for " + domain);
+    logger_.info("PROXY", "Disabled proxy for " + domain);
     return {true, ""};
 }
 
@@ -108,10 +108,10 @@ core::OperationResult NginxProxyProvider::reload() {
     std::string cmd = "docker exec " + proxy_name() + " nginx -s reload > /dev/null 2>&1";
     int rc = std::system(cmd.c_str());
     if (rc != 0) {
-        logger_.info("NginxProxyProvider: Reload failed (proxy container may not be running)");
+        logger_.info("PROXY", "Reload failed (proxy container may not be running)");
         return {false, "Reload failed: proxy container not running"};
     }
-    logger_.info("NginxProxyProvider: Reloaded");
+    logger_.info("PROXY", "Reloaded");
     return {true, ""};
 }
 
@@ -133,7 +133,7 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
 
         bool needs_recreate = false;
         if (network_mode == "host") {
-            logger_.info("NginxProxyProvider: Detected old proxy on host network, recreating");
+            logger_.info("PROXY", "Detected old proxy on host network, recreating");
             needs_recreate = true;
         }
 
@@ -151,7 +151,7 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
             std::remove(port_file.c_str());
 
             if (port_info.empty() || port_info.find("HostPort") == std::string::npos) {
-                logger_.info("NginxProxyProvider: Detected proxy without port mapping, recreating");
+                logger_.info("PROXY", "Detected proxy without port mapping, recreating");
                 needs_recreate = true;
             }
         }
@@ -159,7 +159,7 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
         if (needs_recreate) {
             std::system(("docker rm -f " + proxy_name() + " > /dev/null 2>&1").c_str());
         } else {
-            logger_.info("NginxProxyProvider: Central proxy already running");
+            logger_.info("PROXY", "Central proxy already running");
             return {true, ""};
         }
     }
@@ -193,10 +193,10 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
 
     int rc = std::system(cmd.c_str());
     if (rc != 0) {
-        logger_.error("NginxProxyProvider: Failed to create central proxy container");
+        logger_.error("PROXY", "Failed to create central proxy container");
         return {false, "Failed to create central proxy container"};
     }
-    logger_.info("NginxProxyProvider: Central proxy container created on containercp-public");
+    logger_.info("PROXY", "Central proxy container created on containercp-public");
     return {true, ""};
 }
 
@@ -205,12 +205,12 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
 core::OperationResult NginxProxyProvider::remove_central_proxy() {
     std::string cmd = "docker rm -f " + proxy_name() + " > /dev/null 2>&1";
     std::system(cmd.c_str());
-    logger_.info("NginxProxyProvider: Central proxy container removed");
+    logger_.info("PROXY", "Central proxy container removed");
     return {true, ""};
 }
 
 core::OperationResult NginxProxyProvider::status(const std::string& domain) {
-    logger_.info("NginxProxyProvider: Status for " + domain);
+    logger_.info("PROXY", "Status for " + domain);
     return {true, ""};
 }
 

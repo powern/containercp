@@ -423,10 +423,21 @@ async function startSiteWizard() {
   try {
     const res = await apiPost('/api/sites/create', {owner, domain, profile});
     if (res.success) {
-      $('progress-bar').style.width = '100%';
-      $('progress-step').textContent = 'Site created successfully';
-      $('progress-status').textContent = 'Completed';
-      setTimeout(() => { document.getElementById('progress-overlay')?.remove(); navigate('sites'); }, 1500);
+      // Poll job progress for real-time deployment steps
+      const jobId = res.data.job_id;
+      if (jobId) {
+        pollJobProgress(jobId, () => {
+          $('progress-bar').style.width = '100%';
+          $('progress-step').textContent = 'Site created successfully';
+          $('progress-status').textContent = 'Completed';
+          setTimeout(() => { document.getElementById('progress-overlay')?.remove(); navigate('sites'); }, 1500);
+        });
+      } else {
+        $('progress-bar').style.width = '100%';
+        $('progress-step').textContent = 'Site created successfully';
+        $('progress-status').textContent = 'Completed';
+        setTimeout(() => { document.getElementById('progress-overlay')?.remove(); navigate('sites'); }, 1500);
+      }
     } else {
       $('progress-step').textContent = 'Error: ' + (res.error||'Unknown');
       $('progress-status').textContent = 'Failed';
@@ -437,6 +448,36 @@ async function startSiteWizard() {
     $('progress-status').textContent = 'Failed';
     $('progress-bar').style.background = 'var(--red)';
   }
+}
+
+/* ===== JOB PROGRESS POLLING ===== */
+function pollJobProgress(jobId, onComplete) {
+  const interval = setInterval(async () => {
+    try {
+      const res = await api('/api/jobs?id=' + jobId);
+      if (res.success && res.data) {
+        const job = res.data;
+        const pbar = $('progress-bar');
+        const pstep = $('progress-step');
+        const pstatus = $('progress-status');
+        if (pbar) pbar.style.width = job.progress + '%';
+        if (pstep) pstep.textContent = job.message || (job.steps && job.steps[job.current_step]) || 'Running...';
+        if (pstatus) pstatus.textContent = job.status;
+
+        if (job.status === 'completed' || job.status === 'failed') {
+          clearInterval(interval);
+          if (job.status === 'failed') {
+            if (pbar) pbar.style.background = 'var(--red)';
+            if (pstep) pstep.textContent = 'Error: ' + (job.message || 'Deployment failed');
+          } else {
+            if (onComplete) onComplete();
+          }
+        }
+      }
+    } catch(e) {
+      clearInterval(interval);
+    }
+  }, 500);
 }
 
 /* ===== SITE DETAIL ===== */

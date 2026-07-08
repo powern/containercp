@@ -73,6 +73,12 @@ Before planning any new Epic, read these documents IN ORDER:
 - [x] Run first Release Candidate (rc1) on clean Debian 13 VM
 - [x] Run full 137-item validation checklist — 128 pass, 9 deferred
 - [x] Fix all discovered issues (13 bugs fixed)
+- [x] ARCH-004: Docker network routing for multi-site hosting
+- [x] Apache2 as default web server backend
+- [x] Web UI backend selector (Apache2 default, Nginx optional)
+- [x] Show site backend in site details/list
+- [x] Fix stale disk templates (overwrite on startup)
+- [x] Fix Apache PHP upstream handling
 - [ ] Run 24-hour stability test (RC2)
 - [ ] Release v0.5.0-rc2
 - [ ] Final validation
@@ -110,6 +116,6 @@ Before planning any new Epic, read these documents IN ORDER:
 - [ ] Mail server support
 - [ ] DNS server integration
 - [ ] README update
-- [ ] Web UI: Create Site backend web server selector (Apache2 default, Nginx optional)
-- [ ] Web UI: Show site backend in site details/list
+- [x] Web UI: Create Site backend web server selector (Apache2 default, Nginx optional)
+- [x] Web UI: Show site backend in site details/list
 - [ ] Install/update scripts: systemd service, install.sh, update.sh, dev-rebuild.sh, clean-validation-vm.sh

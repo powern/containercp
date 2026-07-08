@@ -45,3 +45,6 @@ the templates are not recreated.
 
 - `libs/provider/DockerComposeProvider.cpp` — fallback config + validation
 - `tests/test_template.cpp` — config generation and path structure tests
+
+## Status
+Resolved

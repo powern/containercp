@@ -1,5 +1,7 @@
 # Epic: Complete Web Administration Panel
 
+Status: Completed
+
 **Goal:** Transform the Web UI from read-only dashboard into a
 fully interactive administration panel where users can deploy and
 manage websites entirely from the browser.

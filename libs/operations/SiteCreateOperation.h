@@ -3,9 +3,11 @@
 
 #include "config/Config.h"
 #include "core/OperationResult.h"
+#include "core/ProgressCallback.h"
 #include "database/DatabaseManager.h"
 #include "domain/DomainManager.h"
 #include "filesystem/Filesystem.h"
+#include "jobs/JobManager.h"
 #include "node/Node.h"
 #include "proxy/ProxyProvider.h"
 #include "proxy/ReverseProxyManager.h"
@@ -26,7 +28,7 @@ public:
                         filesystem::Filesystem& fs, config::Config& cfg,
                         provider::HostingProvider& provider);
 
-    core::OperationResult execute(const std::string& owner, const std::string& domain, const node::Node& node, bool dry_run = false, const std::string& profile = "");
+    core::OperationResult execute(const std::string& owner, const std::string& domain, const node::Node& node, bool dry_run = false, const std::string& profile = "", jobs::JobManager* jobs = nullptr, uint64_t job_id = 0);
 
 private:
     site::SiteManager& sites_;

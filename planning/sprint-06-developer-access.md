@@ -1,5 +1,7 @@
 # Sprint 6 — Developer Access Layer
 
+Status: Completed
+
 **Goal:** Allow developers to access site files through an access
 user system, abstracted behind an AccessProvider interface.
 

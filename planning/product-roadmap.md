@@ -16,27 +16,27 @@ Core               Stable        100%
 Config             Stable        100%
 Logger             Stable        100%
 Storage            Stable         95%
-CLI                Stable         85%
-Daemon             Stable         90%
-REST API           Active         85%
-Web UI             Active         60%
-Sites              Stable         90%
-Domains            Stable         90%
-Databases          Stable         90%
-Users              Stable         90%
-PHP Versions       Stable         85%
-Docker/Runtime     Stable         85%
-Reverse Proxy      Active         75%
-SSL/Certs          Active         70%
-Access/SFTP        Active         70%
-Backup             Active         80%
-Profiles           Stable         85%
-Templates          Stable         80%
-Jobs               Active         70%
+CLI                Stable         90%
+Daemon             Stable         95%
+REST API           Active         90%
+Web UI             Active         80%
+Sites              Stable         95%
+Domains            Stable         95%
+Databases          Stable         95%
+Users              Stable         95%
+PHP Versions       Stable         90%
+Docker/Runtime     Stable         90%
+Reverse Proxy      Active         90%
+SSL/Certs          Active         75%
+Access/SFTP        Active         75%
+Backup             Active         85%
+Profiles           Stable         90%
+Templates          Stable         85%
+Jobs               Active         75%
 Mail               Placeholder    10%
 DNS                Not started     0%
 Multi-node         Not started     0%
-Tests              Growing        50%
+Tests              Growing        60%
 ```
 
 ## Version 0.1 — Core Foundation (Complete)
@@ -89,7 +89,7 @@ Tests              Growing        50%
 
 **Remaining:** Backup scheduling, backup rotation.
 
-## Version 0.5 — Web Administration (In Progress)
+## Version 0.5 — Web Administration (RC1 Complete)
 
 **Features:**
 - Admin panel with 13 pages (dashboard, sites, domains, databases, SSL, proxy, access, backups, profiles, templates, nodes, logs, settings)
@@ -101,19 +101,27 @@ Tests              Growing        50%
 - Backups page with create functionality
 - Background job tracking
 - CRUD POST endpoints (sites create/remove, backups create)
+- Docker network based multi-site routing (ARCH-004) — no host port allocation
+- Central reverse proxy surviving daemon restarts
+- Apache2 as default backend web server (Nginx selectable via profiles)
+- Web UI backend web server selector on site creation
+- Per-site private Docker networks for backend service isolation
+- Template overwrite on startup to prevent stale configs
+- Fix for Apache PHP upstream handling
 
 **Remaining:**
-- Site creation wizard with deployment progress
 - Edit/delete for all resources
 - Resource detail pages with full data
 - Dashboard with real monitoring data
 - Form validation (client + server)
 - Pagination for large datasets
+- PortManager cleanup (deprecated after ARCH-004)
 
 **Release Candidates:**
 - v0.5.0-rc1 — first validation on Debian 13 (Trixie) — **passed**
-- v0.5.0-rc2 — (future) stability and edge cases
+- v0.5.0-rc2 — (future) 24-hour stability validation
 - v0.5.0-rc3 — (future) final validation
+- v0.5.0 — (future) stable release
 
 **First Production Validation milestone:**
 The RC1 validation cycle completed on 2025-07-07.
@@ -122,13 +130,19 @@ Core lifecycle validation passed: 128 of 137 checklist items pass
 on a clean Debian 13 Validation VM. The 9 remaining items are
 24-hour stability checks deferred to RC2.
 
-See `planning/validation-v0.5.0-rc1.md` for full results.
+ARCH-004 (Docker network routing) was implemented and validated on 2025-07-08,
+replacing the temporary host-port allocation. Full multi-site hosting now works
+with proper container isolation and zero host port consumption per site.
+
+See `planning/validation-v0.5.0-rc1.md` for RC1 results.
 
 **Acceptance criteria for v0.5.0:**
 - [x] Zero compiler warnings (Debug + Release)
 - [x] Core lifecycle validated on clean Debian 13 VM
 - [x] 128 checklist items pass (9 stability items deferred)
 - [x] All unit tests pass
+- [x] Multi-site hosting with Docker network routing validated
+- [x] Apache2 default backend with Web UI selector
 - [ ] 24-hour stability test passes
 - [ ] No orphan resources after cleanup
 

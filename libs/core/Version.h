@@ -3,7 +3,7 @@
 
 namespace containercp::core {
 
-constexpr const char* VERSION = "0.5.0-rc1";
+constexpr const char* VERSION = "0.5.0-rc2";
 
 } // namespace containercp::core
 

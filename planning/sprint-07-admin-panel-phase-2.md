@@ -1,5 +1,7 @@
 # Sprint 7 — Admin Panel Phase 2
 
+Status: Completed
+
 **Goal:** Transform the admin panel from read-only dashboard into an
 interactive management interface.
 
