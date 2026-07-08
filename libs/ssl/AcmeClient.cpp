@@ -3,10 +3,18 @@
 #include "AcmeClient.h"
 
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <curl/curl.h>
 #include <memory>
 #include <fstream>
+
+// One-time libcurl global initialization
+static bool curl_initialized = ([]() {
+    curl_global_init(CURL_GLOBAL_ALL);
+    std::atexit(curl_global_cleanup);
+    return true;
+})();
 #include <openssl/bio.h>
 #include <openssl/ec.h>
 #include <openssl/evp.h>
@@ -122,27 +130,30 @@ std::string AcmeClient::find_json_string_array(const std::string& json, const st
 }
 
 // ============================================================
-// libcurl helpers
+// libcurl helpers (stack-local strings only)
 // ============================================================
-static void http_post(const std::string& url, const std::string& body_data,
-                       const std::string& content_type,
-                       std::shared_ptr<std::string>& out_body,
-                       std::shared_ptr<std::string>& out_headers,
-                       int& status_code) {
-    curl_global_init(CURL_GLOBAL_ALL);
-    CURL* curl = curl_easy_init();
-    if (!curl) return;
+struct HttpResponse {
+    std::string body;
+    std::string headers;
+    int status_code = 0;
+};
 
-    out_body = std::make_shared<std::string>();
-    out_headers = std::make_shared<std::string>();
+static HttpResponse http_post(const std::string& url, const std::string& body_data,
+                               const std::string& content_type) {
+    HttpResponse resp;
+    CURL* curl = curl_easy_init();
+    if (!curl) return resp;
+
+    std::string buf_body;
+    std::string buf_hdrs;
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body_data.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body_data.size());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, out_body.get());
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf_body);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, write_cb);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, out_headers.get());
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &buf_hdrs);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "ContainerCP/0.5");
     curl_easy_setopt(curl, CURLOPT_CAINFO, "/etc/ssl/certs/ca-certificates.crt");
@@ -154,39 +165,45 @@ static void http_post(const std::string& url, const std::string& body_data,
 
     CURLcode res = curl_easy_perform(curl);
     if (res == CURLE_OK) {
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status_code);
-    } else {
-        status_code = 0;
+        long http_code = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+        resp.status_code = (int)http_code;
     }
 
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
+
+    resp.body = buf_body;
+    resp.headers = buf_hdrs;
+    return resp;
 }
 
-static std::string http_get(const std::string& url, int& status_code) {
+static HttpResponse http_get(const std::string& url) {
+    HttpResponse resp;
     CURL* curl = curl_easy_init();
-    if (!curl) return "";
+    if (!curl) return resp;
 
-    auto body = std::make_shared<std::string>();
+    std::string resp_body;
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "ContainerCP/0.5");
     curl_easy_setopt(curl, CURLOPT_CAINFO, "/etc/ssl/certs/ca-certificates.crt");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, body.get());
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp_body);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, write_cb);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, body.get());
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &resp_body);
 
     CURLcode res = curl_easy_perform(curl);
     if (res == CURLE_OK) {
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status_code);
-    } else {
-        status_code = 0;
+        long http_code = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+        resp.status_code = (int)http_code;
     }
 
     curl_easy_cleanup(curl);
-    return *body;
+    resp.body = resp_body;
+    return resp;
 }
 static std::string extract_nonce(const std::string& headers) {
     auto pos = headers.find("Replay-Nonce: ");
@@ -370,37 +387,30 @@ std::string AcmeClient::sign_jws(const std::string& payload, const std::string& 
 }
 
 // ============================================================
-// Http HEAD for nonce fetching
+// Http HEAD for nonce fetching (stack-local string)
 // ============================================================
-static std::string http_head(const std::string& url, int& status_code) {
+static std::string http_head(const std::string& url) {
     CURL* curl = curl_easy_init();
     if (!curl) return "";
 
-    auto hdrs = std::make_shared<std::string>();
+    std::string headers;
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, write_cb);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, hdrs.get());
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &headers);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "ContainerCP/0.5");
 
-    CURLcode res = curl_easy_perform(curl);
-    if (res != CURLE_OK) {
-        status_code = 0;
-    } else {
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status_code);
-    }
-
+    curl_easy_perform(curl);
     curl_easy_cleanup(curl);
-    return *hdrs;
+    return headers;
 }
 
 // ============================================================
 // ACME HTTP methods
 // ============================================================
 std::string AcmeClient::get_nonce() {
-    int status = 0;
-    std::string resp_headers = http_head(new_nonce_url_, status);
+    std::string resp_headers = http_head(new_nonce_url_);
     std::string nonce = extract_nonce(resp_headers);
     return nonce;
 }
@@ -411,15 +421,12 @@ AcmeClient::Response AcmeClient::acme_post(const std::string& url, const std::st
         jws = sign_jws(payload, url, false);
     }
 
-    int status = 0;
-    auto body = std::make_shared<std::string>();
-    auto hdrs = std::make_shared<std::string>();
-    http_post(url, jws, "application/jose+json", body, hdrs, status);
+    HttpResponse http_resp = http_post(url, jws, "application/jose+json");
 
     Response r;
-    r.status_code = status;
-    r.body = *body;
-    r.nonce = extract_nonce(*hdrs);
+    r.status_code = http_resp.status_code;
+    r.body = http_resp.body;
+    r.nonce = extract_nonce(http_resp.headers);
     return r;
 }
 
@@ -434,16 +441,15 @@ AcmeClient::Response AcmeClient::acme_get(const std::string& url) {
 core::OperationResult AcmeClient::discover_directory() {
     logger_.info("ACME", "Discovering directory at " + directory_url_);
 
-    int status = 0;
-    std::string body = http_get(directory_url_, status);
+    HttpResponse get_resp = http_get(directory_url_);
 
-    if (status != 200 || body.empty()) {
-        return {false, "Failed to fetch ACME directory: HTTP " + std::to_string(status)};
+    if (get_resp.status_code != 200 || get_resp.body.empty()) {
+        return {false, "Failed to fetch ACME directory: HTTP " + std::to_string(get_resp.status_code)};
     }
 
-    new_nonce_url_ = find_json_string(body, "newNonce");
-    new_account_url_ = find_json_string(body, "newAccount");
-    new_order_url_ = find_json_string(body, "newOrder");
+    new_nonce_url_ = find_json_string(get_resp.body, "newNonce");
+    new_account_url_ = find_json_string(get_resp.body, "newAccount");
+    new_order_url_ = find_json_string(get_resp.body, "newOrder");
 
     if (new_nonce_url_.empty() || new_account_url_.empty() || new_order_url_.empty()) {
         return {false, "ACME directory response missing required URLs"};
@@ -497,33 +503,27 @@ core::OperationResult AcmeClient::load_or_create_account(const std::string& key_
     logger_.info("ACME-DBG", "9: after sign_jws, jws.size=" + std::to_string(jws.size()));
 
     logger_.info("ACME-DBG", "10: before http_post newAccount");
-    int status = 0;
-    auto body_sp = std::make_shared<std::string>();
-    auto hdrs_sp = std::make_shared<std::string>();
-    http_post(new_account_url_, jws, "application/jose+json", body_sp, hdrs_sp, status);
-    logger_.info("ACME-DBG", "11: after http_post status=" + std::to_string(status)
-                 + " body_size=" + std::to_string(body_sp->size()));
+    HttpResponse post_resp = http_post(new_account_url_, jws, "application/jose+json");
+    logger_.info("ACME-DBG", "11: after http_post status=" + std::to_string(post_resp.status_code)
+                 + " body_size=" + std::to_string(post_resp.body.size()));
 
-    if (status == 201 || status == 200) {
+    if (post_resp.status_code == 201 || post_resp.status_code == 200) {
         logger_.info("ACME-DBG", "12a: account registered success");
-        // Extract account URL from Location header
         std::string loc_header;
-        auto loc_pos = hdrs_sp->find("Location: ");
+        auto loc_pos = post_resp.headers.find("Location: ");
         if (loc_pos != std::string::npos) {
             loc_pos += 10;
-            auto end = hdrs_sp->find("\r\n", loc_pos);
-            if (end != std::string::npos) {
-                loc_header = hdrs_sp->substr(loc_pos, end - loc_pos);
-            }
+            auto end = post_resp.headers.find("\r\n", loc_pos);
+            if (end != std::string::npos)
+                loc_header = post_resp.headers.substr(loc_pos, end - loc_pos);
         }
         if (loc_header.empty()) {
-            loc_pos = hdrs_sp->find("location: ");
+            loc_pos = post_resp.headers.find("location: ");
             if (loc_pos != std::string::npos) {
                 loc_pos += 10;
-                auto end = hdrs_sp->find("\r\n", loc_pos);
-                if (end != std::string::npos) {
-                    loc_header = hdrs_sp->substr(loc_pos, end - loc_pos);
-                }
+                auto end = post_resp.headers.find("\r\n", loc_pos);
+                if (end != std::string::npos)
+                    loc_header = post_resp.headers.substr(loc_pos, end - loc_pos);
             }
         }
         account_.url = loc_header;
@@ -533,7 +533,7 @@ core::OperationResult AcmeClient::load_or_create_account(const std::string& key_
     }
 
     std::string error_msg = "Account registration failed: HTTP "
-                          + std::to_string(status) + " " + *body_sp;
+                          + std::to_string(post_resp.status_code) + " " + post_resp.body;
     logger_.info("ACME-DBG", "12b: account failed, error=" + error_msg);
     return {false, error_msg};
 }
