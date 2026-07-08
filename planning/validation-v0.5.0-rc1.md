@@ -78,8 +78,24 @@ during this validation cycle. These include:
 - No ERROR log messages during normal operation
 - Clean shutdown (SIGTERM)
 
+## Post-RC1 validation (2025-07-08)
+
+### GUI backend selector
+
+Validated on clean Debian 13 VM:
+
+| Check | Result |
+|-------|--------|
+| Create site with Apache2 from Web UI | ✅ HTTP 200, httpd:alpine |
+| Create site with Nginx from Web UI | ✅ HTTP 200, nginx:alpine |
+| Central proxy serves both sites | ✅ |
+| PHP executes on both backends | ✅ X-Powered-By: PHP/8.4.23 |
+| No host ports on site containers | ✅ |
+| Only containercp-proxy exposes 80/443 | ✅ |
+
 ## Next steps
 
 1. Run 24-hour stability test
-2. Close RC1 validation
-3. Begin Version 0.6 planning (DNS and Mail)
+2. Validate remaining 9 stability checklist items
+3. Release v0.5.0-rc2
+4. Begin Version 0.6 planning (DNS and Mail)

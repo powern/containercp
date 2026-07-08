@@ -147,6 +147,17 @@ Epic Closed
 No Epic is considered complete until it has successfully passed
 validation on the official Validation VM.
 
+## Session start
+
+When starting a new session, first read `planning/project-status.md` to
+understand the current project state, what's completed, and what's
+pending. This file is the single source of truth for task status
+across all sprints and versions.
+
+All completed tasks from `tasks/*.md` and planning documents have been
+cross-referenced against the actual codebase and recorded in
+`planning/project-status.md`. Update this file when tasks change status.
+
 ## Current product stage
 
 ContainerCP is at Version 0.5 (Release Candidate 1 completed).

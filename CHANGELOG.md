@@ -10,6 +10,20 @@ Format: date | commit | summary
 
 ---
 
+## 2025-07-08 | `(this commit)` | GUI backend selector validation
+
+### Validation
+
+- Web UI backend selector (Apache2/Nginx) validated on clean Debian 13 VM
+- Created test-gui-apache.local → Apache2 (httpd:alpine) → HTTP 200
+- Created test-gui-nginx.local → Nginx (nginx:alpine) → HTTP 200
+- Both sites accessible through central proxy on port 80
+- PHP 8.4.23 executes correctly on both backends
+- Only `containercp-proxy` exposes host ports 80/443
+- Site containers publish zero host ports
+
+---
+
 ## 2025-07-08 | `(this commit)` | Docker network based multi-site hosting (ARCH-004)
 
 ### What changed
