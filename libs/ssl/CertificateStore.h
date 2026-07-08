@@ -43,6 +43,22 @@ public:
         std::string updated_at;
     };
 
+    enum class LoadError {
+        NONE,
+        NOT_FOUND,
+        INVALID_JSON,
+        UNSUPPORTED_VERSION,
+        IO_ERROR,
+        INVALID_SCHEMA
+    };
+
+    struct MetadataLoadResult {
+        bool success = false;
+        Metadata metadata;
+        LoadError error = LoadError::NONE;
+        std::string message;
+    };
+
     struct ValidationResult {
         bool valid = true;
         std::vector<std::string> warnings;
@@ -63,7 +79,7 @@ public:
     bool certificate_files_exist(uint64_t site_id) const;
 
     bool save_metadata(uint64_t site_id, const Metadata& meta);
-    Metadata load_metadata(uint64_t site_id);
+    MetadataLoadResult load_metadata(uint64_t site_id);
 
     bool save_fullchain(uint64_t site_id, const std::string& pem_data);
     bool save_privkey(uint64_t site_id, const std::string& pem_data);
@@ -86,8 +102,12 @@ public:
     static std::string timestamp_utc();
     static std::string domains_to_string(const std::vector<std::string>& domains);
     static std::vector<std::string> string_to_domains(const std::string& str);
+    static std::string load_error_string(LoadError err);
 
 private:
+    std::string staging_dir(uint64_t site_id, const std::string& stamp) const;
+    bool atomic_write_in_dir(const std::string& dir, const std::string& filename,
+                              const std::string& content, int mode);
     bool atomic_write(const std::string& path, const std::string& content, int mode);
     std::string read_file(const std::string& path) const;
     std::string metadata_to_json(const Metadata& meta) const;

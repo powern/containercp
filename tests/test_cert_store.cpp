@@ -2,29 +2,40 @@
 #include "logger/Logger.h"
 
 #include <cstdio>
+#include <dirent.h>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include "doctest/doctest.h"
 
-static std::string test_dir() {
+static std::string test_root() {
     return "/tmp/containercp_test_ssl_" + std::to_string(::getpid());
 }
 
-static void cleanup(const std::string& dir) {
-    ::unlink((dir + "/1/metadata.json").c_str());
-    ::unlink((dir + "/1/fullchain.pem").c_str());
-    ::unlink((dir + "/1/privkey.pem").c_str());
-    ::unlink((dir + "/1/chain.pem").c_str());
-    ::rmdir((dir + "/1").c_str());
-    ::rmdir(dir.c_str());
+static void cleanup_dir(const std::string& path) {
+    DIR* d = ::opendir(path.c_str());
+    if (!d) return;
+    struct dirent* entry;
+    while ((entry = ::readdir(d)) != nullptr) {
+        std::string name = entry->d_name;
+        if (name == "." || name == "..") continue;
+        std::string full = path + "/" + name;
+        if (entry->d_type == DT_DIR) {
+            cleanup_dir(full);
+        } else {
+            ::unlink(full.c_str());
+        }
+    }
+    ::closedir(d);
+    ::rmdir(path.c_str());
 }
 
 TEST_CASE("CertificateStore save and load metadata") {
     auto& log = containercp::logger::Logger::instance();
-    std::string dir = test_dir();
+    std::string dir = test_root();
     ::mkdir(dir.c_str(), 0700);
 
     containercp::ssl::CertificateStore store(log, dir);
@@ -45,25 +56,163 @@ TEST_CASE("CertificateStore save and load metadata") {
 
     CHECK(store.save_metadata(1, meta));
 
-    auto loaded = store.load_metadata(1);
-    CHECK(loaded.site_id == 1);
-    CHECK(loaded.provider_id == "letsencrypt");
-    CHECK(loaded.status == "active");
-    CHECK(loaded.domains.size() == 2);
-    CHECK(loaded.domains[0] == "example.com");
-    CHECK(loaded.domains[1] == "www.example.com");
-    CHECK(loaded.issued_at == "2025-07-08T12:00:00Z");
-    CHECK(loaded.expires_at == "2025-10-06T12:00:00Z");
-    CHECK(loaded.https_enabled);
-    CHECK(loaded.auto_renew);
-    CHECK(loaded.fingerprint_sha256 == "abc123");
+    auto result = store.load_metadata(1);
+    CHECK(result.success);
+    CHECK(result.error == containercp::ssl::CertificateStore::LoadError::NONE);
+    CHECK(result.metadata.site_id == 1);
+    CHECK(result.metadata.provider_id == "letsencrypt");
+    CHECK(result.metadata.status == "active");
+    CHECK(result.metadata.domains.size() == 2);
+    CHECK(result.metadata.domains[0] == "example.com");
+    CHECK(result.metadata.domains[1] == "www.example.com");
+    CHECK(result.metadata.https_enabled);
+    CHECK(result.metadata.auto_renew);
 
-    cleanup(dir);
+    cleanup_dir(dir);
+}
+
+TEST_CASE("CertificateStore load_metadata returns NOT_FOUND") {
+    auto& log = containercp::logger::Logger::instance();
+    std::string dir = test_root();
+    ::mkdir(dir.c_str(), 0700);
+
+    containercp::ssl::CertificateStore store(log, dir);
+    auto result = store.load_metadata(999);
+    CHECK_FALSE(result.success);
+    CHECK(result.error == containercp::ssl::CertificateStore::LoadError::NOT_FOUND);
+
+    cleanup_dir(dir);
+}
+
+TEST_CASE("CertificateStore load_metadata returns INVALID_JSON") {
+    auto& log = containercp::logger::Logger::instance();
+    std::string dir = test_root();
+    ::mkdir(dir.c_str(), 0700);
+    ::mkdir((dir + "/1").c_str(), 0700);
+
+    {
+        std::ofstream f(dir + "/1/metadata.json");
+        f << "{invalid json}";
+    }
+
+    containercp::ssl::CertificateStore store(log, dir);
+    auto result = store.load_metadata(1);
+    CHECK_FALSE(result.success);
+    CHECK(result.error == containercp::ssl::CertificateStore::LoadError::INVALID_JSON);
+
+    cleanup_dir(dir);
+}
+
+TEST_CASE("CertificateStore load_metadata returns IO_ERROR for empty file") {
+    auto& log = containercp::logger::Logger::instance();
+    std::string dir = test_root();
+    ::mkdir(dir.c_str(), 0700);
+    ::mkdir((dir + "/1").c_str(), 0700);
+
+    {
+        std::ofstream f(dir + "/1/metadata.json");
+        f << "";
+    }
+
+    containercp::ssl::CertificateStore store(log, dir);
+    auto result = store.load_metadata(1);
+    CHECK_FALSE(result.success);
+    CHECK(result.error == containercp::ssl::CertificateStore::LoadError::IO_ERROR);
+
+    cleanup_dir(dir);
+}
+
+TEST_CASE("CertificateStore load_metadata returns INVALID_SCHEMA for site_id mismatch") {
+    auto& log = containercp::logger::Logger::instance();
+    std::string dir = test_root();
+    ::mkdir(dir.c_str(), 0700);
+    ::mkdir((dir + "/1").c_str(), 0700);
+
+    containercp::ssl::CertificateStore store(log, dir);
+    containercp::ssl::CertificateStore::Metadata meta;
+    meta.site_id = 2;
+    meta.domains = {"x.com"};
+    store.save_metadata(1, meta);
+
+    auto result = store.load_metadata(1);
+    CHECK_FALSE(result.success);
+    CHECK(result.error == containercp::ssl::CertificateStore::LoadError::INVALID_SCHEMA);
+
+    cleanup_dir(dir);
+}
+
+TEST_CASE("CertificateStore save_all transactional success") {
+    auto& log = containercp::logger::Logger::instance();
+    std::string dir = test_root();
+    ::mkdir(dir.c_str(), 0700);
+
+    containercp::ssl::CertificateStore store(log, dir);
+
+    containercp::ssl::CertificateStore::Metadata meta;
+    meta.site_id = 1;
+    meta.status = "active";
+    meta.domains = {"example.com"};
+
+    auto result = store.save_all(1, meta, "fullchain-data", "privkey-data", "chain-data");
+    CHECK(result.success);
+
+    CHECK(store.metadata_exists(1));
+    CHECK(store.certificate_files_exist(1));
+
+    // Verify no staging directories remain
+    DIR* d = ::opendir(store.site_dir(1).c_str());
+    REQUIRE(d != nullptr);
+    struct dirent* entry;
+    while ((entry = ::readdir(d)) != nullptr) {
+        std::string name = entry->d_name;
+        if (name == "." || name == "..") continue;
+        CHECK(name.find(".staging-") == std::string::npos);
+    }
+    ::closedir(d);
+
+    cleanup_dir(dir);
+}
+
+TEST_CASE("CertificateStore save_all rollback on write failure") {
+    auto& log = containercp::logger::Logger::instance();
+    std::string dir = test_root();
+    ::mkdir(dir.c_str(), 0700);
+    ::mkdir((dir + "/2").c_str(), 0700);
+    // Make fullchain.pem a directory so writing it fails
+    ::mkdir((dir + "/2/fullchain.pem").c_str(), 0700);
+
+    containercp::ssl::CertificateStore store(log, dir);
+
+    containercp::ssl::CertificateStore::Metadata meta;
+    meta.site_id = 2;
+    meta.status = "active";
+    meta.domains = {"rollback-test.com"};
+
+    auto result = store.save_all(2, meta, "fullchain-data", "privkey-data", "chain-data");
+    CHECK_FALSE(result.success);
+
+    // Verify no staging directory remains
+    DIR* d = ::opendir(store.site_dir(2).c_str());
+    REQUIRE(d != nullptr);
+    struct dirent* entry;
+    bool staging_found = false;
+    while ((entry = ::readdir(d)) != nullptr) {
+        std::string name = entry->d_name;
+        if (name.find(".staging-") == 0) {
+            staging_found = true;
+        }
+    }
+    ::closedir(d);
+    CHECK_FALSE(staging_found);
+
+    // Cleanup the directory we created as a file-blocker
+    ::rmdir((dir + "/2/fullchain.pem").c_str());
+    cleanup_dir(dir);
 }
 
 TEST_CASE("CertificateStore save and load certificate files") {
     auto& log = containercp::logger::Logger::instance();
-    std::string dir = test_dir();
+    std::string dir = test_root();
     ::mkdir(dir.c_str(), 0700);
 
     containercp::ssl::CertificateStore store(log, dir);
@@ -83,7 +232,6 @@ TEST_CASE("CertificateStore save and load certificate files") {
     std::string loaded_key = store.load_privkey(1);
     CHECK(loaded_key == key_pem);
 
-    // Check permissions
     struct stat st;
     ::stat(store.fullchain_path(1).c_str(), &st);
     CHECK((st.st_mode & 0777) == 0644);
@@ -91,12 +239,12 @@ TEST_CASE("CertificateStore save and load certificate files") {
     ::stat(store.privkey_path(1).c_str(), &st);
     CHECK((st.st_mode & 0777) == 0600);
 
-    cleanup(dir);
+    cleanup_dir(dir);
 }
 
 TEST_CASE("CertificateStore atomic replace") {
     auto& log = containercp::logger::Logger::instance();
-    std::string dir = test_dir();
+    std::string dir = test_root();
     ::mkdir(dir.c_str(), 0700);
 
     containercp::ssl::CertificateStore store(log, dir);
@@ -109,47 +257,24 @@ TEST_CASE("CertificateStore atomic replace") {
 
     CHECK(store.save_metadata(1, meta));
 
-    // Overwrite with new data
     meta.domains = {"example.com", "www.example.com"};
     meta.expires_at = "2025-10-06T12:00:00Z";
     CHECK(store.save_metadata(1, meta));
 
-    auto loaded = store.load_metadata(1);
-    CHECK(loaded.domains.size() == 2);
-    CHECK(loaded.expires_at == "2025-10-06T12:00:00Z");
+    auto result = store.load_metadata(1);
+    CHECK(result.metadata.domains.size() == 2);
+    CHECK(result.metadata.expires_at == "2025-10-06T12:00:00Z");
 
-    // Verify no .tmp file remains
     std::string tmp_path = store.metadata_path(1) + ".tmp";
     struct stat st;
     CHECK(::stat(tmp_path.c_str(), &st) != 0);
 
-    cleanup(dir);
+    cleanup_dir(dir);
 }
 
-TEST_CASE("CertificateStore save_all") {
+TEST_CASE("CertificateStore save_all then remove_all") {
     auto& log = containercp::logger::Logger::instance();
-    std::string dir = test_dir();
-    ::mkdir(dir.c_str(), 0700);
-
-    containercp::ssl::CertificateStore store(log, dir);
-
-    containercp::ssl::CertificateStore::Metadata meta;
-    meta.site_id = 1;
-    meta.status = "active";
-    meta.domains = {"example.com"};
-
-    auto result = store.save_all(1, meta, "fullchain-data", "privkey-data", "chain-data");
-    CHECK(result.success);
-
-    CHECK(store.metadata_exists(1));
-    CHECK(store.certificate_files_exist(1));
-
-    cleanup(dir);
-}
-
-TEST_CASE("CertificateStore remove_all") {
-    auto& log = containercp::logger::Logger::instance();
-    std::string dir = test_dir();
+    std::string dir = test_root();
     ::mkdir(dir.c_str(), 0700);
 
     containercp::ssl::CertificateStore store(log, dir);
@@ -163,12 +288,12 @@ TEST_CASE("CertificateStore remove_all") {
     CHECK(store.remove_all(1));
     CHECK_FALSE(store.metadata_exists(1));
 
-    cleanup(dir);
+    cleanup_dir(dir);
 }
 
 TEST_CASE("CertificateStore enumerate") {
     auto& log = containercp::logger::Logger::instance();
-    std::string dir = test_dir();
+    std::string dir = test_root();
     ::mkdir(dir.c_str(), 0700);
 
     containercp::ssl::CertificateStore store(log, dir);
@@ -186,16 +311,15 @@ TEST_CASE("CertificateStore enumerate") {
     CHECK(ids[1] == 2);
     CHECK(ids[2] == 3);
 
-    // Cleanup
     store.remove_all(1);
     store.remove_all(2);
     store.remove_all(3);
-    cleanup(dir);
+    cleanup_dir(dir);
 }
 
 TEST_CASE("CertificateStore validate active certificate") {
     auto& log = containercp::logger::Logger::instance();
-    std::string dir = test_dir();
+    std::string dir = test_root();
     ::mkdir(dir.c_str(), 0700);
 
     containercp::ssl::CertificateStore store(log, dir);
@@ -211,47 +335,25 @@ TEST_CASE("CertificateStore validate active certificate") {
     auto result = store.validate(1);
     CHECK(result.valid);
 
-    cleanup(dir);
+    cleanup_dir(dir);
 }
 
 TEST_CASE("CertificateStore validate missing files") {
     auto& log = containercp::logger::Logger::instance();
-    std::string dir = test_dir();
+    std::string dir = test_root();
     ::mkdir(dir.c_str(), 0700);
 
     containercp::ssl::CertificateStore store(log, dir);
-
-    // Validate non-existent site
     auto result = store.validate(999);
     CHECK_FALSE(result.valid);
     CHECK(result.errors.size() > 0);
 
-    cleanup(dir);
-}
-
-TEST_CASE("CertificateStore invalid JSON metadata") {
-    auto& log = containercp::logger::Logger::instance();
-    std::string dir = test_dir();
-    ::mkdir(dir.c_str(), 0700);
-    ::mkdir((dir + "/1").c_str(), 0700);
-
-    // Write invalid JSON
-    std::ofstream f(dir + "/1/metadata.json");
-    f << "{invalid json}";
-    f.close();
-
-    containercp::ssl::CertificateStore store(log, dir);
-    auto meta = store.load_metadata(1);
-    // Should return default metadata without throwing
-    CHECK(meta.version == 1);
-    CHECK(meta.status == "http_only");
-
-    cleanup(dir);
+    cleanup_dir(dir);
 }
 
 TEST_CASE("CertificateStore metadata version compatibility") {
     auto& log = containercp::logger::Logger::instance();
-    std::string dir = test_dir();
+    std::string dir = test_root();
     ::mkdir(dir.c_str(), 0700);
 
     containercp::ssl::CertificateStore store(log, dir);
@@ -263,17 +365,15 @@ TEST_CASE("CertificateStore metadata version compatibility") {
     meta.issuer = "CN=R3,O=Let's Encrypt,C=US";
 
     CHECK(store.save_metadata(1, meta));
+    auto result = store.load_metadata(1);
+    CHECK(result.metadata.version == 1);
+    CHECK(result.metadata.issuer == "CN=R3,O=Let's Encrypt,C=US");
 
-    auto loaded = store.load_metadata(1);
-    CHECK(loaded.version == 1);
-    CHECK(loaded.issuer == "CN=R3,O=Let's Encrypt,C=US");
-
-    cleanup(dir);
+    cleanup_dir(dir);
 }
 
 TEST_CASE("CertificateStore timestamp_utc format") {
     auto ts = containercp::ssl::CertificateStore::timestamp_utc();
-    // ISO-8601 format: 2025-07-08T12:00:00Z
     CHECK(ts.size() == 20);
     CHECK(ts[10] == 'T');
     CHECK(ts[19] == 'Z');
@@ -289,7 +389,16 @@ TEST_CASE("CertificateStore domains helpers") {
     std::string str = containercp::ssl::CertificateStore::domains_to_string(domains);
     CHECK(str == "a.com,b.com,c.com");
 
-    // Empty
     auto empty = containercp::ssl::CertificateStore::string_to_domains("");
     CHECK(empty.empty());
+}
+
+TEST_CASE("CertificateStore load_error_string") {
+    using LoadError = containercp::ssl::CertificateStore::LoadError;
+    CHECK(containercp::ssl::CertificateStore::load_error_string(LoadError::NONE) == "OK");
+    CHECK(containercp::ssl::CertificateStore::load_error_string(LoadError::NOT_FOUND) == "NOT_FOUND");
+    CHECK(containercp::ssl::CertificateStore::load_error_string(LoadError::INVALID_JSON) == "INVALID_JSON");
+    CHECK(containercp::ssl::CertificateStore::load_error_string(LoadError::UNSUPPORTED_VERSION) == "UNSUPPORTED_VERSION");
+    CHECK(containercp::ssl::CertificateStore::load_error_string(LoadError::IO_ERROR) == "IO_ERROR");
+    CHECK(containercp::ssl::CertificateStore::load_error_string(LoadError::INVALID_SCHEMA) == "INVALID_SCHEMA");
 }

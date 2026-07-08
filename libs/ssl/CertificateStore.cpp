@@ -42,13 +42,16 @@ std::string CertificateStore::chain_path(uint64_t site_id) const {
     return site_dir(site_id) + "/chain.pem";
 }
 
+std::string CertificateStore::staging_dir(uint64_t site_id, const std::string& stamp) const {
+    return site_dir(site_id) + "/.staging-" + stamp;
+}
+
 bool CertificateStore::ensure_site_dir(uint64_t site_id) {
     std::string dir = site_dir(site_id);
     if (::mkdir(dir.c_str(), 0700) == 0) {
         return true;
     }
     if (errno == EEXIST) {
-        // Directory already exists — ensure correct permissions
         ::chmod(dir.c_str(), 0700);
         return true;
     }
@@ -70,7 +73,6 @@ bool CertificateStore::certificate_files_exist(uint64_t site_id) const {
 bool CertificateStore::atomic_write(const std::string& path, const std::string& content, int mode) {
     std::string tmp_path = path + ".tmp";
 
-    // Write to temporary file
     int fd = ::open(tmp_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, mode);
     if (fd < 0) {
         logger_.error("CertificateStore", "Failed to open temp file: " + tmp_path);
@@ -91,7 +93,6 @@ bool CertificateStore::atomic_write(const std::string& path, const std::string& 
         remaining -= static_cast<size_t>(written);
     }
 
-    // fsync before rename
     if (::fsync(fd) < 0) {
         ::close(fd);
         ::unlink(tmp_path.c_str());
@@ -100,14 +101,12 @@ bool CertificateStore::atomic_write(const std::string& path, const std::string& 
     }
     ::close(fd);
 
-    // Atomic rename
     if (::rename(tmp_path.c_str(), path.c_str()) < 0) {
         ::unlink(tmp_path.c_str());
         logger_.error("CertificateStore", "rename failed: " + tmp_path + " -> " + path);
         return false;
     }
 
-    // fsync the directory to ensure metadata is written
     std::string dir = path.substr(0, path.rfind('/'));
     int dir_fd = ::open(dir.c_str(), O_RDONLY);
     if (dir_fd >= 0) {
@@ -116,6 +115,11 @@ bool CertificateStore::atomic_write(const std::string& path, const std::string& 
     }
 
     return true;
+}
+
+bool CertificateStore::atomic_write_in_dir(const std::string& dir, const std::string& filename,
+                                            const std::string& content, int mode) {
+    return atomic_write(dir + "/" + filename, content, mode);
 }
 
 std::string CertificateStore::read_file(const std::string& path) const {
@@ -136,18 +140,51 @@ bool CertificateStore::save_metadata(uint64_t site_id, const Metadata& meta) {
     return atomic_write(metadata_path(site_id), json, 0644);
 }
 
-CertificateStore::Metadata CertificateStore::load_metadata(uint64_t site_id) {
-    Metadata meta;
-    std::string json = read_file(metadata_path(site_id));
+CertificateStore::MetadataLoadResult CertificateStore::load_metadata(uint64_t site_id) {
+    MetadataLoadResult result;
+    std::string path = metadata_path(site_id);
+
+    struct stat st;
+    if (::stat(path.c_str(), &st) != 0) {
+        result.error = LoadError::NOT_FOUND;
+        result.message = "metadata.json not found for site " + std::to_string(site_id);
+        return result;
+    }
+
+    std::string json = read_file(path);
     if (json.empty()) {
-        return meta;
+        result.error = LoadError::IO_ERROR;
+        result.message = "metadata.json is empty for site " + std::to_string(site_id);
+        return result;
     }
+
     try {
-        meta = metadata_from_json(json);
+        result.metadata = metadata_from_json(json);
+    } catch (const std::exception& e) {
+        result.error = LoadError::INVALID_JSON;
+        result.message = std::string("Failed to parse metadata.json: ") + e.what();
+        return result;
     } catch (...) {
-        logger_.error("CertificateStore", "Failed to parse metadata for site " + std::to_string(site_id));
+        result.error = LoadError::INVALID_JSON;
+        result.message = "Failed to parse metadata.json: unknown error";
+        return result;
     }
-    return meta;
+
+    if (result.metadata.version < 1) {
+        result.error = LoadError::INVALID_JSON;
+        result.message = "Unsupported metadata version: " + std::to_string(result.metadata.version);
+        return result;
+    }
+
+    if (result.metadata.site_id != site_id) {
+        result.error = LoadError::INVALID_SCHEMA;
+        result.message = "metadata.json site_id mismatch: expected " + std::to_string(site_id)
+                        + ", got " + std::to_string(result.metadata.site_id);
+        return result;
+    }
+
+    result.success = true;
+    return result;
 }
 
 bool CertificateStore::save_fullchain(uint64_t site_id, const std::string& pem_data) {
@@ -172,18 +209,81 @@ core::OperationResult CertificateStore::save_all(uint64_t site_id, const Metadat
     if (!ensure_site_dir(site_id)) {
         return {false, "Failed to create site directory"};
     }
-    if (!save_fullchain(site_id, fullchain_pem)) {
-        return {false, "Failed to save fullchain.pem"};
+
+    // Use a unique staging directory for transactional writes
+    std::string stamp = std::to_string(::time(nullptr)) + "-" + std::to_string(::getpid());
+    std::string sdir = staging_dir(site_id, stamp);
+
+    if (::mkdir(sdir.c_str(), 0700) != 0) {
+        logger_.error("CertificateStore", "Failed to create staging directory: " + sdir);
+        return {false, "Failed to create staging directory"};
     }
-    if (!save_privkey(site_id, privkey_pem)) {
-        return {false, "Failed to save privkey.pem"};
+
+    // Write all files to staging directory first
+    bool all_ok = true;
+    all_ok = all_ok && atomic_write_in_dir(sdir, "fullchain.pem", fullchain_pem, 0644);
+    all_ok = all_ok && atomic_write_in_dir(sdir, "privkey.pem", privkey_pem, 0600);
+    all_ok = all_ok && atomic_write_in_dir(sdir, "chain.pem", chain_pem, 0644);
+    all_ok = all_ok && atomic_write_in_dir(sdir, "metadata.json", metadata_to_json(meta), 0644);
+
+    if (!all_ok) {
+        // Rollback: remove staging directory and all its contents
+        ::unlink((sdir + "/fullchain.pem").c_str());
+        ::unlink((sdir + "/privkey.pem").c_str());
+        ::unlink((sdir + "/chain.pem").c_str());
+        ::unlink((sdir + "/metadata.json").c_str());
+        ::rmdir(sdir.c_str());
+        logger_.error("CertificateStore", "save_all failed, staging directory rolled back: " + sdir);
+        return {false, "Failed to write certificate files"};
     }
-    if (!save_chain(site_id, chain_pem)) {
-        return {false, "Failed to save chain.pem"};
+
+    // Fsync the staging directory to ensure all data is on disk
+    int dir_fd = ::open(sdir.c_str(), O_RDONLY);
+    if (dir_fd >= 0) {
+        ::fsync(dir_fd);
+        ::close(dir_fd);
     }
-    if (!save_metadata(site_id, meta)) {
-        return {false, "Failed to save metadata.json"};
+
+    // Atomically move each file from staging to final location
+    auto move_file = [&](const std::string& filename) -> bool {
+        std::string src = sdir + "/" + filename;
+        std::string dst = site_dir(site_id) + "/" + filename;
+        if (::rename(src.c_str(), dst.c_str()) != 0) {
+            logger_.error("CertificateStore", "rename failed: " + src + " -> " + dst);
+            return false;
+        }
+        return true;
+    };
+
+    bool move_ok = true;
+    move_ok = move_ok && move_file("fullchain.pem");
+    move_ok = move_ok && move_file("privkey.pem");
+    move_ok = move_ok && move_file("chain.pem");
+    move_ok = move_ok && move_file("metadata.json");
+
+    // Remove staging directory (should be empty after renames)
+    ::rmdir(sdir.c_str());
+
+    if (!move_ok) {
+        // Critical failure: rename of one or more files failed.
+        // Try to restore files that were already renamed back to staging.
+        // Best-effort rollback of the staging directory contents.
+        ::unlink((sdir + "/fullchain.pem").c_str());
+        ::unlink((sdir + "/privkey.pem").c_str());
+        ::unlink((sdir + "/chain.pem").c_str());
+        ::unlink((sdir + "/metadata.json").c_str());
+        ::rmdir(sdir.c_str());
+        logger_.error("CertificateStore", "save_all rename failed, staging cleaned up");
+        return {false, "Failed to finalize certificate files"};
     }
+
+    // Fsync the site directory to commit the renames
+    int site_fd = ::open(site_dir(site_id).c_str(), O_RDONLY);
+    if (site_fd >= 0) {
+        ::fsync(site_fd);
+        ::close(site_fd);
+    }
+
     return {true, ""};
 }
 
@@ -207,16 +307,28 @@ bool CertificateStore::remove_all(uint64_t site_id) {
     ::unlink(privkey_path(site_id).c_str());
     ::unlink(chain_path(site_id).c_str());
 
-    // Remove temp files if any
-    ::unlink((metadata_path(site_id) + ".tmp").c_str());
-    ::unlink((fullchain_path(site_id) + ".tmp").c_str());
-    ::unlink((privkey_path(site_id) + ".tmp").c_str());
-    ::unlink((chain_path(site_id) + ".tmp").c_str());
+    // Remove any staging directories
+    DIR* d = ::opendir(dir.c_str());
+    if (d) {
+        struct dirent* entry;
+        while ((entry = ::readdir(d)) != nullptr) {
+            std::string name = entry->d_name;
+            if (name.find(".staging-") == 0) {
+                // Remove contents then directory
+                std::string sub = dir + "/" + name;
+                ::unlink((sub + "/fullchain.pem").c_str());
+                ::unlink((sub + "/privkey.pem").c_str());
+                ::unlink((sub + "/chain.pem").c_str());
+                ::unlink((sub + "/metadata.json").c_str());
+                ::rmdir(sub.c_str());
+            }
+        }
+        ::closedir(d);
+    }
 
     if (::rmdir(dir.c_str()) == 0) {
         return true;
     }
-    // Directory may not exist — not an error
     if (errno == ENOENT) {
         return true;
     }
@@ -234,12 +346,11 @@ std::vector<uint64_t> CertificateStore::enumerate() {
     while ((entry = ::readdir(dir)) != nullptr) {
         if (entry->d_type == DT_DIR) {
             std::string name = entry->d_name;
-            if (name == "." || name == "..") continue;
+            if (name == "." || name == ".." || name.find(".staging-") == 0) continue;
 
-            // Check if directory name is a numeric site ID
             bool is_numeric = true;
             for (char c : name) {
-                if (!std::isdigit(c)) { is_numeric = false; break; }
+                if (!std::isdigit(static_cast<unsigned char>(c))) { is_numeric = false; break; }
             }
             if (is_numeric) {
                 result.push_back(std::stoull(name));
@@ -255,7 +366,6 @@ CertificateStore::ValidationResult CertificateStore::validate(uint64_t site_id) 
     ValidationResult result;
     std::string dir = site_dir(site_id);
 
-    // Check directory exists
     struct stat dir_st;
     if (::stat(dir.c_str(), &dir_st) != 0) {
         result.valid = false;
@@ -263,69 +373,66 @@ CertificateStore::ValidationResult CertificateStore::validate(uint64_t site_id) 
         return result;
     }
 
-    // Check directory permissions
     if ((dir_st.st_mode & 0777) != 0700) {
         result.warnings.push_back("Directory permissions should be 0700");
     }
 
-    // Check metadata.json
-    struct stat meta_st;
-    if (::stat(metadata_path(site_id).c_str(), &meta_st) != 0) {
+    // Load metadata with proper error handling
+    auto load_result = load_metadata(site_id);
+    if (!load_result.success) {
         result.valid = false;
-        result.errors.push_back("metadata.json not found");
-    } else {
-        if ((meta_st.st_mode & 0777) != 0644) {
-            result.warnings.push_back("metadata.json permissions should be 0644");
-        }
-
-        Metadata meta = load_metadata(site_id);
-        if (meta.version < 1) {
-            result.warnings.push_back("metadata.json has invalid version");
-        }
-        if (meta.site_id != site_id) {
-            result.warnings.push_back("metadata.json site_id mismatch");
-        }
-        if (meta.domains.empty()) {
-            result.warnings.push_back("metadata.json has no domains");
-        }
+        result.errors.push_back(load_error_string(load_result.error) + ": " + load_result.message);
+        return result;
     }
 
-    // Check certificate files if status is active or issuing
-    Metadata meta = load_metadata(site_id);
+    const Metadata& meta = load_result.metadata;
+
+    if (meta.domains.empty()) {
+        result.warnings.push_back("metadata.json has no domains");
+    }
+
+    // Check certificate files if status expects them
     if (meta.status == "active" || meta.status == "issuing" || meta.status == "disabled") {
-        struct stat st;
-
-        if (::stat(fullchain_path(site_id).c_str(), &st) != 0) {
-            result.errors.push_back("fullchain.pem not found");
-        } else if ((st.st_mode & 0777) != 0644) {
-            result.warnings.push_back("fullchain.pem permissions should be 0644");
-        }
-
-        if (::stat(privkey_path(site_id).c_str(), &st) != 0) {
-            result.errors.push_back("privkey.pem not found");
-        } else if ((st.st_mode & 0777) != 0600) {
-            result.warnings.push_back("privkey.pem permissions should be 0600");
-        }
-
-        if (::stat(chain_path(site_id).c_str(), &st) != 0) {
-            result.warnings.push_back("chain.pem not found (optional)");
-        }
-
-        // Check for empty files
-        auto check_not_empty = [&](const std::string& path, const std::string& label) {
-            struct stat fs;
-            if (::stat(path.c_str(), &fs) == 0 && fs.st_size == 0) {
+        auto check_file = [&](const std::string& path, const std::string& label, mode_t expected_mode) {
+            struct stat st;
+            if (::stat(path.c_str(), &st) != 0) {
+                result.errors.push_back(label + " not found");
+                return;
+            }
+            if ((st.st_mode & 0777) != expected_mode) {
+                result.warnings.push_back(label + " permissions should be " +
+                    std::to_string(expected_mode));
+            }
+            if (st.st_size == 0) {
                 result.errors.push_back(label + " is empty");
             }
         };
-        check_not_empty(fullchain_path(site_id), "fullchain.pem");
-        check_not_empty(privkey_path(site_id), "privkey.pem");
+
+        check_file(fullchain_path(site_id), "fullchain.pem", 0644);
+        check_file(privkey_path(site_id), "privkey.pem", 0600);
+
+        struct stat chain_st;
+        if (::stat(chain_path(site_id).c_str(), &chain_st) != 0) {
+            result.warnings.push_back("chain.pem not found (optional)");
+        }
     }
 
     if (!result.errors.empty()) {
         result.valid = false;
     }
     return result;
+}
+
+std::string CertificateStore::load_error_string(LoadError err) {
+    switch (err) {
+        case LoadError::NONE: return "OK";
+        case LoadError::NOT_FOUND: return "NOT_FOUND";
+        case LoadError::INVALID_JSON: return "INVALID_JSON";
+        case LoadError::UNSUPPORTED_VERSION: return "UNSUPPORTED_VERSION";
+        case LoadError::IO_ERROR: return "IO_ERROR";
+        case LoadError::INVALID_SCHEMA: return "INVALID_SCHEMA";
+    }
+    return "UNKNOWN";
 }
 
 // --- JSON helpers ---
@@ -358,7 +465,7 @@ std::string CertificateStore::parse_json_string(const std::string& json, size_t&
     if (pos >= json.size() || json[pos] != '"') {
         return "";
     }
-    ++pos; // skip opening quote
+    ++pos;
     std::string result;
     while (pos < json.size() && json[pos] != '"') {
         if (json[pos] == '\\') {
@@ -379,7 +486,7 @@ std::string CertificateStore::parse_json_string(const std::string& json, size_t&
         ++pos;
     }
     if (pos < json.size()) {
-        ++pos; // skip closing quote
+        ++pos;
     }
     return result;
 }
@@ -392,7 +499,6 @@ std::string CertificateStore::parse_json_value(const std::string& json, size_t& 
         return parse_json_string(json, pos);
     }
     if (json[pos] == '[') {
-        // Array — return as raw substring for now
         size_t start = pos;
         int depth = 0;
         while (pos < json.size()) {
@@ -403,7 +509,6 @@ std::string CertificateStore::parse_json_value(const std::string& json, size_t& 
         }
         return json.substr(start, pos - start);
     }
-    // Number, boolean, or null — read until comma, ], whitespace
     size_t start = pos;
     while (pos < json.size() && json[pos] != ',' && json[pos] != ']'
            && json[pos] != '}' && json[pos] != ' ' && json[pos] != '\n'
@@ -439,7 +544,6 @@ std::string CertificateStore::metadata_to_json(const Metadata& meta) const {
     kv("certificate_type", meta.certificate_type);
     kv("status", meta.status);
 
-    // domains array
     json += "    \"domains\": [";
     for (size_t i = 0; i < meta.domains.size(); ++i) {
         if (i > 0) json += ", ";
@@ -475,36 +579,51 @@ std::string CertificateStore::metadata_to_json(const Metadata& meta) const {
 CertificateStore::Metadata CertificateStore::metadata_from_json(const std::string& json) const {
     Metadata meta;
     size_t pos = 0;
+    bool parsed_any = false;
 
     skip_whitespace(json, pos);
     if (pos >= json.size() || json[pos] != '{') return meta;
-    ++pos; // skip {
+    ++pos;
 
     while (pos < json.size()) {
         skip_whitespace(json, pos);
         if (pos >= json.size() || json[pos] == '}') break;
 
         std::string key = parse_json_string(json, pos);
+        if (key.empty()) {
+            // Malformed key — skip to next comma or closing brace
+            skip_whitespace(json, pos);
+            if (pos < json.size() && json[pos] == ':') ++pos;
+            parse_json_value(json, pos);
+            skip_whitespace(json, pos);
+            if (pos < json.size() && json[pos] == ',') ++pos;
+            continue;
+        }
         skip_whitespace(json, pos);
         if (pos < json.size() && json[pos] == ':') ++pos;
 
         if (key == "version") {
+            parsed_any = true;
             std::string val = parse_json_value(json, pos);
             meta.version = std::stoi(val);
         } else if (key == "site_id") {
+            parsed_any = true;
             std::string val = parse_json_value(json, pos);
             meta.site_id = std::stoull(val);
         } else if (key == "provider_id") {
+            parsed_any = true;
             meta.provider_id = parse_json_string(json, pos);
         } else if (key == "certificate_type") {
+            parsed_any = true;
             meta.certificate_type = parse_json_string(json, pos);
         } else if (key == "status") {
+            parsed_any = true;
             meta.status = parse_json_string(json, pos);
         } else if (key == "domains") {
-            // Parse JSON array
+            parsed_any = true;
             skip_whitespace(json, pos);
             if (pos < json.size() && json[pos] == '[') {
-                ++pos; // skip [
+                ++pos;
                 while (pos < json.size()) {
                     skip_whitespace(json, pos);
                     if (pos >= json.size() || json[pos] == ']') break;
@@ -518,40 +637,56 @@ CertificateStore::Metadata CertificateStore::metadata_from_json(const std::strin
                 if (pos < json.size() && json[pos] == ']') ++pos;
             }
         } else if (key == "issued_at") {
+            parsed_any = true;
             meta.issued_at = parse_json_string(json, pos);
         } else if (key == "expires_at") {
+            parsed_any = true;
             meta.expires_at = parse_json_string(json, pos);
         } else if (key == "renew_after") {
+            parsed_any = true;
             meta.renew_after = parse_json_string(json, pos);
         } else if (key == "https_enabled") {
+            parsed_any = true;
             std::string val = parse_json_value(json, pos);
             meta.https_enabled = (val == "true");
         } else if (key == "redirect_enabled") {
+            parsed_any = true;
             std::string val = parse_json_value(json, pos);
             meta.redirect_enabled = (val == "true");
         } else if (key == "auto_renew") {
+            parsed_any = true;
             std::string val = parse_json_value(json, pos);
             meta.auto_renew = (val == "true");
         } else if (key == "challenge_type") {
+            parsed_any = true;
             meta.challenge_type = parse_json_string(json, pos);
         } else if (key == "last_validation") {
+            parsed_any = true;
             meta.last_validation = parse_json_string(json, pos);
         } else if (key == "last_error") {
+            parsed_any = true;
             meta.last_error = parse_json_string(json, pos);
         } else if (key == "renew_attempts") {
+            parsed_any = true;
             std::string val = parse_json_value(json, pos);
             meta.renew_attempts = std::stoi(val);
         } else if (key == "fingerprint_sha256") {
+            parsed_any = true;
             meta.fingerprint_sha256 = parse_json_string(json, pos);
         } else if (key == "serial_number") {
+            parsed_any = true;
             meta.serial_number = parse_json_string(json, pos);
         } else if (key == "issuer") {
+            parsed_any = true;
             meta.issuer = parse_json_string(json, pos);
         } else if (key == "subject") {
+            parsed_any = true;
             meta.subject = parse_json_string(json, pos);
         } else if (key == "created_at") {
+            parsed_any = true;
             meta.created_at = parse_json_string(json, pos);
         } else if (key == "updated_at") {
+            parsed_any = true;
             meta.updated_at = parse_json_string(json, pos);
         } else {
             // Unknown field — skip value
@@ -560,6 +695,11 @@ CertificateStore::Metadata CertificateStore::metadata_from_json(const std::strin
 
         skip_whitespace(json, pos);
         if (pos < json.size() && json[pos] == ',') ++pos;
+    }
+
+    // If JSON was not empty but no known fields were parsed, it's invalid
+    if (!parsed_any && json.size() > 2) {
+        meta.version = 0; // Signal invalid parse
     }
 
     return meta;
