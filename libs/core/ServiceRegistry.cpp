@@ -12,7 +12,9 @@ ServiceRegistry::ServiceRegistry()
     , backup_provider_(logger_)
     , access_provider_(logger_)
     , proxy_provider_(filesystem_, config_, logger_, ssl_)
-    , cert_provider_(logger_)
+    , http01_challenge_(logger_)
+    , cert_provider_(logger_, http01_challenge_)
+    , custom_cert_provider_(logger_)
     , storage_(config_.database_dir())
     , auth_(*this)
     , runtime_(logger_, config_.sites_dir())
@@ -157,6 +159,10 @@ ServiceRegistry::ServiceRegistry()
         auth_users_.set_users(loaded_auth_users);
     }
 
+    // Register certificate providers by string key
+    cert_providers_["letsencrypt"] = &cert_provider_;
+    cert_providers_["custom"] = &custom_cert_provider_;
+
     auth_.initialize();
 }
 
@@ -234,6 +240,18 @@ ssl::SslCertificateManager& ServiceRegistry::ssl() {
 
 ssl::CertificateProvider& ServiceRegistry::cert_provider() {
     return cert_provider_;
+}
+
+ssl::CertificateProvider& ServiceRegistry::cert_provider_by_name(const std::string& name) {
+    auto it = cert_providers_.find(name);
+    if (it != cert_providers_.end()) {
+        return *it->second;
+    }
+    return cert_provider_;
+}
+
+std::unordered_map<std::string, ssl::CertificateProvider*> ServiceRegistry::certificate_providers() {
+    return cert_providers_;
 }
 
 mail::MailDomainManager& ServiceRegistry::mail() {

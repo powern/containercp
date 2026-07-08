@@ -282,7 +282,7 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         out << "Domain: " << c->domain << "\n"
             << "Provider: " << c->provider << "\n"
             << "Status: " << c->status << "\n"
-            << "Enabled: " << (c->enabled ? "yes" : "no") << "\n";
+            << "HTTPS: " << (c->https_enabled ? "enabled" : "disabled") << "\n";
         return Command::success(out.str());
     }
 

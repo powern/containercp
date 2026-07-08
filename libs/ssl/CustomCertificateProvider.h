@@ -1,17 +1,16 @@
-#ifndef CONTAINERCP_SSL_LETS_ENCRYPT_PROVIDER_H
-#define CONTAINERCP_SSL_LETS_ENCRYPT_PROVIDER_H
+#ifndef CONTAINERCP_SSL_CUSTOM_CERTIFICATE_PROVIDER_H
+#define CONTAINERCP_SSL_CUSTOM_CERTIFICATE_PROVIDER_H
 
 #include "ssl/CertificateProvider.h"
-#include "ssl/ChallengeProvider.h"
 #include "logger/Logger.h"
 
 #include <string>
 
 namespace containercp::ssl {
 
-class LetsEncryptProvider : public CertificateProvider {
+class CustomCertificateProvider : public CertificateProvider {
 public:
-    LetsEncryptProvider(logger::Logger& logger, ChallengeProvider& challenge);
+    explicit CustomCertificateProvider(logger::Logger& logger);
 
     core::OperationResult request(const std::string& domain) override;
     core::OperationResult renew(const std::string& domain) override;
@@ -26,10 +25,9 @@ public:
 
 private:
     logger::Logger& logger_;
-    ChallengeProvider& challenge_;
     std::string ssl_dir_;
 };
 
 } // namespace containercp::ssl
 
-#endif // CONTAINERCP_SSL_LETS_ENCRYPT_PROVIDER_H
+#endif // CONTAINERCP_SSL_CUSTOM_CERTIFICATE_PROVIDER_H

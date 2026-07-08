@@ -603,7 +603,7 @@ bool ApiServer::start() {
         Response r;
         auto* cert = s.ssl().find_by_domain(domain);
         if (!cert) { r.body = "{\"success\":false,\"error\":\"SSL not found\"}"; return r; }
-        cert->enabled = enable;
+        cert->https_enabled = enable;
         if (enable) cert->status = "active";
         else cert->status = "disabled";
         s.save();

@@ -134,7 +134,7 @@ std::string JsonFormatter::ssl_certificates(const std::vector<ssl::SslCertificat
              << "\",\"status\":\"" << escape(c.status)
              << "\",\"expires_at\":\"" << escape(c.expires_at)
              << "\",\"auto_renew\":" << (c.auto_renew ? "true" : "false")
-             << ",\"enabled\":" << (c.enabled ? "true" : "false")
+             << ",\"https_enabled\":" << (c.https_enabled ? "true" : "false")
              << "}";
     }
     json << "]";

@@ -20,7 +20,10 @@
 #include "mail/MailDomainManager.h"
 #include "php/PhpVersionManager.h"
 #include "runtime/PortManager.h"
+#include "ssl/CertificateProvider.h"
 #include "ssl/LetsEncryptProvider.h"
+#include "ssl/CustomCertificateProvider.h"
+#include "ssl/HTTP01ChallengeProvider.h"
 #include "ssl/SslCertificateManager.h"
 #include "profile/ProfileManager.h"
 #include "provider/DockerComposeProvider.h"
@@ -28,6 +31,8 @@
 #include "site/SiteManager.h"
 #include "storage/Storage.h"
 #include "user/UserManager.h"
+
+#include <unordered_map>
 
 namespace containercp::core {
 
@@ -52,6 +57,8 @@ public:
     proxy::ProxyProvider& proxy_provider();
     ssl::SslCertificateManager& ssl();
     ssl::CertificateProvider& cert_provider();
+    ssl::CertificateProvider& cert_provider_by_name(const std::string& name);
+    std::unordered_map<std::string, ssl::CertificateProvider*> certificate_providers();
     mail::MailDomainManager& mail();
     filesystem::Filesystem& filesystem();
     runtime::Runtime& runtime();
@@ -85,7 +92,10 @@ private:
     proxy::ReverseProxyManager reverse_proxies_;
     proxy::NginxProxyProvider proxy_provider_;
     ssl::SslCertificateManager ssl_;
+    ssl::HTTP01ChallengeProvider http01_challenge_;
     ssl::LetsEncryptProvider cert_provider_;
+    ssl::CustomCertificateProvider custom_cert_provider_;
+    std::unordered_map<std::string, ssl::CertificateProvider*> cert_providers_;
     mail::MailDomainManager mail_;
     storage::Storage storage_;
     auth::AuthUserManager auth_users_;

@@ -41,7 +41,7 @@ core::OperationResult NginxProxyProvider::create_proxy(const ReverseProxy& proxy
     std::string upstream = proxy.upstream.empty() ? "site-0-web:80" : proxy.upstream;
 
     auto* cert = ssl_mgr_.find_by_domain(proxy.domain);
-    bool has_ssl = (cert != nullptr && cert->enabled && cert->status == "active");
+    bool has_ssl = (cert != nullptr && cert->https_enabled && cert->status == "active");
 
     std::ostringstream conf;
     if (has_ssl) {

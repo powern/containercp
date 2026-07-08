@@ -15,6 +15,17 @@ public:
     virtual core::OperationResult renew(const std::string& domain) = 0;
     virtual core::OperationResult revoke(const std::string& domain) = 0;
     virtual core::OperationResult status(const std::string& domain) = 0;
+
+    virtual std::string provider_name() const = 0;
+    virtual bool supports_dns_challenge() const { return false; }
+    virtual core::OperationResult request_dns(const std::string& domain) {
+        (void)domain;
+        return {false, "DNS challenge not supported by this provider"};
+    }
+
+    virtual std::string certificate_path(const std::string& domain) const = 0;
+    virtual std::string key_path(const std::string& domain) const = 0;
+    virtual std::string chain_path(const std::string& domain) const = 0;
 };
 
 } // namespace containercp::ssl

@@ -299,8 +299,11 @@ void Storage::save_ssl_certificates(const std::vector<ssl::SslCertificate>& cert
     for (const auto& c : certs) {
         file << c.id << "|" << c.domain_id << "|" << c.domain << "|"
              << c.provider << "|" << c.certificate_path << "|" << c.key_path << "|"
-             << c.expires_at << "|" << c.status << "|" << (c.enabled ? "1" : "0") << "|"
-             << (c.auto_renew ? "1" : "0") << "\n";
+             << c.chain_path << "|" << c.issued_at << "|" << c.expires_at << "|"
+             << c.renew_after << "|" << c.status << "|" << (c.auto_renew ? "1" : "0") << "|"
+             << (c.https_enabled ? "1" : "0") << "|" << (c.redirect_enabled ? "1" : "0") << "|"
+             << c.domains << "|" << c.challenge_type << "|" << c.last_error << "|"
+             << c.last_validation << "|" << c.renew_attempts << "|" << c.version << "\n";
     }
 }
 
@@ -316,16 +319,55 @@ std::vector<ssl::SslCertificate> Storage::load_ssl_certificates() {
         std::istringstream ss(line);
         std::string token;
         ssl::SslCertificate c;
+
+        // Common fields for all formats
         if (std::getline(ss, token, '|')) c.id = std::stoull(token);
         if (std::getline(ss, token, '|')) c.domain_id = std::stoull(token);
         if (std::getline(ss, token, '|')) c.domain = token;
         if (std::getline(ss, token, '|')) c.provider = token;
         if (std::getline(ss, token, '|')) c.certificate_path = token;
         if (std::getline(ss, token, '|')) c.key_path = token;
-        if (std::getline(ss, token, '|')) c.expires_at = token;
-        if (std::getline(ss, token, '|')) c.status = token;
-        if (std::getline(ss, token, '|')) c.enabled = (token == "1");
-        if (std::getline(ss, token, '|')) c.auto_renew = (token == "1");
+
+        // Detect format version by counting remaining fields
+        // Old format (v0.5-rc2): expires_at|status|enabled|auto_renew (4 more fields)
+        // New format (v0.5 SSL): chain_path|issued_at|expires_at|renew_after|status|... (14 more fields)
+        std::string rest;
+        std::getline(ss, rest);
+
+        std::vector<std::string> fields;
+        std::istringstream rest_ss(rest);
+        std::string f;
+        while (std::getline(rest_ss, f, '|')) {
+            fields.push_back(f);
+        }
+
+        if (fields.size() >= 10) {
+            // New format
+            size_t i = 0;
+            if (i < fields.size()) c.chain_path = fields[i++];
+            if (i < fields.size()) c.issued_at = fields[i++];
+            if (i < fields.size()) c.expires_at = fields[i++];
+            if (i < fields.size()) c.renew_after = fields[i++];
+            if (i < fields.size()) c.status = fields[i++];
+            if (i < fields.size()) c.auto_renew = (fields[i++] == "1");
+            if (i < fields.size()) c.https_enabled = (fields[i++] == "1");
+            if (i < fields.size()) c.redirect_enabled = (fields[i++] == "1");
+            if (i < fields.size()) c.domains = fields[i++];
+            if (i < fields.size()) c.challenge_type = fields[i++];
+            if (i < fields.size()) c.last_error = fields[i++];
+            if (i < fields.size()) c.last_validation = fields[i++];
+            if (i < fields.size()) c.renew_attempts = std::stoi(fields[i++]);
+            if (i < fields.size()) c.version = std::stoi(fields[i++]);
+        } else {
+            // Old format: expires_at|status|enabled|auto_renew
+            size_t i = 0;
+            if (i < fields.size()) c.expires_at = fields[i++];
+            if (i < fields.size()) c.status = fields[i++];
+            if (i < fields.size()) c.https_enabled = (fields[i++] == "1");
+            if (i < fields.size()) c.auto_renew = (fields[i++] == "1");
+            c.version = 0; // indicates old format
+        }
+
         c.name = c.domain;
         certs.push_back(std::move(c));
     }
