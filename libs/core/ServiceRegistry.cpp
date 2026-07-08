@@ -174,6 +174,20 @@ void ServiceRegistry::start() {
     const char* staging_env = std::getenv("LETSENCRYPT_STAGING");
     cert_provider_->set_staging(staging_env == nullptr || std::string(staging_env) != "0");
 
+    // Recover certificates stuck in ISSUING state after crash
+    for (auto site_id : cert_store_.enumerate()) {
+        auto load_result = cert_store_.load_metadata(site_id);
+        if (load_result.success && load_result.metadata.status == "issuing") {
+            auto meta = load_result.metadata;
+            meta.status = "error";
+            meta.last_error = "Daemon restarted during certificate issuance.";
+            meta.updated_at = ssl::CertificateStore::timestamp_utc();
+            cert_store_.save_metadata(site_id, meta);
+            logger_.warning("SYSTEM", "Recovered stuck ISSUING certificate for site "
+                           + std::to_string(site_id));
+        }
+    }
+
     job_executor_.start();
     renewal_scheduler_.start();
 }

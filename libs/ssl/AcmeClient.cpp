@@ -297,12 +297,32 @@ std::string AcmeClient::sign_jws(const std::string& payload, const std::string& 
 
     // Get EC key to extract raw public key coordinates
     EC_KEY* ec = EVP_PKEY_get1_EC_KEY(pkey);
+    if (!ec) {
+        EVP_PKEY_free(pkey);
+        return "";
+    }
     const EC_GROUP* group = EC_KEY_get0_group(ec);
+    if (!group) {
+        EC_KEY_free(ec);
+        EVP_PKEY_free(pkey);
+        return "";
+    }
     const EC_POINT* point = EC_KEY_get0_public_key(ec);
+    if (!point) {
+        EC_KEY_free(ec);
+        EVP_PKEY_free(pkey);
+        return "";
+    }
 
     BIGNUM* x = BN_new();
     BIGNUM* y = BN_new();
-    EC_POINT_get_affine_coordinates_GFp(group, point, x, y, nullptr);
+    if (!x || !y || !EC_POINT_get_affine_coordinates_GFp(group, point, x, y, nullptr)) {
+        BN_free(x);
+        BN_free(y);
+        EC_KEY_free(ec);
+        EVP_PKEY_free(pkey);
+        return "";
+    }
 
     // Convert to raw 32-byte big-endian
     char x_raw[32] = {0};
