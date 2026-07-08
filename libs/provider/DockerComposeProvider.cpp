@@ -39,9 +39,19 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
 
     std::string site_id = std::to_string(site.id);
 
-    // Determine web server image and paths from selected profile
+    // Determine web server type from site field or default profile
+    std::string web_server_type = site.web_server.empty() ? "nginx" : site.web_server;
     auto* profile = prof_.get_default(profile::ProfileType::WEB_SERVER);
-    std::string web_server_type = (profile != nullptr) ? profile->web_server : "nginx";
+    // If site specifies a web server, find a matching profile
+    if (web_server_type == "apache" || web_server_type == "nginx") {
+        auto web_profiles = prof_.list_by_type(profile::ProfileType::WEB_SERVER);
+        for (auto* wp : web_profiles) {
+            if (wp != nullptr && wp->web_server == web_server_type) {
+                profile = wp;
+                break;
+            }
+        }
+    }
     std::string web_server_image = "nginx:alpine";
     std::string web_config_dir = "/etc/nginx/conf.d";
     std::string web_log_dir = "/var/log/nginx";

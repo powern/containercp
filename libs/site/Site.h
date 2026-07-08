@@ -15,6 +15,7 @@ struct Site : core::Resource {
     std::string db_name;
     std::string db_user;
     std::string db_password;
+    std::string web_server = "apache";
 };
 
 } // namespace containercp::site

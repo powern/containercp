@@ -26,7 +26,7 @@ public:
                         filesystem::Filesystem& fs, config::Config& cfg,
                         provider::HostingProvider& provider);
 
-    core::OperationResult execute(const std::string& owner, const std::string& domain, const node::Node& node, bool dry_run = false);
+    core::OperationResult execute(const std::string& owner, const std::string& domain, const node::Node& node, bool dry_run = false, const std::string& profile = "");
 
 private:
     site::SiteManager& sites_;

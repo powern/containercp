@@ -2,13 +2,15 @@
 
 namespace containercp::site {
 
-uint64_t SiteManager::create(const std::string& domain, const std::string& owner, uint64_t node_id) {
+uint64_t SiteManager::create(const std::string& domain, const std::string& owner, uint64_t node_id,
+                              const std::string& web_server) {
     Site s;
     s.id = next_id_++;
     s.name = domain;
     s.domain = domain;
     s.owner = owner;
     s.node_id = node_id;
+    s.web_server = web_server.empty() ? "apache" : web_server;
     sites_.push_back(std::move(s));
     return s.id;
 }

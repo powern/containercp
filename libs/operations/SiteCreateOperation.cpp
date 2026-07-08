@@ -24,7 +24,7 @@ SiteCreateOperation::SiteCreateOperation(site::SiteManager& sites, domain::Domai
 {
 }
 
-core::OperationResult SiteCreateOperation::execute(const std::string& owner, const std::string& domain, const node::Node& node, bool dry_run) {
+core::OperationResult SiteCreateOperation::execute(const std::string& owner, const std::string& domain, const node::Node& node, bool dry_run, const std::string& profile) {
     {
         std::string msg = utils::Validator::validate_username(owner);
         if (!msg.empty()) return {false, msg};
@@ -39,6 +39,14 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
         return {false, "Site already exists."};
     }
 
+    std::string web_server = "apache";
+    if (!profile.empty()) {
+        // Map profile name to web server type
+        if (profile.find("nginx") != std::string::npos) {
+            web_server = "nginx";
+        }
+    }
+
     if (dry_run) {
         std::cout << "[Dry Run] Would create site: " << domain << "\n";
         std::cout << "[Dry Run] Would create domain: " << domain << "\n";
@@ -46,6 +54,7 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
         std::cout << "[Dry Run] Would generate docker-compose.yml with Docker network routing\n";
         std::cout << "[Dry Run] Would create directory: /srv/containercp/sites/" << domain << "/\n";
         std::cout << "[Dry Run] Would start Docker stack (no host ports)\n";
+        std::cout << "[Dry Run] Selected backend: " << web_server << "\n";
         return {true, ""};
     }
 
@@ -54,8 +63,9 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner, con
     site.domain = domain;
     site.owner = owner;
     site.node_id = node.id;
+    site.web_server = web_server;
 
-    site.id = sites_.create(domain, owner, node.id);
+    site.id = sites_.create(domain, owner, node.id, web_server);
 
     domains_.create(domain, 0, site.id);
 

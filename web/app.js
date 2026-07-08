@@ -353,6 +353,7 @@ async function loadSites(p) {
       tbl.innerHTML = buildTable([
         {label:'Domain',html:r=>`<a href="#" onclick="navigate('site-detail',${r.id});return false" style="color:var(--primary);text-decoration:none;">${esc(r.domain)}</a>`},
         {label:'Owner',html:r=>esc(r.owner)},
+        {label:'Backend',html:r=>r.web_server==='nginx'?'<span class="badge badge-info">Nginx</span>':'<span class="badge badge-ok">Apache2</span>'},
         {label:'Actions',html:r=>`<button class="btn-icon" onclick="navigate('site-detail',${r.id})" title="View">&#128065;</button><button class="btn-icon" style="color:var(--red)" title="Remove" onclick="removeSite('${esc(r.domain)}')">&#10005;</button>`}
       ], filtered, 'No sites');
     };
@@ -376,13 +377,29 @@ function showCreateSiteWizard() {
     <div style="display:grid;gap:14px;">
       <div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Owner</label><input id="wiz-owner" value="admin" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" oninput="document.getElementById('wiz-owner-err').textContent=''"><div id="wiz-owner-err" style="color:var(--red);font-size:11px;margin-top:2px;"></div></div>
       <div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Domain</label><input id="wiz-domain" placeholder="example.com" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" oninput="document.getElementById('wiz-domain-err').textContent=''"><div id="wiz-domain-err" style="color:var(--red);font-size:11px;margin-top:2px;"></div></div>
+      <div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Backend Web Server</label>
+        <select id="wiz-backend" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;">
+          <option value="apache-php-default">Apache2 (default)</option>
+          <option value="nginx-php-default">Nginx</option>
+        </select>
+      </div>
+      <div id="wiz-summary" style="font-size:12px;color:var(--text3);background:var(--bg2);padding:8px 12px;border-radius:6px;margin-top:4px;">Backend: Apache2 with PHP-FPM</div>
       <button class="btn btn-primary" onclick="startSiteWizard()">Create Site</button>
     </div>`, 420);
+  document.getElementById('wiz-backend').addEventListener('change', function() {
+    var summary = document.getElementById('wiz-summary');
+    if (this.value === 'nginx-php-default') {
+      summary.textContent = 'Backend: Nginx with PHP-FPM';
+    } else {
+      summary.textContent = 'Backend: Apache2 with PHP-FPM';
+    }
+  });
 }
 
 async function startSiteWizard() {
   const owner = $('wiz-owner').value.trim();
   const domain = $('wiz-domain').value.trim();
+  const profile = $('wiz-backend') ? $('wiz-backend').value : '';
   let valid = true;
   if (!owner) { $('wiz-owner-err').textContent = 'Owner is required'; valid = false; }
   if (!domain) { $('wiz-domain-err').textContent = 'Domain is required'; valid = false; }
@@ -404,7 +421,7 @@ async function startSiteWizard() {
   document.body.appendChild(overlay);
 
   try {
-    const res = await apiPost('/api/sites/create', {owner, domain});
+    const res = await apiPost('/api/sites/create', {owner, domain, profile});
     if (res.success) {
       $('progress-bar').style.width = '100%';
       $('progress-step').textContent = 'Site created successfully';
@@ -437,6 +454,7 @@ async function loadSiteDetail(p, siteId) {
         <div class="details-grid">
           <div class="details-field"><div class="details-label">Domain</div><div class="details-value">${esc(site.domain)}</div></div>
           <div class="details-field"><div class="details-label">Owner</div><div class="details-value">${esc(site.owner)}</div></div>
+          <div class="details-field"><div class="details-label">Web Server</div><div class="details-value">${site.web_server==='nginx'?'Nginx':'Apache2'}</div></div>
           <div class="details-field"><div class="details-label">Node ID</div><div class="details-value">${site.node_id}</div></div>
         </div>
       </div>

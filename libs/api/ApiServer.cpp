@@ -392,6 +392,7 @@ bool ApiServer::start() {
         Response r;
         std::string owner = json_extract(req.body, "owner");
         std::string domain = json_extract(req.body, "domain");
+        std::string profile = json_extract(req.body, "profile");
         if (owner.empty() || domain.empty()) {
             r.status_code = 400;
             r.body = "{\"success\":false,\"error\":\"owner and domain required\"}";
@@ -419,7 +420,7 @@ bool ApiServer::start() {
             s.databases(), s.reverse_proxies(),
             s.proxy_provider(),
             s.filesystem(), s.config(), s.hosting_provider());
-        auto result = op.execute(owner, domain, *node);
+        auto result = op.execute(owner, domain, *node, false, profile);
 
         if (result.success) {
             s.save();

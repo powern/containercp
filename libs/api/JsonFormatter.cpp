@@ -48,7 +48,8 @@ std::string JsonFormatter::sites(const std::vector<site::Site>& sites) {
              << "\",\"domain\":\"" << escape(s.domain)
              << "\",\"owner\":\"" << escape(s.owner)
              << "\",\"node_id\":" << s.node_id
-             << "}";
+             << ",\"web_server\":\"" << escape(s.web_server)
+             << "\"}";
     }
     json << "]";
     return json.str();

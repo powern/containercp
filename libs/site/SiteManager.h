@@ -11,7 +11,8 @@ namespace containercp::site {
 
 class SiteManager {
 public:
-    uint64_t create(const std::string& domain, const std::string& owner, uint64_t node_id);
+    uint64_t create(const std::string& domain, const std::string& owner, uint64_t node_id,
+                    const std::string& web_server = "");
     bool remove(uint64_t id);
     Site* find(const std::string& domain);
     const std::vector<Site>& list() const;
