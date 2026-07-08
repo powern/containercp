@@ -3,6 +3,7 @@
 #include "template/web_templates.h"
 
 #include <filesystem>
+#include <fstream>
 
 namespace containercp::core {
 
@@ -185,6 +186,48 @@ void ServiceRegistry::start() {
             cert_store_.save_metadata(site_id, meta);
             logger_.warning("SYSTEM", "Recovered stuck ISSUING certificate for site "
                            + std::to_string(site_id));
+        }
+    }
+
+    // Migrate legacy proxy configs with wrong certificate paths
+    // Old format: /srv/containercp/ssl/<domain>/current/...
+    // New format: /srv/containercp/ssl/<site-id>/current/...
+    {
+        for (auto site_id : cert_store_.enumerate()) {
+            auto load_result = cert_store_.load_metadata(site_id);
+            if (!load_result.success) continue;
+            auto& meta = load_result.metadata;
+            if (meta.status != "active" || !meta.https_enabled) continue;
+
+            std::string domain = meta.domains.empty() ? "" : meta.domains[0];
+            if (domain.empty()) continue;
+
+            std::string correct_cert = cert_store_.fullchain_path(site_id);
+            std::string correct_key = cert_store_.privkey_path(site_id);
+            std::string old_pattern = "/ssl/" + domain + "/";  // old path format
+
+            // Read current proxy config
+            std::string cfg_path = config_.data_root() + "/proxy/sites/" + domain + ".conf";
+            std::ifstream cfg_in(cfg_path);
+            if (!cfg_in.is_open()) continue;
+            std::string cfg((std::istreambuf_iterator<char>(cfg_in)), {});
+            cfg_in.close();
+
+            // Check if config uses old paths or lacks HTTPS
+            bool needs_update = (cfg.find(old_pattern) != std::string::npos)
+                             || (cfg.find("listen 443 ssl") == std::string::npos && meta.https_enabled);
+
+            if (needs_update) {
+                logger_.info("SYSTEM", "Migrating proxy config for " + domain
+                             + ": cert=" + correct_cert + " key=" + correct_key);
+                auto result = proxy_provider_.attach_certificate(domain, correct_cert, correct_key);
+                if (result.success) {
+                    logger_.info("SYSTEM", "Proxy config migrated for " + domain);
+                } else {
+                    logger_.warning("SYSTEM", "Proxy config migration failed for "
+                                   + domain + ": " + result.message);
+                }
+            }
         }
     }
 

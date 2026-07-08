@@ -216,9 +216,10 @@
 | SSL-004: AcmeClient + LetsEncryptProvider (ACME engine) | ✅ | Step 4 complete |
 | SSL-005: Proxy integration (attach certs, reload, redirect) | ✅ | Step 5 complete |
 | SSL-006: RenewalScheduler | ✅ | Step 6 complete |
-| SSL-006: RenewalScheduler | ⬜ | Step 6 |
 | SSL-007: Web UI SSL page | ✅ | Step 7 complete (minimal) |
-| SSL-008: Real server validation | ⬜ | Step 8 |
+| SSL-008: Real ACME HTTP-01 staging | ✅ | Step 8A complete |
+| SSL-009: Real server validation + bug fixes | ✅ | Step 8B: ACME flow, CSR, finalize, HTTPS paths, renewal policy |
+| SSL-010: Proxy config auto-migration on startup | 🔄 | Automated cert path migration for existing sites |
 
 ## Version 0.6 — DNS and Mail (Planned, after v0.5.0)
 
