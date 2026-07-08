@@ -73,6 +73,8 @@ Forbidden without confirmation:
 ## Development rules
 
 - Every change must be committed to Git
+- Commit and push must ALWAYS happen together — never leave commits unpushed
+- Push command: `git remote set-url origin "https://powern:$(cat /tmp/github_token)@github.com/powern/containercp.git" && git push origin main`
 - One task = one logical change
 - Tests must be added with every Epic
 - Zero compiler warnings required before commit
