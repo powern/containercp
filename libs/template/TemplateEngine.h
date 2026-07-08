@@ -11,7 +11,13 @@ public:
                        const std::string& domain,
                        const std::string& owner,
                        const std::string& php_image,
-                       const std::string& site_id = "") const;
+                       const std::string& site_id = "",
+                       const std::string& web_server_image = "nginx:alpine",
+                       const std::string& web_config_dir = "/etc/nginx/conf.d",
+                       const std::string& web_log_dir = "/var/log/nginx",
+                       const std::string& web_doc_root = "/var/www/html",
+                       const std::string& web_local_config = "config/nginx",
+                       const std::string& web_local_log = "logs/nginx") const;
 
     std::string render_web(const std::string& template_content,
                            const std::string& domain,

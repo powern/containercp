@@ -8,13 +8,13 @@ ComposeGenerator::ComposeGenerator(filesystem::Filesystem& fs, const std::string
     , default_template_(
         "services:\n"
         "  web:\n"
-        "    image: nginx:alpine\n"
+        "    image: {{WEB_SERVER_IMAGE}}\n"
         "    container_name: site-{{SITE_ID}}-web\n"
         "    restart: unless-stopped\n"
         "    volumes:\n"
-        "      - ./public:/var/www/html\n"
-        "      - ./logs/nginx:/var/log/nginx\n"
-        "      - ./config/nginx:/etc/nginx/conf.d\n"
+        "      - ./public:{{WEB_DOC_ROOT}}\n"
+        "      - ./{{WEB_LOCAL_LOG}}:{{WEB_LOG_DIR}}\n"
+        "      - ./{{WEB_LOCAL_CONFIG}}:{{WEB_CONFIG_DIR}}\n"
         "    networks:\n"
         "      - containercp-public\n"
         "      - containercp-site-{{SITE_ID}}\n"
@@ -22,7 +22,7 @@ ComposeGenerator::ComposeGenerator(filesystem::Filesystem& fs, const std::string
         "      php:\n"
         "        condition: service_healthy\n"
         "    healthcheck:\n"
-        "      test: [\"CMD\", \"nginx\", \"-t\"]\n"
+        "      test: [\"CMD\", \"{{WEB_HEALTH_CMD}}\", \"-t\"]\n"
         "      interval: 30s\n"
         "      timeout: 10s\n"
         "      retries: 3\n"
@@ -34,7 +34,7 @@ ComposeGenerator::ComposeGenerator(filesystem::Filesystem& fs, const std::string
         "    container_name: site-{{SITE_ID}}-php\n"
         "    restart: unless-stopped\n"
         "    volumes:\n"
-        "      - ./public:/var/www/html\n"
+        "      - ./public:{{WEB_DOC_ROOT}}\n"
         "      - ./logs:/var/log/php\n"
         "      - ./tmp:/tmp\n"
         "    networks:\n"
@@ -95,20 +95,24 @@ ComposeGenerator::ComposeGenerator(filesystem::Filesystem& fs, const std::string
 
 std::string ComposeGenerator::get_or_create_template() {
     std::string template_path = template_dir_ + "php-site.compose.template";
-
-    // Always write the current template to disk on first call
-    // This ensures the template stays in sync with the binary
     fs_.create_directory(template_dir_);
     fs_.create_file(template_path, default_template_);
-
     return fs_.read_file(template_path);
 }
 
 bool ComposeGenerator::generate(const std::string& domain, const std::string& owner,
                                  const std::string& php_image, const std::string& output_path,
-                                 const std::string& site_id) {
+                                 const std::string& site_id,
+                                 const std::string& web_server_image,
+                                 const std::string& web_config_dir,
+                                 const std::string& web_log_dir,
+                                 const std::string& web_doc_root,
+                                 const std::string& web_local_config,
+                                 const std::string& web_local_log) {
     std::string template_content = get_or_create_template();
-    std::string rendered = engine_.render(template_content, domain, owner, php_image, site_id);
+    std::string rendered = engine_.render(template_content, domain, owner, php_image, site_id,
+        web_server_image, web_config_dir, web_log_dir, web_doc_root,
+        web_local_config, web_local_log);
     return fs_.create_file(output_path, rendered);
 }
 

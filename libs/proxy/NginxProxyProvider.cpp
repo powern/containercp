@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <sys/wait.h>
 
@@ -116,8 +117,51 @@ core::OperationResult NginxProxyProvider::reload() {
 
 core::OperationResult NginxProxyProvider::ensure_central_proxy() {
     if (central_proxy_running()) {
-        logger_.info("NginxProxyProvider: Central proxy already running");
-        return {true, ""};
+        // Verify the existing container has the correct configuration.
+        // If it was created with --network host (old RC1 style), recreate it.
+        // Also check that port 80 is mapped and containercp-public network exists.
+        std::string mode_check = "docker inspect " + proxy_name()
+            + " --format '{{.HostConfig.NetworkMode}}' 2>/dev/null";
+        std::string mode_file = "/tmp/containercp-proxy-mode.txt";
+        std::system((mode_check + " > " + mode_file + " 2>/dev/null").c_str());
+
+        std::ifstream mode_result(mode_file);
+        std::string network_mode;
+        std::getline(mode_result, network_mode);
+        mode_result.close();
+        std::remove(mode_file.c_str());
+
+        bool needs_recreate = false;
+        if (network_mode == "host") {
+            logger_.info("NginxProxyProvider: Detected old proxy on host network, recreating");
+            needs_recreate = true;
+        }
+
+        // Also check port mapping — if port 80 is not published, recreate
+        if (!needs_recreate) {
+            std::string port_check = "docker inspect " + proxy_name()
+                + " --format '{{index .NetworkSettings.Ports \"80/tcp\"}}' 2>/dev/null";
+            std::string port_file = "/tmp/containercp-proxy-port.txt";
+            std::system((port_check + " > " + port_file + " 2>/dev/null").c_str());
+
+            std::ifstream port_result(port_file);
+            std::string port_info;
+            std::getline(port_result, port_info);
+            port_result.close();
+            std::remove(port_file.c_str());
+
+            if (port_info.empty() || port_info.find("HostPort") == std::string::npos) {
+                logger_.info("NginxProxyProvider: Detected proxy without port mapping, recreating");
+                needs_recreate = true;
+            }
+        }
+
+        if (needs_recreate) {
+            std::system(("docker rm -f " + proxy_name() + " > /dev/null 2>&1").c_str());
+        } else {
+            logger_.info("NginxProxyProvider: Central proxy already running");
+            return {true, ""};
+        }
     }
 
     fs_.create_directory(cfg_.data_root() + "/proxy/");
