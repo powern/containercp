@@ -17,6 +17,7 @@
 #include <netinet/in.h>
 #include <sstream>
 #include <sys/socket.h>
+#include <thread>
 #include <unistd.h>
 
 namespace containercp::api {
@@ -756,19 +757,38 @@ bool ApiServer::start() {
             std::string provider_id = json_extract(req.body, "provider_id");
             if (provider_id.empty()) provider_id = "letsencrypt";
 
-            auto& provider = s.cert_provider_by_name(provider_id);
-            auto result = provider.request(domain);
+            // Validate provider_id exists before creating job
+            if (s.certificate_providers().find(provider_id) == s.certificate_providers().end()) {
+                r.status_code = 400;
+                r.body = json_error("INVALID_PROVIDER", "Unknown provider: " + provider_id);
+                return r;
+            }
 
-            std::vector<std::string> steps = {"Requesting certificate for " + domain};
+            std::vector<std::string> steps = {"Validating domain...", "Requesting certificate...",
+                                               "Waiting for ACME validation...", "Finalizing..."};
             uint64_t job_id = s.jobs().create("ssl-issue", steps);
-            s.jobs().update(job_id, result.success ? "completed" : "failed", 100, result.message);
+            s.jobs().update(job_id, "pending", 0, "Queued");
 
+            // Enqueue async job execution
+            std::thread worker([&s, provider_id, domain, job_id]() {
+                auto& provider = *s.certificate_providers()[provider_id];
+                s.jobs().update(job_id, "running", 10, "Requesting certificate...");
+                auto result = provider.request(domain);
+                if (result.success) {
+                    s.jobs().update(job_id, "completed", 100, "Certificate issued");
+                } else {
+                    s.jobs().update(job_id, "failed", 100, result.message);
+                }
+            });
+            worker.detach();
+
+            r.status_code = 202;
             std::ostringstream json;
             json << "{\"success\":true,\"data\":{"
                  << "\"job_id\":" << job_id
-                 << ",\"status\":\"" << (result.success ? "completed" : "failed")
-                 << "\",\"message\":\"" << JsonFormatter::escape(result.message)
-                 << "\"}}";
+                 << ",\"status\":\"pending\""
+                 << ",\"message\":\"Certificate issuance queued\""
+                 << "}}";
             r.body = json.str();
             return r;
         }
@@ -780,45 +800,66 @@ bool ApiServer::start() {
                 provider_id = load_result.metadata.provider_id;
             }
 
-            auto& provider = s.cert_provider_by_name(provider_id);
-            auto result = provider.renew(domain);
+            if (s.certificate_providers().find(provider_id) == s.certificate_providers().end()) {
+                r.status_code = 400;
+                r.body = json_error("INVALID_PROVIDER", "Unknown provider: " + provider_id);
+                return r;
+            }
 
-            std::vector<std::string> steps = {"Renewing certificate for " + domain};
+            std::vector<std::string> steps = {"Validating domain...", "Renewing certificate...",
+                                               "Finalizing..."};
             uint64_t job_id = s.jobs().create("ssl-renew", steps);
-            s.jobs().update(job_id, result.success ? "completed" : "failed", 100, result.message);
+            s.jobs().update(job_id, "pending", 0, "Queued");
 
+            std::thread worker([&s, provider_id, domain, job_id]() {
+                auto& provider = *s.certificate_providers()[provider_id];
+                s.jobs().update(job_id, "running", 10, "Renewing certificate...");
+                auto result = provider.renew(domain);
+                if (result.success) {
+                    s.jobs().update(job_id, "completed", 100, "Certificate renewed");
+                } else {
+                    s.jobs().update(job_id, "failed", 100, result.message);
+                }
+            });
+            worker.detach();
+
+            r.status_code = 202;
             std::ostringstream json;
             json << "{\"success\":true,\"data\":{"
                  << "\"job_id\":" << job_id
-                 << ",\"status\":\"" << (result.success ? "completed" : "failed")
-                 << "\",\"message\":\"" << JsonFormatter::escape(result.message)
-                 << "\"}}";
+                 << ",\"status\":\"pending\""
+                 << ",\"message\":\"Certificate renewal queued\""
+                 << "}}";
             r.body = json.str();
             return r;
         }
 
         if (action == "enable") {
-            // Check if certificate exists and is valid
-            auto load_result = s.cert_store().load_metadata(site_id);
-            if (!load_result.success) {
+            // Validate certificate through CertificateStore
+            auto validation = s.cert_store().validate(site_id);
+            if (!validation.valid) {
                 r.status_code = 409;
-                r.body = json_error("SSL_INVALID_STATE", "No valid certificate. Issue a certificate first.");
-                return r;
-            }
-            if (load_result.metadata.status != "active") {
-                r.status_code = 409;
-                r.body = json_error("SSL_INVALID_STATE", "Certificate is not active. Status: "
-                    + load_result.metadata.status);
+                std::string reason = "Certificate validation failed";
+                if (!validation.errors.empty()) {
+                    reason = validation.errors[0];
+                }
+                r.body = json_error("SSL_INVALID_STATE", reason);
                 return r;
             }
 
-            // Update metadata
+            auto load_result = s.cert_store().load_metadata(site_id);
+            if (!load_result.success || load_result.metadata.status != "active") {
+                r.status_code = 409;
+                r.body = json_error("SSL_INVALID_STATE", "Certificate is not in active state");
+                return r;
+            }
+
             auto meta = load_result.metadata;
             meta.https_enabled = true;
             meta.updated_at = containercp::ssl::CertificateStore::timestamp_utc();
             s.cert_store().save_metadata(site_id, meta);
 
-            // Update SslCertificateManager
+            // Update SslCertificateManager for backward compat
             auto* cert = s.ssl().find_by_domain(domain);
             if (cert) {
                 cert->https_enabled = true;
@@ -835,7 +876,6 @@ bool ApiServer::start() {
         }
 
         if (action == "disable") {
-            // Disable HTTPS but keep certificate files
             auto load_result = s.cert_store().load_metadata(site_id);
             if (load_result.success) {
                 auto meta = load_result.metadata;
@@ -861,7 +901,17 @@ bool ApiServer::start() {
 
         if (action == "redirect/enable") {
             auto load_result = s.cert_store().load_metadata(site_id);
-            if (!load_result.success || !load_result.metadata.https_enabled) {
+            if (!load_result.success) {
+                r.status_code = 409;
+                r.body = json_error("SSL_INVALID_STATE", "No certificate found for this site");
+                return r;
+            }
+            if (load_result.metadata.status != "active") {
+                r.status_code = 409;
+                r.body = json_error("SSL_INVALID_STATE", "Certificate is not active");
+                return r;
+            }
+            if (!load_result.metadata.https_enabled) {
                 r.status_code = 409;
                 r.body = json_error("SSL_INVALID_STATE", "HTTPS must be enabled before enabling redirect");
                 return r;
