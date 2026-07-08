@@ -88,8 +88,9 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
                 "<VirtualHost *:80>\n"
                 "    ServerName " + site.domain + "\n"
                 "    DocumentRoot " + web_doc_root + "\n"
+                "    DirectoryIndex index.php index.html\n"
                 "    <Directory " + web_doc_root + ">\n"
-                "        Options Indexes FollowSymLinks\n"
+                "        Options FollowSymLinks\n"
                 "        AllowOverride All\n"
                 "        Require all granted\n"
                 "    </Directory>\n"
@@ -120,6 +121,19 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
                 "}\n";
         }
         fs_.create_file(config_path, fallback);
+    }
+
+    // For Apache httpd:alpine, enable required modules (mod_proxy, mod_proxy_fcgi)
+    // by writing a module-load config that gets included via IncludeOptional.
+    if (web_server_type == "apache") {
+        std::string modules_path = site_dir + "config/apache/00-load-modules.conf";
+        if (!fs_.exists(modules_path)) {
+            std::string modules =
+                "# Enable proxy modules for PHP-FPM support\n"
+                "LoadModule proxy_module modules/mod_proxy.so\n"
+                "LoadModule proxy_fcgi_module modules/mod_proxy_fcgi.so\n";
+            fs_.create_file(modules_path, modules);
+        }
     }
 
     // Validate that the web server config file was actually written

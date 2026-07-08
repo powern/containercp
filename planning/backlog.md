@@ -110,5 +110,6 @@ Before planning any new Epic, read these documents IN ORDER:
 - [ ] Mail server support
 - [ ] DNS server integration
 - [ ] README update
+- [ ] Web UI: Create Site backend web server selector (Apache2 default, Nginx optional)
+- [ ] Web UI: Show site backend in site details/list
 - [ ] Install/update scripts: systemd service, install.sh, update.sh, dev-rebuild.sh, clean-validation-vm.sh
-- [ ] Apache httpd PHP-FPM integration (mod_proxy_fcgi in httpd:alpine)

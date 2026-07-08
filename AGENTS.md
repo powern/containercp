@@ -85,6 +85,11 @@ Forbidden without confirmation:
   `CHANGELOG.md` with: date, commit hash, summary, files changed, user-visible
   behavior, validation result, and known risks. Commit changelog together with the
   code/docs change.
+- **Web UI must follow backend changes** — when a backend/core/API change affects
+  product behavior, the Web UI must be updated in the same task or immediately
+  after it. If site creation logic changes, Web UI Create Site must be updated.
+  If profile/backend selection changes, Web UI must expose it. If API payload
+  changes, Web UI must be updated. Do not leave GUI behind backend logic.
 
 ## Validation-driven development
 

@@ -93,9 +93,10 @@ inline std::unordered_map<std::string, std::string> default_web_templates() {
         {"apache-php-default", R"~(<VirtualHost *:80>
     ServerName {{DOMAIN}}
     DocumentRoot {{PUBLIC_ROOT}}
+    DirectoryIndex index.php index.html
 
     <Directory {{PUBLIC_ROOT}}>
-        Options Indexes FollowSymLinks
+        Options FollowSymLinks
         AllowOverride All
         Require all granted
     </Directory>
@@ -110,9 +111,10 @@ inline std::unordered_map<std::string, std::string> default_web_templates() {
         {"apache-wordpress", R"~(<VirtualHost *:80>
     ServerName {{DOMAIN}}
     DocumentRoot {{PUBLIC_ROOT}}
+    DirectoryIndex index.php index.html
 
     <Directory {{PUBLIC_ROOT}}>
-        Options Indexes FollowSymLinks
+        Options FollowSymLinks
         AllowOverride All
         Require all granted
     </Directory>
