@@ -1,8 +1,11 @@
 #include "HTTP01ChallengeProvider.h"
 #include "ssl/CertificateProvider.h" // for ACME_CHALLENGE_PATH
 
+#include <cerrno>
 #include <curl/curl.h>
+#include <cstring>
 #include <fstream>
+#include <sstream>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -10,6 +13,32 @@
 static size_t http01_write_cb(char* data, size_t size, size_t nmemb, std::string* buf) {
     buf->append(data, size * nmemb);
     return size * nmemb;
+}
+
+// Helper: create directory and all parents recursively
+static bool mkdir_p(const std::string& path, mode_t mode, std::string& error_out) {
+    if (path.empty()) { error_out = "empty path"; return false; }
+    // Check if already exists
+    struct stat st;
+    if (::stat(path.c_str(), &st) == 0) {
+        if (S_ISDIR(st.st_mode)) return true;
+        error_out = "exists but is not a directory";
+        return false;
+    }
+    // Create parent first
+    auto slash = path.rfind('/');
+    if (slash != std::string::npos && slash > 0) {
+        std::string parent = path.substr(0, slash);
+        if (!mkdir_p(parent, mode, error_out)) return false;
+    }
+    // Create this directory
+    if (::mkdir(path.c_str(), mode) != 0) {
+        std::ostringstream err;
+        err << "mkdir(" << path << ") failed: " << std::strerror(errno) << " (errno=" << errno << ")";
+        error_out = err.str();
+        return false;
+    }
+    return true;
 }
 
 namespace containercp::ssl {
@@ -41,20 +70,28 @@ core::OperationResult HTTP01ChallengeProvider::prepare(
         return {false, "Domain cannot be empty for HTTP-01 challenge"};
     }
 
-    // Ensure challenge directory exists
+    // Ensure challenge directory exists (create recursively)
     std::string dir = challenge_dir(domain);
-    ::mkdir(dir.c_str(), 0755);
+    std::string mkdir_err;
+    if (!mkdir_p(dir, 0755, mkdir_err)) {
+        std::string err = "Failed to create challenge directory: " + mkdir_err;
+        logger_.error("HTTP-01", err);
+        return {false, err};
+    }
+    logger_.info("HTTP-01", "challenge_root=" + dir);
 
     // Write token file
     std::string path = dir + "/" + token;
     std::ofstream file(path);
     if (!file.is_open()) {
-        return {false, "Failed to write challenge file: " + path};
+        std::ostringstream err;
+        err << "Failed to write challenge file: " << path
+            << " (" << std::strerror(errno) << ", errno=" << errno << ")";
+        logger_.error("HTTP-01", err.str());
+        return {false, err.str()};
     }
     file << key_authorization;
     file.close();
-
-    logger_.info("HTTP-01", "challenge_root=" + dir);
     logger_.info("HTTP-01", "challenge_file=" + path);
     return {true, ""};
 }
