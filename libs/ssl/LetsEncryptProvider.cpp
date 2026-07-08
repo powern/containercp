@@ -112,10 +112,33 @@ bool LetsEncryptProvider::supports_auto_renew() const {
 }
 
 std::string LetsEncryptProvider::certificate_path(const std::string& domain) const {
+    // Resolve site_id from CertificateStore for correct path
+    auto site_ids = store_.enumerate();
+    for (auto sid : site_ids) {
+        auto meta = store_.load_metadata(sid);
+        if (meta.success) {
+            for (const auto& d : meta.metadata.domains) {
+                if (d == domain) {
+                    return store_.fullchain_path(sid);
+                }
+            }
+        }
+    }
     return ssl_dir_ + "/" + domain + "/current/fullchain.pem";
 }
 
 std::string LetsEncryptProvider::key_path(const std::string& domain) const {
+    auto site_ids = store_.enumerate();
+    for (auto sid : site_ids) {
+        auto meta = store_.load_metadata(sid);
+        if (meta.success) {
+            for (const auto& d : meta.metadata.domains) {
+                if (d == domain) {
+                    return store_.privkey_path(sid);
+                }
+            }
+        }
+    }
     return ssl_dir_ + "/" + domain + "/current/privkey.pem";
 }
 

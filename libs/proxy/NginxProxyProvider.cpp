@@ -118,6 +118,16 @@ core::OperationResult NginxProxyProvider::attach_certificate(const std::string& 
     params.cert_path = cert_path;
     params.key_path = key_path;
 
+    logger_.info("PROXY", domain + ": attaching cert cert_path=" + cert_path + " key_path=" + key_path);
+
+    // Verify certificate files exist
+    if (!fs_.exists(cert_path)) {
+        return {false, domain + ": Certificate file not found: " + cert_path};
+    }
+    if (!fs_.exists(key_path)) {
+        return {false, domain + ": Private key file not found: " + key_path};
+    }
+
     std::string config = config_builder_.build(params);
 
     // Transactional write: write to temp file, validate, rename
@@ -171,6 +181,8 @@ core::OperationResult NginxProxyProvider::detach_certificate(const std::string& 
     if (upstream.empty()) {
         upstream = "site-0-web:80";
     }
+
+    logger_.info("PROXY", domain + ": detaching certificate");
 
     // Build pure HTTP config
     std::string config = config_builder_.build_http_block(domain, upstream);

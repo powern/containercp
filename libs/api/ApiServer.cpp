@@ -895,12 +895,13 @@ bool ApiServer::start() {
                 s.save();
             }
 
-            // Attach certificate to proxy config
-            std::string cert_path = s.cert_provider().certificate_path(domain);
-            std::string key_path = s.cert_provider().key_path(domain);
+            // Attach certificate to proxy config using CertificateStore paths
+            std::string cert_path = s.cert_store().fullchain_path(site_id);
+            std::string key_path = s.cert_store().privkey_path(site_id);
+            s.logger().info("API", "Attaching cert for " + domain + ": cert=" + cert_path + " key=" + key_path);
             auto proxy_result = s.proxy_provider().attach_certificate(domain, cert_path, key_path);
             if (!proxy_result.success) {
-                s.logger().warning("API", "Proxy certificate attach failed: " + proxy_result.message);
+                s.logger().warning("API", "Proxy certificate attach failed for " + domain + ": " + proxy_result.message);
             }
 
             std::ostringstream json;
