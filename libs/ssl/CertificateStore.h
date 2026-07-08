@@ -105,9 +105,13 @@ public:
     static std::string load_error_string(LoadError err);
 
 private:
-    std::string staging_dir(uint64_t site_id, const std::string& stamp) const;
-    bool atomic_write_in_dir(const std::string& dir, const std::string& filename,
-                              const std::string& content, int mode);
+    std::string versions_dir(uint64_t site_id) const;
+    std::string current_link(uint64_t site_id) const;
+    int find_next_version(uint64_t site_id) const;
+    bool fsync_dir(const std::string& dir_path) const;
+    bool has_flat_files(uint64_t site_id) const;
+    void migrate_flat_to_versioned(uint64_t site_id, int version);
+
     bool atomic_write(const std::string& path, const std::string& content, int mode);
     std::string read_file(const std::string& path) const;
     std::string metadata_to_json(const Metadata& meta) const;

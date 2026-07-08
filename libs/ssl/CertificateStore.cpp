@@ -26,48 +26,102 @@ std::string CertificateStore::site_dir(uint64_t site_id) const {
     return ssl_root_ + "/" + std::to_string(site_id);
 }
 
+std::string CertificateStore::versions_dir(uint64_t site_id) const {
+    return site_dir(site_id) + "/versions";
+}
+
+std::string CertificateStore::current_link(uint64_t site_id) const {
+    return site_dir(site_id) + "/current";
+}
+
 std::string CertificateStore::metadata_path(uint64_t site_id) const {
-    return site_dir(site_id) + "/metadata.json";
+    return current_link(site_id) + "/metadata.json";
 }
 
 std::string CertificateStore::fullchain_path(uint64_t site_id) const {
-    return site_dir(site_id) + "/fullchain.pem";
+    return current_link(site_id) + "/fullchain.pem";
 }
 
 std::string CertificateStore::privkey_path(uint64_t site_id) const {
-    return site_dir(site_id) + "/privkey.pem";
+    return current_link(site_id) + "/privkey.pem";
 }
 
 std::string CertificateStore::chain_path(uint64_t site_id) const {
-    return site_dir(site_id) + "/chain.pem";
+    return current_link(site_id) + "/chain.pem";
 }
 
-std::string CertificateStore::staging_dir(uint64_t site_id, const std::string& stamp) const {
-    return site_dir(site_id) + "/.staging-" + stamp;
+bool CertificateStore::fsync_dir(const std::string& dir_path) const {
+    int fd = ::open(dir_path.c_str(), O_RDONLY);
+    if (fd < 0) return false;
+    bool ok = (::fsync(fd) == 0);
+    ::close(fd);
+    return ok;
 }
 
 bool CertificateStore::ensure_site_dir(uint64_t site_id) {
     std::string dir = site_dir(site_id);
-    if (::mkdir(dir.c_str(), 0700) == 0) {
-        return true;
+    if (::mkdir(dir.c_str(), 0700) != 0 && errno != EEXIST) {
+        logger_.error("CertificateStore", "Failed to create directory " + dir);
+        return false;
     }
-    if (errno == EEXIST) {
-        ::chmod(dir.c_str(), 0700);
-        return true;
+    ::chmod(dir.c_str(), 0700);
+
+    // Ensure versions/ subdirectory exists
+    std::string vdir = versions_dir(site_id);
+    if (::mkdir(vdir.c_str(), 0700) != 0 && errno != EEXIST) {
+        logger_.error("CertificateStore", "Failed to create versions directory " + vdir);
+        return false;
     }
-    logger_.error("CertificateStore", "Failed to create directory " + dir);
-    return false;
+
+    return true;
 }
 
 bool CertificateStore::metadata_exists(uint64_t site_id) const {
     struct stat st;
+    // First check if current symlink exists and resolves
+    if (::stat(current_link(site_id).c_str(), &st) != 0) {
+        // If no symlink, check for flat files (pre-versioned layout)
+        return has_flat_files(site_id);
+    }
     return ::stat(metadata_path(site_id).c_str(), &st) == 0;
 }
 
 bool CertificateStore::certificate_files_exist(uint64_t site_id) const {
     struct stat st;
+    if (::stat(current_link(site_id).c_str(), &st) != 0) {
+        return false;
+    }
     return ::stat(fullchain_path(site_id).c_str(), &st) == 0
         && ::stat(privkey_path(site_id).c_str(), &st) == 0;
+}
+
+bool CertificateStore::has_flat_files(uint64_t site_id) const {
+    struct stat st;
+    std::string dir = site_dir(site_id);
+    return ::stat((dir + "/metadata.json").c_str(), &st) == 0;
+}
+
+void CertificateStore::migrate_flat_to_versioned(uint64_t site_id, int version) {
+    std::string dir = site_dir(site_id);
+    std::string vdir = versions_dir(site_id) + "/" + std::to_string(version);
+    ::mkdir(vdir.c_str(), 0700);
+
+    auto move_if_exists = [&](const std::string& name) {
+        std::string src = dir + "/" + name;
+        struct stat st;
+        if (::stat(src.c_str(), &st) == 0) {
+            ::rename(src.c_str(), (vdir + "/" + name).c_str());
+        }
+    };
+
+    move_if_exists("metadata.json");
+    move_if_exists("fullchain.pem");
+    move_if_exists("privkey.pem");
+    move_if_exists("chain.pem");
+
+    // Create new symlink
+    ::symlink(("versions/" + std::to_string(version)).c_str(), current_link(site_id).c_str());
+    fsync_dir(dir);
 }
 
 bool CertificateStore::atomic_write(const std::string& path, const std::string& content, int mode) {
@@ -107,19 +161,7 @@ bool CertificateStore::atomic_write(const std::string& path, const std::string& 
         return false;
     }
 
-    std::string dir = path.substr(0, path.rfind('/'));
-    int dir_fd = ::open(dir.c_str(), O_RDONLY);
-    if (dir_fd >= 0) {
-        ::fsync(dir_fd);
-        ::close(dir_fd);
-    }
-
     return true;
-}
-
-bool CertificateStore::atomic_write_in_dir(const std::string& dir, const std::string& filename,
-                                            const std::string& content, int mode) {
-    return atomic_write(dir + "/" + filename, content, mode);
 }
 
 std::string CertificateStore::read_file(const std::string& path) const {
@@ -132,12 +174,53 @@ std::string CertificateStore::read_file(const std::string& path) const {
     return ss.str();
 }
 
-bool CertificateStore::save_metadata(uint64_t site_id, const Metadata& meta) {
-    if (!ensure_site_dir(site_id)) {
-        return false;
+int CertificateStore::find_next_version(uint64_t site_id) const {
+    int max_ver = 0;
+    std::string vdir = versions_dir(site_id);
+    DIR* d = ::opendir(vdir.c_str());
+    if (!d) return 1;
+    struct dirent* entry;
+    while ((entry = ::readdir(d)) != nullptr) {
+        if (entry->d_type == DT_DIR) {
+            std::string name = entry->d_name;
+            if (name == "." || name == "..") continue;
+            bool is_numeric = true;
+            for (char c : name) {
+                if (!std::isdigit(static_cast<unsigned char>(c))) {
+                    is_numeric = false; break;
+                }
+            }
+            if (is_numeric) {
+                int v = std::stoi(name);
+                if (v > max_ver) max_ver = v;
+            }
+        }
     }
-    std::string json = metadata_to_json(meta);
-    return atomic_write(metadata_path(site_id), json, 0644);
+    ::closedir(d);
+    return max_ver + 1;
+}
+
+bool CertificateStore::save_metadata(uint64_t site_id, const Metadata& meta) {
+    if (!ensure_site_dir(site_id)) return false;
+
+    // Check if current symlink exists
+    struct stat st;
+    std::string current = current_link(site_id);
+    if (::stat(current.c_str(), &st) != 0) {
+        // No current version yet — migrate flat files or create version 1
+        if (has_flat_files(site_id)) {
+            migrate_flat_to_versioned(site_id, 1);
+        } else {
+            // Create initial version
+            int ver = find_next_version(site_id);
+            std::string vdir = versions_dir(site_id) + "/" + std::to_string(ver);
+            ::mkdir(vdir.c_str(), 0700);
+            ::symlink(("versions/" + std::to_string(ver)).c_str(), current.c_str());
+            fsync_dir(site_dir(site_id));
+        }
+    }
+
+    return atomic_write(metadata_path(site_id), metadata_to_json(meta), 0644);
 }
 
 CertificateStore::MetadataLoadResult CertificateStore::load_metadata(uint64_t site_id) {
@@ -145,6 +228,17 @@ CertificateStore::MetadataLoadResult CertificateStore::load_metadata(uint64_t si
     std::string path = metadata_path(site_id);
 
     struct stat st;
+    if (::stat(current_link(site_id).c_str(), &st) != 0) {
+        // No current symlink — check for flat files (migration path)
+        if (has_flat_files(site_id)) {
+            migrate_flat_to_versioned(site_id, 1);
+        } else {
+            result.error = LoadError::NOT_FOUND;
+            result.message = "No certificate data for site " + std::to_string(site_id);
+            return result;
+        }
+    }
+
     if (::stat(path.c_str(), &st) != 0) {
         result.error = LoadError::NOT_FOUND;
         result.message = "metadata.json not found for site " + std::to_string(site_id);
@@ -170,9 +264,16 @@ CertificateStore::MetadataLoadResult CertificateStore::load_metadata(uint64_t si
         return result;
     }
 
-    if (result.metadata.version < 1) {
+    if (result.metadata.version <= 0) {
         result.error = LoadError::INVALID_JSON;
-        result.message = "Unsupported metadata version: " + std::to_string(result.metadata.version);
+        result.message = "metadata.json has invalid version: " + std::to_string(result.metadata.version);
+        return result;
+    }
+
+    if (result.metadata.version > 1) {
+        result.error = LoadError::UNSUPPORTED_VERSION;
+        result.message = "metadata.json version " + std::to_string(result.metadata.version)
+                        + " is not supported by this version of ContainerCP";
         return result;
     }
 
@@ -189,16 +290,53 @@ CertificateStore::MetadataLoadResult CertificateStore::load_metadata(uint64_t si
 
 bool CertificateStore::save_fullchain(uint64_t site_id, const std::string& pem_data) {
     if (!ensure_site_dir(site_id)) return false;
+    // Ensure current symlink exists
+    struct stat st;
+    if (::stat(current_link(site_id).c_str(), &st) != 0) {
+        if (has_flat_files(site_id)) {
+            migrate_flat_to_versioned(site_id, 1);
+        } else {
+            int ver = find_next_version(site_id);
+            std::string vdir = versions_dir(site_id) + "/" + std::to_string(ver);
+            ::mkdir(vdir.c_str(), 0700);
+            ::symlink(("versions/" + std::to_string(ver)).c_str(), current_link(site_id).c_str());
+            fsync_dir(site_dir(site_id));
+        }
+    }
     return atomic_write(fullchain_path(site_id), pem_data, 0644);
 }
 
 bool CertificateStore::save_privkey(uint64_t site_id, const std::string& pem_data) {
     if (!ensure_site_dir(site_id)) return false;
+    struct stat st;
+    if (::stat(current_link(site_id).c_str(), &st) != 0) {
+        if (has_flat_files(site_id)) {
+            migrate_flat_to_versioned(site_id, 1);
+        } else {
+            int ver = find_next_version(site_id);
+            std::string vdir = versions_dir(site_id) + "/" + std::to_string(ver);
+            ::mkdir(vdir.c_str(), 0700);
+            ::symlink(("versions/" + std::to_string(ver)).c_str(), current_link(site_id).c_str());
+            fsync_dir(site_dir(site_id));
+        }
+    }
     return atomic_write(privkey_path(site_id), pem_data, 0600);
 }
 
 bool CertificateStore::save_chain(uint64_t site_id, const std::string& pem_data) {
     if (!ensure_site_dir(site_id)) return false;
+    struct stat st;
+    if (::stat(current_link(site_id).c_str(), &st) != 0) {
+        if (has_flat_files(site_id)) {
+            migrate_flat_to_versioned(site_id, 1);
+        } else {
+            int ver = find_next_version(site_id);
+            std::string vdir = versions_dir(site_id) + "/" + std::to_string(ver);
+            ::mkdir(vdir.c_str(), 0700);
+            ::symlink(("versions/" + std::to_string(ver)).c_str(), current_link(site_id).c_str());
+            fsync_dir(site_dir(site_id));
+        }
+    }
     return atomic_write(chain_path(site_id), pem_data, 0644);
 }
 
@@ -210,78 +348,100 @@ core::OperationResult CertificateStore::save_all(uint64_t site_id, const Metadat
         return {false, "Failed to create site directory"};
     }
 
-    // Use a unique staging directory for transactional writes
-    std::string stamp = std::to_string(::time(nullptr)) + "-" + std::to_string(::getpid());
-    std::string sdir = staging_dir(site_id, stamp);
+    // Find next version number and create its directory
+    int new_version = find_next_version(site_id);
+    std::string new_version_dir = versions_dir(site_id) + "/" + std::to_string(new_version);
 
-    if (::mkdir(sdir.c_str(), 0700) != 0) {
-        logger_.error("CertificateStore", "Failed to create staging directory: " + sdir);
-        return {false, "Failed to create staging directory"};
+    if (::mkdir(new_version_dir.c_str(), 0700) != 0) {
+        logger_.error("CertificateStore", "Failed to create version directory: " + new_version_dir);
+        return {false, "Failed to create version directory"};
     }
 
-    // Write all files to staging directory first
-    bool all_ok = true;
-    all_ok = all_ok && atomic_write_in_dir(sdir, "fullchain.pem", fullchain_pem, 0644);
-    all_ok = all_ok && atomic_write_in_dir(sdir, "privkey.pem", privkey_pem, 0600);
-    all_ok = all_ok && atomic_write_in_dir(sdir, "chain.pem", chain_pem, 0644);
-    all_ok = all_ok && atomic_write_in_dir(sdir, "metadata.json", metadata_to_json(meta), 0644);
+    // Write all files to the new version directory
+    bool write_ok = true;
+    write_ok = write_ok && atomic_write(new_version_dir + "/fullchain.pem", fullchain_pem, 0644);
+    write_ok = write_ok && atomic_write(new_version_dir + "/privkey.pem", privkey_pem, 0600);
+    write_ok = write_ok && atomic_write(new_version_dir + "/chain.pem", chain_pem, 0644);
+    write_ok = write_ok && atomic_write(new_version_dir + "/metadata.json", metadata_to_json(meta), 0644);
 
-    if (!all_ok) {
-        // Rollback: remove staging directory and all its contents
-        ::unlink((sdir + "/fullchain.pem").c_str());
-        ::unlink((sdir + "/privkey.pem").c_str());
-        ::unlink((sdir + "/chain.pem").c_str());
-        ::unlink((sdir + "/metadata.json").c_str());
-        ::rmdir(sdir.c_str());
-        logger_.error("CertificateStore", "save_all failed, staging directory rolled back: " + sdir);
+    if (!write_ok) {
+        // Rollback: remove the incomplete version directory
+        ::unlink((new_version_dir + "/fullchain.pem").c_str());
+        ::unlink((new_version_dir + "/privkey.pem").c_str());
+        ::unlink((new_version_dir + "/chain.pem").c_str());
+        ::unlink((new_version_dir + "/metadata.json").c_str());
+        ::rmdir(new_version_dir.c_str());
+        logger_.error("CertificateStore", "save_all write failed, new version rolled back");
         return {false, "Failed to write certificate files"};
     }
 
-    // Fsync the staging directory to ensure all data is on disk
-    int dir_fd = ::open(sdir.c_str(), O_RDONLY);
-    if (dir_fd >= 0) {
-        ::fsync(dir_fd);
-        ::close(dir_fd);
+    // Fsync the new version directory
+    fsync_dir(new_version_dir);
+
+    // Create the new symlink with a temp name, then atomically swap
+    std::string current = current_link(site_id);
+    std::string tmp_link = current + ".tmp";
+    std::string target = "versions/" + std::to_string(new_version);
+
+    // Remove stale tmp symlink if any
+    ::unlink(tmp_link.c_str());
+
+    if (::symlink(target.c_str(), tmp_link.c_str()) != 0) {
+        logger_.error("CertificateStore", "Failed to create temporary symlink: " + tmp_link);
+        // Clean up the new version
+        ::unlink((new_version_dir + "/fullchain.pem").c_str());
+        ::unlink((new_version_dir + "/privkey.pem").c_str());
+        ::unlink((new_version_dir + "/chain.pem").c_str());
+        ::unlink((new_version_dir + "/metadata.json").c_str());
+        ::rmdir(new_version_dir.c_str());
+        return {false, "Failed to create symlink"};
     }
 
-    // Atomically move each file from staging to final location
-    auto move_file = [&](const std::string& filename) -> bool {
-        std::string src = sdir + "/" + filename;
-        std::string dst = site_dir(site_id) + "/" + filename;
-        if (::rename(src.c_str(), dst.c_str()) != 0) {
-            logger_.error("CertificateStore", "rename failed: " + src + " -> " + dst);
-            return false;
+    // Fsync site dir before atomic swap
+    fsync_dir(site_dir(site_id));
+
+    // Atomic swap: rename() atomically replaces the destination
+    if (::rename(tmp_link.c_str(), current.c_str()) != 0) {
+        logger_.error("CertificateStore", "Failed to atomically swap symlink: " + current);
+        ::unlink(tmp_link.c_str());
+        // New version is orphaned but the old current is still intact
+        return {false, "Failed to finalize certificate update"};
+    }
+
+    // Fsync site dir after swap
+    fsync_dir(site_dir(site_id));
+
+    // Clean up old versions (keep current and one previous backup)
+    {
+        DIR* d = ::opendir(versions_dir(site_id).c_str());
+        if (d) {
+            struct dirent* entry;
+            while ((entry = ::readdir(d)) != nullptr) {
+                if (entry->d_type == DT_DIR) {
+                    std::string name = entry->d_name;
+                    if (name == "." || name == "..") continue;
+                    bool is_numeric = true;
+                    for (char c : name) {
+                        if (!std::isdigit(static_cast<unsigned char>(c))) {
+                            is_numeric = false; break;
+                        }
+                    }
+                    if (is_numeric) {
+                        int v = std::stoi(name);
+                        if (v < new_version - 1) {
+                            // Remove old version
+                            std::string old_dir = versions_dir(site_id) + "/" + name;
+                            ::unlink((old_dir + "/fullchain.pem").c_str());
+                            ::unlink((old_dir + "/privkey.pem").c_str());
+                            ::unlink((old_dir + "/chain.pem").c_str());
+                            ::unlink((old_dir + "/metadata.json").c_str());
+                            ::rmdir(old_dir.c_str());
+                        }
+                    }
+                }
+            }
+            ::closedir(d);
         }
-        return true;
-    };
-
-    bool move_ok = true;
-    move_ok = move_ok && move_file("fullchain.pem");
-    move_ok = move_ok && move_file("privkey.pem");
-    move_ok = move_ok && move_file("chain.pem");
-    move_ok = move_ok && move_file("metadata.json");
-
-    // Remove staging directory (should be empty after renames)
-    ::rmdir(sdir.c_str());
-
-    if (!move_ok) {
-        // Critical failure: rename of one or more files failed.
-        // Try to restore files that were already renamed back to staging.
-        // Best-effort rollback of the staging directory contents.
-        ::unlink((sdir + "/fullchain.pem").c_str());
-        ::unlink((sdir + "/privkey.pem").c_str());
-        ::unlink((sdir + "/chain.pem").c_str());
-        ::unlink((sdir + "/metadata.json").c_str());
-        ::rmdir(sdir.c_str());
-        logger_.error("CertificateStore", "save_all rename failed, staging cleaned up");
-        return {false, "Failed to finalize certificate files"};
-    }
-
-    // Fsync the site directory to commit the renames
-    int site_fd = ::open(site_dir(site_id).c_str(), O_RDONLY);
-    if (site_fd >= 0) {
-        ::fsync(site_fd);
-        ::close(site_fd);
     }
 
     return {true, ""};
@@ -302,20 +462,19 @@ std::string CertificateStore::load_chain(uint64_t site_id) {
 bool CertificateStore::remove_all(uint64_t site_id) {
     std::string dir = site_dir(site_id);
 
-    ::unlink(metadata_path(site_id).c_str());
-    ::unlink(fullchain_path(site_id).c_str());
-    ::unlink(privkey_path(site_id).c_str());
-    ::unlink(chain_path(site_id).c_str());
+    // Remove current symlink
+    ::unlink(current_link(site_id).c_str());
 
-    // Remove any staging directories
-    DIR* d = ::opendir(dir.c_str());
+    // Remove all version directories
+    std::string vdir = versions_dir(site_id);
+    DIR* d = ::opendir(vdir.c_str());
     if (d) {
         struct dirent* entry;
         while ((entry = ::readdir(d)) != nullptr) {
-            std::string name = entry->d_name;
-            if (name.find(".staging-") == 0) {
-                // Remove contents then directory
-                std::string sub = dir + "/" + name;
+            if (entry->d_type == DT_DIR) {
+                std::string name = entry->d_name;
+                if (name == "." || name == "..") continue;
+                std::string sub = vdir + "/" + name;
                 ::unlink((sub + "/fullchain.pem").c_str());
                 ::unlink((sub + "/privkey.pem").c_str());
                 ::unlink((sub + "/chain.pem").c_str());
@@ -325,6 +484,17 @@ bool CertificateStore::remove_all(uint64_t site_id) {
         }
         ::closedir(d);
     }
+    ::rmdir(vdir.c_str());
+
+    // Remove flat files if any (pre-migration)
+    ::unlink((dir + "/metadata.json").c_str());
+    ::unlink((dir + "/fullchain.pem").c_str());
+    ::unlink((dir + "/privkey.pem").c_str());
+    ::unlink((dir + "/chain.pem").c_str());
+    ::unlink((dir + "/metadata.json.tmp").c_str());
+    ::unlink((dir + "/fullchain.pem.tmp").c_str());
+    ::unlink((dir + "/privkey.pem.tmp").c_str());
+    ::unlink((dir + "/chain.pem.tmp").c_str());
 
     if (::rmdir(dir.c_str()) == 0) {
         return true;
@@ -346,7 +516,7 @@ std::vector<uint64_t> CertificateStore::enumerate() {
     while ((entry = ::readdir(dir)) != nullptr) {
         if (entry->d_type == DT_DIR) {
             std::string name = entry->d_name;
-            if (name == "." || name == ".." || name.find(".staging-") == 0) continue;
+            if (name == "." || name == "..") continue;
 
             bool is_numeric = true;
             for (char c : name) {
@@ -377,6 +547,14 @@ CertificateStore::ValidationResult CertificateStore::validate(uint64_t site_id) 
         result.warnings.push_back("Directory permissions should be 0700");
     }
 
+    // Check current symlink
+    struct stat link_st;
+    if (::stat(current_link(site_id).c_str(), &link_st) != 0) {
+        result.valid = false;
+        result.errors.push_back("current symlink does not exist");
+        return result;
+    }
+
     // Load metadata with proper error handling
     auto load_result = load_metadata(site_id);
     if (!load_result.success) {
@@ -391,7 +569,6 @@ CertificateStore::ValidationResult CertificateStore::validate(uint64_t site_id) 
         result.warnings.push_back("metadata.json has no domains");
     }
 
-    // Check certificate files if status expects them
     if (meta.status == "active" || meta.status == "issuing" || meta.status == "disabled") {
         auto check_file = [&](const std::string& path, const std::string& label, mode_t expected_mode) {
             struct stat st;
@@ -591,7 +768,6 @@ CertificateStore::Metadata CertificateStore::metadata_from_json(const std::strin
 
         std::string key = parse_json_string(json, pos);
         if (key.empty()) {
-            // Malformed key — skip to next comma or closing brace
             skip_whitespace(json, pos);
             if (pos < json.size() && json[pos] == ':') ++pos;
             parse_json_value(json, pos);
@@ -689,7 +865,6 @@ CertificateStore::Metadata CertificateStore::metadata_from_json(const std::strin
             parsed_any = true;
             meta.updated_at = parse_json_string(json, pos);
         } else {
-            // Unknown field — skip value
             parse_json_value(json, pos);
         }
 
@@ -697,9 +872,8 @@ CertificateStore::Metadata CertificateStore::metadata_from_json(const std::strin
         if (pos < json.size() && json[pos] == ',') ++pos;
     }
 
-    // If JSON was not empty but no known fields were parsed, it's invalid
     if (!parsed_any && json.size() > 2) {
-        meta.version = 0; // Signal invalid parse
+        meta.version = 0;
     }
 
     return meta;
