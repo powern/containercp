@@ -141,7 +141,8 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         operations::SiteRemoveOperation op(
             s.sites(), s.domains(), s.databases(),
             s.backups(), s.ssl(), s.mail(),
-            s.reverse_proxies(),
+            s.reverse_proxies(), s.proxy_provider(),
+            s.port_manager(),
             s.filesystem(), s.config(), s.runtime());
         auto result = op.execute(cmd.args[0]);
         if (result.success) { s.save(); return Command::success("Site removed: " + cmd.args[0]); }
@@ -153,7 +154,8 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         operations::SiteRemoveOperation op(
             s.sites(), s.domains(), s.databases(),
             s.backups(), s.ssl(), s.mail(),
-            s.reverse_proxies(),
+            s.reverse_proxies(), s.proxy_provider(),
+            s.port_manager(),
             s.filesystem(), s.config(), s.runtime());
         auto result = op.execute(cmd.args[0]);
         if (result.success) { s.save(); return Command::success("Site removed: " + cmd.args[0]); }
@@ -175,6 +177,7 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         if (!node) return Command::error("No node available");
         operations::SiteCreateOperation op(s.sites(), s.domains(),
             s.databases(), s.reverse_proxies(),
+            s.proxy_provider(), s.port_manager(),
             s.filesystem(), s.config(), s.hosting_provider());
         auto result = op.execute(owner, domain, *node);
         if (result.success) {
@@ -191,6 +194,7 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         if (!node) return Command::error("No node available");
         operations::SiteCreateOperation op(s.sites(), s.domains(),
             s.databases(), s.reverse_proxies(),
+            s.proxy_provider(), s.port_manager(),
             s.filesystem(), s.config(), s.hosting_provider());
         auto result = op.execute(cmd.args[0], cmd.args[1], *node, true);
         return result.success ? Command::success("") : Command::error(result.message);

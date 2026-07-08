@@ -31,6 +31,9 @@ int main(int argc, char* argv[]) {
     containercp::core::Application::instance();
     auto& services = containercp::core::Application::instance().services();
 
+    // Ensure database directory exists before any services try to write to it
+    services.filesystem().create_directory(services.config().database_dir());
+
     int api_port = parse_env("CONTAINERCP_API_PORT", parse_arg(argc, argv, "--api-port", 8080));
     int ui_port = parse_env("CONTAINERCP_UI_PORT", parse_arg(argc, argv, "--ui-port", 8081));
 
@@ -84,6 +87,9 @@ int main(int argc, char* argv[]) {
     services.logger().info("Daemon: Web UI API proxy /ui-api/* -> 127.0.0.1:" + std::to_string(api_port));
     services.logger().info("Daemon: Web UI login required");
 
+    // Start central reverse proxy container
+    services.proxy_provider().ensure_central_proxy();
+
     containercp::daemon::DaemonApp daemon(services);
 
     while (true) {
@@ -107,5 +113,6 @@ int main(int argc, char* argv[]) {
 
     ::close(server_fd);
     ::unlink(socket_path.c_str());
+    services.proxy_provider().remove_central_proxy();
     return 0;
 }

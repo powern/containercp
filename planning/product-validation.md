@@ -226,28 +226,42 @@ Validation: ContainerCP can be built and installed on a clean Debian 13 (Trixie)
 | 123 | Create Site modal validates inputs | [ ] | |
 | 124 | Web UI recovers from daemon restart | [ ] | |
 
+## Multi-Site Hosting
+
+| # | Check | Status | Notes |
+|---|-------|--------|-------|
+| 125 | Create first site (multi-one.local) | [ ] | |
+| 126 | Create second site (multi-two.local) — succeeds without port conflict | [ ] | |
+| 127 | Second site nginx bound to unique host port (not 80) | [ ] | |
+| 128 | Central reverse proxy container running on port 80 | [ ] | |
+| 129 | `curl -H "Host: multi-one.local" http://127.0.0.1/` returns site content | [ ] | |
+| 130 | `curl -H "Host: multi-two.local" http://127.0.0.1/` returns site content | [ ] | |
+| 131 | Both sites survive daemon restart | [ ] | |
+| 132 | Removing first site does not affect second site | [ ] | |
+| 133 | Proxy config cleaned up after site removal | [ ] | |
+
 ## Stability
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 125 | Daemon runs continuously for 24 hours | [ ] | |
-| 126 | No memory leaks detected (stable RSS) | [ ] | |
-| 127 | No zombie processes | [ ] | |
-| 128 | API responds within 500ms for all endpoints | [ ] | |
-| 129 | No orphan files in `/srv/containercp/` | [ ] | |
-| 130 | No orphan Docker containers | [ ] | |
-| 131 | No orphan Docker volumes | [ ] | |
-| 132 | Daemon logs contain no ERROR messages during normal operation | [ ] | |
-| 133 | Clean shutdown (SIGTERM) | [ ] | |
+| 134 | Daemon runs continuously for 24 hours | [ ] | |
+| 135 | No memory leaks detected (stable RSS) | [ ] | |
+| 136 | No zombie processes | [ ] | |
+| 137 | API responds within 500ms for all endpoints | [ ] | |
+| 138 | No orphan files in `/srv/containercp/` | [ ] | |
+| 139 | No orphan Docker containers | [ ] | |
+| 140 | No orphan Docker volumes | [ ] | |
+| 141 | Daemon logs contain no ERROR messages during normal operation | [ ] | |
+| 142 | Clean shutdown (SIGTERM) | [ ] | |
 
 ## Regression
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 134 | All unit tests pass (`ctest`) | [ ] | |
-| 135 | Zero compiler warnings (Debug) | [ ] | |
-| 136 | Zero compiler warnings (Release) | [ ] | |
-| 137 | No new warnings introduced | [ ] | |
+| 143 | All unit tests pass (`ctest`) | [ ] | |
+| 144 | Zero compiler warnings (Debug) | [ ] | |
+| 145 | Zero compiler warnings (Release) | [ ] | |
+| 146 | No new warnings introduced | [ ] | |
 
 ---
 
@@ -271,34 +285,14 @@ Validation: ContainerCP can be built and installed on a clean Debian 13 (Trixie)
 | Template Profiles | 6 | 0 | 0 | 6 |
 | Site Removal | 10 | 0 | 0 | 10 |
 | Web UI Operations | 8 | 0 | 0 | 8 |
+| Multi-Site Hosting | 9 | 0 | 0 | 9 |
 | Stability | 9 | 0 | 0 | 9 |
 | Regression | 4 | 0 | 0 | 4 |
-| **Total** | **137** | **0** | **0** | **137** |
+| **Total** | **146** | **0** | **0** | **146** |
 
 ---
 
------|-------|------|------|------------|
-| Validation VM | 3 | 0 | 0 | 3 |
-| Installation | 11 | 0 | 0 | 11 |
-| Configuration | 6 | 0 | 0 | 6 |
-| REST API | 8 | 0 | 0 | 8 |
-| Web UI | 18 | 0 | 0 | 18 |
-| CLI | 6 | 0 | 0 | 6 |
-| Site Management | 10 | 0 | 0 | 10 |
-| Docker Compose | 10 | 0 | 0 | 10 |
-| Web Server | 5 | 0 | 0 | 5 |
-| SSL | 6 | 0 | 0 | 6 |
-| Access | 6 | 0 | 0 | 6 |
-| Database | 4 | 0 | 0 | 4 |
-| Backup and Restore | 7 | 0 | 0 | 7 |
-| Template Profiles | 6 | 0 | 0 | 6 |
-| Site Removal | 10 | 0 | 0 | 10 |
-| Web UI Operations | 8 | 0 | 0 | 8 |
-| Stability | 9 | 0 | 0 | 9 |
-| Regression | 4 | 0 | 0 | 4 |
-| **Total** | **137** | **0** | **0** | **137** |
 
----
 
 ## How to use this document
 

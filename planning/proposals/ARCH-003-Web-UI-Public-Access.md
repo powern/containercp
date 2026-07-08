@@ -1,6 +1,6 @@
 # ARCH-003: Secure Web UI External Access
 
-Status: Draft
+Status: Implemented
 
 ## Problem
 

@@ -127,6 +127,9 @@ ServiceRegistry::ServiceRegistry()
         sites_.set_sites(loaded_sites);
     }
 
+    // Scan existing site directories to reclaim allocated ports
+    port_manager_.scan_existing_sites(config_.sites_dir());
+
     auto loaded_auth_users = storage_.load_auth_users();
     if (!loaded_auth_users.empty()) {
         auth_users_.set_users(loaded_auth_users);
@@ -233,6 +236,10 @@ filesystem::Filesystem& ServiceRegistry::filesystem() {
 
 runtime::Runtime& ServiceRegistry::runtime() {
     return runtime_;
+}
+
+runtime::PortManager& ServiceRegistry::port_manager() {
+    return port_manager_;
 }
 
 provider::HostingProvider& ServiceRegistry::hosting_provider() {

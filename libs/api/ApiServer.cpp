@@ -417,6 +417,7 @@ bool ApiServer::start() {
 
         operations::SiteCreateOperation op(s.sites(), s.domains(),
             s.databases(), s.reverse_proxies(),
+            s.proxy_provider(), s.port_manager(),
             s.filesystem(), s.config(), s.hosting_provider());
         auto result = op.execute(owner, domain, *node);
 
@@ -447,7 +448,8 @@ bool ApiServer::start() {
         operations::SiteRemoveOperation op(
             s.sites(), s.domains(), s.databases(),
             s.backups(), s.ssl(), s.mail(),
-            s.reverse_proxies(),
+            s.reverse_proxies(), s.proxy_provider(),
+            s.port_manager(),
             s.filesystem(), s.config(), s.runtime());
 
         auto result = op.execute(domain);

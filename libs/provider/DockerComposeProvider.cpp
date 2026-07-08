@@ -16,7 +16,7 @@ DockerComposeProvider::DockerComposeProvider(filesystem::Filesystem& fs, config:
 {
 }
 
-core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
+core::OperationResult DockerComposeProvider::create_site(site::Site& site, uint16_t nginx_port) {
     auto check = rt_.check_compose();
     if (!check.success) {
         return check;
@@ -29,9 +29,9 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site) {
 
     docker::EnvGenerator env(fs_, site_dir);
     if (site.db_name.empty()) {
-        env.generate(site.domain, site.owner);
+        env.generate(site.domain, site.owner, nginx_port);
     } else {
-        env.generate(site.domain, site.owner, site.db_name, site.db_user, site.db_password);
+        env.generate(site.domain, site.owner, site.db_name, site.db_user, site.db_password, nginx_port);
     }
 
     auto* php_version = php_.get_default();

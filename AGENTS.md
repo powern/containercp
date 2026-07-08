@@ -140,11 +140,11 @@ validation on the official Validation VM.
 
 ## Current product stage
 
-ContainerCP is approaching Version 0.5 (Web Administration).
+ContainerCP is at Version 0.5 (Release Candidate 1 completed).
 The project has evolved from a CLI utility to a hosting platform
 with daemon architecture, REST API, Web UI, and growing provider
 ecosystem.
 
-The next major milestone is the First Production Validation on a
-clean Debian 13 (Trixie) system. Validation VM testing is now
-required for every Epic (see `planning/TEST_ENVIRONMENT.md`).
+The next milestone is RC2 (24-hour stability validation) followed
+by the v0.5.0 stable release. Validation VM testing is required
+for every Epic (see `planning/TEST_ENVIRONMENT.md`).

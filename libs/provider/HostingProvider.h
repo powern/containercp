@@ -4,13 +4,15 @@
 #include "core/OperationResult.h"
 #include "site/Site.h"
 
+#include <cstdint>
+
 namespace containercp::provider {
 
 class HostingProvider {
 public:
     virtual ~HostingProvider() = default;
 
-    virtual core::OperationResult create_site(site::Site& site) = 0;
+    virtual core::OperationResult create_site(site::Site& site, uint16_t nginx_port = 80) = 0;
     virtual core::OperationResult remove_site(site::Site& site) = 0;
     virtual core::OperationResult start_site(site::Site& site) = 0;
     virtual core::OperationResult stop_site(site::Site& site) = 0;

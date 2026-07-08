@@ -1,7 +1,9 @@
 #include "NginxProxyProvider.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <sstream>
+#include <sys/wait.h>
 
 namespace containercp::proxy {
 
@@ -16,6 +18,18 @@ NginxProxyProvider::NginxProxyProvider(filesystem::Filesystem& fs, config::Confi
 
 std::string NginxProxyProvider::config_path(const std::string& domain) const {
     return cfg_.data_root() + "/proxy/sites/" + domain + ".conf";
+}
+
+std::string NginxProxyProvider::proxy_name() const {
+    return "containercp-proxy";
+}
+
+bool NginxProxyProvider::central_proxy_running() const {
+    std::string cmd = "docker inspect " + proxy_name() + " > /dev/null 2>&1";
+    int rc = std::system(cmd.c_str());
+    if (rc == -1) return false;
+    int exit_code = WEXITSTATUS(rc);
+    return exit_code == 0;
 }
 
 core::OperationResult NginxProxyProvider::create_proxy(const ReverseProxy& proxy) {
@@ -93,7 +107,56 @@ core::OperationResult NginxProxyProvider::disable_proxy(const std::string& domai
 }
 
 core::OperationResult NginxProxyProvider::reload() {
-    logger_.info("NginxProxyProvider: Reload requested (no-op)");
+    std::string cmd = "docker exec " + proxy_name() + " nginx -s reload > /dev/null 2>&1";
+    int rc = std::system(cmd.c_str());
+    if (rc != 0) {
+        logger_.info("NginxProxyProvider: Reload failed (proxy container may not be running)");
+        return {false, "Reload failed: proxy container not running"};
+    }
+    logger_.info("NginxProxyProvider: Reloaded");
+    return {true, ""};
+}
+
+core::OperationResult NginxProxyProvider::ensure_central_proxy() {
+    if (central_proxy_running()) {
+        logger_.info("NginxProxyProvider: Central proxy already running");
+        return {true, ""};
+    }
+
+    fs_.create_directory(cfg_.data_root() + "/proxy/");
+    fs_.create_directory(cfg_.data_root() + "/proxy/sites/");
+
+    // Also write a fallback default config so nginx has something to serve
+    // when no sites are configured (to avoid errors in the nginx container)
+    std::string default_conf_path = cfg_.data_root() + "/proxy/sites/00-default.conf";
+    if (!fs_.exists(default_conf_path)) {
+        std::ostringstream conf;
+        conf << "server {\n"
+             << "    listen 80 default_server;\n"
+             << "    server_name _;\n"
+             << "    return 404;\n"
+             << "}\n";
+        fs_.create_file(default_conf_path, conf.str());
+    }
+
+    std::string cmd = "docker run -d --name " + proxy_name()
+        + " --restart unless-stopped --network host"
+        + " -v " + cfg_.data_root() + "/proxy/sites/:/etc/nginx/conf.d/"
+        + " nginx:alpine > /dev/null 2>&1";
+
+    int rc = std::system(cmd.c_str());
+    if (rc != 0) {
+        logger_.error("NginxProxyProvider: Failed to create central proxy container");
+        return {false, "Failed to create central proxy container"};
+    }
+    logger_.info("NginxProxyProvider: Central proxy container created");
+    return {true, ""};
+}
+
+core::OperationResult NginxProxyProvider::remove_central_proxy() {
+    std::string cmd = "docker rm -f " + proxy_name() + " > /dev/null 2>&1";
+    std::system(cmd.c_str());
+    logger_.info("NginxProxyProvider: Central proxy container removed");
     return {true, ""};
 }
 

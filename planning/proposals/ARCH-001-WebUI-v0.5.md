@@ -1,6 +1,6 @@
 # ARCH-001: Complete Web UI for Version 0.5
 
-Status: Draft
+Status: Implemented
 
 ## Problem
 

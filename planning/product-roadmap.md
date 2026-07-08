@@ -286,7 +286,7 @@ complete hosting workflow end-to-end.
 
 The platform passes the First Production Validation when every
 item on the validation checklist has been verified on a clean
-Debian 12 installation.
+Debian 13 (Trixie) installation.
 
 ---
 

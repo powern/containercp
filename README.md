@@ -30,7 +30,7 @@ portable, and predictable.
 - **Template profiles** — nginx/Apache, PHP/WordPress/Laravel config
   templates on disk, editable without recompilation
 - **Job tracking** — background operations with progress reporting
-- **Validation** — 114-item product validation checklist
+- **Validation** — 137-item product validation checklist
 
 ## Architecture
 
@@ -51,7 +51,7 @@ Browser / CLI / curl
                       └──────────────────┘
 ```
 
-## Quick start on Debian 12
+## Quick start on Debian 13
 
 ```bash
 # Install dependencies
@@ -70,8 +70,8 @@ cmake --build build-release
 # Verify
 curl http://127.0.0.1:8080/api/health
 
-# Open Web UI
-# http://<server-ip>:8080/
+# Open Web UI (external access)
+# http://<server-ip>:8081/
 
 # Create a site (CLI)
 ./build-release/containercp site create admin example.com
@@ -87,7 +87,7 @@ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release
 ```
 
-Requires: CMake 3.25+, Ninja, g++ (C++20), Linux (Debian 12 recommended).
+Requires: CMake 3.25+, Ninja, g++ (C++20), Linux (Debian 13 (Trixie) recommended).
 
 ## Run daemon
 
@@ -96,12 +96,14 @@ Requires: CMake 3.25+, Ninja, g++ (C++20), Linux (Debian 12 recommended).
 ```
 
 The daemon listens on:
-- `http://127.0.0.1:8080` — REST API and Web UI
+- `http://127.0.0.1:8080` — REST API (localhost only)
+- `http://0.0.0.0:8081` — Web UI (external access, with login)
 - `/srv/containercp/containercpd.sock` — CLI communication
 
 ## Web UI
 
-Open `http://<server-ip>:8080/` in any modern browser.
+For external access, open `http://<server-ip>:8081/` in any modern browser.
+For local access (no auth), open `http://127.0.0.1:8080/`.
 
 Pages: Dashboard, Sites, Domains, Databases, SSL, Proxy, Access,
 Backups, Profiles, Templates, Nodes, Logs, Settings.
@@ -137,8 +139,8 @@ containercp template list          # List template profiles
 
 ## Project status
 
-**Version 0.5 Release Candidate** — feature complete, entering
-production validation phase.
+**Version 0.5 Release Candidate** — RC1 validation completed (128/137 pass),
+preparing RC2 for 24-hour stability validation.
 
 | Subsystem | Status | Completeness |
 |-----------|--------|-------------|

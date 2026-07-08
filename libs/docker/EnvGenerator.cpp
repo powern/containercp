@@ -11,14 +11,15 @@ EnvGenerator::EnvGenerator(filesystem::Filesystem& fs, const std::string& site_d
 {
 }
 
-bool EnvGenerator::generate(const std::string& domain, const std::string& owner) {
+bool EnvGenerator::generate(const std::string& domain, const std::string& owner,
+                             uint16_t nginx_port) {
     return generate(domain, owner, "site_db", "site_user",
-                    utils::PasswordGenerator::generate());
+                    utils::PasswordGenerator::generate(), nginx_port);
 }
 
 bool EnvGenerator::generate(const std::string& domain, const std::string& owner,
                              const std::string& db_name, const std::string& db_user,
-                             const std::string& db_password) {
+                             const std::string& db_password, uint16_t nginx_port) {
     std::ostringstream env;
 
     env << "# Site\n";
@@ -28,7 +29,7 @@ bool EnvGenerator::generate(const std::string& domain, const std::string& owner,
     env << "\n";
 
     env << "# Nginx\n";
-    env << "NGINX_PORT=80\n";
+    env << "NGINX_PORT=" << nginx_port << "\n";
     env << "\n";
 
     env << "# PHP\n";

@@ -1,11 +1,11 @@
 # ContainerCP Installation Guide
 
 This guide is written for system administrators who want to install
-ContainerCP on a Debian 12 server.
+ContainerCP on a Debian 13 (Trixie) server.
 
 ## Prerequisites
 
-**Operating system:** Debian 12 (bookworm)
+**Operating system:** Debian 13 (Trixie)
 
 **Packages:**
 
@@ -16,15 +16,9 @@ apt install -y git cmake ninja-build g++ curl
 
 **Docker and Docker Compose:**
 
-Debian 13 (bookworm):
+Debian 13 (Trixie):
 ```
 apt install -y docker.io docker-compose
-systemctl enable --now docker
-```
-
-Debian 12 (bullseye):
-```
-apt install -y docker.io docker-compose-v2
 systemctl enable --now docker
 ```
 
@@ -32,13 +26,12 @@ systemctl enable --now docker
 
 ```
 docker --version
-docker compose version     # Debian 12
-docker-compose version     # Debian 13
+docker compose version
 ```
 
-ContainerCP supports both `docker compose` (plugin, Debian 12+) and
-`docker-compose` (standalone binary, Debian 13+). It detects the
-available command automatically at runtime.
+ContainerCP supports both `docker compose` (plugin) and
+`docker-compose` (standalone binary). It detects the
+available command automatically at runtime. Debian 13 ships both.
 
 ## Build
 
@@ -59,8 +52,8 @@ ls -la build-release/containercp
 ```
 
 Expected:
-- `containercpd` — the daemon binary (~800KB)
-- `containercp` — the CLI client binary (~100KB)
+- `containercpd` — the daemon binary (~1.1 MB)
+- `containercp` — the CLI client binary (~100 KB)
 
 ## Start the daemon
 
@@ -178,7 +171,7 @@ Then open `http://127.0.0.1:8080/` on your local machine.
 ### Production reverse proxy
 
 For production, set up nginx or Apache to serve the static files
-from `/opt/containercp/web/` and proxy `/api/*` to
+from `/opt/containercp/web/` and proxy `/ui-api/*` to
 `http://127.0.0.1:8080`. The public Web UI port (8081) is designed
 for development and small deployments.
 

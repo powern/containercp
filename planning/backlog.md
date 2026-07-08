@@ -47,14 +47,14 @@ Before planning any new Epic, read these documents IN ORDER:
 - [x] CCP-3005: Add --force for site remove
 - [x] CCP-3006: Improve validation error messages
 
-## Sprint 6 — Developer Access Layer
+## Sprint 6 — Developer Access Layer (Completed during v0.5)
 
-- [ ] CCP-4001: AccessUser resource
-- [ ] CCP-4002: AccessProvider abstraction
-- [ ] CCP-4003: LocalSftpProvider placeholder
-- [ ] CCP-4004: CLI access user commands
-- [ ] CCP-4005: Access directory mapping
-- [ ] CCP-4006: Document future SFTP implementation
+- [x] CCP-4001: AccessUser resource
+- [x] CCP-4002: AccessProvider abstraction
+- [x] CCP-4003: LocalSftpProvider placeholder
+- [x] CCP-4004: CLI access user commands
+- [x] CCP-4005: Access directory mapping
+- [x] CCP-4006: Document future SFTP implementation
 
 ## Sprint 7 — Admin Panel Phase 2
 

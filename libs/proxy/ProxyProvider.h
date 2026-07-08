@@ -18,6 +18,8 @@ public:
     virtual core::OperationResult disable_proxy(const std::string& domain) = 0;
     virtual core::OperationResult reload() = 0;
     virtual core::OperationResult status(const std::string& domain) = 0;
+    virtual core::OperationResult ensure_central_proxy() { return {true, ""}; }
+    virtual core::OperationResult remove_central_proxy() { return {true, ""}; }
 };
 
 } // namespace containercp::proxy

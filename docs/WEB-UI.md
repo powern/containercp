@@ -11,7 +11,7 @@ cmake --build build-release
 2. Start the daemon:
 
 ```
-./build/containercpd
+./build-release/containercpd
 ```
 
 3. Open in browser:

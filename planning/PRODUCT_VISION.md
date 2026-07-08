@@ -160,8 +160,8 @@ to navigate from any resource to its related resources and back.
 
 A successful v1.0 release means:
 
-1. A system administrator can install ContainerCP on a clean Debian 12
-   server and have a working hosting platform within 30 minutes
+1. A system administrator can install ContainerCP on a clean Debian 13
+   (Trixie) server and have a working hosting platform within 30 minutes
 
 2. The administrator can create a website, point a domain, provision
    SSL, create an SFTP user, and upload files — all from the Web UI
@@ -173,7 +173,7 @@ A successful v1.0 release means:
 
 5. The daemon runs continuously without crashes or memory leaks
 
-6. All 114 validation checklist items pass
+6. All 137 validation checklist items pass
 
 7. A first-time user can deploy a PHP website without reading
    documentation

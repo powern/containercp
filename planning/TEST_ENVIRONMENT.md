@@ -69,7 +69,7 @@ Epic is complete.
 
 ## Validation checklist
 
-The full 126-item checklist is in `planning/product-validation.md`.
+The full 146-item checklist is in `planning/product-validation.md`.
 
 Validation priority order:
 
@@ -127,6 +127,6 @@ validation on the official Validation VM.
 2. No development tools beyond the listed packages are pre-installed.
 3. No runtime data is pre-created.
 4. The daemon is started fresh for each validation run.
-5. All 126 checklist items must pass.
+5. All 146 checklist items must pass.
 6. Discovered bugs are documented in `planning/bugs/`.
 7. Fixes are committed before the next RC iteration.

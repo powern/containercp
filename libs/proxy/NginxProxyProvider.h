@@ -22,9 +22,13 @@ public:
     core::OperationResult disable_proxy(const std::string& domain) override;
     core::OperationResult reload() override;
     core::OperationResult status(const std::string& domain) override;
+    core::OperationResult ensure_central_proxy();
+    core::OperationResult remove_central_proxy();
 
 private:
     std::string config_path(const std::string& domain) const;
+    std::string proxy_name() const;
+    bool central_proxy_running() const;
 
     filesystem::Filesystem& fs_;
     config::Config& cfg_;

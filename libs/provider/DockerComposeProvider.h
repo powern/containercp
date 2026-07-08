@@ -9,6 +9,8 @@
 #include "runtime/Runtime.h"
 #include "profile/ProfileManager.h"
 
+#include <cstdint>
+
 namespace containercp::provider {
 
 class DockerComposeProvider : public HostingProvider {
@@ -16,8 +18,7 @@ public:
     DockerComposeProvider(filesystem::Filesystem& fs, config::Config& cfg,
                           php::PhpVersionManager& php, runtime::Runtime& rt,
                           profile::ProfileManager& prof);
-
-    core::OperationResult create_site(site::Site& site) override;
+    core::OperationResult create_site(site::Site& site, uint16_t nginx_port = 80) override;
     core::OperationResult remove_site(site::Site& site) override;
     core::OperationResult start_site(site::Site& site) override;
     core::OperationResult stop_site(site::Site& site) override;
