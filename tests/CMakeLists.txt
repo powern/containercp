@@ -21,6 +21,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/site/SiteManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/domain/Domain.cpp
     ${CMAKE_SOURCE_DIR}/libs/domain/DomainManager.cpp
+    ${CMAKE_SOURCE_DIR}/libs/domain/DomainViewService.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/AccessUser.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/AccessUserManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/AccessGrant.cpp

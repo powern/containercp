@@ -35,6 +35,7 @@
 #include "profile/ProfileManager.h"
 #include "provider/DockerComposeProvider.h"
 #include "runtime/DockerRuntime.h"
+#include "domain/DomainViewService.h"
 #include "site/SiteManager.h"
 #include "storage/Storage.h"
 #include "user/UserManager.h"
@@ -51,6 +52,7 @@ public:
     site::SiteManager& sites();
     user::UserManager& users();
     domain::DomainManager& domains();
+    domain::DomainViewService& domain_view();
     php::PhpVersionManager& php_versions();
     profile::ProfileManager& profiles();
     database::DatabaseManager& databases();
@@ -107,6 +109,7 @@ private:
     proxy::NginxProxyProvider proxy_provider_;
     ssl::SslCertificateManager ssl_;
     ssl::CertificateStore cert_store_;
+    domain::DomainViewService domain_view_;
     ssl::HTTP01ChallengeProvider http01_challenge_;
     std::shared_ptr<ssl::LetsEncryptProvider> cert_provider_;
     std::shared_ptr<ssl::PemCertificateProvider> pem_cert_provider_;

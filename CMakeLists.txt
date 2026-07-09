@@ -36,6 +36,7 @@ set(CONTAINERCP_SOURCES
     libs/database/DatabaseManager.cpp
     libs/domain/Domain.cpp
     libs/domain/DomainManager.cpp
+    libs/domain/DomainViewService.cpp
     libs/docker/ComposeGenerator.cpp
     libs/docker/EnvGenerator.cpp
     libs/filesystem/Filesystem.cpp
