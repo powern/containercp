@@ -267,7 +267,7 @@
 | Web UI | 85% | Active |
 | Sites | 95% | Stable |
 | Domains | 95% | Stable |
-| Databases | 95% | Stable |
+| Databases | 75% | Postponed — see `planning/database-module-architecture.md` |
 | Users | 95% | Stable |
 | PHP Versions | 90% | Stable |
 | Docker/Runtime | 92% | Stable |

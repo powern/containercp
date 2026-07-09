@@ -112,6 +112,7 @@ Before planning any new Epic, read these documents IN ORDER:
 - [ ] User management CLI commands
 - [ ] Resource usage monitoring
 - [ ] Stack logs command
+- [ ] Database module (postponed — see `planning/database-module-architecture.md`)
 - [ ] Multi-node support
 - [ ] Mail server support
 - [ ] DNS server integration
