@@ -6,6 +6,28 @@ Format: date | commit | summary
 
 ---
 
+## 2025-07-08 | `a8f6207` | Always regenerate admin proxy config on startup
+- Admin nginx config now regenerated on EVERY daemon restart
+- Previously only created once — config fixes never took effect
+
+### Debug commands (after config change)
+```bash
+# 1. Reload nginx inside container
+docker exec containercp-proxy nginx -s reload
+
+# 2. Test challenge (127.0.0.1 + Host header bypasses DNS)
+wget --header="Host: web2.softico.ua" http://127.0.0.1/.well-known/acme-challenge/<TOKEN>
+
+# 3. Check if challenge file exists inside container
+docker exec containercp-proxy ls -la /srv/containercp/ssl/0/.well-known/acme-challenge/
+
+# 4. Read current nginx config
+docker exec containercp-proxy cat /etc/nginx/conf.d/web2.softico.ua.conf
+
+# 5. Validate nginx config
+docker exec containercp-proxy nginx -t
+```
+
 ## 2025-07-08 | `a2e4356` | Fix HTTP-01 challenge verification (missing Host header)
 - Docker exec wget now includes `--header='Host: <domain>'` so nginx
   correctly matches the admin server block
