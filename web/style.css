@@ -129,6 +129,6 @@ tr:hover td { background:var(--bg3); }
   .topbar-search { max-width:160px; }
   .cards { grid-template-columns:repeat(auto-fill, minmax(140px,1fr)); }
   .health-grid { grid-template-columns:1fr 1fr; }
-.rt-menu-item { padding:8px 14px; font-size:13px; cursor:pointer; white-space:nowrap; }
-.rt-menu-item:hover { background:var(--bg3); }
+.btn-warning { background:var(--yellow); color:#000; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-size:13px; font-weight:500; }
+.btn-warning:hover { opacity:0.9; }
 }

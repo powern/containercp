@@ -360,14 +360,7 @@ async function loadSites(p) {
         {label:'HTTPS',html:r=>`<span data-rt-id="${r.id}" data-rt-service="https" class="badge badge-info">...</span>`},
         {label:'Owner',html:r=>esc(r.owner)},
         {label:'Backend',html:r=>r.web_server==='nginx'?'<span class="badge badge-info">Nginx</span>':'<span class="badge badge-ok">Apache2</span>'},
-        {label:'Actions',html:r=>`<div style="display:flex;gap:2px;align-items:center;">
-          <button class="btn-icon" onclick="navigate('site-detail',${r.id})" title="View">&#128065;</button>
-          <div style="position:relative;display:inline-block;">
-            <button class="btn-icon" onclick="toggleRuntimeMenu(event,${r.id},'${esc(r.domain)}','${r.web_server}')" title="Runtime actions">&#9889;</button>
-            <div id="rt-menu-${r.id}" class="rt-dropdown" style="display:none;position:absolute;right:0;top:100%;z-index:100;background:var(--surface);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.3);min-width:150px;padding:4px 0;"></div>
-          </div>
-          <button class="btn-icon" style="color:var(--red)" title="Remove" onclick="removeSite('${esc(r.domain)}')">&#10005;</button>
-        </div>`}
+        {label:'Actions',html:r=>`<button class="btn-icon" onclick="navigate('site-detail',${r.id})" title="View">&#128065;</button><button class="btn-icon" style="color:var(--red)" title="Remove" onclick="removeSite('${esc(r.domain)}')">&#10005;</button>`}
       ], filtered, 'No sites');
       // Fetch runtime + HTTPS status for each site
       filtered.forEach(site => {
@@ -389,86 +382,7 @@ async function loadSites(p) {
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load sites</div>'; }
 }
 
-/* ===== RUNTIME ACTIONS ===== */
-function toggleRuntimeMenu(event, siteId, domain, backend) {
-  event.stopPropagation();
-  const menu = document.getElementById('rt-menu-' + siteId);
-  if (!menu) return;
-  // Close all other open menus
-  document.querySelectorAll('.rt-dropdown').forEach(m => { if (m.id !== 'rt-menu-' + siteId) m.style.display = 'none'; });
-  if (menu.style.display === 'block') { menu.style.display = 'none'; return; }
 
-  const label = (a) => {
-    const map = {'restart-web':'Restart Web','restart-php':'Restart PHP','restart-db':'Restart DB','restart-redis':'Restart Redis','restart-all':'Restart All'};
-    return map[a] || a;
-  };
-  const needsConfirm = (a) => a === 'restart-db' || a === 'restart-redis' || a === 'restart-all';
-
-  const actions = ['restart-web','restart-php','restart-db','restart-redis','restart-all'];
-  menu.innerHTML = actions.map(a => {
-    const warn = needsConfirm(a) ? ' style="color:var(--yellow)"' : '';
-    return `<div class="rt-menu-item" data-action="${a}" data-site="${siteId}" data-domain="${esc(domain)}"${warn} onclick="runRuntimeAction(this)">${label(a)}</div>`;
-  }).join('');
-  menu.style.display = 'block';
-  // Close on outside click
-  setTimeout(() => document.addEventListener('click', closeRtMenus, {once:true}), 10);
-}
-
-function closeRtMenus() {
-  document.querySelectorAll('.rt-dropdown').forEach(m => m.style.display = 'none');
-}
-
-async function runRuntimeAction(el) {
-  const action = el.dataset.action;
-  const siteId = el.dataset.site;
-  const domain = el.dataset.domain;
-
-  // Confirmation for destructive actions
-  if (action === 'restart-db') {
-    if (!confirm('Restart database container for ' + domain + '?\nThis may cause brief downtime.')) return;
-  } else if (action === 'restart-redis') {
-    if (!confirm('Restart Redis container for ' + domain + '?')) return;
-  } else if (action === 'restart-all') {
-    if (!confirm('Restart ALL containers for ' + domain + '?\nThis will restart web, PHP, database, and Redis.')) return;
-  } else {
-    if (!confirm('Restart ' + (action === 'restart-web' ? 'web' : 'PHP') + ' for ' + domain + '?')) return;
-  }
-
-  closeRtMenus();
-  toast('Restarting...', 'info');
-
-  try {
-    const res = await apiPost('/api/runtime/' + siteId + '/' + action, {});
-    if (res.success && res.data) {
-      toast('Restart queued (job #' + res.data.job_id + ')', 'success');
-    } else if (res.success) {
-      toast('Restart queued', 'success');
-    } else {
-      toast('Error: ' + (res.error || 'Unknown error'), 'error');
-      return;
-    }
-  } catch(e) {
-    toast('Error: ' + e.message, 'error');
-    return;
-  }
-
-  // Refresh runtime status badges after a short delay
-  setTimeout(() => refreshSiteRuntime(siteId), 1500);
-}
-
-function refreshSiteRuntime(siteId) {
-  api('/api/runtime/' + siteId).then(rt => {
-    if (!rt.success) return;
-    const m={'Running':'badge-ok','Active':'badge-ok','Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn','Expiring':'badge-warn','Error':'badge-err','Expired':'badge-err','Disabled':'badge-info','Issuing':'badge-warn','Unknown':'badge-info'};
-    const update = (srv, val) => {
-      const el = document.querySelector(`span[data-rt-id="${siteId}"][data-rt-service="${srv}"]`);
-      if (el) { el.className = 'badge ' + (m[val]||'badge-info'); el.textContent = val; }
-    };
-    update('web', rt.data.web);
-    update('php', rt.data.php);
-    update('https', rt.data.https);
-  }).catch(() => {});
-}
 
 async function removeSite(domain) {
   if (!confirm('Remove site '+domain+'? This cannot be undone.')) return;
@@ -607,23 +521,124 @@ async function loadSiteDetail(p, siteId) {
           <div class="details-field"><div class="details-label">Node ID</div><div class="details-value">${site.node_id}</div></div>
         </div>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;" id="site-rel"></div>`;
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div id="rt-card" class="card"></div>
+        <div id="site-cols-left" style="display:grid;gap:12px;align-content:start;"></div>
+        <div id="site-cols-right" style="display:grid;gap:12px;align-content:start;"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;" id="site-cols-bottom"></div>`;
     const [domains, databases, ssl, proxy, backups] = await Promise.all([
       api('/api/domains'), api('/api/databases'), api('/api/ssl'), api('/api/proxy'), api('/api/backups')
     ]);
-    const rel = $('site-rel');
-    const related = [
-      {label:'Domains',items:(domains.data||[]).filter(d=>d.site_id==site.id).map(d=>d.domain),color:'#3b82f6'},
-      {label:'Databases',items:(databases.data||[]).filter(d=>d.site_id==site.id).map(d=>d.name),color:'#8b5cf6'},
-      {label:'SSL',link:'ssl',items:(ssl.data||[]).filter(c=>c.site_id==site.id).map(c=>c.status + (c.https_enabled?' (ON)':'')),color:'#ec4899'},
-      {label:'Proxy',items:(proxy.data||[]).filter(p=>p.site_id==site.id).map(p=>p.status),color:'#06b6d4'},
-      {label:'Backups',items:(backups.data||[]).filter(b=>b.site_id==site.id).map(b=>b.filename),color:'#f97316'}
-    ];
-    rel.innerHTML = related.map(r => {
-      const clickable = r.link ? ` onclick="navigateTo('${r.link}')" style="cursor:pointer"` : '';
-      return `<div class="card"${clickable}><h3>${r.label}</h3><div class="count${r.items.length===0?' zero':''}">${r.items.length || 0}</div><div style="font-size:11px;color:var(--text3);margin-top:4px;">${r.items.slice(0,2).join(', ')}${r.items.length>2?'...':''}</div></div>`;
-    }).join('');
+    // Existing cards: Domains + SSL in left column, Databases in right column
+    const colLeft = $('site-cols-left');
+    const colRight = $('site-cols-right');
+    const colBottom = $('site-cols-bottom');
+    const makeCard = (label, items, color, link) => {
+      const clickable = link ? ` onclick="navigate('${link}')" style="cursor:pointer"` : '';
+      return `<div class="card"${clickable}><h3>${label}</h3><div class="count${items.length===0?' zero':''}">${items.length || 0}</div><div style="font-size:11px;color:var(--text3);margin-top:4px;">${items.slice(0,2).join(', ')}${items.length>2?'...':''}</div></div>`;
+    };
+    colLeft.innerHTML =
+      makeCard('Domains', (domains.data||[]).filter(d=>d.site_id==site.id).map(d=>d.domain), '#3b82f6') +
+      makeCard('SSL', (ssl.data||[]).filter(c=>c.site_id==site.id).map(c=>c.status + (c.https_enabled?' (ON)':'')), '#ec4899', 'ssl');
+    colRight.innerHTML = makeCard('Databases', (databases.data||[]).filter(d=>d.site_id==site.id).map(d=>d.name), '#8b5cf6');
+    colBottom.innerHTML =
+      makeCard('Proxy', (proxy.data||[]).filter(p=>p.site_id==site.id).map(p=>p.status), '#06b6d4') +
+      makeCard('Backups', (backups.data||[]).filter(b=>b.site_id==site.id).map(b=>b.filename), '#f97316');
+    // Load runtime card
+    loadRuntimeCard(site.id, site.domain, site.web_server);
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load site</div>'; }
+}
+
+/* ===== RUNTIME CARD ===== */
+let _rtSiteId = null;
+function loadRuntimeCard(siteId, domain, backend) {
+  _rtSiteId = siteId;
+  const card = $('rt-card');
+  if (!card) return;
+  card.innerHTML = `
+    <h3>Runtime</h3>
+    <div style="margin-top:8px;display:grid;gap:6px;" id="rt-status-list">
+      <div style="font-size:12px;color:var(--text3);">Loading...</div>
+    </div>
+    <div style="margin-top:12px;display:grid;gap:6px;" id="rt-actions"></div>
+    <div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px;" id="rt-actions-all"></div>
+  `;
+  refreshRuntimeCard(siteId, domain, backend);
+}
+
+function refreshRuntimeCard(siteId, domain, backend) {
+  api('/api/runtime/' + siteId).then(rt => {
+    if (!rt.success) return;
+    const badge = (s) => {
+      const m={'Running':'badge-ok','Healthy':'badge-ok','Active':'badge-ok','Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn','Expiring':'badge-warn','Error':'badge-err','Expired':'badge-err','Disabled':'badge-info','Issuing':'badge-warn','Unknown':'badge-info'};
+      return `<span class="badge ${m[s]||'badge-info'}">${s}</span>`;
+    };
+    const list = $('rt-status-list');
+    if (!list) return;
+    // Show all four roles with their compose service hint
+    const roles = [
+      {role:'Frontend', svc:'web', status: rt.data.web, backend: backend},
+      {role:'PHP', svc:'php', status: rt.data.php, backend: ''},
+      {role:'Database', svc:'mariadb', status: rt.data.rt_db || 'Unknown', backend: ''},
+      {role:'Redis', svc:'redis', status: rt.data.rt_redis || 'Unknown', backend: ''}
+    ];
+    list.innerHTML = roles.map(r => {
+      const impl = r.backend ? `<span style="font-size:11px;color:var(--text3);margin-left:4px;">(${r.backend === 'nginx' ? 'Nginx' : 'Apache'})</span>` : '';
+      return `<div style="display:flex;justify-content:space-between;align-items:center;">
+        <div><span style="font-weight:500;">${r.role}</span>${impl}</div>
+        <div>${badge(r.status)}</div>
+      </div>`;
+    }).join('');
+  }).catch(() => {});
+  // Rebuild action buttons (domain captured via closure)
+  buildRuntimeActions(siteId, domain);
+}
+
+function buildRuntimeActions(siteId, domain) {
+  const actionsDiv = $('rt-actions');
+  const allDiv = $('rt-actions-all');
+  if (!actionsDiv || !allDiv) return;
+  const btn = (action, label, style) =>
+    `<button class="btn btn-sm ${style||''}" onclick="runRuntimeAction(${siteId},'${esc(domain)}','${action}')" style="width:100%;">${label}</button>`;
+
+  actionsDiv.innerHTML =
+    btn('restart-web', 'Restart Web') +
+    btn('restart-php', 'Restart PHP') +
+    btn('restart-db', 'Restart DB') +
+    btn('restart-redis', 'Restart Redis');
+  allDiv.innerHTML = btn('restart-all', 'Restart Entire Site', 'btn-warning');
+}
+
+function runRuntimeAction(siteId, domain, action) {
+  if (action === 'restart-db') {
+    if (!confirm('Restart database container for ' + domain + '?\nThis may cause brief downtime.')) return;
+  } else if (action === 'restart-redis') {
+    if (!confirm('Restart Redis container for ' + domain + '?')) return;
+  } else if (action === 'restart-all') {
+    if (!confirm('Restart ALL containers for ' + domain + '?\nThis will restart web, PHP, database, and Redis.')) return;
+  } else {
+    if (!confirm('Restart ' + (action === 'restart-web' ? 'web' : 'PHP') + ' for ' + domain + '?')) return;
+  }
+
+  toast('Restarting...', 'info');
+  apiPost('/api/runtime/' + siteId + '/' + action, {}).then(res => {
+    if (res.success && res.data) {
+      toast('Restart queued (job #' + res.data.job_id + ')', 'success');
+    } else if (res.success) {
+      toast('Restart queued', 'success');
+    } else {
+      toast('Error: ' + (res.error || 'Unknown error'), 'error');
+      return;
+    }
+    // Refresh runtime status after delay
+    setTimeout(() => {
+      const domainEl = document.querySelector('#rt-card');
+      if (domainEl) refreshRuntimeCard(siteId, domain, '');
+    }, 1500);
+  }).catch(e => {
+    toast('Error: ' + e.message, 'error');
+  });
 }
 
 /* ===== DOMAINS ===== */
