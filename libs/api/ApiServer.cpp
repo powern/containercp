@@ -300,7 +300,7 @@ bool ApiServer::start() {
                      << ",\"status\":\"HTTP_ONLY\""
                      << ",\"https_enabled\":false"
                      << ",\"redirect_enabled\":false"
-                     << ",\"auto_renew\":true"
+                     << ",\"auto_renew\":false"
                      << ",\"expires_at\":\"\""
                      << ",\"last_error\":\"\"";
             }
@@ -719,7 +719,7 @@ bool ApiServer::start() {
             json << ",\"status\":\"HTTP_ONLY\""
                  << ",\"https_enabled\":false"
                  << ",\"redirect_enabled\":false"
-                 << ",\"auto_renew\":true";
+                 << ",\"auto_renew\":false";
         }
         json << "}}";
         r.body = json.str();
