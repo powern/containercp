@@ -41,6 +41,15 @@ WebServer (127.0.0.1:8081, localhost only)
 | ensure_central_proxy() | Add admin config to proxy startup | Modified |
 | WebServer listen address | Bind to 127.0.0.1 only | Modified (remove 0.0.0.0) |
 
+## Validation status
+
+| Date | Result |
+|------|--------|
+| 2025-07-09 | ✅ HTTPS on port 443 works (`curl -Ik https://web2.softico.ua` → 200) |
+| 2025-07-09 | ✅ ACME challenge served correctly |
+| 2025-07-09 | ✅ Admin Panel login through reverse proxy |
+| 2025-07-09 | ✅ Bootstrap simplified (no SSL step) |
+
 ## Steps
 
 ### Step 1 — Config + Settings API ✅

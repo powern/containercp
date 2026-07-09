@@ -64,20 +64,10 @@ body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; backg
   </div>
 
   <div id="step2" class="step hidden">
-    <div><span class="step-num">2</span><span class="step-title">HTTPS</span></div>
-    <p style="font-size:12px;color:#a1a1aa;margin:8px 0 12px;">Enable HTTPS for your admin panel via Let's Encrypt.</p>
-    <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;">
-      <input type="checkbox" id="enable-https" checked> Enable HTTPS
-    </label>
-    <button class="btn btn-primary" onclick="issueSsl()" id="ssl-btn">Issue Certificate</button>
-    <div id="s2-status" class="status"></div>
-  </div>
-
-  <div id="step3" class="step hidden">
-    <div><span class="step-num">3</span><span class="step-title">Finish</span></div>
-    <p style="font-size:12px;color:#a1a1aa;margin:8px 0 12px;">Setup is complete! The daemon will restart in normal mode.</p>
+    <div><span class="step-num">2</span><span class="step-title">Finish</span></div>
+    <p style="font-size:12px;color:#a1a1aa;margin:8px 0 12px;">Setup is complete. The daemon will restart in normal mode.<br>After restart, go to Settings → Admin Panel HTTPS to configure SSL.</p>
     <button class="btn btn-primary" onclick="completeSetup()">Finish Setup</button>
-    <div id="s3-status" class="status"></div>
+    <div id="s2-status" class="status"></div>
   </div>
 </div>
 <script>
@@ -104,46 +94,23 @@ async function saveHostname() {
     status('s1-status', 'Hostname saved: ' + h, 'ok');
     $('step1').classList.add('hidden');
     $('step2').classList.remove('hidden');
+    completeSetup();
   } else {
     status('s1-status', res.error || 'Failed to save', 'err');
   }
 }
 
-async function issueSsl() {
-  const btn = $('ssl-btn');
-  btn.disabled = true;
-  status('s2-status', 'Checking DNS and issuing certificate...', 'info');
-  const https = $('enable-https').checked;
-  const host = $('hostname').value.trim();
-  if (https) {
-    const res = await api('/api/bootstrap/issue-ssl', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({hostname: host})
-    });
-    if (res.success) {
-      status('s2-status', 'Certificate issued! HTTPS enabled.', 'ok');
-    } else {
-      status('s2-status', res.error || 'Certificate issuance failed', 'err');
-      btn.disabled = false;
-      return;
-    }
-  } else {
-    status('s2-status', 'Skipping HTTPS. HTTP only.', 'info');
-  }
-  $('step2').classList.add('hidden');
-  $('step3').classList.remove('hidden');
-}
-
 async function completeSetup() {
-  status('s3-status', 'Finalizing...', 'info');
+  status('s2-status', 'Finalizing...', 'info');
   const res = await api('/api/bootstrap/complete', {method:'POST'});
   if (res.success) {
-    status('s3-status', 'Setup complete! Restarting daemon...', 'ok');
+    status('s2-status', 'Setup complete! Restarting daemon...', 'ok');
     setTimeout(() => { location.reload(); }, 2000);
   } else {
-    status('s3-status', res.error || 'Failed to complete setup', 'err');
+    status('s2-status', res.error || 'Failed to complete setup', 'err');
   }
 }
+
 </script>
 </body>
 </html>

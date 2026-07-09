@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2025-07-08 | `c16c776` | ACME challenge via Web UI + Bootstrap SSL removed
+
+### ✅ HTTPS on port 443 — validated
+```
+curl -Ik https://web2.softico.ua
+→ HTTP/1.1 200 OK
+→ Admin Panel login page
+```
+
+### Bootstrap simplified
+- Removed SSL step from Setup Wizard (Bootstrap only saves hostname)
+- Admin panel SSL is configured after Bootstrap via Settings → Admin Panel HTTPS
+- The issue SSL + renew buttons remain in Settings for post-setup HTTPS
+
 ## 2025-07-08 | `1cc6a09` | Fix 403 on ACME challenge — alias + permissions
 
 ### Debug commands (403 Forbidden — nginx can't read file)
