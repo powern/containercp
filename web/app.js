@@ -642,6 +642,17 @@ function runRuntimeAction(siteId, domain, action) {
 }
 
 /* ===== DOMAINS ===== */
+function domainTypeBadge(type) {
+  const m = {'primary':'badge-ok','alias':'badge-info','redirect':'badge-warn','wildcard':'badge-info'};
+  const label = type || 'legacy';
+  return `<span class="badge ${m[label]||'badge-err'}">${esc(label)}</span>`;
+}
+
+function domainSslBadge(status) {
+  const m={'Active':'badge-ok','Disabled':'badge-info','Expired':'badge-err','Expiring':'badge-warn','Error':'badge-err','Issuing':'badge-warn'};
+  return `<span class="badge ${m[status]||'badge-info'}">${esc(status)}</span>`;
+}
+
 async function loadDomains(p) {
   try {
     const data = await api('/api/domains');
@@ -650,14 +661,25 @@ async function loadDomains(p) {
     window.renderTable = () => {
       const tbl = $('domains-table');
       if (!tbl) return;
+      const rows = (data.data||[]).filter(r=>!searchTerm||r.domain.includes(searchTerm)||(r.site_name||'').includes(searchTerm));
       tbl.innerHTML = buildTable([
-        {label:'Domain',html:r=>esc(r.domain)},{label:'Site ID',html:r=>esc(r.site_id)},{label:'SSL',html:r=>r.ssl_enabled?'<span class="badge badge-ok">Enabled</span>':'<span class="badge badge-err">Disabled</span>'},
-        {label:'Actions',html:r=>`<button class="btn-icon" style="color:var(--red)" onclick="removeDomain('${esc(r.domain)}')">&#10005;</button>`}
-      ], (data.data||[]).filter(r=>!searchTerm||r.domain.includes(searchTerm)));
+        {label:'Domain',html:r=>`<a href="http://${esc(r.domain)}" target="_blank" style="color:var(--primary);text-decoration:none;" title="Open in browser">${esc(r.domain)}</a> <span style="cursor:pointer;font-size:11px;color:var(--text3);" onclick="copyText('${esc(r.domain)}')" title="Copy domain">&#128203;</span>`},
+        {label:'Type',html:r=>domainTypeBadge(r.type)},
+        {label:'Site',html:r=>r.site_name?`${esc(r.site_name)}<br><span style="font-size:11px;color:var(--text3);">${esc(r.site_domain||'')}</span>`:`<span class="badge badge-info">Unlinked</span>`},
+        {label:'Target',html:r=>r.target?esc(r.target):r.site_domain?esc(r.site_domain):'<span class="badge badge-info">—</span>'},
+        {label:'DNS',html:()=>'<span class="badge badge-info">Unknown</span>'},
+        {label:'HTTP',html:()=>'<span class="badge badge-info">Unknown</span>'},
+        {label:'SSL',html:r=>domainSslBadge(r.ssl_status)},
+        {label:'Actions',html:r=>`<button class="btn-icon" onclick="window.open('http://${esc(r.domain)}','_blank')" title="Open">&#8599;</button><button class="btn-icon" onclick="copyText('${esc(r.domain)}')" title="Copy">&#128203;</button>${r.site_id?`<button class="btn-icon" onclick="navigate('site-detail',${r.site_id})" title="View site">&#128065;</button>`:''}<button class="btn-icon" style="color:var(--red)" onclick="removeDomain('${esc(r.domain)}')" title="Remove">&#10005;</button>`}
+      ], rows, 'No domains');
     };
     p.innerHTML += `<div id="domains-table"></div>`;
     window.renderTable();
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load domains</div>'; }
+}
+
+function copyText(text) {
+  navigator.clipboard.writeText(text).then(() => toast('Copied: '+text, 'success')).catch(() => toast('Copy failed', 'error'));
 }
 
 async function removeDomain(domain) {
