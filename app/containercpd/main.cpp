@@ -102,6 +102,10 @@ int main(int argc, char* argv[]) {
     auto& services = containercp::core::Application::instance().services();
     auto& log = services.logger();
 
+    // Load persisted settings (server_hostname from env or file)
+    services.config().load_server_hostname();
+    log.info("SYSTEM", "Server hostname: '" + services.config().server_hostname() + "'");
+
     // Ensure database directory exists
     services.filesystem().create_directory(services.config().database_dir());
 
