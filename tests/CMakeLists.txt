@@ -10,6 +10,7 @@ add_executable(containercp_tests
     test_api.cpp
     test_daemon.cpp
     test_template.cpp
+    test_runtime.cpp
     test_backup.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/Validator.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/StringUtils.cpp
@@ -48,6 +49,8 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/logger/Logger.cpp
     ${CMAKE_SOURCE_DIR}/libs/jobs/JobManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/jobs/JobExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/libs/runtime/CommandExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/libs/runtime/SiteRuntimeManager.cpp
 )
 
 target_include_directories(containercp_tests PRIVATE

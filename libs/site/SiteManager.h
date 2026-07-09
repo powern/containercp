@@ -15,6 +15,7 @@ public:
                     const std::string& web_server = "");
     bool remove(uint64_t id);
     Site* find(const std::string& domain);
+    Site* find_by_id(uint64_t id);
     const std::vector<Site>& list() const;
 
     void set_sites(const std::vector<Site>& sites);

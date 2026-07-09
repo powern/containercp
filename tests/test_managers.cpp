@@ -58,6 +58,24 @@ TEST_CASE("SiteManager create/find/list/remove") {
     CHECK(mgr.list().empty());
 }
 
+TEST_CASE("SiteManager find_by_id") {
+    containercp::site::SiteManager mgr;
+    uint64_t id1 = mgr.create("site1.com", "admin", 1);
+    uint64_t id2 = mgr.create("site2.com", "admin", 1);
+
+    auto* s = mgr.find_by_id(id1);
+    REQUIRE(s != nullptr);
+    CHECK(s->domain == "site1.com");
+    CHECK(s->id == id1);
+
+    s = mgr.find_by_id(id2);
+    REQUIRE(s != nullptr);
+    CHECK(s->domain == "site2.com");
+    CHECK(s->id == id2);
+
+    CHECK(mgr.find_by_id(999) == nullptr);
+}
+
 TEST_CASE("SiteManager remove cleans state") {
     containercp::site::SiteManager mgr;
     mgr.create("test.com", "admin", 1);

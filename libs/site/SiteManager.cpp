@@ -34,6 +34,15 @@ Site* SiteManager::find(const std::string& domain) {
     return nullptr;
 }
 
+Site* SiteManager::find_by_id(uint64_t id) {
+    for (auto& s : sites_) {
+        if (s.id == id) {
+            return &s;
+        }
+    }
+    return nullptr;
+}
+
 const std::vector<Site>& SiteManager::list() const {
     return sites_;
 }

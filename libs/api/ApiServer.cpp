@@ -267,7 +267,7 @@ bool ApiServer::start() {
         return r;
     });
 
-    // GET /api/runtime/<site_id> — per-site container status
+    // GET /api/runtime/<site_id> — per-site container + HTTPS status
     router_.add_prefix("GET", "/api/runtime/", [&s](const Request& req) {
         Response r;
         std::string id_str = req.path.substr(std::string("/api/runtime/").size());
@@ -278,11 +278,18 @@ bool ApiServer::start() {
             r.body = "{\"success\":false,\"error\":\"Invalid site ID\"}";
             return r;
         }
-        auto status = s.site_runtime().get_status(site_id);
+        auto* site = s.sites().find_by_id(site_id);
+        if (!site) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Site not found\"}";
+            return r;
+        }
+        auto status = s.site_runtime().get_status(site_id, site->domain);
         std::ostringstream json;
         json << "{\"success\":true,\"data\":{"
              << "\"web\":\"" << status.web.status
              << "\",\"php\":\"" << status.php.status
+             << "\",\"https\":\"" << status.https_status
              << "\"}}";
         r.body = json.str();
         return r;

@@ -6,6 +6,53 @@ Format: date | commit | summary
 
 ---
 
+## 2025-07-09 | (pending commit) | Phase 1: Read-only site runtime information (corrected)
+
+### Fixed all 6 issues from review
+
+**1. UI column indexing** — replaced numeric cell offsets with `data-rt-id` and `data-rt-service` attributes so runtime badges find their cells by stable selectors regardless of column order.
+
+**2. Docker Compose project resolution** — `container_status()` now accepts the real site compose directory (`sites_root_ + domain`) and uses `docker compose --project-directory <dir>` instead of an inferred project name, fixing the path resolution to match actual site layout.
+
+**3. Error semantics** — Docker/Compose command failures (non-zero exit code) now return `"Error"` instead of `"Stopped"`. Only `exited`/`paused`/`created` states map to `"Stopped"`. Exit codes and stderr are logged.
+
+**4. HTTPS status** — `https_status_from_metadata()` reads `<ssl_root>/<site_id>/metadata.json` and returns `Active`, `Expiring`, `Expired`, `Disabled`, `Error`, or `Issuing`. Expiry checked against current time with 30-day warning threshold.
+
+**5. Command execution safety** — added `CommandExecutor` class using `fork()`/`execvp()` with separate pipes for stdout/stderr and `waitpid()` for exit code. No shell string concatenation, no shared temp files, no race conditions.
+
+**6. SiteManager::find_by_id** — added for domain resolution in API handler.
+
+### Files changed
+- `libs/runtime/CommandExecutor.h` — new: safe fork/exec command runner
+- `libs/runtime/CommandExecutor.cpp` — new: implementation
+- `libs/runtime/SiteRuntimeManager.h` — rewritten API: `get_status(site_id, domain)`, `https_status_from_metadata`
+- `libs/runtime/SiteRuntimeManager.cpp` — rewritten: docker compose ps via `--project-directory`, error-logged failures, HTTPS metadata parsing
+- `libs/site/SiteManager.h` — added `find_by_id(uint64_t)`
+- `libs/site/SiteManager.cpp` — implemented `find_by_id`
+- `libs/api/ApiServer.cpp` — API handler resolves domain via `find_by_id`, passes to get_status, includes `https` in response
+- `web/app.js` — Web/PHP/HTTPS columns use `data-rt-id`/`data-rt-service` selectors; added HTTPS column with badge
+- `CMakeLists.txt` — added `CommandExecutor.cpp`
+- `tests/CMakeLists.txt` — added `CommandExecutor.cpp`, `SiteRuntimeManager.cpp`, `test_runtime.cpp`
+- `tests/test_runtime.cpp` — new: 9 tests for CommandExecutor + 8 for https_status_from_metadata
+- `tests/test_managers.cpp` — added `find_by_id` test
+- `CHANGELOG.md` — this entry
+
+### User-visible behavior
+- Sites table shows Web, PHP, and HTTPS status columns with color-coded badges
+- Correct status: stopped containers show "Stopped", missing compose projects show "Error"
+- HTTPS status reflects real cert state including expiry warnings
+
+### Validation results
+- Build: zero warnings
+- Tests: 96 pass, 0 fail
+- Manual logic verified via https_status_from_metadata unit tests
+
+### Risks
+- `docker compose ps` and `docker inspect` now run for every site on table load (parallel). For large fleets, add caching or polling in a future phase.
+- HTTPS expiry check uses ISO 8601 parsing via sscanf — handles standard UTC format only.
+
+---
+
 ## 2025-07-08 | `c16c776` | ACME challenge via Web UI + Bootstrap SSL removed
 
 ### ✅ HTTPS on port 443 — validated

@@ -57,6 +57,7 @@ set(CONTAINERCP_SOURCES
     libs/proxy/ReverseProxyManager.cpp
     libs/runtime/DockerRuntime.cpp
     libs/runtime/PortManager.cpp
+    libs/runtime/CommandExecutor.cpp
     libs/runtime/SiteRuntimeManager.cpp
     libs/site/Site.cpp
     libs/site/SiteManager.cpp
