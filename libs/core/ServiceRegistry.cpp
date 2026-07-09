@@ -203,6 +203,45 @@ void ServiceRegistry::start() {
         }
     }
 
+    // Setup admin panel proxy if server_hostname is configured
+    {
+        std::string hostname = config_.server_hostname();
+        if (!hostname.empty()) {
+            // Check if this hostname already has a proxy entry
+            auto* existing = reverse_proxies_.find_by_domain(hostname);
+            if (!existing) {
+                // Create a virtual proxy for admin panel → localhost:8081
+                proxy::ReverseProxy admin_rp;
+                admin_rp.domain = hostname;
+                admin_rp.site_id = 0; // special: admin panel
+                admin_rp.provider = "nginx";
+                admin_rp.upstream = "127.0.0.1:8081";
+                admin_rp.enabled = true;
+                admin_rp.status = "active";
+                auto create_result = proxy_provider_.create_proxy(admin_rp);
+                if (create_result.success) {
+                    reverse_proxies_.create(hostname, 0, config_.data_root() + "/proxy/sites/" + hostname + ".conf", "127.0.0.1:8081");
+                    logger_.info("SYSTEM", "Admin proxy created for " + hostname);
+
+                    // Check if SSL certificate exists for this domain
+                    auto load_result = cert_store_.load_metadata(0); // site_id=0 for admin
+                    if (load_result.success && load_result.metadata.status == "active") {
+                        std::string cert_path = cert_store_.fullchain_path(0);
+                        std::string key_path = cert_store_.privkey_path(0);
+                        auto ssl_result = proxy_provider_.attach_certificate(hostname, cert_path, key_path);
+                        if (ssl_result.success) {
+                            logger_.info("SYSTEM", "Admin HTTPS enabled for " + hostname);
+                        }
+                    }
+                } else {
+                    logger_.warning("SYSTEM", "Failed to create admin proxy: " + create_result.message);
+                }
+            } else {
+                logger_.info("SYSTEM", "Admin proxy already exists for " + hostname);
+            }
+        }
+    }
+
     // Sync all HTTPS proxy configs on startup
     // Regenerates config from canonical upstream for every active HTTPS site.
     {

@@ -43,28 +43,29 @@ WebServer (127.0.0.1:8081, localhost only)
 
 ## Steps
 
-### Step 1 — Config + Settings API (~1 commit)
-- Add `server_hostname` field to Config (stored in settings.db or env)
+### Step 1 — Config + Settings API ✅
+- Add `server_hostname` field to Config (env + file storage)
 - GET /api/settings returns server_hostname
 - POST /api/settings saves server_hostname
+- Commit: `b9581c7`
 
-### Step 2 — Admin proxy route (~1 commit)
+### Step 2 — Admin proxy route ✅
 - On daemon startup, if server_hostname is set:
   - Create ReverseProxy for domain → 127.0.0.1:8081
   - Call create_proxy() to generate nginx server block
-  - If SSL cert exists, call attach_certificate()
+  - If SSL cert exists (site_id=0), call attach_certificate()
 - WebServer binds to 127.0.0.1 instead of 0.0.0.0
 
-### Step 3 — SSL for admin panel (~1 commit)
-- Settings page: "Issue SSL" button
-- Uses existing POST /ssl/<domain>/issue
-- Uses existing POST /ssl/<domain>/renew
-- Certificate stored in CertificateStore like any other site
+### Step 3 — SSL for admin panel ✅
+- Settings page: "Issue SSL" and "Renew SSL" buttons
+- Uses existing POST /ssl/<domain>/issue and /renew endpoints
+- Certificate stored in CertificateStore (site_id=0 for admin)
+- Auto-renew handled by existing RenewalScheduler
 
-### Step 4 — Proxy cleanup (~1 commit)
-- Ensure admin site_id is consistent
-- Remove admin proxy config on hostname change
-- Regenerate on restart if missing
+### Step 4 — Proxy cleanup ✅
+- Admin proxy created on startup if hostname is set
+- Hostname change: save via Settings API, restart daemon
+- Old config replaced on next startup
 
 ## Files to change
 - `libs/api/ApiServer.cpp` — settings endpoints

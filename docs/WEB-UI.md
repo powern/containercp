@@ -21,9 +21,14 @@ Local access (full functionality, no auth):
 http://127.0.0.1:8080/
 ```
 
-External access (with login page):
+External access (with login page, through central proxy):
 ```
 http://<server-ip>:8081/
+```
+
+HTTPS access (if configured):
+```
+https://<server-hostname>/
 ```
 
 Default credentials:
@@ -35,6 +40,11 @@ For SSH tunneling (bypasses login):
 ```
 ssh -L 8080:127.0.0.1:8080 user@<server>
 ```
+
+**Note:** Port 8081 now binds to 127.0.0.1 only.
+External access is only possible through the central proxy
+(containercp-proxy) which routes HTTPS on port 443.
+Use Settings → Server Hostname to configure the admin domain.
 
 ## Dashboard
 

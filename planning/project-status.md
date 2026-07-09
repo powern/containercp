@@ -221,6 +221,7 @@
 | SSL-009: Real server validation + bug fixes | ✅ | Step 8B: ACME flow, CSR, finalize, HTTPS paths, renewal policy |
 | SSL-010: Comprehensive SSL/Proxy cleanup | ✅ | Canonical upstream, transactional API, SSL mount, no fallbacks |
 | SSL-011: Production-ready SSL finalization | ✅ | Production LE default, PEM date parsing, env in metadata/GUI, dead code removed |
+| SSL-012: Admin Panel HTTPS | ✅ | Settings hostname, proxy route, Issue/Renew UI, WebServer on localhost only |
 
 ## Version 0.6 — DNS and Mail (Planned, after v0.5.0)
 
