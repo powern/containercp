@@ -232,11 +232,33 @@ format.  No business logic, no direct I/O, no Docker commands.
 
 ---
 
-## 9. Required rule for future agents
+## 9. Debugging UI API failures
+
+When a page shows "Failed to load" or similar errors:
+
+1. **Check the browser Network response body first** — open DevTools →
+   Network tab → find the failing request → inspect the Response tab.
+2. **HTTP 200 does not mean the frontend parsed successfully.**
+   A 200 with malformed JSON will fail at `response.json()` in the
+   frontend, triggering the catch block.
+3. **Validate generated JSON before investigating proxy/routing.**
+   Proxy, auth, and routing issues typically produce HTTP 4xx/5xx or
+   connection errors.  A 200 with invalid JSON is almost always a
+   backend serialization bug.
+4. **Avoid manual JSON string concatenation where possible.**
+   Use `JsonFormatter`, helper functions, or DTO-based serialization.
+   If manual concatenation is unavoidable, add regression tests for:
+   - empty strings
+   - quoted strings (`"`)
+   - commas and backslashes
+   - URLs and special characters
+   - missing optional fields
+
+## 10. Required rule for future agents
 
 > **Before modifying or adding any API endpoint, read this document first.**
 
-## 10. Related documents
+## 11. Related documents
 
 - `docs/api/API_REFERENCE.md` — authoritative endpoint index
 - `docs/development/single-source-of-truth.md` — SSOT ownership rules
