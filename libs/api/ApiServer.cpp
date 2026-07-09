@@ -306,6 +306,49 @@ bool ApiServer::start() {
         return r;
     });
 
+    // POST /api/runtime/<site_id>/<action> — prepare runtime action (Phase 2 stub)
+    // Actions: restart-web, restart-php, restart-all
+    // Phase 3 will implement actual docker compose restart.
+    router_.add_prefix("POST", "/api/runtime/", [&s](const Request& req) {
+        Response r;
+        // Path format: /api/runtime/<site_id>/<action>
+        std::string remaining = req.path.substr(std::string("/api/runtime/").size());
+        size_t slash = remaining.find('/');
+        std::string id_str = (slash != std::string::npos) ? remaining.substr(0, slash) : remaining;
+        std::string action = (slash != std::string::npos) ? remaining.substr(slash + 1) : "";
+
+        if (id_str.empty() || action.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Usage: POST /api/runtime/<site_id>/<action>\"}";
+            return r;
+        }
+
+        uint64_t site_id = 0;
+        try { site_id = std::stoull(id_str); } catch (...) {}
+        if (site_id == 0) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid site ID\"}";
+            return r;
+        }
+
+        auto* site = s.sites().find_by_id(site_id);
+        if (!site) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Site not found\"}";
+            return r;
+        }
+
+        auto result = s.site_runtime().execute_action(site_id, site->domain, action);
+        if (!result.success) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
+            return r;
+        }
+
+        r.body = "{\"success\":true,\"message\":\"" + JsonFormatter::escape(result.message) + "\"}";
+        return r;
+    });
+
     router_.add("GET", "/api/settings", [&s](const Request&) {
         Response r;
         std::ostringstream json;

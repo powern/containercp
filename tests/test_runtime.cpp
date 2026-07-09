@@ -52,6 +52,46 @@ TEST_CASE("CommandExecutor::run with workdir") {
     CHECK(r.out.find("/tmp") != std::string::npos);
 }
 
+TEST_CASE("SiteRuntimeManager valid_actions list") {
+    const auto& actions = SiteRuntimeManager::valid_actions();
+    CHECK(actions.size() == 3);
+    CHECK(actions[0] == "restart-web");
+    CHECK(actions[1] == "restart-php");
+    CHECK(actions[2] == "restart-all");
+}
+
+TEST_CASE("SiteRuntimeManager execute_action validation") {
+    auto& log = containercp::logger::Logger::instance();
+    SiteRuntimeManager mgr(log, "/tmp");
+
+    SUBCASE("valid action restart-web") {
+        auto r = mgr.execute_action(1, "test.com", "restart-web");
+        CHECK(r.success);
+        CHECK(r.message.find("restart-web") != std::string::npos);
+    }
+
+    SUBCASE("valid action restart-php") {
+        auto r = mgr.execute_action(1, "test.com", "restart-php");
+        CHECK(r.success);
+    }
+
+    SUBCASE("valid action restart-all") {
+        auto r = mgr.execute_action(1, "test.com", "restart-all");
+        CHECK(r.success);
+    }
+
+    SUBCASE("invalid action returns error") {
+        auto r = mgr.execute_action(1, "test.com", "reboot");
+        CHECK_FALSE(r.success);
+        CHECK(r.message.find("Invalid action") != std::string::npos);
+    }
+
+    SUBCASE("empty action returns error") {
+        auto r = mgr.execute_action(1, "test.com", "");
+        CHECK_FALSE(r.success);
+    }
+}
+
 TEST_CASE("SiteRuntimeManager status semantic mapping") {
     // These test the container_status logic indirectly via
     // actual Docker commands — only run if docker is available.

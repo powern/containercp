@@ -14,7 +14,16 @@ std::string trim(const std::string& s) {
     return s.substr(start, end - start);
 }
 
+std::vector<std::string> make_actions() {
+    return {"restart-web", "restart-php", "restart-all"};
+}
+
 } // anonymous namespace
+
+const std::vector<std::string>& SiteRuntimeManager::valid_actions() {
+    static const std::vector<std::string> actions = make_actions();
+    return actions;
+}
 
 std::string SiteRuntimeManager::path_join(const std::string& a, const std::string& b) {
     if (a.empty()) return b;
@@ -34,6 +43,23 @@ SiteRuntimeManager::SiteRuntimeManager(logger::Logger& logger,
     if (!sites_root_.empty() && sites_root_.back() == '/') {
         sites_root_.pop_back();
     }
+}
+
+core::OperationResult SiteRuntimeManager::execute_action(
+    uint64_t site_id, const std::string& domain,
+    const std::string& action) const {
+    (void)site_id;
+    (void)domain;
+
+    for (const auto& a : valid_actions()) {
+        if (a == action) {
+            // Phase 2 stub — action validated but not executed.
+            // Phase 3 will call docker compose restart here.
+            return {true, "Action submitted: " + action};
+        }
+    }
+
+    return {false, "Invalid action: " + action + ". Valid: restart-web, restart-php, restart-all"};
 }
 
 std::string SiteRuntimeManager::container_status(const std::string& compose_dir,
