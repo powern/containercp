@@ -58,6 +58,7 @@ set(CONTAINERCP_SOURCES
     libs/runtime/DockerRuntime.cpp
     libs/runtime/PortManager.cpp
     libs/runtime/CommandExecutor.cpp
+    libs/runtime/RuntimeActionExecutor.cpp
     libs/runtime/SiteRuntimeManager.cpp
     libs/site/Site.cpp
     libs/site/SiteManager.cpp

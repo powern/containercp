@@ -33,12 +33,11 @@ public:
     std::string container_status(const std::string& compose_dir,
                                  const std::string& service) const;
 
-    // Validate and prepare a runtime action for future execution.
-    // Phase 2: stub — validates action, returns success.
-    // Phase 3: will execute docker compose restart via JobExecutor.
-    core::OperationResult execute_action(uint64_t site_id,
-                                          const std::string& domain,
-                                          const std::string& action) const;
+    // Map a site-level action to the compose service names it affects.
+    // restart-web → {"web"}, restart-php → {"php"},
+    // restart-all → {"web", "php"}
+    // Returns empty vector for unknown actions.
+    std::vector<std::string> services_for_action(const std::string& action) const;
 
 private:
     static std::string path_join(const std::string& a, const std::string& b);

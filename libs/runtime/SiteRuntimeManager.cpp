@@ -45,21 +45,12 @@ SiteRuntimeManager::SiteRuntimeManager(logger::Logger& logger,
     }
 }
 
-core::OperationResult SiteRuntimeManager::execute_action(
-    uint64_t site_id, const std::string& domain,
+std::vector<std::string> SiteRuntimeManager::services_for_action(
     const std::string& action) const {
-    (void)site_id;
-    (void)domain;
-
-    for (const auto& a : valid_actions()) {
-        if (a == action) {
-            // Phase 2 stub — action validated but not executed.
-            // Phase 3 will call docker compose restart here.
-            return {true, "Action submitted: " + action};
-        }
-    }
-
-    return {false, "Invalid action: " + action + ". Valid: restart-web, restart-php, restart-all"};
+    if (action == "restart-web") return {"web"};
+    if (action == "restart-php") return {"php"};
+    if (action == "restart-all") return {"web", "php"};
+    return {};
 }
 
 std::string SiteRuntimeManager::container_status(const std::string& compose_dir,

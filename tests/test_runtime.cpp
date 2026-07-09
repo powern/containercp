@@ -1,4 +1,5 @@
 #include "runtime/CommandExecutor.h"
+#include "runtime/RuntimeActionExecutor.h"
 #include "runtime/SiteRuntimeManager.h"
 #include "logger/Logger.h"
 
@@ -60,34 +61,44 @@ TEST_CASE("SiteRuntimeManager valid_actions list") {
     CHECK(actions[2] == "restart-all");
 }
 
-TEST_CASE("SiteRuntimeManager execute_action validation") {
+TEST_CASE("SiteRuntimeManager services_for_action mapping") {
     auto& log = containercp::logger::Logger::instance();
     SiteRuntimeManager mgr(log, "/tmp");
 
-    SUBCASE("valid action restart-web") {
-        auto r = mgr.execute_action(1, "test.com", "restart-web");
-        CHECK(r.success);
-        CHECK(r.message.find("restart-web") != std::string::npos);
+    SUBCASE("restart-web maps to web service") {
+        auto svc = mgr.services_for_action("restart-web");
+        REQUIRE(svc.size() == 1);
+        CHECK(svc[0] == "web");
     }
 
-    SUBCASE("valid action restart-php") {
-        auto r = mgr.execute_action(1, "test.com", "restart-php");
-        CHECK(r.success);
+    SUBCASE("restart-php maps to php service") {
+        auto svc = mgr.services_for_action("restart-php");
+        REQUIRE(svc.size() == 1);
+        CHECK(svc[0] == "php");
     }
 
-    SUBCASE("valid action restart-all") {
-        auto r = mgr.execute_action(1, "test.com", "restart-all");
-        CHECK(r.success);
+    SUBCASE("restart-all maps to both services") {
+        auto svc = mgr.services_for_action("restart-all");
+        REQUIRE(svc.size() == 2);
+        CHECK(svc[0] == "web");
+        CHECK(svc[1] == "php");
     }
 
-    SUBCASE("invalid action returns error") {
-        auto r = mgr.execute_action(1, "test.com", "reboot");
-        CHECK_FALSE(r.success);
-        CHECK(r.message.find("Invalid action") != std::string::npos);
+    SUBCASE("invalid action returns empty") {
+        CHECK(mgr.services_for_action("reboot").empty());
     }
 
-    SUBCASE("empty action returns error") {
-        auto r = mgr.execute_action(1, "test.com", "");
+    SUBCASE("empty action returns empty") {
+        CHECK(mgr.services_for_action("").empty());
+    }
+}
+
+TEST_CASE("RuntimeActionExecutor compose_action basic errors") {
+    auto& log = containercp::logger::Logger::instance();
+    RuntimeActionExecutor exec(log);
+
+    SUBCASE("missing compose dir returns error") {
+        auto r = exec.restart_services("/nonexistent/path", {"web"});
         CHECK_FALSE(r.success);
     }
 }

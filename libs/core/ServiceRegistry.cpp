@@ -23,6 +23,7 @@ ServiceRegistry::ServiceRegistry()
     , renewal_scheduler_(logger_, cert_store_, jobs_, job_executor_, cert_providers_)
     , auth_(*this)
     , runtime_(logger_, config_.sites_dir())
+    , runtime_action_executor_(logger_)
     , site_runtime_(logger_, config_.sites_dir())
     , hosting_provider_(filesystem_, config_, php_versions_, runtime_, profiles_)
 {
@@ -471,6 +472,10 @@ runtime::PortManager& ServiceRegistry::port_manager() {
 
 runtime::SiteRuntimeManager& ServiceRegistry::site_runtime() {
     return site_runtime_;
+}
+
+runtime::RuntimeActionExecutor& ServiceRegistry::runtime_executor() {
+    return runtime_action_executor_;
 }
 
 provider::HostingProvider& ServiceRegistry::hosting_provider() {

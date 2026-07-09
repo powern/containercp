@@ -306,12 +306,10 @@ bool ApiServer::start() {
         return r;
     });
 
-    // POST /api/runtime/<site_id>/<action> — prepare runtime action (Phase 2 stub)
+    // POST /api/runtime/<site_id>/<action> — execute runtime action async
     // Actions: restart-web, restart-php, restart-all
-    // Phase 3 will implement actual docker compose restart.
     router_.add_prefix("POST", "/api/runtime/", [&s](const Request& req) {
         Response r;
-        // Path format: /api/runtime/<site_id>/<action>
         std::string remaining = req.path.substr(std::string("/api/runtime/").size());
         size_t slash = remaining.find('/');
         std::string id_str = (slash != std::string::npos) ? remaining.substr(0, slash) : remaining;
@@ -338,14 +336,62 @@ bool ApiServer::start() {
             return r;
         }
 
-        auto result = s.site_runtime().execute_action(site_id, site->domain, action);
-        if (!result.success) {
+        // Validate action and resolve to compose services
+        auto services = s.site_runtime().services_for_action(action);
+        if (services.empty()) {
+            std::string valid;
+            for (const auto& a : s.site_runtime().valid_actions()) {
+                if (!valid.empty()) valid += ", ";
+                valid += a;
+            }
             r.status_code = 400;
-            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
+            r.body = "{\"success\":false,\"error\":\"Invalid action '" +
+                     JsonFormatter::escape(action) + "'. Valid: " + valid + "\"}";
             return r;
         }
 
-        r.body = "{\"success\":true,\"message\":\"" + JsonFormatter::escape(result.message) + "\"}";
+        // Create async job
+        std::vector<std::string> steps = {"Preparing restart...",
+                                           "Restarting " + action + "...",
+                                           "Verifying..."};
+        uint64_t job_id = s.jobs().create("runtime-" + action, steps);
+        s.jobs().update(job_id, "pending", 0, "Queued");
+
+        bool submitted = s.job_executor().submit(job_id,
+            [&s, domain = site->domain, services, action, site_id]
+            (jobs::JobManager& jm, uint64_t jid) {
+                jm.update(jid, "running", 10, "Restarting...");
+
+                std::string compose_dir = s.config().sites_dir() + domain;
+                // Remove trailing slash if present
+                if (!compose_dir.empty() && compose_dir.back() == '/') {
+                    compose_dir.pop_back();
+                }
+
+                auto result = s.runtime_executor().restart_services(compose_dir, services);
+                if (result.success) {
+                    jm.update(jid, "completed", 100, "Restart completed");
+                } else {
+                    jm.update(jid, "failed", 100, result.message);
+                }
+            });
+
+        if (!submitted) {
+            s.jobs().update(job_id, "failed", 0, "Task queue full");
+            r.status_code = 503;
+            r.body = "{\"success\":false,\"error\":\"Task queue full\"}";
+            return r;
+        }
+
+        r.status_code = 202;
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":{"
+             << "\"job_id\":" << job_id
+             << ",\"status\":\"pending\""
+             << ",\"message\":\"Action " << JsonFormatter::escape(action)
+             << " queued for site " << site_id << "\""
+             << "}}";
+        r.body = json.str();
         return r;
     });
 

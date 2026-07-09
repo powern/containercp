@@ -6,7 +6,13 @@ Format: date | commit | summary
 
 ---
 
-## 2025-07-09 | (pending commit) | Phase 1: Read-only site runtime information (corrected)
+## 2025-07-09 | `da38415` | Phase 1 cleanup: compose_dir path join, badge update, poll-based executor, HTTPS metadata path
+
+## 2025-07-09 | `9d62391` | Phase 1 cleanup: remove duplicated HTTPS implementation, reuse CertificateStore
+
+## 2025-07-09 | `ad14a91` | Phase 2: Prepare runtime action architecture (stub)
+
+## 2025-07-09 | (pending commit) | Phase 3: Real restart actions via RuntimeActionExecutor + JobExecutor
 
 ### Fixed all 6 issues from review
 
@@ -737,6 +743,39 @@ networks, and Docker DNS resolution.
 - Daemon restart restores management without affecting running sites
 - Site removal cleans up private network and proxy config
 - All unit tests pass, zero compiler warnings
+
+## 2025-07-09 | (pending commit) | Phase 3: Real restart actions via RuntimeActionExecutor + JobExecutor
+
+### Architecture
+- **`RuntimeActionExecutor`** — new global layer that knows HOW to execute Docker Compose actions. Uses `CommandExecutor` (safe `fork()`/`execvp()` with `poll()`). Method: `restart_services(compose_dir, services)` runs `docker compose restart <services>` against the site's compose project directory.
+- **`SiteRuntimeManager`** — now only maps WHAT: `services_for_action("restart-web")` returns `{"web"}`, `"restart-php"` → `{"php"}`, `"restart-all"` → `{"web", "php"}`. Removed the old `execute_action` stub.
+- **API handler** — `POST /api/runtime/<site_id>/<action>` creates an async Job via `JobExecutor`, submits a task that calls `RuntimeActionExecutor::restart_services()`, returns `job_id`. Status code 202.
+- **Backend agnostic** — service name is always `web` for both Apache and Nginx backends. No hardcoded Apache assumptions.
+
+### Files changed
+- `libs/runtime/RuntimeActionExecutor.h` — new: global compose action executor
+- `libs/runtime/RuntimeActionExecutor.cpp` — new: implementation with compose_action + restart_services
+- `libs/runtime/SiteRuntimeManager.h` — added `services_for_action()`, removed `execute_action()`
+- `libs/runtime/SiteRuntimeManager.cpp` — implemented `services_for_action()`, removed `execute_action()` stub
+- `libs/api/ApiServer.cpp` — POST handler now async via JobExecutor, returns job_id
+- `libs/core/ServiceRegistry.h` — added `RuntimeActionExecutor` include, accessor, member
+- `libs/core/ServiceRegistry.cpp` — initialized `runtime_action_executor_`, added accessor
+- `CMakeLists.txt` — added `RuntimeActionExecutor.cpp`
+- `tests/CMakeLists.txt` — added `RuntimeActionExecutor.cpp`
+- `tests/test_runtime.cpp` — replaced `execute_action` tests with `services_for_action` + `RuntimeActionExecutor` tests
+
+### Test results
+- 111 tests pass (14 new), 0 fail, 0 warnings
+
+### Risks
+- `RuntimeActionExecutor` uses `docker compose --project-directory` — requires Docker Compose v2+.
+- Async jobs run in a thread pool. If the daemon shuts down while a restart job is running, the job is cancelled/marked failed.
+
+### Non-goals (Phase 3 scope only)
+- No UI buttons yet
+- No DB/Redis restart
+- No recreate/pull/stop actions
+- No SSL changes
 
 ### Risks
 
