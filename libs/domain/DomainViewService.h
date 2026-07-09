@@ -2,6 +2,7 @@
 #define CONTAINERCP_DOMAIN_DOMAIN_VIEW_SERVICE_H
 
 #include "domain/DomainManager.h"
+#include "logger/Logger.h"
 #include "ssl/CertificateStore.h"
 #include "site/SiteManager.h"
 
@@ -18,7 +19,8 @@ namespace containercp::domain {
 // DomainViewService only combines read-only data for presentation.
 class DomainViewService {
 public:
-    DomainViewService(DomainManager& domains,
+    DomainViewService(logger::Logger& logger,
+                      DomainManager& domains,
                       site::SiteManager& sites,
                       ssl::CertificateStore& cert_store);
 
@@ -31,6 +33,7 @@ public:
 private:
     void write_enriched(std::ostringstream& json, const Domain& d) const;
 
+    logger::Logger& logger_;
     DomainManager& domains_;
     site::SiteManager& sites_;
     ssl::CertificateStore& cert_store_;
