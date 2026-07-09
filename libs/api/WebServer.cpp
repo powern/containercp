@@ -214,7 +214,7 @@ void WebServer::handle_client(int client_fd, WebServer* server) {
         server->handle_auth_logout(raw, client_fd);
         return;
     }
-    if (req.path == "/ui-api/health" || req.path == "/api/health") {
+    if (req.path == "/ui-api/health" || req.path == "/api/health" || req.path == "/ui-api/api/health") {
         server->proxy_to_api(raw, client_fd);
         return;
     }
@@ -238,14 +238,12 @@ void WebServer::handle_client(int client_fd, WebServer* server) {
         return;
     }
 
-    // Reject raw API paths
+    // Proxy /api/* requests to the API server (for Reverse Proxy access)
     if (req.path.find("/api/") == 0) {
-        Response resp;
-        resp.status_code = 403;
-        resp.body = "Forbidden: API is not available on this port. Use 127.0.0.1:8080.";
-        std::string resp_str = resp.to_string();
-        ::write(client_fd, resp_str.data(), resp_str.size());
-        ::close(client_fd);
+        if (!server->require_session(raw, client_fd)) {
+            return;
+        }
+        server->proxy_to_api(raw, client_fd);
         return;
     }
 

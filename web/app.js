@@ -1,4 +1,5 @@
-const API_BASE = window.location.port === '8081' ? '/ui-api' : '';
+// Always use /ui-api/ prefix (works through Reverse Proxy and directly)
+const API_BASE = '/ui-api';
 
 let sessionToken = localStorage.getItem('session_token');
 let currentUser = null;
