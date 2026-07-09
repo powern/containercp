@@ -748,7 +748,7 @@ networks, and Docker DNS resolution.
 
 ### Architecture
 - **`RuntimeActionExecutor`** — new global layer that knows HOW to execute Docker Compose actions. Uses `CommandExecutor` (safe `fork()`/`execvp()` with `poll()`). Method: `restart_services(compose_dir, services)` runs `docker compose restart <services>` against the site's compose project directory.
-- **`SiteRuntimeManager`** — now only maps WHAT: `services_for_action("restart-web")` returns `{"web"}`, `"restart-php"` → `{"php"}`, `"restart-all"` → `{"web", "php"}`. Removed the old `execute_action` stub.
+- **`SiteRuntimeManager`** — now only maps WHAT: `services_for_action("restart-web")` returns `{"web"}`, `"restart-php"` → `{"php"}`, `"restart-all"` → `{}` (empty = all compose services). Removed the old `execute_action` stub.
 - **API handler** — `POST /api/runtime/<site_id>/<action>` creates an async Job via `JobExecutor`, submits a task that calls `RuntimeActionExecutor::restart_services()`, returns `job_id`. Status code 202.
 - **Backend agnostic** — service name is always `web` for both Apache and Nginx backends. No hardcoded Apache assumptions.
 

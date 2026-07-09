@@ -29,7 +29,7 @@ std::string role_to_action_suffix(ServiceRole role);
 // "restart-php"    → {PHP}
 // "restart-db"     → {Database}
 // "restart-redis"  → {Cache}
-// "restart-all"    → {Frontend, PHP, Database, Cache}
+// "restart-all"    → {} (empty = all compose services)
 // Returns empty vector for unknown actions.
 std::vector<ServiceRole> roles_from_action(const std::string& action);
 
