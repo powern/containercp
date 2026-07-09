@@ -147,6 +147,20 @@ ServiceRegistry::ServiceRegistry()
 
     auto loaded_proxies = storage_.load_reverse_proxies();
     if (!loaded_proxies.empty()) {
+        // Normalize upstreams from legacy database entries
+        for (auto& p : loaded_proxies) {
+            std::string normalized = proxy::ProxyConfigBuilder::normalize_upstream(p.upstream);
+            std::string canonical = "site-" + std::to_string(p.site_id) + "-web:80";
+            if (normalized != canonical) {
+                logger_.info("SYSTEM", "Fixed upstream for " + p.domain
+                             + ": '" + p.upstream + "' -> '" + canonical + "'");
+                p.upstream = canonical;
+            } else if (normalized != p.upstream) {
+                logger_.info("SYSTEM", "Normalized upstream for " + p.domain
+                             + ": '" + p.upstream + "' -> '" + normalized + "'");
+                p.upstream = normalized;
+            }
+        }
         reverse_proxies_.set_proxies(loaded_proxies);
     }
 
@@ -190,8 +204,7 @@ void ServiceRegistry::start() {
     }
 
     // Sync all HTTPS proxy configs on startup
-    // Rewrites config from canonical state for every active HTTPS site.
-    // This fixes any stale/broken configs (old paths, wrong upstream, duplicates).
+    // Regenerates config from canonical upstream for every active HTTPS site.
     {
         for (auto site_id : cert_store_.enumerate()) {
             auto load_result = cert_store_.load_metadata(site_id);
@@ -201,6 +214,11 @@ void ServiceRegistry::start() {
 
             std::string domain = meta.domains.empty() ? "" : meta.domains[0];
             if (domain.empty()) continue;
+
+            // Log the upstream value from ReverseProxyManager for debugging
+            auto* rp = reverse_proxies_.find_by_domain(domain);
+            logger_.info("SYSTEM", "Pre-sync upstream for " + domain
+                         + ": " + (rp ? (rp->upstream.empty() ? "EMPTY" : rp->upstream) : "NOT_FOUND"));
 
             std::string cert_path = cert_store_.fullchain_path(site_id);
             std::string key_path = cert_store_.privkey_path(site_id);
