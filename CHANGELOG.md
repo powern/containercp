@@ -6,6 +6,14 @@ Format: date | commit | summary
 
 ---
 
+## 2025-07-08 | `7dc9ee1` | Bootstrap/Normal mode architecture
+
+- StartupManager selects bootstrap or normal mode
+- Bootstrap: lightweight HTTP server on 0.0.0.0:80 with Setup Wizard
+- Normal: full daemon on 127.0.0.1:8080/8081, through proxy
+- Recovery: if proxy fails → mark incomplete → next boot goes to bootstrap
+- New files: StartupManager.h/.cpp, bootstrap_server.cpp
+
 ## 2025-07-08 | `611123f` | Steps 2-4: Admin Panel HTTPS — proxy route, SSL, cleanup
 - Admin proxy created on startup if server_hostname is set (→ 127.0.0.1:8081)
 - SSL cert auto-attached if exists (site_id=0)
