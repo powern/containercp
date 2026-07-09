@@ -6,6 +6,26 @@ Format: date | commit | summary
 
 ---
 
+## 2025-07-08 | `1cc6a09` | Fix 403 on ACME challenge — alias + permissions
+
+### Debug commands (403 Forbidden — nginx can't read file)
+```bash
+# 1. Fix directory permissions (nginx runs as 'nginx' user in container)
+chmod -R 755 /srv/containercp/ssl/0/
+
+# 2. Verify file exists inside container
+docker exec containercp-proxy cat /srv/containercp/ssl/0/.well-known/acme-challenge/<TOKEN>
+
+# 3. Check nginx error log
+docker exec containercp-proxy cat /var/log/nginx/error.log
+
+# 4. Test with correct Host header
+wget --header="Host: web2.softico.ua" http://127.0.0.1/.well-known/acme-challenge/<TOKEN>
+
+# 5. Validate config + reload
+docker exec containercp-proxy nginx -t && docker exec containercp-proxy nginx -s reload
+```
+
 ## 2025-07-08 | `a8f6207` | Always regenerate admin proxy config on startup
 - Admin nginx config now regenerated on EVERY daemon restart
 - Previously only created once — config fixes never took effect
