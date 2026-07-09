@@ -97,6 +97,73 @@ std::vector<std::string> RuntimeActionExecutor::list_services(const std::string&
     return services;
 }
 
+ContainerStatus RuntimeActionExecutor::service_status(
+    const std::string& compose_dir,
+    const std::string& service) const {
+
+    ContainerStatus result;
+    result.name = service;
+
+    // Step 1: get container name from docker compose ps
+    auto ps_result = executor_.run({
+        "docker", "compose", "--project-directory", compose_dir,
+        "ps", "--format", "{{.Name}}", service
+    });
+
+    if (ps_result.exit_code != 0) {
+        logger_.error("RT_STAT",
+            "docker compose ps failed for " + compose_dir + "/" + service +
+            " exit=" + std::to_string(ps_result.exit_code) +
+            " stderr=" + trim(ps_result.err));
+        result.status = "Error";
+        return result;
+    }
+
+    std::string container_name = trim(ps_result.out);
+    if (container_name.empty()) {
+        result.status = "Stopped";
+        return result;
+    }
+    result.name = container_name;
+
+    // Step 2: inspect container state and health
+    auto inspect_result = executor_.run({
+        "docker", "inspect", container_name,
+        "--format", "{{.State.Status}}|{{.State.Health.Status}}"
+    });
+
+    if (inspect_result.exit_code != 0 || inspect_result.out.empty()) {
+        logger_.error("RT_STAT",
+            "docker inspect failed for " + container_name +
+            " exit=" + std::to_string(inspect_result.exit_code) +
+            " stderr=" + trim(inspect_result.err));
+        result.status = "Error";
+        return result;
+    }
+
+    std::string combined = trim(inspect_result.out);
+    size_t sep = combined.find('|');
+    std::string state = (sep != std::string::npos) ? combined.substr(0, sep) : combined;
+    std::string health = (sep != std::string::npos) ? combined.substr(sep + 1) : "";
+    result.health = health;
+
+    if (state == "running") {
+        if (health == "unhealthy") result.status = "Unhealthy";
+        else if (health == "starting") result.status = "Starting";
+        else result.status = "Running";
+    } else if (state == "exited" || state == "paused" || state == "removing") {
+        result.status = "Stopped";
+    } else if (state == "restarting") {
+        result.status = "Starting";
+    } else if (state == "created") {
+        result.status = "Stopped";
+    } else {
+        result.status = "Unknown";
+    }
+
+    return result;
+}
+
 core::OperationResult RuntimeActionExecutor::restart_services(
     const std::string& compose_dir,
     const std::vector<std::string>& services) {

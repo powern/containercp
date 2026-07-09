@@ -24,7 +24,7 @@ ServiceRegistry::ServiceRegistry()
     , auth_(*this)
     , runtime_(logger_, config_.sites_dir())
     , runtime_action_executor_(logger_)
-    , site_runtime_(logger_, config_.sites_dir())
+    , site_runtime_(logger_, config_.sites_dir(), runtime_action_executor_)
     , hosting_provider_(filesystem_, config_, php_versions_, runtime_, profiles_)
 {
     auto loaded_nodes = storage_.load_nodes();

@@ -147,7 +147,8 @@ TEST_CASE("SiteRuntimeManager valid_actions list") {
 
 TEST_CASE("SiteRuntimeManager services_for_action (delegates to ServiceRole)") {
     auto& log = containercp::logger::Logger::instance();
-    SiteRuntimeManager mgr(log, "/tmp");
+    RuntimeActionExecutor exec(log);
+    SiteRuntimeManager mgr(log, "/tmp", exec);
 
     SUBCASE("restart-web maps to web service") {
         auto svc = mgr.services_for_action("restart-web");
@@ -201,6 +202,16 @@ TEST_CASE("RuntimeActionExecutor compose_action basic errors") {
     SUBCASE("missing compose dir returns error for all services (empty list)") {
         auto r = exec.restart_services("/nonexistent/path", {});
         CHECK_FALSE(r.success);
+    }
+}
+
+TEST_CASE("RuntimeActionExecutor service_status basic errors") {
+    auto& log = containercp::logger::Logger::instance();
+    RuntimeActionExecutor exec(log);
+
+    SUBCASE("missing compose dir returns Error status") {
+        auto s = exec.service_status("/nonexistent/path", "web");
+        CHECK(s.status == "Error");
     }
 }
 
