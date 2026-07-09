@@ -339,6 +339,29 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
                 };
                 meta.issued_at = fmt(nb);
                 meta.expires_at = fmt(na);
+
+                // Extract issuer from certificate
+                X509_NAME* issuer_name = X509_get_issuer_name(x509);
+                if (issuer_name) {
+                    BIO* ibio = BIO_new(BIO_s_mem());
+                    X509_NAME_print_ex(ibio, issuer_name, 0, XN_FLAG_RFC2253);
+                    char* idata = nullptr;
+                    long ilen = BIO_get_mem_data(ibio, &idata);
+                    if (ilen > 0) meta.issuer = std::string(idata, ilen);
+                    BIO_free(ibio);
+                }
+
+                // Extract subject
+                X509_NAME* subj_name = X509_get_subject_name(x509);
+                if (subj_name) {
+                    BIO* sbio = BIO_new(BIO_s_mem());
+                    X509_NAME_print_ex(sbio, subj_name, 0, XN_FLAG_RFC2253);
+                    char* sdata = nullptr;
+                    long slen = BIO_get_mem_data(sbio, &sdata);
+                    if (slen > 0) meta.subject = std::string(sdata, slen);
+                    BIO_free(sbio);
+                }
+
                 X509_free(x509);
             }
             BIO_free(cert_bio);

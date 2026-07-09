@@ -215,6 +215,17 @@ void ServiceRegistry::start() {
             std::string domain = meta.domains.empty() ? "" : meta.domains[0];
             if (domain.empty()) continue;
 
+            // Check if ACME environment matches the certificate issuer
+            bool looks_like_staging = meta.issuer.find("STAGING") != std::string::npos
+                                   || meta.issuer.find("Fake") != std::string::npos;
+            if (meta.environment != "staging" && looks_like_staging) {
+                logger_.warning("SYSTEM", domain + ": ACME=production but issuer is STAGING ("
+                               + meta.issuer + "). Reissue certificate.");
+            }
+            logger_.info("SYSTEM", domain + ": env=" + meta.environment
+                         + " issuer=\"" + meta.issuer + "\""
+                         + " decision=" + (looks_like_staging ? "staging cert, reissue for production" : "ok"));
+
             // Log the upstream value from ReverseProxyManager for debugging
             auto* rp = reverse_proxies_.find_by_domain(domain);
             logger_.info("SYSTEM", "Pre-sync upstream for " + domain
