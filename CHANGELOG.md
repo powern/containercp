@@ -6,7 +6,41 @@ Format: date | commit | summary
 
 ---
 
-## 2025-07-08 | `(this commit)` | Comprehensive SSL/Proxy subsystem cleanup
+## 2025-07-08 | `611123f` | Steps 2-4: Admin Panel HTTPS — proxy route, SSL, cleanup
+- Admin proxy created on startup if server_hostname is set (→ 127.0.0.1:8081)
+- SSL cert auto-attached if exists (site_id=0)
+- WebServer binds to 127.0.0.1 (port 8081 closed for external access)
+- Settings page: Save Hostname + Issue SSL + Renew SSL buttons
+- Updated WEB-UI.md, admin-panel-https.md, project-status.md
+
+## 2025-07-08 | `b9581c7` | Step 1: Admin Panel HTTPS — Config + Settings API
+- Config::server_hostname() with env var + file storage
+- GET/POST /api/settings endpoints
+- Settings GUI: hostname input + SSL action buttons
+- WebServer bind address changed to 127.0.0.1
+
+## 2025-07-08 | `19c1bda` | Fix SSL auto-renew display for HTTP-only sites + add tests
+- API returns auto_renew=false for HTTP_ONLY sites
+- GUI shows N/A for HTTP_ONLY, Yes/No for active
+- 8 new test cases for auto-renew persistence
+
+## 2025-07-08 | `7a49592` | Fix: reload nginx after certificate issue/renew
+- Job lambda now calls proxy_provider().reload() after issue/renew
+- Nginx picks up new certificate via updated current symlink
+
+## 2025-07-08 | `bf70072` | Detect staging certificates in production mode
+- Parse issuer/subject from PEM via X509_NAME
+- Startup log: env + issuer + decision (keep/reissue)
+- Warning if production env but staging issuer
+
+## 2025-07-08 | `9074557` | Production-ready SSL finalization
+- Production Let's Encrypt as default (staging via LETSENCRYPT_STAGING=1)
+- PEM date parsing (notBefore/notAfter via OpenSSL)
+- Environment field in metadata + GUI
+- Dead code removed: extract_upstream, find_json_string_array, fallbacks
+- Startup upstream normalization fixes legacy DB values
+
+## 2025-07-08 | `441c1ab` | Comprehensive SSL/Proxy subsystem cleanup
 
 ### Architectural fixes
 
