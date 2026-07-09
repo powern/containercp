@@ -789,6 +789,9 @@ bool ApiServer::start() {
                     jm.update(jid, "running", 10, "Requesting certificate...");
                     auto result = provider.request(domain);
                     if (result.success) {
+                        // Reload nginx so it picks up the new certificate via current symlink
+                        jm.update(jid, "running", 95, "Reloading nginx...");
+                        s.proxy_provider().reload();
                         jm.update(jid, "completed", 100, "Certificate issued");
                     } else {
                         jm.update(jid, "failed", 100, result.message);
@@ -845,6 +848,8 @@ bool ApiServer::start() {
                     jm.update(jid, "running", 10, "Renewing certificate...");
                     auto result = provider.renew(domain);
                     if (result.success) {
+                        jm.update(jid, "running", 95, "Reloading nginx...");
+                        s.proxy_provider().reload();
                         jm.update(jid, "completed", 100, "Certificate renewed");
                     } else {
                         jm.update(jid, "failed", 100, result.message);
