@@ -51,6 +51,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/jobs/JobExecutor.cpp
     ${CMAKE_SOURCE_DIR}/libs/runtime/CommandExecutor.cpp
     ${CMAKE_SOURCE_DIR}/libs/runtime/RuntimeActionExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/libs/runtime/ServiceRole.cpp
     ${CMAKE_SOURCE_DIR}/libs/runtime/SiteRuntimeManager.cpp
 )
 

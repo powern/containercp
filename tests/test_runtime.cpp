@@ -1,5 +1,6 @@
 #include "runtime/CommandExecutor.h"
 #include "runtime/RuntimeActionExecutor.h"
+#include "runtime/ServiceRole.h"
 #include "runtime/SiteRuntimeManager.h"
 #include "logger/Logger.h"
 
@@ -12,6 +13,8 @@
 #include "doctest/doctest.h"
 
 using namespace containercp::runtime;
+
+// ── CommandExecutor ───────────────────────────────────────────────
 
 TEST_CASE("CommandExecutor::run returns error for empty args") {
     CommandExecutor exec;
@@ -53,6 +56,85 @@ TEST_CASE("CommandExecutor::run with workdir") {
     CHECK(r.out.find("/tmp") != std::string::npos);
 }
 
+// ── ServiceRole (Runtime subsystem core) ──────────────────────────
+
+TEST_CASE("ServiceRole role_to_action_suffix") {
+    CHECK(role_to_action_suffix(ServiceRole::Frontend) == "web");
+    CHECK(role_to_action_suffix(ServiceRole::PHP) == "php");
+    CHECK(role_to_action_suffix(ServiceRole::Database) == "db");
+    CHECK(role_to_action_suffix(ServiceRole::Cache) == "redis");
+}
+
+TEST_CASE("ServiceRole role_to_compose_service") {
+    CHECK(role_to_compose_service(ServiceRole::Frontend) == "web");
+    CHECK(role_to_compose_service(ServiceRole::PHP) == "php");
+    CHECK(role_to_compose_service(ServiceRole::Database) == "mariadb");
+    CHECK(role_to_compose_service(ServiceRole::Cache) == "redis");
+}
+
+TEST_CASE("ServiceRole roles_from_action") {
+    SUBCASE("restart-web") {
+        auto roles = roles_from_action("restart-web");
+        REQUIRE(roles.size() == 1);
+        CHECK(roles[0] == ServiceRole::Frontend);
+    }
+
+    SUBCASE("restart-php") {
+        auto roles = roles_from_action("restart-php");
+        REQUIRE(roles.size() == 1);
+        CHECK(roles[0] == ServiceRole::PHP);
+    }
+
+    SUBCASE("restart-db") {
+        auto roles = roles_from_action("restart-db");
+        REQUIRE(roles.size() == 1);
+        CHECK(roles[0] == ServiceRole::Database);
+    }
+
+    SUBCASE("restart-redis") {
+        auto roles = roles_from_action("restart-redis");
+        REQUIRE(roles.size() == 1);
+        CHECK(roles[0] == ServiceRole::Cache);
+    }
+
+    SUBCASE("restart-all") {
+        auto roles = roles_from_action("restart-all");
+        CHECK(roles.empty());
+    }
+
+    SUBCASE("invalid action") {
+        CHECK(roles_from_action("reboot").empty());
+    }
+}
+
+TEST_CASE("ServiceRole roles_to_compose_services") {
+    SUBCASE("empty input returns empty (all services)") {
+        CHECK(roles_to_compose_services({}).empty());
+    }
+
+    SUBCASE("frontend role") {
+        auto svc = roles_to_compose_services({ServiceRole::Frontend});
+        REQUIRE(svc.size() == 1);
+        CHECK(svc[0] == "web");
+    }
+
+    SUBCASE("all roles") {
+        auto svc = roles_to_compose_services({
+            ServiceRole::Frontend,
+            ServiceRole::PHP,
+            ServiceRole::Database,
+            ServiceRole::Cache
+        });
+        REQUIRE(svc.size() == 4);
+        CHECK(svc[0] == "web");
+        CHECK(svc[1] == "php");
+        CHECK(svc[2] == "mariadb");
+        CHECK(svc[3] == "redis");
+    }
+}
+
+// ── SiteRuntimeManager (Sites module consumer) ────────────────────
+
 TEST_CASE("SiteRuntimeManager valid_actions list") {
     const auto& actions = SiteRuntimeManager::valid_actions();
     CHECK(actions.size() == 5);
@@ -63,7 +145,7 @@ TEST_CASE("SiteRuntimeManager valid_actions list") {
     CHECK(actions[4] == "restart-all");
 }
 
-TEST_CASE("SiteRuntimeManager services_for_action mapping") {
+TEST_CASE("SiteRuntimeManager services_for_action (delegates to ServiceRole)") {
     auto& log = containercp::logger::Logger::instance();
     SiteRuntimeManager mgr(log, "/tmp");
 
@@ -105,6 +187,8 @@ TEST_CASE("SiteRuntimeManager services_for_action mapping") {
     }
 }
 
+// ── RuntimeActionExecutor (global execution layer) ────────────────
+
 TEST_CASE("RuntimeActionExecutor compose_action basic errors") {
     auto& log = containercp::logger::Logger::instance();
     RuntimeActionExecutor exec(log);
@@ -123,6 +207,5 @@ TEST_CASE("RuntimeActionExecutor compose_action basic errors") {
 TEST_CASE("SiteRuntimeManager status semantic mapping") {
     // These test the container_status logic indirectly via
     // actual Docker commands — only run if docker is available.
-    // We verify that the status mapper produces correct strings
-    // for known docker states.
+    // Verified statuses: Running, Stopped, Unhealthy, Starting, Error.
 }

@@ -34,6 +34,7 @@ public:
                                  const std::string& service) const;
 
     // Map a site-level action to the compose service names it affects.
+    // Delegates to ServiceRole for the canonical role→service mapping.
     // restart-web → {"web"}, restart-php → {"php"},
     // restart-db → {"mariadb"}, restart-redis → {"redis"},
     // restart-all → {} (empty = all compose services)

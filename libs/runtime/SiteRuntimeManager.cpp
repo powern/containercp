@@ -1,4 +1,5 @@
 #include "SiteRuntimeManager.h"
+#include "runtime/ServiceRole.h"
 
 #include <algorithm>
 #include <cctype>
@@ -17,6 +18,10 @@ std::string trim(const std::string& s) {
 std::vector<std::string> make_actions() {
     return {"restart-web", "restart-php", "restart-db", "restart-redis", "restart-all"};
 }
+
+// Site compose services for status checks.
+// These are the services relevant to the Sites module.
+constexpr const char* STATUS_SERVICES[] = {"web", "php"};
 
 } // anonymous namespace
 
@@ -47,12 +52,7 @@ SiteRuntimeManager::SiteRuntimeManager(logger::Logger& logger,
 
 std::vector<std::string> SiteRuntimeManager::services_for_action(
     const std::string& action) const {
-    if (action == "restart-web") return {"web"};
-    if (action == "restart-php") return {"php"};
-    if (action == "restart-db") return {"mariadb"};
-    if (action == "restart-redis") return {"redis"};
-    if (action == "restart-all") return {};  // empty = all compose services
-    return {};
+    return roles_to_compose_services(roles_from_action(action));
 }
 
 std::string SiteRuntimeManager::container_status(const std::string& compose_dir,
@@ -110,10 +110,10 @@ SiteRuntimeStatus SiteRuntimeManager::get_status(uint64_t site_id,
     SiteRuntimeStatus s;
     std::string compose_dir = path_join(sites_root_, domain);
 
-    s.web.status = container_status(compose_dir, "web");
-    s.php.status = container_status(compose_dir, "php");
-    s.web.name = domain + "-web";
-    s.php.name = domain + "-php";
+    s.web.status = container_status(compose_dir, STATUS_SERVICES[0]);
+    s.php.status = container_status(compose_dir, STATUS_SERVICES[1]);
+    s.web.name = domain + "-" + STATUS_SERVICES[0];
+    s.php.name = domain + "-" + STATUS_SERVICES[1];
 
     return s;
 }
