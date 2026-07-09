@@ -219,6 +219,40 @@ void WebServer::handle_client(int client_fd, WebServer* server) {
         return;
     }
 
+    // ACME HTTP-01 challenge file serving (before auth, always public)
+    if (req.path.find("/.well-known/acme-challenge/") == 0 && req.method == "GET") {
+        // Read challenge file from admin SSL directory or sites directory
+        // Format: /.well-known/acme-challenge/<token>
+        std::string prefix = "/.well-known/acme-challenge/";
+        std::string token = req.path.substr(prefix.size());
+        std::string paths[] = {
+            server->services_.config().data_root() + "/ssl/0/.well-known/acme-challenge/" + token,
+            server->services_.config().data_root() + "/ssl/.well-known/acme-challenge/" + token,
+        };
+        std::string content;
+        for (const auto& p : paths) {
+            std::ifstream f(p);
+            if (f.is_open()) {
+                std::getline(f, content, '\0');
+                break;
+            }
+        }
+        if (!content.empty()) {
+            std::ostringstream resp;
+            resp << "HTTP/1.1 200 OK\r\n"
+                 << "Content-Type: application/octet-stream\r\n"
+                 << "Content-Length: " << content.size() << "\r\n"
+                 << "\r\n"
+                 << content;
+            std::string rs = resp.str();
+            ::write(client_fd, rs.data(), rs.size());
+        } else {
+            server->send_json(client_fd, 404, "{\"success\":false,\"error\":\"Challenge token not found\"}");
+        }
+        ::close(client_fd);
+        return;
+    }
+
     // Auth routes that require session
     if (req.path == "/ui-api/auth/change-password") {
         server->handle_auth_change_password(raw, client_fd);
