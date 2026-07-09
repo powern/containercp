@@ -2,6 +2,7 @@
 #include "auth/AuthService.h"
 #include "template/web_templates.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 
@@ -207,21 +208,56 @@ void ServiceRegistry::start() {
     {
         std::string hostname = config_.server_hostname();
         if (!hostname.empty()) {
+            // Auto-detect Docker gateway for admin upstream (host → container communication)
+            std::string admin_upstream = "host.docker.internal:8081";
+            {
+                std::string gw_file = "/tmp/containercp-admin-gw.txt";
+                std::string gw_cmd = "docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null > " + gw_file;
+                std::system(gw_cmd.c_str());
+                std::ifstream gw_in(gw_file);
+                std::string gw_ip;
+                std::getline(gw_in, gw_ip);
+                std::remove(gw_file.c_str());
+                if (!gw_ip.empty()) {
+                    admin_upstream = gw_ip + ":8081";
+                    logger_.info("SYSTEM", "Docker gateway: " + gw_ip);
+                }
+            }
+
             // Check if this hostname already has a proxy entry
             auto* existing = reverse_proxies_.find_by_domain(hostname);
             if (!existing) {
-                // Create a virtual proxy for admin panel → localhost:8081
                 proxy::ReverseProxy admin_rp;
                 admin_rp.domain = hostname;
                 admin_rp.site_id = 0; // special: admin panel
                 admin_rp.provider = "nginx";
-                admin_rp.upstream = "host.docker.internal:8081";
+                admin_rp.upstream = admin_upstream;
                 admin_rp.enabled = true;
                 admin_rp.status = "active";
                 auto create_result = proxy_provider_.create_proxy(admin_rp);
                 if (create_result.success) {
-                    reverse_proxies_.create(hostname, 0, config_.data_root() + "/proxy/sites/" + hostname + ".conf", "host.docker.internal:8081");
-                    logger_.info("SYSTEM", "Admin proxy created for " + hostname);
+                    reverse_proxies_.create(hostname, 0, config_.data_root() + "/proxy/sites/" + hostname + ".conf", admin_upstream);
+                    logger_.info("SYSTEM", "Admin proxy created for " + hostname + " upstream=" + admin_upstream);
+
+                    // Reload proxy so the new config takes effect
+                    proxy_provider_.reload();
+
+                    // Verify admin route is reachable
+                    {
+                        std::string verify_file = "/tmp/containercp-admin-verify.txt";
+                        std::string verify_cmd = "wget -qO- --timeout=3 http://" + admin_upstream + "/ 2>/dev/null | head -c 100";
+                        std::system((verify_cmd + " > " + verify_file + " 2>/dev/null").c_str());
+                        std::ifstream vf(verify_file);
+                        std::string result;
+                        std::getline(vf, result);
+                        std::remove(verify_file.c_str());
+                        if (!result.empty()) {
+                            logger_.info("SYSTEM", "Admin panel reachable via " + admin_upstream);
+                        } else {
+                            logger_.warning("SYSTEM", "Admin panel NOT reachable via " + admin_upstream
+                                           + ". Web UI may not be accessible through proxy.");
+                        }
+                    }
 
                     // Check if SSL certificate exists for this domain
                     auto load_result = cert_store_.load_metadata(0); // site_id=0 for admin
