@@ -6,25 +6,40 @@
 namespace containercp::proxy {
 
 std::string ProxyConfigBuilder::build(const Params& params) const {
-    std::ostringstream conf;
-
     if (params.https && params.redirect) {
-        conf << build_redirect_block(params.domain);
-        conf << build_https_block(params.domain, params.upstream,
-                                   params.cert_path, params.key_path);
-    } else if (params.https) {
-        conf << build_http_block(params.domain, params.upstream);
-        conf << build_https_block(params.domain, params.upstream,
-                                   params.cert_path, params.key_path);
-    } else {
-        conf << build_http_block(params.domain, params.upstream);
+        return build_redirect_block(params.domain)
+             + build_https_block(params.domain, params.upstream,
+                                  params.cert_path, params.key_path);
     }
-
-    // Add ACME challenge location for admin panel
+    if (params.https) {
+        return build_http_block(params.domain, params.upstream)
+             + build_https_block(params.domain, params.upstream,
+                                  params.cert_path, params.key_path);
+    }
+    // HTTP only — build server block with optional ACME location INSIDE
+    std::ostringstream conf;
+    conf << "server {\n"
+         << "    listen 80;\n"
+         << "    server_name " << params.domain << ";\n"
+         << "    resolver 127.0.0.11 valid=30s;\n"
+         << "\n";
+    // ACME challenge location (inside server block, before proxy_pass)
     if (!params.acme_challenge_root.empty()) {
-        conf << acme_challenge_location(params.acme_challenge_root);
+        auto parent = params.acme_challenge_root.substr(0, params.acme_challenge_root.rfind('/'));
+        conf << "    location ^~ /.well-known/acme-challenge/ {\n"
+             << "        root " << parent << ";\n"
+             << "        try_files $uri =404;\n"
+             << "    }\n\n";
     }
-
+    conf << "    location / {\n"
+         << "        set $backend \"http://" << params.upstream << "\";\n"
+         << "        proxy_pass $backend;\n"
+         << "        proxy_set_header Host $host;\n"
+         << "        proxy_set_header X-Real-IP $remote_addr;\n"
+         << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+         << "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+         << "    }\n"
+         << "}\n";
     return conf.str();
 }
 

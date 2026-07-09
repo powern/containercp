@@ -236,22 +236,23 @@ void ServiceRegistry::start() {
                 admin_rp.upstream = admin_upstream;
                 admin_rp.enabled = true;
                 admin_rp.status = "active";
-                auto create_result = proxy_provider_.create_proxy(admin_rp);
-                if (create_result.success) {
+                // Create admin proxy config with ACME challenge location inside server block
+                proxy_provider_.create_proxy(admin_rp);
+                {
+                    proxy::ProxyConfigBuilder cfg_builder;
+                    proxy::ProxyConfigBuilder::Params cfg_p;
+                    cfg_p.domain = hostname;
+                    cfg_p.upstream = admin_upstream;
+                    cfg_p.acme_challenge_root = config_.data_root() + "/ssl/0/.well-known/acme-challenge";
+                    std::string cfg = cfg_builder.build(cfg_p);
+                    std::string cfg_path = config_.data_root() + "/proxy/sites/" + hostname + ".conf";
+                    // Overwrite with config that includes ACME challenge location INSIDE server block
+                    std::ofstream cfg_out(cfg_path);
+                    if (cfg_out.is_open()) { cfg_out << cfg; }
+                }
+                {
                     reverse_proxies_.create(hostname, 0, config_.data_root() + "/proxy/sites/" + hostname + ".conf", admin_upstream);
                     logger_.info("SYSTEM", "Admin proxy created for " + hostname + " upstream=" + admin_upstream);
-
-                    // Add ACME challenge location to admin config
-                    {
-                        std::string admin_conf = config_.data_root() + "/proxy/sites/" + hostname + ".conf";
-                        std::ofstream acme_append(admin_conf, std::ios::app);
-                        if (acme_append.is_open()) {
-                            std::string acme_loc = proxy::ProxyConfigBuilder::acme_challenge_location(
-                                config_.data_root() + "/ssl/0/.well-known/acme-challenge");
-                            acme_append << acme_loc;
-                            logger_.info("SYSTEM", "Added ACME challenge location for " + hostname);
-                        }
-                    }
 
                     // Reload proxy so the new config takes effect
                     proxy_provider_.reload();
@@ -283,8 +284,6 @@ void ServiceRegistry::start() {
                             logger_.info("SYSTEM", "Admin HTTPS enabled for " + hostname);
                         }
                     }
-                } else {
-                    logger_.warning("SYSTEM", "Failed to create admin proxy: " + create_result.message);
                 }
             } else {
                 logger_.info("SYSTEM", "Admin proxy already exists for " + hostname);
