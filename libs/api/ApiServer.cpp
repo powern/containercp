@@ -695,9 +695,15 @@ bool ApiServer::start() {
             }
         }
         if (site_id == 0) {
-            r.status_code = 404;
-            r.body = json_error("NOT_FOUND", "Site not found: " + domain);
-            return r;
+            // Check if this is the admin panel hostname
+            if (domain == s.config().server_hostname()) {
+                site_id = 0;
+                site_domain = domain;
+            } else {
+                r.status_code = 404;
+                r.body = json_error("NOT_FOUND", "Site not found: " + domain);
+                return r;
+            }
         }
 
         auto load_result = s.cert_store().load_metadata(site_id);
@@ -765,7 +771,7 @@ bool ApiServer::start() {
         std::string prefix = "/api/ssl/" + domain + "/";
         std::string action = req.path.substr(prefix.size());
 
-        // Find site
+        // Find site (or admin panel hostname with site_id=0)
         uint64_t site_id = 0;
         for (const auto& site : s.sites().list()) {
             if (site.name == domain) {
@@ -773,7 +779,12 @@ bool ApiServer::start() {
                 break;
             }
         }
-        if (site_id == 0) {
+        // Check if this is the admin panel hostname
+        if (site_id == 0 && domain == s.config().server_hostname()) {
+            site_id = 0; // admin panel virtual site
+        }
+        // If not found as regular site or admin hostname, return error
+        if (site_id == 0 && domain != s.config().server_hostname()) {
             r.status_code = 404;
             r.body = json_error("NOT_FOUND", "Site not found: " + domain);
             return r;
