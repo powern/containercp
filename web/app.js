@@ -653,6 +653,11 @@ function domainSslBadge(status) {
   return `<span class="badge ${m[status]||'badge-info'}">${esc(status)}</span>`;
 }
 
+function domainUsableHttps(r) {
+  // Only suggest HTTPS when the certificate is actually usable
+  return r.ssl_status === 'Active' || r.ssl_status === 'Expiring';
+}
+
 async function loadDomains(p) {
   try {
     const data = await api('/api/domains');
@@ -661,10 +666,19 @@ async function loadDomains(p) {
     window.renderTable = () => {
       const tbl = $('domains-table');
       if (!tbl) return;
-      const rows = (data.data||[]).filter(r=>!searchTerm||r.domain.includes(searchTerm)||(r.site_name||'').includes(searchTerm));
+      const lowerSearch = (searchTerm||'').toLowerCase();
+      const rows = (data.data||[]).filter(r => {
+        if (!lowerSearch) return true;
+        return (r.domain||'').toLowerCase().includes(lowerSearch)
+            || (r.site_name||'').toLowerCase().includes(lowerSearch)
+            || (r.site_domain||'').toLowerCase().includes(lowerSearch)
+            || (r.target||'').toLowerCase().includes(lowerSearch)
+            || (r.type||'').toLowerCase().includes(lowerSearch)
+            || (r.ssl_status||'').toLowerCase().includes(lowerSearch);
+      });
       tbl.innerHTML = buildTable([
         {label:'Domain',html:r=>{
-          const proto = r.ssl_enabled ? 'https' : 'http';
+          const proto = domainUsableHttps(r) ? 'https' : 'http';
           return `<a href="${proto}://${esc(r.domain)}" target="_blank" style="color:var(--primary);text-decoration:none;font-weight:500;" title="Open ${proto}://${esc(r.domain)}">${esc(r.domain)}</a> <span style="cursor:pointer;font-size:11px;color:var(--text3);" onclick="copyText('${esc(r.domain)}')" title="Copy domain">&#128203;</span>`;
         }},
         {label:'Type',html:r=>domainTypeBadge(r.type)},
@@ -678,10 +692,10 @@ async function loadDomains(p) {
         {label:'HTTP',html:()=>'<span class="badge badge-info">Unknown</span>'},
         {label:'SSL',html:r=>domainSslBadge(r.ssl_status)},
         {label:'Actions',html:r=>{
-          const proto = r.ssl_enabled ? 'https' : 'http';
+          const proto = domainUsableHttps(r) ? 'https' : 'http';
           let acts = `<button class="btn-icon" onclick="window.open('${proto}://${esc(r.domain)}','_blank')" title="Open in browser">&#8599;</button>`;
           acts += `<button class="btn-icon" onclick="copyText('${esc(r.domain)}')" title="Copy domain">&#128203;</button>`;
-          acts += `<button class="btn-icon" onclick="navigate('ssl')" title="SSL settings">&#128274;</button>`;
+          acts += `<button class="btn-icon" onclick="navigate('ssl')" title="SSL overview">&#128274;</button>`;
           if (r.site_id) acts += `<button class="btn-icon" onclick="navigate('site-detail',${r.site_id})" title="View site">&#128065;</button>`;
           acts += `<button class="btn-icon" style="color:var(--red)" onclick="removeDomain('${esc(r.domain)}')" title="Remove domain">&#10005;</button>`;
           return acts;
