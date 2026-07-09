@@ -267,6 +267,31 @@ bool ApiServer::start() {
         return r;
     });
 
+    router_.add("GET", "/api/settings", [&s](const Request&) {
+        Response r;
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":{"
+             << "\"version\":\"" << containercp::core::VERSION
+             << "\",\"server_hostname\":\"" << JsonFormatter::escape(s.config().server_hostname())
+             << "\"}}";
+        r.body = json.str();
+        return r;
+    });
+
+    router_.add("POST", "/api/settings", [&s](const Request& req) {
+        Response r;
+        std::string hostname = json_extract(req.body, "server_hostname");
+        // Basic validation
+        if (!hostname.empty() && hostname.find("..") != std::string::npos) {
+            r.body = "{\"success\":false,\"error\":\"Invalid hostname\"}";
+            return r;
+        }
+        s.config().set_server_hostname(hostname);
+        s.logger().info("SYSTEM", "Server hostname set to: " + hostname);
+        r.body = "{\"success\":true,\"data\":{\"server_hostname\":\"" + JsonFormatter::escape(hostname) + "\"}}";
+        return r;
+    });
+
     // GET /api/ssl — list all sites with SSL state (including HTTP_ONLY)
     router_.add("GET", "/api/ssl", [&s](const Request&) {
         Response r;

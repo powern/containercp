@@ -1,5 +1,9 @@
 #include "Config.h"
 
+#include <cstdlib>
+#include <fstream>
+#include <string>
+
 namespace containercp::config {
 
 Config::Config()
@@ -53,6 +57,38 @@ std::string Config::proxy_dir() const {
 
 std::string Config::web_templates_dir() const {
     return config_root_ + "/templates/web/";
+}
+
+std::string Config::server_hostname() const {
+    return server_hostname_;
+}
+
+void Config::set_server_hostname(const std::string& hostname) {
+    server_hostname_ = hostname;
+    save_server_hostname();
+}
+
+void Config::load_server_hostname() {
+    // Check env var first (overrides stored value)
+    const char* env = std::getenv("SERVER_HOSTNAME");
+    if (env != nullptr && env[0] != '\0') {
+        server_hostname_ = env;
+        return;
+    }
+    // Try to read from stored file
+    std::string path = data_root_ + "/server_hostname";
+    std::ifstream f(path);
+    if (f.is_open()) {
+        std::getline(f, server_hostname_);
+    }
+}
+
+void Config::save_server_hostname() const {
+    std::string path = data_root_ + "/server_hostname";
+    std::ofstream f(path);
+    if (f.is_open()) {
+        f << server_hostname_;
+    }
 }
 
 } // namespace containercp::config

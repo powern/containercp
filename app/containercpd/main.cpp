@@ -109,6 +109,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Load persisted settings (server_hostname from env or file)
+    services.config().load_server_hostname();
+
     // Ensure PID file is cleaned up on exit
     struct Cleanup {
         ~Cleanup() { release_single_instance(); }
@@ -133,8 +136,8 @@ int main(int argc, char* argv[]) {
     });
     api_thread.detach();
 
-    // Start Web UI server on public address (background thread)
-    containercp::api::WebServer web_server(services, "0.0.0.0", ui_port, api_port);
+    // Start Web UI server on localhost only (accessed through central proxy)
+    containercp::api::WebServer web_server(services, "127.0.0.1", ui_port, api_port);
     std::thread web_thread([&web_server]() {
         web_server.start();
     });
