@@ -29,6 +29,7 @@ set(CONTAINERCP_SOURCES
     libs/core/Resource.cpp
     libs/core/ResourceManager.cpp
     libs/core/ServiceRegistry.cpp
+    libs/core/StartupManager.cpp
     libs/daemon/CommandProtocol.cpp
     libs/daemon/DaemonApp.cpp
     libs/database/Database.cpp
@@ -79,6 +80,7 @@ set(CONTAINERCP_SOURCES
 # Daemon binary
 add_executable(containercpd
     app/containercpd/main.cpp
+    app/containercpd/bootstrap_server.cpp
     ${CONTAINERCP_SOURCES}
 )
 

@@ -1,4 +1,5 @@
 #include "core/Application.h"
+#include "core/StartupManager.h"
 #include "api/ApiServer.h"
 #include "api/WebServer.h"
 #include "daemon/DaemonApp.h"
@@ -37,7 +38,6 @@ static bool is_process_alive(pid_t pid) {
 }
 
 static bool acquire_single_instance(const std::string& data_root) {
-    // Create data directory first if it doesn't exist
     ::mkdir((data_root + "/").c_str(), 0755);
 
     std::ifstream pid_file(PID_FILE);
@@ -51,11 +51,9 @@ static bool acquire_single_instance(const std::string& data_root) {
             std::cerr << "[ERROR] [SYSTEM] If the daemon crashed, remove " << PID_FILE << " and try again." << std::endl;
             return false;
         }
-        // Stale PID file — remove it
         ::unlink(PID_FILE);
     }
 
-    // Write our PID
     std::ofstream out(PID_FILE);
     if (!out.is_open()) {
         std::cerr << "[ERROR] [SYSTEM] Failed to write PID file: " << PID_FILE << std::endl;
@@ -70,54 +68,41 @@ static void release_single_instance() {
     ::unlink(PID_FILE);
 }
 
-static void verify_directories(containercp::filesystem::Filesystem& fs,
-                                const containercp::config::Config& cfg) {
-    auto& log = containercp::logger::Logger::instance();
+int main(int argc, char* argv[]) {
+    // Ensure data directory exists for PID file
+    ::mkdir("/srv/containercp", 0755);
 
-    struct DirEntry {
-        std::string path;
-        std::string label;
-    };
+    if (!acquire_single_instance("/srv/containercp")) {
+        return 1;
+    }
+    struct Cleanup { ~Cleanup() { release_single_instance(); } } cleanup;
 
-    DirEntry dirs[] = {
-        {cfg.database_dir(), "Database"},
-        {cfg.sites_dir(), "Sites"},
-        {cfg.data_root() + "/proxy/", "Proxy root"},
-        {cfg.data_root() + "/proxy/sites/", "Proxy sites"},
-        {cfg.data_root() + "/ssl/", "SSL certificates"},
-        {cfg.data_root() + "/backups/", "Backups"},
-        {cfg.users_dir(), "Users"},
-        {cfg.web_templates_dir(), "Web templates"},
-        {cfg.log_root(), "Log"},
-    };
-
-    for (const auto& d : dirs) {
-        if (!fs.exists(d.path)) {
-            fs.create_directory(d.path);
-            log.info("SYSTEM", "Created directory: " + d.path);
+    // Load server hostname from env or file
+    std::string server_hostname;
+    {
+        const char* env = std::getenv("SERVER_HOSTNAME");
+        if (env != nullptr && env[0] != '\0') {
+            server_hostname = env;
+        } else {
+            std::ifstream f("/srv/containercp/server_hostname");
+            if (f.is_open()) std::getline(f, server_hostname);
         }
     }
-}
 
-int main(int argc, char* argv[]) {
+    // Decide: bootstrap or normal mode
+    if (containercp::core::StartupManager::needs_bootstrap("/srv/containercp", server_hostname)) {
+        // Run Setup Wizard on 0.0.0.0:80
+        std::cerr << "[SYSTEM] Starting in BOOTSTRAP mode." << std::endl;
+        std::cerr << "[SYSTEM] Open http://<server-ip>/ in your browser to configure." << std::endl;
+        return containercp::core::StartupManager::run_bootstrap("/srv/containercp");
+    }
+
+    // === Normal Mode ===
     containercp::core::Application::instance();
     auto& services = containercp::core::Application::instance().services();
     auto& log = services.logger();
 
-    // Single instance check — must happen before any service starts
-    if (!acquire_single_instance(services.config().data_root())) {
-        return 1;
-    }
-
-    // Load persisted settings (server_hostname from env or file)
-    services.config().load_server_hostname();
-
-    // Ensure PID file is cleaned up on exit
-    struct Cleanup {
-        ~Cleanup() { release_single_instance(); }
-    } cleanup;
-
-    // Ensure database directory exists before any services try to write to it
+    // Ensure database directory exists
     services.filesystem().create_directory(services.config().database_dir());
 
     int api_port = parse_env("CONTAINERCP_API_PORT", parse_arg(argc, argv, "--api-port", 8080));
@@ -127,20 +112,21 @@ int main(int argc, char* argv[]) {
 
     // Startup recovery — verify all required directories
     log.info("SYSTEM", "Verifying required directories...");
-    verify_directories(services.filesystem(), services.config());
+    services.filesystem().create_directory(services.config().database_dir());
+    services.filesystem().create_directory(services.config().data_root() + "/ssl/");
+    services.filesystem().create_directory(services.config().data_root() + "/proxy/");
+    services.filesystem().create_directory(services.config().data_root() + "/proxy/sites/");
+    services.filesystem().create_directory(services.config().data_root() + "/backups/");
+    services.filesystem().create_directory(services.config().log_root());
 
     // Start REST API server on localhost only (background thread)
     containercp::api::ApiServer api_server(services, api_port);
-    std::thread api_thread([&api_server]() {
-        api_server.start();
-    });
+    std::thread api_thread([&api_server]() { api_server.start(); });
     api_thread.detach();
 
     // Start Web UI server on localhost only (accessed through central proxy)
     containercp::api::WebServer web_server(services, "127.0.0.1", ui_port, api_port);
-    std::thread web_thread([&web_server]() {
-        web_server.start();
-    });
+    std::thread web_thread([&web_server]() { web_server.start(); });
     web_thread.detach();
 
     // Remove old socket file
@@ -148,10 +134,7 @@ int main(int argc, char* argv[]) {
 
     // Create UNIX socket server
     int server_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-    if (server_fd < 0) {
-        log.error("SYSTEM", "Failed to create UNIX socket");
-        return 1;
-    }
+    if (server_fd < 0) { log.error("SYSTEM", "Failed to create UNIX socket"); return 1; }
 
     struct sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
@@ -162,9 +145,7 @@ int main(int argc, char* argv[]) {
         ::close(server_fd);
         return 1;
     }
-
     ::chmod(socket_path.c_str(), 0666);
-
     if (::listen(server_fd, 5) < 0) {
         log.error("SYSTEM", "Failed to listen on UNIX socket");
         ::close(server_fd);
@@ -173,15 +154,21 @@ int main(int argc, char* argv[]) {
 
     log.info("SYSTEM", "Listening on " + socket_path);
     log.info("SYSTEM", "REST API on 127.0.0.1:" + std::to_string(api_port));
-    log.info("SYSTEM", "Web UI on 0.0.0.0:" + std::to_string(ui_port));
-    log.info("SYSTEM", "Web UI API proxy /ui-api/* -> 127.0.0.1:" + std::to_string(api_port));
-    log.info("SYSTEM", "Web UI login required");
+    log.info("SYSTEM", "Web UI on 127.0.0.1:" + std::to_string(ui_port));
+    log.info("SYSTEM", "Login required");
 
     // Startup recovery — ensure central proxy container and network
     log.info("SYSTEM", "Ensuring central proxy...");
     auto proxy_result = services.proxy_provider().ensure_central_proxy();
     if (!proxy_result.success) {
         log.error("SYSTEM", "Failed to ensure central proxy: " + proxy_result.message);
+    }
+
+    // If proxy failed and we have no running proxy, go to bootstrap
+    if (!proxy_result.success) {
+        log.warning("SYSTEM", "Proxy not available. Falling back to bootstrap mode.");
+        containercp::core::StartupManager::mark_setup_incomplete("/srv/containercp");
+        log.info("SYSTEM", "Restart to enter setup wizard.");
     }
 
     containercp::daemon::DaemonApp daemon(services);
@@ -191,11 +178,7 @@ int main(int argc, char* argv[]) {
         struct sockaddr_un client_addr{};
         socklen_t client_len = sizeof(client_addr);
         int client_fd = ::accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
-        if (client_fd < 0) {
-            log.error("SYSTEM", "Accept failed");
-            break;
-        }
-
+        if (client_fd < 0) { log.error("SYSTEM", "Accept failed"); break; }
         char buf[65536];
         ssize_t n = ::read(client_fd, buf, sizeof(buf) - 1);
         if (n > 0) {
