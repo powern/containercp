@@ -6,6 +6,44 @@ Format: date | commit | summary
 
 ---
 
+## 2025-07-08 | `(this commit)` | Comprehensive SSL/Proxy subsystem cleanup
+
+### Architectural fixes
+
+1. **Canonical upstream source of truth** — upstream resolved from
+   ReverseProxyManager, never parsed from nginx config files.
+   `attach_certificate()`/`detach_certificate()` use
+   `proxy_mgr_.find_by_domain(domain)->upstream`.
+
+2. **SSL mount in central proxy** — `ensure_central_proxy()` now mounts
+   `/srv/containercp/ssl/` as read-only volume. Missing mount detected
+   and container recreated automatically.
+
+3. **Transactional API handlers** — enable/disable/redirect now validate
+   nginx config BEFORE saving metadata. Metadata only saved after
+   successful proxy change and reload.
+
+4. **No fallback upstream** — removed all `site-0-web:80` fallbacks.
+   Missing upstream = clear error, not silent wrong value.
+
+5. **SiteCreateOperation validates proxy** — checks `create_proxy()` and
+   `reload()` results. Failure = site creation fails.
+
+6. **Reload checks exit code** — checks `WEXITSTATUS(rc)` instead of
+   parsing stderr. Returns real nginx error messages.
+
+7. **Removed `extract_upstream()`** — no more config file parsing.
+
+### Files changed
+- `libs/proxy/NginxProxyProvider.h/.cpp` — ReverseProxyManager ref,
+  canonical upstream, SSL mount, no fallbacks
+- `libs/core/ServiceRegistry.cpp` — pass ReverseProxyManager
+- `libs/api/ApiServer.cpp` — transactional handlers
+- `libs/operations/SiteCreateOperation.cpp` — check proxy results
+- `CHANGELOG.md` — this entry
+
+---
+
 ## 2025-07-08 | `(this commit)` | SSL Step 8A: real ACME HTTP-01 staging implementation
 
 ### New: Real ACME HTTP-01 client

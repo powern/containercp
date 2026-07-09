@@ -219,7 +219,7 @@
 | SSL-007: Web UI SSL page | ✅ | Step 7 complete (minimal) |
 | SSL-008: Real ACME HTTP-01 staging | ✅ | Step 8A complete |
 | SSL-009: Real server validation + bug fixes | ✅ | Step 8B: ACME flow, CSR, finalize, HTTPS paths, renewal policy |
-| SSL-010: Proxy config auto-migration on startup | 🔄 | Automated cert path migration for existing sites |
+| SSL-010: Comprehensive SSL/Proxy cleanup | ✅ | Canonical upstream, transactional API, SSL mount, no fallbacks |
 
 ## Version 0.6 — DNS and Mail (Planned, after v0.5.0)
 

@@ -3,6 +3,7 @@
 
 #include "proxy/ProxyProvider.h"
 #include "proxy/ProxyConfigBuilder.h"
+#include "proxy/ReverseProxyManager.h"
 #include "config/Config.h"
 #include "filesystem/Filesystem.h"
 #include "logger/Logger.h"
@@ -15,7 +16,8 @@ namespace containercp::proxy {
 class NginxProxyProvider : public ProxyProvider {
 public:
     NginxProxyProvider(filesystem::Filesystem& fs, config::Config& cfg,
-                       logger::Logger& logger, ssl::SslCertificateManager& ssl_mgr);
+                       logger::Logger& logger, ssl::SslCertificateManager& ssl_mgr,
+                       proxy::ReverseProxyManager& proxy_mgr);
 
     core::OperationResult create_proxy(const ReverseProxy& proxy) override;
     core::OperationResult remove_proxy(const std::string& domain) override;
@@ -40,6 +42,7 @@ private:
     config::Config& cfg_;
     logger::Logger& logger_;
     ssl::SslCertificateManager& ssl_mgr_;
+    proxy::ReverseProxyManager& proxy_mgr_;
     ProxyConfigBuilder config_builder_;
 };
 

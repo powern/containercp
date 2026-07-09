@@ -152,10 +152,19 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner,
     rp.upstream = upstream;
     rp.enabled = true;
     rp.status = "active";
-    proxy_provider_.create_proxy(rp);
+
+    auto create_result = proxy_provider_.create_proxy(rp);
+    if (!create_result.success) {
+        update_job_and_progress(jobs, job_id, 0, "Failed to create proxy: " + create_result.message);
+        return {false, create_result.message};
+    }
 
     update_job_and_progress(jobs, job_id, 95, "Reloading proxy...");
-    proxy_provider_.reload();
+    auto reload_result = proxy_provider_.reload();
+    if (!reload_result.success) {
+        update_job_and_progress(jobs, job_id, 0, "Proxy reload failed: " + reload_result.message);
+        return {false, reload_result.message};
+    }
 
     proxies_.create(domain, site.id, cfg_.data_root() + "/proxy/sites/" + domain + ".conf", upstream);
 

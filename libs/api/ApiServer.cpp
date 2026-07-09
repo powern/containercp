@@ -869,9 +869,7 @@ bool ApiServer::start() {
             if (!validation.valid) {
                 r.status_code = 409;
                 std::string reason = "Certificate validation failed";
-                if (!validation.errors.empty()) {
-                    reason = validation.errors[0];
-                }
+                if (!validation.errors.empty()) reason = validation.errors[0];
                 r.body = json_error("SSL_INVALID_STATE", reason);
                 return r;
             }
@@ -883,26 +881,25 @@ bool ApiServer::start() {
                 return r;
             }
 
-            auto meta = load_result.metadata;
-            meta.https_enabled = true;
-            meta.updated_at = containercp::ssl::CertificateStore::timestamp_utc();
-            s.cert_store().save_metadata(site_id, meta);
-
-            // Update SslCertificateManager for backward compat
-            auto* cert = s.ssl().find_by_domain(domain);
-            if (cert) {
-                cert->https_enabled = true;
-                s.save();
-            }
-
-            // Attach certificate to proxy config using CertificateStore paths
+            // Transactional enable: attach cert to proxy FIRST, only save metadata on success
             std::string cert_path = s.cert_store().fullchain_path(site_id);
             std::string key_path = s.cert_store().privkey_path(site_id);
             s.logger().info("API", "Attaching cert for " + domain + ": cert=" + cert_path + " key=" + key_path);
             auto proxy_result = s.proxy_provider().attach_certificate(domain, cert_path, key_path);
             if (!proxy_result.success) {
-                s.logger().warning("API", "Proxy certificate attach failed for " + domain + ": " + proxy_result.message);
+                r.status_code = 500;
+                r.body = json_error("PROXY_ERROR", proxy_result.message);
+                return r;
             }
+
+            // Only now save metadata (after proxy confirmed config is valid and reloaded)
+            auto meta = load_result.metadata;
+            meta.https_enabled = true;
+            meta.updated_at = containercp::ssl::CertificateStore::timestamp_utc();
+            s.cert_store().save_metadata(site_id, meta);
+
+            auto* cert = s.ssl().find_by_domain(domain);
+            if (cert) { cert->https_enabled = true; s.save(); }
 
             std::ostringstream json;
             json << "{\"success\":true,\"data\":{"
@@ -914,6 +911,14 @@ bool ApiServer::start() {
         }
 
         if (action == "disable") {
+            // Detach from proxy FIRST, only save metadata on success
+            auto proxy_result = s.proxy_provider().detach_certificate(domain);
+            if (!proxy_result.success) {
+                r.status_code = 500;
+                r.body = json_error("PROXY_ERROR", proxy_result.message);
+                return r;
+            }
+
             auto load_result = s.cert_store().load_metadata(site_id);
             if (load_result.success) {
                 auto meta = load_result.metadata;
@@ -923,16 +928,7 @@ bool ApiServer::start() {
             }
 
             auto* cert = s.ssl().find_by_domain(domain);
-            if (cert) {
-                cert->https_enabled = false;
-                s.save();
-            }
-
-            // Detach certificate from proxy config
-            auto proxy_result = s.proxy_provider().detach_certificate(domain);
-            if (!proxy_result.success) {
-                s.logger().warning("API", "Proxy certificate detach failed: " + proxy_result.message);
-            }
+            if (cert) { cert->https_enabled = false; s.save(); }
 
             std::ostringstream json;
             json << "{\"success\":true,\"data\":{"
@@ -945,12 +941,7 @@ bool ApiServer::start() {
 
         if (action == "redirect/enable") {
             auto load_result = s.cert_store().load_metadata(site_id);
-            if (!load_result.success) {
-                r.status_code = 409;
-                r.body = json_error("SSL_INVALID_STATE", "No certificate found for this site");
-                return r;
-            }
-            if (load_result.metadata.status != "active") {
+            if (!load_result.success || load_result.metadata.status != "active") {
                 r.status_code = 409;
                 r.body = json_error("SSL_INVALID_STATE", "Certificate is not active");
                 return r;
@@ -958,6 +949,16 @@ bool ApiServer::start() {
             if (!load_result.metadata.https_enabled) {
                 r.status_code = 409;
                 r.body = json_error("SSL_INVALID_STATE", "HTTPS must be enabled before enabling redirect");
+                return r;
+            }
+
+            // Generate new config with redirect, validate, reload, THEN save
+            std::string cert_path = s.cert_store().fullchain_path(site_id);
+            std::string key_path = s.cert_store().privkey_path(site_id);
+            auto proxy_result = s.proxy_provider().attach_certificate(domain, cert_path, key_path);
+            if (!proxy_result.success) {
+                r.status_code = 500;
+                r.body = json_error("PROXY_ERROR", proxy_result.message);
                 return r;
             }
 
@@ -977,6 +978,16 @@ bool ApiServer::start() {
 
         if (action == "redirect/disable") {
             auto load_result = s.cert_store().load_metadata(site_id);
+            // Generate new config without redirect
+            std::string cert_path = s.cert_store().fullchain_path(site_id);
+            std::string key_path = s.cert_store().privkey_path(site_id);
+            auto proxy_result = s.proxy_provider().attach_certificate(domain, cert_path, key_path);
+            if (!proxy_result.success) {
+                r.status_code = 500;
+                r.body = json_error("PROXY_ERROR", proxy_result.message);
+                return r;
+            }
+
             if (load_result.success) {
                 auto meta = load_result.metadata;
                 meta.redirect_enabled = false;
