@@ -21,6 +21,7 @@
 #include "mail/MailDomainManager.h"
 #include "php/PhpVersionManager.h"
 #include "runtime/PortManager.h"
+#include "runtime/SiteRuntimeManager.h"
 #include "ssl/CertificateProvider.h"
 #include "ssl/CertificateStore.h"
 #include "ssl/LetsEncryptProvider.h"
@@ -71,6 +72,7 @@ public:
     filesystem::Filesystem& filesystem();
     runtime::Runtime& runtime();
     runtime::PortManager& port_manager();
+    runtime::SiteRuntimeManager& site_runtime();
     provider::HostingProvider& hosting_provider();
     auth::AuthUserManager& auth_users();
     auth::AuthService& auth();
@@ -116,6 +118,7 @@ private:
     filesystem::Filesystem filesystem_;
     runtime::DockerRuntime runtime_;
     runtime::PortManager port_manager_;
+    runtime::SiteRuntimeManager site_runtime_;
     provider::DockerComposeProvider hosting_provider_;
 };
 

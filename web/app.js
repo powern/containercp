@@ -355,10 +355,30 @@ async function loadSites(p) {
       const filtered = (data.data||[]).filter(r => !searchTerm || r.domain.includes(searchTerm) || r.owner.includes(searchTerm));
       tbl.innerHTML = buildTable([
         {label:'Domain',html:r=>`<a href="#" onclick="navigate('site-detail',${r.id});return false" style="color:var(--primary);text-decoration:none;">${esc(r.domain)}</a>`},
+        {label:'Web',html:r=>`<span class="badge badge-info">...</span>`},
+        {label:'PHP',html:r=>`<span class="badge badge-info">...</span>`},
         {label:'Owner',html:r=>esc(r.owner)},
         {label:'Backend',html:r=>r.web_server==='nginx'?'<span class="badge badge-info">Nginx</span>':'<span class="badge badge-ok">Apache2</span>'},
         {label:'Actions',html:r=>`<button class="btn-icon" onclick="navigate('site-detail',${r.id})" title="View">&#128065;</button><button class="btn-icon" style="color:var(--red)" title="Remove" onclick="removeSite('${esc(r.domain)}')">&#10005;</button>`}
       ], filtered, 'No sites');
+      // Fetch runtime status for each site
+      filtered.forEach(site => {
+        api('/api/runtime/' + site.id).then(rt => {
+          if (!rt.success) return;
+          const rows = tbl.querySelectorAll('tbody tr');
+          for (let i = 0; i < filtered.length && i < rows.length; i++) {
+            if (filtered[i].id === site.id) {
+              const cells = rows[i].querySelectorAll('td');
+              if (cells.length >= 2) {
+                const st = (s) => { const m={'Running':'badge-ok','Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn','Unknown':'badge-info'}; return `<span class="badge ${m[s]||'badge-info'}">${s}</span>`; };
+                cells[0].innerHTML = st(rt.data.web);
+                cells[1].innerHTML = st(rt.data.php);
+              }
+              break;
+            }
+          }
+        }).catch(()=>{});
+      });
     };
     p.innerHTML += `<div id="sites-table"></div>`;
     window.renderTable();

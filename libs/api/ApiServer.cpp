@@ -267,6 +267,27 @@ bool ApiServer::start() {
         return r;
     });
 
+    // GET /api/runtime/<site_id> — per-site container status
+    router_.add_prefix("GET", "/api/runtime/", [&s](const Request& req) {
+        Response r;
+        std::string id_str = req.path.substr(std::string("/api/runtime/").size());
+        uint64_t site_id = 0;
+        try { site_id = std::stoull(id_str); } catch (...) {}
+        if (site_id == 0) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid site ID\"}";
+            return r;
+        }
+        auto status = s.site_runtime().get_status(site_id);
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":{"
+             << "\"web\":\"" << status.web.status
+             << "\",\"php\":\"" << status.php.status
+             << "\"}}";
+        r.body = json.str();
+        return r;
+    });
+
     router_.add("GET", "/api/settings", [&s](const Request&) {
         Response r;
         std::ostringstream json;
