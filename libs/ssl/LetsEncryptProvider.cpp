@@ -253,10 +253,11 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
                 }
             }
 
-            // Step B: try via docker exec localhost inside proxy container
+            // Step B: try via docker exec localhost with correct Host header
             {
                 std::string out_file = "/tmp/containercp-challenge-docker.txt";
                 std::string cmd = "docker exec containercp-proxy wget -qO- --timeout=5"
+                    " --header='Host: " + authz.domain + "'"
                     " http://127.0.0.1/.well-known/acme-challenge/" + challenge_token + " 2>/dev/null"
                     " > " + out_file;
                 std::system(cmd.c_str());
@@ -268,11 +269,41 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
                     logger_.info("LetsEncrypt", "Docker challenge OK: body='" + docker_body
                                  + "' match=" + (docker_body == key_auth ? "yes" : "no"));
                 } else {
-                    logger_.warning("LetsEncrypt", "Docker challenge FAILED (check nginx config)");
-                    // Log the nginx config for debugging
-                    std::string cat_cmd = "docker exec containercp-proxy cat /etc/nginx/conf.d/" + authz.domain + ".conf 2>/dev/null | head -30";
-                    std::system(cat_cmd.c_str());
+                    logger_.warning("LetsEncrypt", "Docker challenge FAILED (check nginx server_name)");
+                    // Check if nginx config exists
+                    std::string check_cmd = "docker exec containercp-proxy ls /etc/nginx/conf.d/" + authz.domain + ".conf 2>/dev/null && echo 'EXISTS' || echo 'MISSING'";
+                    std::string check_file = "/tmp/containercp-chk-config.txt";
+                    std::system((check_cmd + " > " + check_file).c_str());
+                    std::ifstream chk_in(check_file);
+                    std::string chk_result;
+                    std::getline(chk_in, chk_result);
+                    std::remove(check_file.c_str());
+                    logger_.warning("LetsEncrypt", "Admin config exists: " + chk_result);
+                    if (chk_result == "EXISTS") {
+                        std::string cat_cmd = "docker exec containercp-proxy cat /etc/nginx/conf.d/" + authz.domain + ".conf 2>/dev/null";
+                        std::system(cat_cmd.c_str());
+                    }
                 }
+            }
+
+            // Step B2: try via host localhost with correct Host header (through proxy)
+            {
+                std::string out_file = "/tmp/containercp-challenge-host.txt";
+                std::string curl_cmd = "curl -s -o " + out_file + " -w '%{http_code}'"
+                    " -H 'Host: " + authz.domain + "'"
+                    " http://127.0.0.1/.well-known/acme-challenge/" + challenge_token + " 2>/dev/null";
+                std::string status_file = "/tmp/containercp-challenge-status.txt";
+                std::system((curl_cmd + " > " + status_file).c_str());
+                std::ifstream status_in(status_file);
+                std::string http_code;
+                std::getline(status_in, http_code);
+                std::remove(status_file.c_str());
+                std::ifstream body_in(out_file);
+                std::string host_body;
+                std::getline(body_in, host_body);
+                std::remove(out_file.c_str());
+                logger_.info("LetsEncrypt", "Host challenge via 127.0.0.1: status=" + http_code
+                             + " body='" + host_body + "'");
             }
 
             // Step C: try via external domain (for ACME validation)
