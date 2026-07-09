@@ -250,6 +250,8 @@ void ServiceRegistry::start() {
                 proxy::ProxyConfigBuilder::Params cfg_p;
                 cfg_p.domain = hostname;
                 cfg_p.upstream = admin_upstream;
+                // Direct API route: /api/* → API server (bypasses Web UI server)
+                cfg_p.api_upstream = admin_upstream.substr(0, admin_upstream.rfind(':')) + ":8080";
                 cfg_p.acme_challenge_root = config_.data_root() + "/ssl/0/.well-known/acme-challenge";
                 std::string cfg = cfg_builder.build(cfg_p);
                 std::string cfg_path = config_.data_root() + "/proxy/sites/" + hostname + ".conf";

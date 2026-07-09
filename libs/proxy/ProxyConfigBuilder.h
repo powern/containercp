@@ -14,6 +14,7 @@ public:
     struct Params {
         std::string domain;
         std::string upstream;
+        std::string api_upstream;   // e.g. "host.docker.internal:8080" — direct API route
         bool https = false;
         bool redirect = false;
         std::string cert_path;
@@ -24,12 +25,14 @@ public:
     std::string build(const Params& params) const;
 
     std::string build_http_block(const std::string& domain,
-                                  const std::string& upstream) const;
+                                  const std::string& upstream,
+                                  const std::string& api_loc = "") const;
 
     std::string build_https_block(const std::string& domain,
                                    const std::string& upstream,
                                    const std::string& cert_path,
-                                   const std::string& key_path) const;
+                                   const std::string& key_path,
+                                   const std::string& api_loc = "") const;
 
     std::string build_redirect_block(const std::string& domain) const;
 
