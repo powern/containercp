@@ -25,10 +25,9 @@ std::string ProxyConfigBuilder::build(const Params& params) const {
          << "\n";
     // ACME challenge location (inside server block, before proxy_pass)
     if (!params.acme_challenge_root.empty()) {
-        // Use alias to map URI directly to challenge directory
         std::string dir = params.acme_challenge_root;
         if (dir.back() != '/') dir += '/';
-        conf << "    location ^~ /.well-known/acme-challenge/ {\n"
+        conf << "    location /.well-known/acme-challenge/ {\n"
              << "        alias " << dir << ";\n"
              << "    }\n\n";
     }
