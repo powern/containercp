@@ -226,67 +226,64 @@ void ServiceRegistry::start() {
                 }
             }
 
-            // Check if this hostname already has a proxy entry
+            // Ensure ReverseProxy entry exists (idempotent)
             auto* existing = reverse_proxies_.find_by_domain(hostname);
             if (!existing) {
                 proxy::ReverseProxy admin_rp;
                 admin_rp.domain = hostname;
-                admin_rp.site_id = 0; // special: admin panel
+                admin_rp.site_id = 0;
                 admin_rp.provider = "nginx";
                 admin_rp.upstream = admin_upstream;
                 admin_rp.enabled = true;
                 admin_rp.status = "active";
-                // Create admin proxy config with ACME challenge location inside server block
                 proxy_provider_.create_proxy(admin_rp);
-                {
-                    proxy::ProxyConfigBuilder cfg_builder;
-                    proxy::ProxyConfigBuilder::Params cfg_p;
-                    cfg_p.domain = hostname;
-                    cfg_p.upstream = admin_upstream;
-                    cfg_p.acme_challenge_root = config_.data_root() + "/ssl/0/.well-known/acme-challenge";
-                    std::string cfg = cfg_builder.build(cfg_p);
-                    std::string cfg_path = config_.data_root() + "/proxy/sites/" + hostname + ".conf";
-                    // Overwrite with config that includes ACME challenge location INSIDE server block
-                    std::ofstream cfg_out(cfg_path);
-                    if (cfg_out.is_open()) { cfg_out << cfg; }
+                reverse_proxies_.create(hostname, 0, config_.data_root() + "/proxy/sites/" + hostname + ".conf", admin_upstream);
+                logger_.info("SYSTEM", "Admin proxy entry created for " + hostname);
+            }
+
+            // ALWAYS regenerate admin proxy config file (supports config updates)
+            {
+                proxy::ProxyConfigBuilder cfg_builder;
+                proxy::ProxyConfigBuilder::Params cfg_p;
+                cfg_p.domain = hostname;
+                cfg_p.upstream = admin_upstream;
+                cfg_p.acme_challenge_root = config_.data_root() + "/ssl/0/.well-known/acme-challenge";
+                std::string cfg = cfg_builder.build(cfg_p);
+                std::string cfg_path = config_.data_root() + "/proxy/sites/" + hostname + ".conf";
+                std::ofstream cfg_out(cfg_path);
+                if (cfg_out.is_open()) { cfg_out << cfg; }
+                logger_.info("SYSTEM", "Admin proxy config regenerated for " + hostname);
+            }
+
+            // Reload proxy so the new config takes effect
+            proxy_provider_.reload();
+
+            // Verify admin route is reachable
+            {
+                std::string verify_file = "/tmp/containercp-admin-verify.txt";
+                std::string verify_cmd = "wget -qO- --timeout=3 http://" + admin_upstream + "/ 2>/dev/null | head -c 100";
+                std::system((verify_cmd + " > " + verify_file + " 2>/dev/null").c_str());
+                std::ifstream vf(verify_file);
+                std::string result;
+                std::getline(vf, result);
+                std::remove(verify_file.c_str());
+                if (!result.empty()) {
+                    logger_.info("SYSTEM", "Admin panel reachable via " + admin_upstream);
+                } else {
+                    logger_.warning("SYSTEM", "Admin panel NOT reachable via " + admin_upstream
+                                   + ". Web UI may not be accessible through proxy.");
                 }
-                {
-                    reverse_proxies_.create(hostname, 0, config_.data_root() + "/proxy/sites/" + hostname + ".conf", admin_upstream);
-                    logger_.info("SYSTEM", "Admin proxy created for " + hostname + " upstream=" + admin_upstream);
+            }
 
-                    // Reload proxy so the new config takes effect
-                    proxy_provider_.reload();
-
-                    // Verify admin route is reachable
-                    {
-                        std::string verify_file = "/tmp/containercp-admin-verify.txt";
-                        std::string verify_cmd = "wget -qO- --timeout=3 http://" + admin_upstream + "/ 2>/dev/null | head -c 100";
-                        std::system((verify_cmd + " > " + verify_file + " 2>/dev/null").c_str());
-                        std::ifstream vf(verify_file);
-                        std::string result;
-                        std::getline(vf, result);
-                        std::remove(verify_file.c_str());
-                        if (!result.empty()) {
-                            logger_.info("SYSTEM", "Admin panel reachable via " + admin_upstream);
-                        } else {
-                            logger_.warning("SYSTEM", "Admin panel NOT reachable via " + admin_upstream
-                                           + ". Web UI may not be accessible through proxy.");
-                        }
-                    }
-
-                    // Check if SSL certificate exists for this domain
-                    auto load_result = cert_store_.load_metadata(0); // site_id=0 for admin
-                    if (load_result.success && load_result.metadata.status == "active") {
-                        std::string cert_path = cert_store_.fullchain_path(0);
-                        std::string key_path = cert_store_.privkey_path(0);
-                        auto ssl_result = proxy_provider_.attach_certificate(hostname, cert_path, key_path);
-                        if (ssl_result.success) {
-                            logger_.info("SYSTEM", "Admin HTTPS enabled for " + hostname);
-                        }
-                    }
+            // Check if SSL certificate exists for this domain
+            auto load_result = cert_store_.load_metadata(0); // site_id=0 for admin
+            if (load_result.success && load_result.metadata.status == "active") {
+                std::string cert_path = cert_store_.fullchain_path(0);
+                std::string key_path = cert_store_.privkey_path(0);
+                auto ssl_result = proxy_provider_.attach_certificate(hostname, cert_path, key_path);
+                if (ssl_result.success) {
+                    logger_.info("SYSTEM", "Admin HTTPS enabled for " + hostname);
                 }
-            } else {
-                logger_.info("SYSTEM", "Admin proxy already exists for " + hostname);
             }
         }
     }
