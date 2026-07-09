@@ -163,5 +163,13 @@ libs/runtime/
    logic.
 
 6. **Backward compatibility** — the API actions (`restart-web`,
-   `restart-php`, etc.) are stable.  Internal role mappings can
-   evolve without breaking consumers.
+    `restart-php`, etc.) are stable.  Internal role mappings can
+    evolve without breaking consumers.
+
+## Related documents
+
+- `AGENTS.md` — main AI entry point
+- `docs/development/single-source-of-truth.md` — SSOT ownership rules
+- `docs/ADR/` — architecture decisions
+- `CHANGELOG.md` — recent changes (see `docs/changelog/runtime-phases.md` for Phase 1–5 details)
+- `planning/sites-runtime-management.md` — feature planning document

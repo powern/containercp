@@ -1,17 +1,17 @@
 # ContainerCP — Agent Rules
 
-## Product Vision
+## Project identity
 
 ContainerCP is a modern, open-source container-oriented hosting
-control panel designed for system administrators, developers, and
-hosting providers.
+control panel for system administrators, developers, and hosting providers.
 
-Read `planning/PRODUCT_VISION.md` before making any architectural
-decision.
+**Current version:** v0.5 (RC1 completed, working toward RC2 → v0.5.0 stable)
 
-## Planning workflow
+---
 
-Before planning ANY Epic, read these documents IN ORDER:
+## Mandatory reading order
+
+Before planning or implementing ANY Epic, read these IN ORDER:
 
 1. `planning/PRODUCT_VISION.md` — product vision and principles
 2. `planning/product-roadmap.md` — version milestones
@@ -20,153 +20,79 @@ Before planning ANY Epic, read these documents IN ORDER:
 5. Latest Sprint/Epic Reviews — recent progress and debt
 6. `docs/ADR/` — architecture decisions
 
-## Architecture Proposal stage
+At session start: read `planning/project-status.md` for current task state.
 
-No Epic may start with implementation.
+---
 
-Every Epic must first begin with an Architecture Proposal.
+## Core development rules
 
-Create `planning/proposals/ARCH-XXX-ShortName.md` following the
-template in `planning/proposals/README.md`.
+- **API first** — every operation must be available through the REST API
+  before CLI or Web UI. CLI and UI are only clients of the API.
+- **Architecture order**: `Core → Resource → Manager → Storage → Provider → Daemon → REST API → Web UI → CLI → Tests`
+- **Business logic** must never live in CLI handlers or Web UI code.
+- **Validation-driven** — VM validation is the primary quality gate
+  (see `planning/TEST_ENVIRONMENT.md`).
+- **Single Source of Truth** — every type of information has exactly one
+  owner module (see `docs/development/single-source-of-truth.md`).
+- **Architecture Proposal required** — no Epic starts without one
+  (see `planning/proposals/README.md` for template).
+- **One task = one logical commit**. Tests required with every Epic.
+- **Zero compiler warnings** before commit. All existing tests must pass.
+- **Web UI must follow backend changes** — never leave GUI behind.
+- **Changelog required** — every task or bug fix adds an entry to `CHANGELOG.md`
+  with date, commit hash, summary, files changed, user-visible behavior,
+  validation result, and known risks.
 
-Architecture decisions must be validated before implementation begins.
-This prevents unnecessary refactoring.
-
-## Architecture rule
-
-Every subsystem must be designed in this order:
-
-```
-Core → Resource → Manager → Storage → Provider → Daemon → REST API → Web UI → CLI → Tests
-```
-
-Business logic must never live inside CLI handlers or Web UI code.
-CLI and Web UI are only presentation layers over the same service layer.
-
-## API first
-
-Every operation must be available through the REST API before any
-other interface. CLI and Web UI are only clients of the API.
-
-## Core principles
-
-1. **API first** — REST API before CLI or Web UI
-2. **Daemon owns business logic** — thin clients only
-3. **Everything is a Resource** — uniform entities, managers, storage
-4. **Providers isolate external systems** — never depend directly on tools
-5. **Configuration is editable without recompilation** — templates on disk
-6. **Production before optimization** — simple over clever
-7. **Backward compatibility** — never break existing commands
-8. **One responsibility per subsystem** — clean module boundaries
-9. **Resources are always linked** — site_id foreign keys throughout
-10. **Validation-driven development** — VM validation is the primary quality gate
+---
 
 ## Safety rules
 
-Never run destructive commands without explicit confirmation.
+Never run destructive commands without explicit confirmation:
 
-Forbidden without confirmation:
 - `rm -rf`, `docker system prune`, `docker volume rm`
 - Deleting `/srv/containercp` or `/etc/containercp`
 - Changing firewall rules, SSH config, or network config
 
-## Development rules
+---
 
-- Every change must be committed to Git
-- Commit and push must ALWAYS happen together — never leave commits unpushed
+## Commit and push
+
+- Every change committed to Git. Commit and push ALWAYS together.
 - Push command: `git remote set-url origin "https://powern:$(cat /tmp/github_token)@github.com/powern/containercp.git" && git push origin main`
-- One task = one logical change
-- Tests must be added with every Epic
-- Zero compiler warnings required before commit
-- All existing tests must pass before commit
-- Validation is the primary quality gate — unit tests are necessary but not sufficient
-- Validation VM testing is required before closing any Epic
-- No Epic is considered complete until it has passed validation on the official VM
-- See `planning/TEST_ENVIRONMENT.md` for VM setup
-- **Changelog required** — every completed task or bug fix must add an entry to
-  `CHANGELOG.md` with: date, commit hash, summary, files changed, user-visible
-  behavior, validation result, and known risks. Commit changelog together with the
-  code/docs change.
-- **Web UI must follow backend changes** — when a backend/core/API change affects
-  product behavior, the Web UI must be updated in the same task or immediately
-  after it. If site creation logic changes, Web UI Create Site must be updated.
-  If profile/backend selection changes, Web UI must expose it. If API payload
-  changes, Web UI must be updated. Do not leave GUI behind backend logic.
 
-## Validation-driven development
+---
 
-Validation on the official VM is the primary quality gate. Unit tests
-and integration tests are necessary but no longer sufficient. Real
-deployment and real usage determine whether an Epic is complete.
+## Key documents
+
+| Purpose | Document |
+|---------|----------|
+| Product vision | `planning/PRODUCT_VISION.md` |
+| Roadmap | `planning/product-roadmap.md` |
+| Validation checklist | `planning/product-validation.md` |
+| Backlog | `planning/backlog.md` |
+| Project status | `planning/project-status.md` |
+| Architecture decisions | `docs/ADR/` |
+| Runtime architecture | `docs/runtime-architecture.md` |
+| Single Source of Truth | `docs/development/single-source-of-truth.md` |
+| Development rules | `docs/development/coding-rules.md` |
+| API design | `docs/development/api-rules.md` |
+| Testing | `planning/TEST_ENVIRONMENT.md` |
+| Changelog | `CHANGELOG.md` |
+
+---
 
 ## Product release lifecycle
 
-Every major version follows this lifecycle:
-
-1. Planning
-2. Architecture Review
-3. Implementation
-4. Code Review
-5. Stabilization
-6. Integration Validation
-7. Release Candidate (rc1, rc2, rc3...)
-8. Product Release
-9. Next Epic
-
-Release Candidates must pass the product validation checklist
-in `planning/product-validation.md` before shipping.
+```
+Planning → Architecture Review → Implementation → Code Review →
+Stabilization → Integration Validation → Release Candidate →
+Product Release → Next Epic
+```
 
 ## Epic lifecycle
 
-Every Epic now follows this lifecycle:
-
 ```
-Architecture Proposal
-    ↓
-Implementation
-    ↓
-Unit Tests
-    ↓
-Integration Tests
-    ↓
-Git Commit
-    ↓
-Git Push
-    ↓
-Deploy to Validation VM
-    ↓
-Real Product Validation
-    ↓
-Architecture Review
-    ↓
-Bug Fixes
-    ↓
-Repeat until stable
-    ↓
-Epic Closed
+Architecture Proposal → Implementation → Unit Tests → Integration Tests →
+Git Commit → Git Push → Deploy to Validation VM → Real Product Validation →
+Architecture Review → Bug Fixes → Repeat until stable → Epic Closed
 ```
-
-No Epic is considered complete until it has successfully passed
-validation on the official Validation VM.
-
-## Session start
-
-When starting a new session, first read `planning/project-status.md` to
-understand the current project state, what's completed, and what's
-pending. This file is the single source of truth for task status
-across all sprints and versions.
-
-All completed tasks from `tasks/*.md` and planning documents have been
-cross-referenced against the actual codebase and recorded in
-`planning/project-status.md`. Update this file when tasks change status.
-
-## Current product stage
-
-ContainerCP is at Version 0.5 (Release Candidate 1 completed).
-The project has evolved from a CLI utility to a hosting platform
-with daemon architecture, REST API, Web UI, and growing provider
-ecosystem.
-
-The next milestone is RC2 (24-hour stability validation) followed
-by the v0.5.0 stable release. Validation VM testing is required
-for every Epic (see `planning/TEST_ENVIRONMENT.md`).

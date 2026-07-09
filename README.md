@@ -83,6 +83,11 @@ foundation.
 - [`INSTALL.md`](INSTALL.md) — Detailed installation guide
 - [`scripts/install.sh`](scripts/install.sh) — Automatic installation
 - [`scripts/update.sh`](scripts/update.sh) — Automatic update
+- [`AGENTS.md`](AGENTS.md) — AI agent rules and navigation
+- [`CHANGELOG.md`](CHANGELOG.md) — Release history
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — System architecture
+- [`docs/runtime-architecture.md`](docs/runtime-architecture.md) — Runtime subsystem
+- [`docs/development/single-source-of-truth.md`](docs/development/single-source-of-truth.md) — SSOT rules
 - [`planning/product-roadmap.md`](planning/product-roadmap.md) — Roadmap
 - [`planning/product-validation.md`](planning/product-validation.md) — Validation checklist
 - [`docs/ADR/`](docs/ADR/) — Architecture Decision Records

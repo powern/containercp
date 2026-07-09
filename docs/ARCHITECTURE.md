@@ -92,3 +92,11 @@ The MVP uses a LocalNode provider.
 Remote nodes are not implemented yet.
 
 But the architecture must not block adding them later.
+
+## Related documents
+
+- `AGENTS.md` — main AI entry point
+- `docs/runtime-architecture.md` — runtime subsystem
+- `docs/development/single-source-of-truth.md` — SSOT rules
+- `docs/ADR/` — architecture decisions
+- `planning/product-roadmap.md` — version milestones
