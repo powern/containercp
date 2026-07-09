@@ -107,7 +107,7 @@ Before planning any new Epic, read these documents IN ORDER:
 
 ## Future
 
-- [ ] SSL certificate generation (Let's Encrypt)
+- [x] SSL certificate generation (Let's Encrypt — ACME HTTP-01, staging/production, auto-renewal, GUI)
 - [ ] Reverse proxy integration (Traefik / Caddy)
 - [ ] User management CLI commands
 - [ ] Resource usage monitoring
@@ -116,7 +116,7 @@ Before planning any new Epic, read these documents IN ORDER:
 - [ ] Multi-node support
 - [ ] Mail server support
 - [ ] DNS server integration
-- [ ] README update
+- [x] README update (docs restructure, navigation links, API reference)
 - [x] Web UI: Create Site backend web server selector (Apache2 default, Nginx optional)
 - [x] Web UI: Show site backend in site details/list
 - [ ] Install/update scripts: systemd service, install.sh, update.sh, dev-rebuild.sh, clean-validation-vm.sh
