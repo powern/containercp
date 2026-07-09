@@ -6,6 +6,30 @@ Format: date | commit | summary
 
 ---
 
+## 2025-07-08 | `a2e4356` | Fix HTTP-01 challenge verification (missing Host header)
+- Docker exec wget now includes `--header='Host: <domain>'` so nginx
+  correctly matches the admin server block
+- Added Step B2: curl via host 127.0.0.1:80 with correct Host header
+- Steps B and B2 added between file check and ACME notify
+
+### Debug commands (HTTP-01 challenge)
+```bash
+# 1. Check if admin config exists inside proxy container
+docker exec containercp-proxy ls -la /etc/nginx/conf.d/web2.softico.ua.conf
+
+# 2. Read the generated nginx config
+docker exec containercp-proxy cat /etc/nginx/conf.d/web2.softico.ua.conf
+
+# 3. Test challenge with correct Host header (bypasses DNS)
+wget --header="Host: web2.softico.ua" http://127.0.0.1/.well-known/acme-challenge/<TOKEN>
+
+# 4. If step 3 works but ACME fails — check DNS/public port 80
+# 5. Check nginx config is valid
+docker exec containercp-proxy nginx -t
+# 6. reload nginx after config changes
+docker exec containercp-proxy nginx -s reload
+```
+
 ## 2025-07-08 | `7dc9ee1` | Bootstrap/Normal mode architecture
 
 - StartupManager selects bootstrap or normal mode
