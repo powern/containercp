@@ -336,23 +336,35 @@ bool ApiServer::start() {
             return r;
         }
 
-        // Validate action and resolve to compose services
-        auto services = s.site_runtime().services_for_action(action);
-        if (services.empty()) {
-            std::string valid;
+        // Validate action against known list
+        bool valid = false;
+        for (const auto& a : s.site_runtime().valid_actions()) {
+            if (a == action) { valid = true; break; }
+        }
+        if (!valid) {
+            std::string valid_list;
             for (const auto& a : s.site_runtime().valid_actions()) {
-                if (!valid.empty()) valid += ", ";
-                valid += a;
+                if (!valid_list.empty()) valid_list += ", ";
+                valid_list += a;
             }
             r.status_code = 400;
             r.body = "{\"success\":false,\"error\":\"Invalid action '" +
-                     JsonFormatter::escape(action) + "'. Valid: " + valid + "\"}";
+                     JsonFormatter::escape(action) + "'. Valid: " + valid_list + "\"}";
             return r;
         }
 
+        // Resolve to compose services (empty = all services in project)
+        auto services = s.site_runtime().services_for_action(action);
+
         // Create async job
+        std::string action_label = action;
+        if (action == "restart-all") action_label = "all services";
+        else if (action == "restart-web") action_label = "web";
+        else if (action == "restart-php") action_label = "PHP";
+        else if (action == "restart-db") action_label = "database";
+        else if (action == "restart-redis") action_label = "Redis";
         std::vector<std::string> steps = {"Preparing restart...",
-                                           "Restarting " + action + "...",
+                                           "Restarting " + action_label + "...",
                                            "Verifying..."};
         uint64_t job_id = s.jobs().create("runtime-" + action, steps);
         s.jobs().update(job_id, "pending", 0, "Queued");

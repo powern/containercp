@@ -55,10 +55,12 @@ TEST_CASE("CommandExecutor::run with workdir") {
 
 TEST_CASE("SiteRuntimeManager valid_actions list") {
     const auto& actions = SiteRuntimeManager::valid_actions();
-    CHECK(actions.size() == 3);
+    CHECK(actions.size() == 5);
     CHECK(actions[0] == "restart-web");
     CHECK(actions[1] == "restart-php");
-    CHECK(actions[2] == "restart-all");
+    CHECK(actions[2] == "restart-db");
+    CHECK(actions[3] == "restart-redis");
+    CHECK(actions[4] == "restart-all");
 }
 
 TEST_CASE("SiteRuntimeManager services_for_action mapping") {
@@ -77,11 +79,21 @@ TEST_CASE("SiteRuntimeManager services_for_action mapping") {
         CHECK(svc[0] == "php");
     }
 
-    SUBCASE("restart-all maps to both services") {
+    SUBCASE("restart-db maps to mariadb service") {
+        auto svc = mgr.services_for_action("restart-db");
+        REQUIRE(svc.size() == 1);
+        CHECK(svc[0] == "mariadb");
+    }
+
+    SUBCASE("restart-redis maps to redis service") {
+        auto svc = mgr.services_for_action("restart-redis");
+        REQUIRE(svc.size() == 1);
+        CHECK(svc[0] == "redis");
+    }
+
+    SUBCASE("restart-all returns empty for all services") {
         auto svc = mgr.services_for_action("restart-all");
-        REQUIRE(svc.size() == 2);
-        CHECK(svc[0] == "web");
-        CHECK(svc[1] == "php");
+        CHECK(svc.empty());
     }
 
     SUBCASE("invalid action returns empty") {
@@ -97,8 +109,13 @@ TEST_CASE("RuntimeActionExecutor compose_action basic errors") {
     auto& log = containercp::logger::Logger::instance();
     RuntimeActionExecutor exec(log);
 
-    SUBCASE("missing compose dir returns error") {
+    SUBCASE("missing compose dir returns error for single service") {
         auto r = exec.restart_services("/nonexistent/path", {"web"});
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("missing compose dir returns error for all services (empty list)") {
+        auto r = exec.restart_services("/nonexistent/path", {});
         CHECK_FALSE(r.success);
     }
 }

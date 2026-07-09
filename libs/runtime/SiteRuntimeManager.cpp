@@ -15,7 +15,7 @@ std::string trim(const std::string& s) {
 }
 
 std::vector<std::string> make_actions() {
-    return {"restart-web", "restart-php", "restart-all"};
+    return {"restart-web", "restart-php", "restart-db", "restart-redis", "restart-all"};
 }
 
 } // anonymous namespace
@@ -49,7 +49,9 @@ std::vector<std::string> SiteRuntimeManager::services_for_action(
     const std::string& action) const {
     if (action == "restart-web") return {"web"};
     if (action == "restart-php") return {"php"};
-    if (action == "restart-all") return {"web", "php"};
+    if (action == "restart-db") return {"mariadb"};
+    if (action == "restart-redis") return {"redis"};
+    if (action == "restart-all") return {};  // empty = all compose services
     return {};
 }
 

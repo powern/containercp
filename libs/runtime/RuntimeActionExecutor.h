@@ -33,6 +33,10 @@ public:
                                           const std::string& subcommand,
                                           const std::vector<std::string>& services);
 
+    // List all services defined in a compose project.
+    // Returns empty vector on error.
+    std::vector<std::string> list_services(const std::string& compose_dir);
+
     // Convenience: docker compose restart one or more services.
     core::OperationResult restart_services(const std::string& compose_dir,
                                             const std::vector<std::string>& services);

@@ -35,7 +35,8 @@ public:
 
     // Map a site-level action to the compose service names it affects.
     // restart-web → {"web"}, restart-php → {"php"},
-    // restart-all → {"web", "php"}
+    // restart-db → {"mariadb"}, restart-redis → {"redis"},
+    // restart-all → {} (empty = all compose services)
     // Returns empty vector for unknown actions.
     std::vector<std::string> services_for_action(const std::string& action) const;
 

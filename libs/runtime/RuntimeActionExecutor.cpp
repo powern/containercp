@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <sstream>
+#include <vector>
 
 namespace containercp::runtime {
 
@@ -77,6 +78,23 @@ core::OperationResult RuntimeActionExecutor::compose_action(
     logger_.info("COMPOSE",
         compose_dir + " " + desc.str() + " ok");
     return {true, "docker compose " + desc.str() + " completed"};
+}
+
+std::vector<std::string> RuntimeActionExecutor::list_services(const std::string& compose_dir) {
+    auto result = executor_.run({
+        "docker", "compose", "--project-directory", compose_dir,
+        "config", "--services"
+    });
+    if (result.exit_code != 0) return {};
+
+    std::vector<std::string> services;
+    std::istringstream stream(result.out);
+    std::string line;
+    while (std::getline(stream, line)) {
+        line = trim(line);
+        if (!line.empty()) services.push_back(line);
+    }
+    return services;
 }
 
 core::OperationResult RuntimeActionExecutor::restart_services(
