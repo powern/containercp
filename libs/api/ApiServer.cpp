@@ -267,7 +267,10 @@ bool ApiServer::start() {
         return r;
     });
 
-    // GET /api/runtime/<site_id> — per-site container + HTTPS status
+    // GET /api/runtime/<site_id> — container status (web/PHP) + HTTPS summary
+    //
+    // HTTPS status is derived from CertificateStore (single source of truth).
+    // SiteRuntimeManager only handles container runtime — no SSL duplication.
     router_.add_prefix("GET", "/api/runtime/", [&s](const Request& req) {
         Response r;
         std::string id_str = req.path.substr(std::string("/api/runtime/").size());
@@ -285,11 +288,19 @@ bool ApiServer::start() {
             return r;
         }
         auto status = s.site_runtime().get_status(site_id, site->domain);
+
+        // HTTPS status from CertificateStore (single source of truth)
+        std::string https_status = "Disabled";
+        auto meta = s.cert_store().load_metadata(site_id);
+        if (meta.success) {
+            https_status = s.cert_store().https_display_status(meta.metadata);
+        }
+
         std::ostringstream json;
         json << "{\"success\":true,\"data\":{"
              << "\"web\":\"" << status.web.status
              << "\",\"php\":\"" << status.php.status
-             << "\",\"https\":\"" << status.https_status
+             << "\",\"https\":\"" << https_status
              << "\"}}";
         r.body = json.str();
         return r;

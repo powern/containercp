@@ -528,3 +528,76 @@ TEST_CASE("CertificateStore load_error_string") {
     CHECK(containercp::ssl::CertificateStore::load_error_string(LoadError::IO_ERROR) == "IO_ERROR");
     CHECK(containercp::ssl::CertificateStore::load_error_string(LoadError::INVALID_SCHEMA) == "INVALID_SCHEMA");
 }
+
+TEST_CASE("CertificateStore::https_display_status") {
+    using Metadata = containercp::ssl::CertificateStore::Metadata;
+    Metadata m;
+
+    SUBCASE("default (http_only)") {
+        CHECK(containercp::ssl::CertificateStore::https_display_status(m) == "Disabled");
+    }
+
+    SUBCASE("http_only status") {
+        m.status = "http_only";
+        m.https_enabled = false;
+        CHECK(containercp::ssl::CertificateStore::https_display_status(m) == "Disabled");
+    }
+
+    SUBCASE("disabled status") {
+        m.status = "disabled";
+        m.https_enabled = false;
+        CHECK(containercp::ssl::CertificateStore::https_display_status(m) == "Disabled");
+    }
+
+    SUBCASE("active with https_enabled") {
+        m.status = "active";
+        m.https_enabled = true;
+        m.expires_at = "2030-01-01T00:00:00Z";
+        CHECK(containercp::ssl::CertificateStore::https_display_status(m) == "Active");
+    }
+
+    SUBCASE("expired cert") {
+        m.status = "active";
+        m.https_enabled = true;
+        m.expires_at = "2020-01-01T00:00:00Z";
+        CHECK(containercp::ssl::CertificateStore::https_display_status(m) == "Expired");
+    }
+
+    SUBCASE("error status") {
+        m.status = "error";
+        m.https_enabled = true;
+        CHECK(containercp::ssl::CertificateStore::https_display_status(m) == "Error");
+    }
+
+    SUBCASE("issuing status") {
+        m.status = "issuing";
+        m.https_enabled = false;
+        CHECK(containercp::ssl::CertificateStore::https_display_status(m) == "Issuing");
+    }
+
+    SUBCASE("active but https not enabled") {
+        m.status = "active";
+        m.https_enabled = false;
+        CHECK(containercp::ssl::CertificateStore::https_display_status(m) == "Disabled");
+    }
+
+    SUBCASE("empty status") {
+        m.status = "";
+        m.https_enabled = true;
+        CHECK(containercp::ssl::CertificateStore::https_display_status(m) == "Disabled");
+    }
+
+    SUBCASE("issued status with https_enabled") {
+        m.status = "issued";
+        m.https_enabled = true;
+        m.expires_at = "2030-06-01T00:00:00Z";
+        CHECK(containercp::ssl::CertificateStore::https_display_status(m) == "Active");
+    }
+
+    SUBCASE("no expiry date") {
+        m.status = "active";
+        m.https_enabled = true;
+        m.expires_at = "";
+        CHECK(containercp::ssl::CertificateStore::https_display_status(m) == "Active");
+    }
+}

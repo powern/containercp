@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <dirent.h>
 #include <fcntl.h>
 #include <fstream>
@@ -881,6 +882,42 @@ CertificateStore::Metadata CertificateStore::metadata_from_json(const std::strin
     }
 
     return meta;
+}
+
+std::string CertificateStore::https_display_status(const Metadata& meta) {
+    if (meta.status == "error") return "Error";
+    if (meta.status == "issuing") return "Issuing";
+
+    if (meta.status.empty() || meta.status == "http_only" || meta.status == "disabled") {
+        return "Disabled";
+    }
+
+    if (!meta.https_enabled) return "Disabled";
+
+    if (meta.status == "active" || meta.status == "issued") {
+        if (!meta.expires_at.empty()) {
+            struct tm tm = {};
+            int y, M, d, h, m_min;
+            double sec;
+            if (sscanf(meta.expires_at.c_str(), "%d-%d-%dT%d:%d:%lf",
+                       &y, &M, &d, &h, &m_min, &sec) >= 3) {
+                tm.tm_year = y - 1900;
+                tm.tm_mon = M - 1;
+                tm.tm_mday = d;
+                tm.tm_hour = h;
+                tm.tm_min = m_min;
+                tm.tm_sec = static_cast<int>(sec);
+                time_t expiry_t = timegm(&tm);
+                time_t now = time(nullptr);
+                double days = difftime(expiry_t, now) / 86400.0;
+                if (days < 0) return "Expired";
+                if (days < 30) return "Expiring";
+            }
+        }
+        return "Active";
+    }
+
+    return "Disabled";
 }
 
 std::string CertificateStore::timestamp_utc() {

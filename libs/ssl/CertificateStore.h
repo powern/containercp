@@ -100,6 +100,11 @@ public:
 
     ValidationResult validate(uint64_t site_id);
 
+    // Return a display-friendly HTTPS status from metadata.
+    // Possible results: Active, Expiring (within 30 days), Expired,
+    // Error, Issuing, Disabled.
+    static std::string https_display_status(const Metadata& meta);
+
     static std::string timestamp_utc();
     static std::string domains_to_string(const std::vector<std::string>& domains);
     static std::vector<std::string> string_to_domains(const std::string& str);
