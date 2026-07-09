@@ -65,15 +65,15 @@ std::string AcmeClient::sha256_base64(const std::string& data) {
 AcmeClient::AcmeClient(logger::Logger& logger)
     : logger_(logger)
 {
-    directory_url_ = "https://acme-staging-v02.api.letsencrypt.org/directory";
+    directory_url_ = "https://acme-v02.api.letsencrypt.org/directory";
+    staging_ = false;
 }
 void AcmeClient::set_staging(bool staging) {
     staging_ = staging;
-    if (staging) {
-        directory_url_ = "https://acme-staging-v02.api.letsencrypt.org/directory";
-    } else {
-        directory_url_ = "https://acme-v02.api.letsencrypt.org/directory";
-    }
+    directory_url_ = staging
+        ? "https://acme-staging-v02.api.letsencrypt.org/directory"
+        : "https://acme-v02.api.letsencrypt.org/directory";
+    logger_.info("ACME", "Using " + std::string(staging ? "STAGING" : "PRODUCTION") + " endpoint");
 }
 // ============================================================
 // Manual JSON string extraction (no dependencies)
@@ -100,24 +100,8 @@ std::string AcmeClient::find_json_string(const std::string& json, const std::str
     }
     return result;
 }
-// Extract first string from a JSON array value
-std::string AcmeClient::find_json_string_array(const std::string& json, const std::string& key) const {
-    std::string search = "\"" + key + "\":[\"";
-    auto pos = json.find(search);
-    if (pos == std::string::npos) {
-        search = "\"" + key + "\": [\"";
-        pos = json.find(search);
-        if (pos == std::string::npos) return "";
-    }
-    pos += search.size();
-    std::string result;
-    while (pos < json.size() && json[pos] != '"') {
-        if (json[pos] == '\\' && pos + 1 < json.size()) { ++pos; result += json[pos]; }
-        else result += json[pos];
-        ++pos;
-    }
-    return result;
-}
+// ============================================================
+// libcurl helpers (stack-local strings only)
 // ============================================================
 // libcurl helpers (stack-local strings only)
 // ============================================================

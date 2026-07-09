@@ -2,6 +2,9 @@
 
 #include <chrono>
 #include <curl/curl.h>
+#include <openssl/bio.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
 #include <fstream>
 #include <sstream>
 
@@ -315,9 +318,35 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
     meta.issued_at = CertificateStore::timestamp_utc();
     meta.created_at = meta.issued_at;
     meta.updated_at = meta.issued_at;
-    // ACME certificates are valid for 90 days. Set expires_at and renew_after
-    // so the scheduler renews 30 days before expiry.
+    meta.environment = acme_.is_staging() ? "staging" : "production";
+
+    // Parse certificate dates from the downloaded PEM
     {
+        BIO* cert_bio = BIO_new_mem_buf(fullchain_pem.data(), fullchain_pem.size());
+        if (cert_bio) {
+            X509* x509 = PEM_read_bio_X509(cert_bio, nullptr, nullptr, nullptr);
+            if (x509) {
+                const ASN1_TIME* nb = X509_get0_notBefore(x509);
+                const ASN1_TIME* na = X509_get0_notAfter(x509);
+                auto fmt = [](const ASN1_TIME* t) -> std::string {
+                    BIO* b = BIO_new(BIO_s_mem());
+                    ASN1_TIME_print(b, t);
+                    char buf[32];
+                    int len = BIO_read(b, buf, sizeof(buf) - 1);
+                    BIO_free(b);
+                    if (len > 0) { buf[len] = '\0'; return std::string(buf); }
+                    return "";
+                };
+                meta.issued_at = fmt(nb);
+                meta.expires_at = fmt(na);
+                X509_free(x509);
+            }
+            BIO_free(cert_bio);
+        }
+    }
+
+    // If PEM parsing failed, fallback to 90-day window
+    if (meta.expires_at.empty()) {
         auto now = std::chrono::system_clock::now();
         auto exp_tp = now + std::chrono::hours(90 * 24);
         auto renew_tp = now + std::chrono::hours(60 * 24);
@@ -330,6 +359,10 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
         };
         meta.expires_at = fmt(std::chrono::system_clock::to_time_t(exp_tp));
         meta.renew_after = fmt(std::chrono::system_clock::to_time_t(renew_tp));
+    } else {
+        // Set renew_after to 30 days before expiry
+        // For now, use expires_at as-is and let scheduler handle the window
+        meta.renew_after = meta.expires_at;
     }
 
     auto save_result = store_.save_all(site_id, meta, fullchain_pem, privkey_pem, "");

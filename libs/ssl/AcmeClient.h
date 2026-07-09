@@ -70,7 +70,6 @@ private:
     };
 
     std::string find_json_string(const std::string& json, const std::string& key) const;
-    std::string find_json_string_array(const std::string& json, const std::string& key) const;
 
     std::string get_nonce();
     std::string compute_thumbprint();

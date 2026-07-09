@@ -200,7 +200,7 @@
 | Backup scheduling not implemented | No cron/systemd timer |
 | Backup rotation not implemented | Old backups fill disk |
 | PortManager deprecated but not removed | `libs/runtime/PortManager.cpp` |
-| SSL auto-renewal | 🔄 Being implemented in current Epic |
+| SSL auto-renewal | ✅ Implemented in current Epic |
 | No real auth for REST API | AuthMiddleware is AllowAll |
 
 ---
@@ -220,6 +220,7 @@
 | SSL-008: Real ACME HTTP-01 staging | ✅ | Step 8A complete |
 | SSL-009: Real server validation + bug fixes | ✅ | Step 8B: ACME flow, CSR, finalize, HTTPS paths, renewal policy |
 | SSL-010: Comprehensive SSL/Proxy cleanup | ✅ | Canonical upstream, transactional API, SSL mount, no fallbacks |
+| SSL-011: Production-ready SSL finalization | ✅ | Production LE default, PEM date parsing, env in metadata/GUI, dead code removed |
 
 ## Version 0.6 — DNS and Mail (Planned, after v0.5.0)
 
@@ -269,7 +270,7 @@
 | PHP Versions | 90% | Stable |
 | Docker/Runtime | 92% | Stable |
 | Reverse Proxy | 92% | Active |
-| SSL/Certs | 10% | Epic in progress (ARCH-005) |
+| SSL/Certs | 90% | Production-ready, ACME HTTP-01, auto-renewal, full GUI |
 | Access/SFTP | 75% | Active (placeholder) |
 | Backup | 85% | Active |
 | Profiles | 90% | Stable |

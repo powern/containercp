@@ -663,7 +663,7 @@ async function loadSsl(p) {
         {label:'Domain', html:r=>`<a href="#" onclick="loadSite('${esc(r.domain)}');return false">${esc(r.domain)}</a>`},
         {label:'Status', html:r=>sslStatusBadge(r.status)},
         {label:'HTTPS', html:r=>r.https_enabled?'<span class="badge badge-ok">ON</span>':'<span class="badge badge-err">OFF</span>'},
-        {label:'Provider', html:r=>esc(r.provider_id)||'—'},
+        {label:'Provider', html:r=>esc(r.provider_id)+(r.environment?'<br><span class="badge badge-info">'+esc(r.environment)+'</span>':'')},
         {label:'Expires', html:r=>fmtDate(r.expires_at)},
         {label:'Auto Renew', html:r=>r.auto_renew?'<span class="badge badge-ok">Yes</span>':'<span class="badge badge-info">No</span>'},
         {label:'Actions', html:r=>sslActions(r)}

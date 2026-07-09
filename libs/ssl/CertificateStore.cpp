@@ -745,6 +745,7 @@ std::string CertificateStore::metadata_to_json(const Metadata& meta) const {
     kv("serial_number", meta.serial_number);
     kv("issuer", meta.issuer);
     kv("subject", meta.subject);
+    kv("environment", meta.environment);
 
     kv("created_at", meta.created_at);
     kv("updated_at", meta.updated_at, true);
@@ -858,6 +859,9 @@ CertificateStore::Metadata CertificateStore::metadata_from_json(const std::strin
         } else if (key == "subject") {
             parsed_any = true;
             meta.subject = parse_json_string(json, pos);
+        } else if (key == "environment") {
+            parsed_any = true;
+            meta.environment = parse_json_string(json, pos);
         } else if (key == "created_at") {
             parsed_any = true;
             meta.created_at = parse_json_string(json, pos);

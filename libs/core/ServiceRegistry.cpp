@@ -185,9 +185,9 @@ ServiceRegistry::ServiceRegistry()
 }
 
 void ServiceRegistry::start() {
-    // Configure ACME staging: staging is default; production requires explicit opt-out
+    // Configure ACME environment: production is default; staging requires explicit opt-in
     const char* staging_env = std::getenv("LETSENCRYPT_STAGING");
-    cert_provider_->set_staging(staging_env == nullptr || std::string(staging_env) != "0");
+    cert_provider_->set_staging(staging_env != nullptr && std::string(staging_env) == "1");
 
     // Recover certificates stuck in ISSUING state after crash
     for (auto site_id : cert_store_.enumerate()) {

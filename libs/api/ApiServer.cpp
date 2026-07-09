@@ -286,6 +286,7 @@ bool ApiServer::start() {
                 const auto& meta = load_result.metadata;
                 json << ",\"site_id\":" << meta.site_id
                      << ",\"provider_id\":\"" << JsonFormatter::escape(meta.provider_id)
+                     << "\",\"environment\":\"" << JsonFormatter::escape(meta.environment)
                      << "\",\"status\":\"" << JsonFormatter::escape(meta.status)
                      << "\",\"https_enabled\":" << (meta.https_enabled ? "true" : "false")
                      << ",\"redirect_enabled\":" << (meta.redirect_enabled ? "true" : "false")
@@ -698,6 +699,7 @@ bool ApiServer::start() {
         if (load_result.success) {
             const auto& meta = load_result.metadata;
             json << ",\"provider_id\":\"" << JsonFormatter::escape(meta.provider_id)
+                 << "\",\"environment\":\"" << JsonFormatter::escape(meta.environment)
                  << "\",\"certificate_type\":\"" << JsonFormatter::escape(meta.certificate_type)
                  << "\",\"status\":\"" << JsonFormatter::escape(meta.status)
                  << "\",\"issued_at\":\"" << JsonFormatter::escape(meta.issued_at)

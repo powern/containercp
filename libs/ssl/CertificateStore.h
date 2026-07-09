@@ -39,6 +39,7 @@ public:
         std::string issuer;
         std::string subject;
 
+        std::string environment;
         std::string created_at;
         std::string updated_at;
     };
