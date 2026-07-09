@@ -82,4 +82,19 @@ std::string ProxyConfigBuilder::acme_challenge_location() const {
            "}\n";
 }
 
+std::string ProxyConfigBuilder::normalize_upstream(const std::string& raw) {
+    std::string result = raw;
+    auto scheme = result.find("://");
+    if (scheme != std::string::npos) {
+        result = result.substr(scheme + 3);
+    }
+    while (!result.empty() && result[0] == '/') {
+        result = result.substr(1);
+    }
+    while (!result.empty() && (result.back() == ' ' || result.back() == '\t' || result.back() == ';')) {
+        result.pop_back();
+    }
+    return result;
+}
+
 } // namespace containercp::proxy

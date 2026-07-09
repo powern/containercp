@@ -33,6 +33,8 @@ public:
     std::string build_redirect_block(const std::string& domain) const;
 
     std::string acme_challenge_location() const;
+
+    static std::string normalize_upstream(const std::string& raw);
 };
 
 } // namespace containercp::proxy

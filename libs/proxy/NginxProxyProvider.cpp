@@ -8,6 +8,8 @@
 
 namespace containercp::proxy {
 
+
+
 NginxProxyProvider::NginxProxyProvider(filesystem::Filesystem& fs, config::Config& cfg,
                                        logger::Logger& logger, ssl::SslCertificateManager& ssl_mgr)
     : fs_(fs)
@@ -37,7 +39,6 @@ core::OperationResult NginxProxyProvider::create_proxy(const ReverseProxy& proxy
     std::string path = config_path(proxy.domain);
     fs_.create_directory(cfg_.data_root() + "/proxy/sites/");
 
-    // Upstream is now a Docker service name, e.g. "site-3-web:80"
     std::string upstream = proxy.upstream.empty() ? "site-0-web:80" : proxy.upstream;
 
     auto* cert = ssl_mgr_.find_by_domain(proxy.domain);
@@ -47,7 +48,7 @@ core::OperationResult NginxProxyProvider::create_proxy(const ReverseProxy& proxy
     cfg_params.domain = proxy.domain;
     cfg_params.upstream = upstream;
     cfg_params.https = has_ssl;
-    cfg_params.redirect = has_ssl; // legacy: existing sites with SSL get redirect
+    cfg_params.redirect = has_ssl;
     if (has_ssl && cert) {
         cfg_params.cert_path = cert->certificate_path;
         cfg_params.key_path = cert->key_path;
@@ -78,6 +79,30 @@ core::OperationResult NginxProxyProvider::disable_proxy(const std::string& domai
     return {true, ""};
 }
 
+// Extract upstream from existing config file, normalize to host:port
+static std::string extract_upstream(const std::string& filepath, logger::Logger& logger) {
+    std::ifstream in(filepath);
+    if (!in.is_open()) return "";
+
+    std::string content((std::istreambuf_iterator<char>(in)), {});
+    in.close();
+
+    const std::string marker = "proxy_pass ";
+    auto pos = content.find(marker);
+    if (pos == std::string::npos) return "";
+
+    pos += marker.size(); // skip "proxy_pass "
+
+    // Find semicolon end
+    auto end = content.find(";", pos);
+    if (end == std::string::npos) return "";
+
+    std::string normalized = ProxyConfigBuilder::normalize_upstream(content.substr(pos, end - pos));
+
+    logger.info("PROXY", "extract_upstream: normalized='" + normalized + "'");
+    return normalized;
+}
+
 core::OperationResult NginxProxyProvider::attach_certificate(const std::string& domain,
                                                                const std::string& cert_path,
                                                                const std::string& key_path) {
@@ -86,43 +111,15 @@ core::OperationResult NginxProxyProvider::attach_certificate(const std::string& 
         return {false, "Proxy config not found for " + domain};
     }
 
-    // Normalize upstream: extract from existing config, strip scheme and leading slashes
-    std::string upstream;
-    {
-        std::ifstream in(path);
-        if (!in.is_open()) {
-            return {false, "Cannot read existing config for " + domain};
-        }
-        std::string existing((std::istreambuf_iterator<char>(in)), {});
-        in.close();
-
-        // Find proxy_pass directive
-        auto pos = existing.find("proxy_pass ");
-        if (pos != std::string::npos) {
-            pos += 12; // "proxy_pass "
-            // Strip http:// if present
-            if (existing.compare(pos, 7, "http://") == 0) pos += 7;
-            // Strip leading slashes (e.g., "///site-4-web:80")
-            while (pos < existing.size() && existing[pos] == '/') pos++;
-            auto end = existing.find(";", pos);
-            if (end != std::string::npos) {
-                upstream = existing.substr(pos, end - pos);
-                // Trim whitespace
-                while (!upstream.empty() && (upstream.back() == ' ' || upstream.back() == '\t'))
-                    upstream.pop_back();
-            }
-        }
-    }
-
+    // Extract upstream from existing config (always normalized to host:port)
+    std::string upstream = extract_upstream(path, logger_);
     if (upstream.empty()) {
-        // Default: use a reasonable fallback
         upstream = "site-0-web:80";
-        logger_.warning("PROXY", domain + ": upstream not found in config, using default: " + upstream);
+        logger_.warning("PROXY", domain + ": upstream not found, using default: " + upstream);
     }
-
     logger_.info("PROXY", domain + ": resolved upstream=" + upstream);
 
-    // Verify certificate files exist before generating config
+    // Verify certificate files exist
     if (!fs_.exists(cert_path)) {
         return {false, domain + ": Certificate file not found: " + cert_path};
     }
@@ -141,17 +138,38 @@ core::OperationResult NginxProxyProvider::attach_certificate(const std::string& 
     std::string config = config_builder_.build(params);
     logger_.info("PROXY", domain + ": generated config (" + std::to_string(config.size()) + " bytes)");
 
-    // Transactional write: write to temp file, validate with nginx -t, then rename
-    std::string tmp_path = path + ".attach_tmp";
-    fs_.create_file(tmp_path, config);
+    // Write to a backup copy first, then rename to config_path.
+    // nginx -t validates ALL configs in /etc/nginx/conf.d/ so we must
+    // ensure the new file is in place (via atomic rename) before validating.
+    //
+    // Transactional flow:
+    //   1. Write new config to path.new (on host filesystem, visible to container)
+    //   2. Rename new → path (atomic, replaces old broken config)
+    //   3. Run nginx -t inside container
+    //   4. If OK, reload nginx
+    //   5. If FAIL, restore old config from path.bak (saved before rename)
+    std::string new_path = path + ".new";
+    std::string bak_path = path + ".bak";
 
-    if (!validate_nginx_config(tmp_path)) {
-        std::filesystem::remove(tmp_path);
-        return {false, domain + ": Generated nginx config is invalid"};
+    // Save current config as backup
+    std::filesystem::copy(path, bak_path, std::filesystem::copy_options::overwrite_existing);
+
+    // Write new config
+    fs_.create_file(new_path, config);
+
+    // Atomic rename: replace old config with new one
+    std::filesystem::rename(new_path, path);
+
+    // Validate ALL nginx configs inside the container
+    if (!validate_nginx_config(path)) {
+        // Restore backup
+        std::filesystem::rename(bak_path, path);
+        logger_.error("PROXY", domain + ": nginx config validation failed, config restored");
+        return {false, domain + ": nginx config validation failed"};
     }
 
-    // Atomic replace
-    std::filesystem::rename(tmp_path, path);
+    // Remove backup
+    std::filesystem::remove(bak_path);
 
     // Reload nginx
     auto reload_result = reload();
@@ -166,52 +184,31 @@ core::OperationResult NginxProxyProvider::attach_certificate(const std::string& 
 core::OperationResult NginxProxyProvider::detach_certificate(const std::string& domain) {
     std::string path = config_path(domain);
     if (!fs_.exists(path)) {
-        return {true, ""}; // No config, nothing to detach
+        return {true, ""};
     }
 
-    // Read existing config
-    std::ifstream in(path);
-    if (!in.is_open()) {
-        return {false, "Cannot read config for " + domain};
-    }
-    std::string existing((std::istreambuf_iterator<char>(in)), {});
-    in.close();
-
-    // Extract upstream from existing config
-    std::string upstream;
-    {
-        auto pos = existing.find("proxy_pass ");
-        if (pos != std::string::npos) {
-            pos += 12; // "proxy_pass "
-            if (existing.compare(pos, 7, "http://") == 0) pos += 7;
-            while (pos < existing.size() && existing[pos] == '/') pos++;
-            auto end = existing.find(";", pos);
-            if (end != std::string::npos) {
-                upstream = existing.substr(pos, end - pos);
-                while (!upstream.empty() && (upstream.back() == ' ' || upstream.back() == '\t'))
-                    upstream.pop_back();
-            }
-        }
-    }
+    std::string upstream = extract_upstream(path, logger_);
     if (upstream.empty()) {
         upstream = "site-0-web:80";
     }
-
     logger_.info("PROXY", domain + ": detaching certificate, upstream=" + upstream);
 
     // Build pure HTTP config
     std::string config = config_builder_.build_http_block(domain, upstream);
 
-    // Transactional write
-    std::string tmp_path = path + ".detach_tmp";
-    fs_.create_file(tmp_path, config);
+    // Transactional replace
+    std::string new_path = path + ".detach_new";
+    std::string bak_path = path + ".detach_bak";
+    std::filesystem::copy(path, bak_path, std::filesystem::copy_options::overwrite_existing);
+    fs_.create_file(new_path, config);
+    std::filesystem::rename(new_path, path);
 
-    if (!validate_nginx_config(tmp_path)) {
-        std::filesystem::remove(tmp_path);
-        return {false, "Generated nginx config is invalid"};
+    if (!validate_nginx_config(path)) {
+        std::filesystem::rename(bak_path, path);
+        logger_.error("PROXY", domain + ": nginx config validation failed after detach, restored");
+        return {false, domain + ": nginx config validation failed"};
     }
-
-    std::filesystem::rename(tmp_path, path);
+    std::filesystem::remove(bak_path);
 
     auto reload_result = reload();
     if (!reload_result.success) {
@@ -222,7 +219,8 @@ core::OperationResult NginxProxyProvider::detach_certificate(const std::string& 
     return {true, ""};
 }
 
-bool NginxProxyProvider::validate_nginx_config(const std::string& /*config_path*/) const {
+bool NginxProxyProvider::validate_nginx_config(const std::string& config_path) const {
+    (void)config_path; // All configs in /etc/nginx/conf.d/ are validated together
     std::string cmd = "docker exec " + proxy_name() + " nginx -t 2>&1";
     std::string out_file = "/tmp/containercp-nginx-check.txt";
     std::system((cmd + " > " + out_file + " 2>&1").c_str());
@@ -244,11 +242,25 @@ bool NginxProxyProvider::validate_nginx_config(const std::string& /*config_path*
 }
 
 core::OperationResult NginxProxyProvider::reload() {
-    std::string cmd = "docker exec " + proxy_name() + " nginx -s reload > /dev/null 2>&1";
-    int rc = std::system(cmd.c_str());
-    if (rc != 0) {
-        logger_.info("PROXY", "Reload failed (proxy container may not be running)");
-        return {false, "Reload failed: proxy container not running"};
+    std::string cmd = "docker exec " + proxy_name() + " nginx -s reload 2>&1";
+    std::string out_file = "/tmp/containercp-nginx-reload.txt";
+    std::system((cmd + " > " + out_file + " 2>&1").c_str());
+    std::ifstream out_in(out_file);
+    bool ok = true;
+    std::string error_msg;
+    if (out_in.is_open()) {
+        std::string line;
+        while (std::getline(out_in, line)) {
+            if (line.find("emerg") != std::string::npos || line.find("failed") != std::string::npos) {
+                error_msg = line;
+                ok = false;
+            }
+        }
+    }
+    std::remove(out_file.c_str());
+    if (!ok) {
+        logger_.error("PROXY", "Reload failed: " + error_msg);
+        return {false, "Reload failed: " + error_msg};
     }
     logger_.info("PROXY", "Reloaded");
     return {true, ""};
@@ -256,9 +268,6 @@ core::OperationResult NginxProxyProvider::reload() {
 
 core::OperationResult NginxProxyProvider::ensure_central_proxy() {
     if (central_proxy_running()) {
-        // Verify the existing container has the correct configuration.
-        // If it was created with --network host (old RC1 style), recreate it.
-        // Also check that port 80 is mapped and containercp-public network exists.
         std::string mode_check = "docker inspect " + proxy_name()
             + " --format '{{.HostConfig.NetworkMode}}' 2>/dev/null";
         std::string mode_file = "/tmp/containercp-proxy-mode.txt";
@@ -276,7 +285,6 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
             needs_recreate = true;
         }
 
-        // Also check port mapping — if port 80 is not published, recreate
         if (!needs_recreate) {
             std::string port_check = "docker inspect " + proxy_name()
                 + " --format '{{index .NetworkSettings.Ports \"80/tcp\"}}' 2>/dev/null";
@@ -306,12 +314,10 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
     fs_.create_directory(cfg_.data_root() + "/proxy/");
     fs_.create_directory(cfg_.data_root() + "/proxy/sites/");
 
-    // Ensure the shared public network exists
     std::string net_cmd = "docker network inspect containercp-public > /dev/null 2>&1"
         " || docker network create containercp-public > /dev/null 2>&1";
     std::system(net_cmd.c_str());
 
-    // Write a fallback default config so nginx has something to serve
     std::string default_conf_path = cfg_.data_root() + "/proxy/sites/00-default.conf";
     if (!fs_.exists(default_conf_path)) {
         std::ostringstream conf;
@@ -339,8 +345,6 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
     return {true, ""};
 }
 
-// remove_central_proxy is preserved for cleanup but NOT called on normal shutdown.
-// The proxy container survives daemon restart. Only explicit reset should remove it.
 core::OperationResult NginxProxyProvider::remove_central_proxy() {
     std::string cmd = "docker rm -f " + proxy_name() + " > /dev/null 2>&1";
     std::system(cmd.c_str());

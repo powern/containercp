@@ -1,3 +1,4 @@
+#include "proxy/ProxyConfigBuilder.h"
 #include "proxy/ReverseProxyManager.h"
 
 #include <cstdint>
@@ -24,6 +25,18 @@ TEST_CASE("ReverseProxyManager create/find/list/remove") {
 
     CHECK(mgr.remove(id));
     CHECK(mgr.find_by_domain("example.com") == nullptr);
+}
+
+TEST_CASE("ProxyConfigBuilder normalize_upstream") {
+    using containercp::proxy::ProxyConfigBuilder;
+
+    CHECK(ProxyConfigBuilder::normalize_upstream("site-4-web:80") == "site-4-web:80");
+    CHECK(ProxyConfigBuilder::normalize_upstream("/site-4-web:80") == "site-4-web:80");
+    CHECK(ProxyConfigBuilder::normalize_upstream("http://site-4-web:80") == "site-4-web:80");
+    CHECK(ProxyConfigBuilder::normalize_upstream("http:///site-4-web:80") == "site-4-web:80");
+    CHECK(ProxyConfigBuilder::normalize_upstream("ttp:///site-4-web:80") == "site-4-web:80");
+    CHECK(ProxyConfigBuilder::normalize_upstream("site-0-web:80;") == "site-0-web:80");
+    CHECK(ProxyConfigBuilder::normalize_upstream("") == "");
 }
 
 TEST_CASE("ReverseProxyManager multiple") {
