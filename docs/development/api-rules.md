@@ -235,3 +235,10 @@ format.  No business logic, no direct I/O, no Docker commands.
 ## 9. Required rule for future agents
 
 > **Before modifying or adding any API endpoint, read this document first.**
+
+## 10. Related documents
+
+- `docs/api/API_REFERENCE.md` — authoritative endpoint index
+- `docs/development/single-source-of-truth.md` — SSOT ownership rules
+- `docs/runtime-architecture.md` — runtime subsystem
+- `AGENTS.md` — main AI entry point

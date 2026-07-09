@@ -28,7 +28,8 @@ At session start: read `planning/project-status.md` for current task state.
 
 - **API first** — every operation must be available through the REST API
   before CLI or Web UI. CLI and UI are only clients of the API.
-  Before any API work, read `docs/development/api-rules.md`.
+  Before any API work, read `docs/api/API_REFERENCE.md` (endpoint index)
+  and `docs/development/api-rules.md` (design rules).
 - **Architecture order**: `Core → Resource → Manager → Storage → Provider → Daemon → REST API → Web UI → CLI → Tests`
 - **Business logic** must never live in CLI handlers or Web UI code.
 - **Validation-driven** — VM validation is the primary quality gate
@@ -76,7 +77,8 @@ Never run destructive commands without explicit confirmation:
 | Runtime architecture | `docs/runtime-architecture.md` |
 | Single Source of Truth | `docs/development/single-source-of-truth.md` |
 | Development rules | `docs/development/coding-rules.md` |
-| API design | `docs/development/api-rules.md` |
+| API reference | `docs/api/API_REFERENCE.md` |
+| API design rules | `docs/development/api-rules.md` |
 | Testing | `planning/TEST_ENVIRONMENT.md` |
 | Changelog | `CHANGELOG.md` |
 
