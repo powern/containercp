@@ -257,7 +257,43 @@ bool ApiServer::start() {
 
     router_.add("GET", "/api/domains", [&s](const Request&) {
         Response r;
-        r.body = JsonFormatter::success(JsonFormatter::domains(s.domains().list()));
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":[";
+        bool first = true;
+        for (const auto& d : s.domains().list()) {
+            if (!first) json << ",";
+            first = false;
+
+            // Enrich with site info
+            std::string site_name;
+            std::string site_domain;
+            auto* site = s.sites().find_by_id(d.site_id);
+            if (site) {
+                site_name = site->name;
+                site_domain = site->domain;
+            }
+
+            // Enrich with SSL status from CertificateStore (SSOT)
+            std::string ssl_status = "Disabled";
+            auto ssl_meta = s.cert_store().load_metadata(d.site_id);
+            if (ssl_meta.success) {
+                ssl_status = s.cert_store().https_display_status(ssl_meta.metadata);
+            }
+
+            json << "{\"id\":" << d.id
+                 << ",\"domain\":\"" << JsonFormatter::escape(d.fqdn)
+                 << "\",\"type\":\"" << JsonFormatter::escape(d.type)
+                 << "\",\"site_id\":" << d.site_id
+                 << ",\"site_name\":\"" << JsonFormatter::escape(site_name)
+                 << "\",\"site_domain\":\"" << JsonFormatter::escape(site_domain)
+                 << "\",\"target\":\"" << JsonFormatter::escape(d.target)
+                 << ",\"ssl_enabled\":" << (d.ssl_enabled ? "true" : "false")
+                 << ",\"ssl_status\":\"" << JsonFormatter::escape(ssl_status)
+                 << ",\"enabled\":" << (d.enabled ? "true" : "false")
+                 << "}";
+        }
+        json << "]}";
+        r.body = json.str();
         return r;
     });
 

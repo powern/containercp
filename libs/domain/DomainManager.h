@@ -11,7 +11,9 @@ namespace containercp::domain {
 
 class DomainManager {
 public:
-    uint64_t create(const std::string& fqdn, uint64_t owner_id, uint64_t site_id);
+    uint64_t create(const std::string& fqdn, uint64_t owner_id, uint64_t site_id,
+                    const std::string& type = "primary",
+                    const std::string& target = "");
     bool remove(uint64_t id);
     Domain* find(const std::string& fqdn);
     Domain* find(uint64_t id);

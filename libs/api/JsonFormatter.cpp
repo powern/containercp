@@ -96,7 +96,9 @@ std::string JsonFormatter::domains(const std::vector<domain::Domain>& domains) {
              << ",\"php_version\":\"" << escape(d.php_version)
              << "\",\"ssl_enabled\":" << (d.ssl_enabled ? "true" : "false")
              << ",\"enabled\":" << (d.enabled ? "true" : "false")
-             << "}";
+             << ",\"type\":\"" << escape(d.type)
+             << "\",\"target\":\"" << escape(d.target)
+             << "\"}";
     }
     json << "]";
     return json.str();

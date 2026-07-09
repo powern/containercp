@@ -2,7 +2,8 @@
 
 namespace containercp::domain {
 
-uint64_t DomainManager::create(const std::string& fqdn, uint64_t owner_id, uint64_t site_id) {
+uint64_t DomainManager::create(const std::string& fqdn, uint64_t owner_id, uint64_t site_id,
+                                const std::string& type, const std::string& target) {
     Domain d;
     d.id = next_id_++;
     d.name = fqdn;
@@ -12,6 +13,8 @@ uint64_t DomainManager::create(const std::string& fqdn, uint64_t owner_id, uint6
     d.php_version = "8.4";
     d.ssl_enabled = false;
     d.enabled = true;
+    d.type = type;
+    d.target = target;
     domains_.push_back(std::move(d));
     return d.id;
 }

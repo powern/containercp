@@ -15,6 +15,8 @@ struct Domain : core::Resource {
     std::string php_version = "8.4";
     bool ssl_enabled = false;
     bool enabled = true;
+    std::string type = "primary";      // primary, alias, redirect, wildcard
+    std::string target;                // site domain for primary/alias, URL for redirect
 };
 
 } // namespace containercp::domain
