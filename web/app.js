@@ -643,9 +643,9 @@ function runRuntimeAction(siteId, domain, action) {
 
 /* ===== DOMAINS ===== */
 function domainTypeBadge(type) {
-  const m = {'primary':'badge-ok','alias':'badge-info','redirect':'badge-warn','wildcard':'badge-info'};
+  const m = {'primary':'badge-ok','alias':'badge-info','redirect':'badge-warn','wildcard':'badge-info','legacy':'badge-info'};
   const label = type || 'legacy';
-  return `<span class="badge ${m[label]||'badge-err'}">${esc(label)}</span>`;
+  return `<span class="badge ${m[label]||'badge-info'}">${esc(label)}</span>`;
 }
 
 function domainSslBadge(status) {
@@ -656,21 +656,36 @@ function domainSslBadge(status) {
 async function loadDomains(p) {
   try {
     const data = await api('/api/domains');
-    p.innerHTML = `<div class="page-header"><h1>Domains</h1></div>`;
+    p.innerHTML = `<div class="page-header"><h1>Domains</h1><div class="page-actions" style="font-size:12px;color:var(--text3);font-weight:normal;">${(data.data||[]).length} domain${(data.data||[]).length===1?'':'s'}</div></div>`;
     p.innerHTML += tb('All Domains');
     window.renderTable = () => {
       const tbl = $('domains-table');
       if (!tbl) return;
       const rows = (data.data||[]).filter(r=>!searchTerm||r.domain.includes(searchTerm)||(r.site_name||'').includes(searchTerm));
       tbl.innerHTML = buildTable([
-        {label:'Domain',html:r=>`<a href="http://${esc(r.domain)}" target="_blank" style="color:var(--primary);text-decoration:none;" title="Open in browser">${esc(r.domain)}</a> <span style="cursor:pointer;font-size:11px;color:var(--text3);" onclick="copyText('${esc(r.domain)}')" title="Copy domain">&#128203;</span>`},
+        {label:'Domain',html:r=>{
+          const proto = r.ssl_enabled ? 'https' : 'http';
+          return `<a href="${proto}://${esc(r.domain)}" target="_blank" style="color:var(--primary);text-decoration:none;font-weight:500;" title="Open ${proto}://${esc(r.domain)}">${esc(r.domain)}</a> <span style="cursor:pointer;font-size:11px;color:var(--text3);" onclick="copyText('${esc(r.domain)}')" title="Copy domain">&#128203;</span>`;
+        }},
         {label:'Type',html:r=>domainTypeBadge(r.type)},
-        {label:'Site',html:r=>r.site_name?`${esc(r.site_name)}<br><span style="font-size:11px;color:var(--text3);">${esc(r.site_domain||'')}</span>`:`<span class="badge badge-info">Unlinked</span>`},
-        {label:'Target',html:r=>r.target?esc(r.target):r.site_domain?esc(r.site_domain):'<span class="badge badge-info">—</span>'},
+        {label:'Site',html:r=>r.site_name?`<div style="line-height:1.4;"><div>${esc(r.site_name)}</div><div style="font-size:11px;color:var(--text3);">${esc(r.site_domain||'')}</div></div>`:`<span class="badge badge-info">Unlinked</span>`},
+        {label:'Target',html:r=>{
+          if (r.target) return `<span style="word-break:break-all;">${esc(r.target)}</span>`;
+          if (r.site_domain) return `<span style="color:var(--text3);">${esc(r.site_domain)}</span>`;
+          return '<span class="badge badge-info">—</span>';
+        }},
         {label:'DNS',html:()=>'<span class="badge badge-info">Unknown</span>'},
         {label:'HTTP',html:()=>'<span class="badge badge-info">Unknown</span>'},
         {label:'SSL',html:r=>domainSslBadge(r.ssl_status)},
-        {label:'Actions',html:r=>`<button class="btn-icon" onclick="window.open('http://${esc(r.domain)}','_blank')" title="Open">&#8599;</button><button class="btn-icon" onclick="copyText('${esc(r.domain)}')" title="Copy">&#128203;</button>${r.site_id?`<button class="btn-icon" onclick="navigate('site-detail',${r.site_id})" title="View site">&#128065;</button>`:''}<button class="btn-icon" style="color:var(--red)" onclick="removeDomain('${esc(r.domain)}')" title="Remove">&#10005;</button>`}
+        {label:'Actions',html:r=>{
+          const proto = r.ssl_enabled ? 'https' : 'http';
+          let acts = `<button class="btn-icon" onclick="window.open('${proto}://${esc(r.domain)}','_blank')" title="Open in browser">&#8599;</button>`;
+          acts += `<button class="btn-icon" onclick="copyText('${esc(r.domain)}')" title="Copy domain">&#128203;</button>`;
+          acts += `<button class="btn-icon" onclick="navigate('ssl')" title="SSL settings">&#128274;</button>`;
+          if (r.site_id) acts += `<button class="btn-icon" onclick="navigate('site-detail',${r.site_id})" title="View site">&#128065;</button>`;
+          acts += `<button class="btn-icon" style="color:var(--red)" onclick="removeDomain('${esc(r.domain)}')" title="Remove domain">&#10005;</button>`;
+          return acts;
+        }}
       ], rows, 'No domains');
     };
     p.innerHTML += `<div id="domains-table"></div>`;
