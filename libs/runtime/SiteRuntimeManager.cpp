@@ -19,10 +19,6 @@ std::vector<std::string> make_actions() {
     return {"restart-web", "restart-php", "restart-db", "restart-redis", "restart-all"};
 }
 
-// Site compose services for status checks.
-// These are the services relevant to the Sites module.
-constexpr const char* STATUS_SERVICES[] = {"web", "php"};
-
 } // anonymous namespace
 
 const std::vector<std::string>& SiteRuntimeManager::valid_actions() {
@@ -110,10 +106,14 @@ SiteRuntimeStatus SiteRuntimeManager::get_status(uint64_t site_id,
     SiteRuntimeStatus s;
     std::string compose_dir = path_join(sites_root_, domain);
 
-    s.web.status = container_status(compose_dir, STATUS_SERVICES[0]);
-    s.php.status = container_status(compose_dir, STATUS_SERVICES[1]);
-    s.web.name = domain + "-" + STATUS_SERVICES[0];
-    s.php.name = domain + "-" + STATUS_SERVICES[1];
+    s.web.status = container_status(compose_dir, "web");
+    s.php.status = container_status(compose_dir, "php");
+    s.db.status = container_status(compose_dir, "mariadb");
+    s.cache.status = container_status(compose_dir, "redis");
+    s.web.name = domain + "-web";
+    s.php.name = domain + "-php";
+    s.db.name = domain + "-mariadb";
+    s.cache.name = domain + "-redis";
 
     return s;
 }

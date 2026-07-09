@@ -20,6 +20,8 @@ struct ContainerStatus {
 struct SiteRuntimeStatus {
     ContainerStatus web;
     ContainerStatus php;
+    ContainerStatus db;
+    ContainerStatus cache;
 };
 
 class SiteRuntimeManager {

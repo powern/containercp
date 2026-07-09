@@ -300,6 +300,8 @@ bool ApiServer::start() {
         json << "{\"success\":true,\"data\":{"
              << "\"web\":\"" << status.web.status
              << "\",\"php\":\"" << status.php.status
+             << "\",\"db\":\"" << status.db.status
+             << "\",\"cache\":\"" << status.cache.status
              << "\",\"https\":\"" << https_status
              << "\"}}";
         r.body = json.str();

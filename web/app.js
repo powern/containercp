@@ -580,8 +580,8 @@ function refreshRuntimeCard(siteId, domain, backend) {
     const roles = [
       {role:'Frontend', svc:'web', status: rt.data.web, backend: backend},
       {role:'PHP', svc:'php', status: rt.data.php, backend: ''},
-      {role:'Database', svc:'mariadb', status: rt.data.rt_db || 'Unknown', backend: ''},
-      {role:'Redis', svc:'redis', status: rt.data.rt_redis || 'Unknown', backend: ''}
+      {role:'Database', svc:'mariadb', status: rt.data.db || 'Unknown', backend: ''},
+      {role:'Redis', svc:'redis', status: rt.data.cache || 'Unknown', backend: ''}
     ];
     list.innerHTML = roles.map(r => {
       const impl = r.backend ? `<span style="font-size:11px;color:var(--text3);margin-left:4px;">(${r.backend === 'nginx' ? 'Nginx' : 'Apache'})</span>` : '';
