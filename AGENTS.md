@@ -28,6 +28,7 @@ At session start: read `planning/project-status.md` for current task state.
 
 - **API first** — every operation must be available through the REST API
   before CLI or Web UI. CLI and UI are only clients of the API.
+  Before any API work, read `docs/development/api-rules.md`.
 - **Architecture order**: `Core → Resource → Manager → Storage → Provider → Daemon → REST API → Web UI → CLI → Tests`
 - **Business logic** must never live in CLI handlers or Web UI code.
 - **Validation-driven** — VM validation is the primary quality gate
