@@ -180,8 +180,19 @@ Fields: `version`, `server_hostname`.
 
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|
-| GET | `/api/domains` | List all domains | `DomainManager` |
+| GET | `/api/domains` | List all domains (enriched with site name + SSL status) | `DomainManager` + `SiteManager` + `CertificateStore` |
 | POST | `/api/domains/remove` | Remove a domain record | `DomainManager` |
+
+**GET /api/domains** — returns per-domain: `id`, `domain`, `type`
+(`primary`|`alias`|`redirect`|`wildcard`), `site_id`, `site_name`,
+`site_domain`, `target`, `ssl_enabled`, `ssl_status` (from
+`CertificateStore::https_display_status`), `enabled`.
+
+The API handler enriches domain records with site info from
+`SiteManager::find_by_id()` and SSL status from
+`CertificateStore::load_metadata()` + `https_display_status()`.
+No business logic is duplicated — the API consumes the owning
+subsystems.
 
 ### 2.10 Proxy
 
