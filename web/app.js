@@ -360,7 +360,14 @@ async function loadSites(p) {
         {label:'HTTPS',html:r=>`<span data-rt-id="${r.id}" data-rt-service="https" class="badge badge-info">...</span>`},
         {label:'Owner',html:r=>esc(r.owner)},
         {label:'Backend',html:r=>r.web_server==='nginx'?'<span class="badge badge-info">Nginx</span>':'<span class="badge badge-ok">Apache2</span>'},
-        {label:'Actions',html:r=>`<button class="btn-icon" onclick="navigate('site-detail',${r.id})" title="View">&#128065;</button><button class="btn-icon" style="color:var(--red)" title="Remove" onclick="removeSite('${esc(r.domain)}')">&#10005;</button>`}
+        {label:'Actions',html:r=>`<div style="display:flex;gap:2px;align-items:center;">
+          <button class="btn-icon" onclick="navigate('site-detail',${r.id})" title="View">&#128065;</button>
+          <div style="position:relative;display:inline-block;">
+            <button class="btn-icon" onclick="toggleRuntimeMenu(event,${r.id},'${esc(r.domain)}','${r.web_server}')" title="Runtime actions">&#9889;</button>
+            <div id="rt-menu-${r.id}" class="rt-dropdown" style="display:none;position:absolute;right:0;top:100%;z-index:100;background:var(--surface);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.3);min-width:150px;padding:4px 0;"></div>
+          </div>
+          <button class="btn-icon" style="color:var(--red)" title="Remove" onclick="removeSite('${esc(r.domain)}')">&#10005;</button>
+        </div>`}
       ], filtered, 'No sites');
       // Fetch runtime + HTTPS status for each site
       filtered.forEach(site => {
@@ -380,6 +387,87 @@ async function loadSites(p) {
     p.innerHTML += `<div id="sites-table"></div>`;
     window.renderTable();
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load sites</div>'; }
+}
+
+/* ===== RUNTIME ACTIONS ===== */
+function toggleRuntimeMenu(event, siteId, domain, backend) {
+  event.stopPropagation();
+  const menu = document.getElementById('rt-menu-' + siteId);
+  if (!menu) return;
+  // Close all other open menus
+  document.querySelectorAll('.rt-dropdown').forEach(m => { if (m.id !== 'rt-menu-' + siteId) m.style.display = 'none'; });
+  if (menu.style.display === 'block') { menu.style.display = 'none'; return; }
+
+  const label = (a) => {
+    const map = {'restart-web':'Restart Web','restart-php':'Restart PHP','restart-db':'Restart DB','restart-redis':'Restart Redis','restart-all':'Restart All'};
+    return map[a] || a;
+  };
+  const needsConfirm = (a) => a === 'restart-db' || a === 'restart-redis' || a === 'restart-all';
+
+  const actions = ['restart-web','restart-php','restart-db','restart-redis','restart-all'];
+  menu.innerHTML = actions.map(a => {
+    const warn = needsConfirm(a) ? ' style="color:var(--yellow)"' : '';
+    return `<div class="rt-menu-item" data-action="${a}" data-site="${siteId}" data-domain="${esc(domain)}"${warn} onclick="runRuntimeAction(this)">${label(a)}</div>`;
+  }).join('');
+  menu.style.display = 'block';
+  // Close on outside click
+  setTimeout(() => document.addEventListener('click', closeRtMenus, {once:true}), 10);
+}
+
+function closeRtMenus() {
+  document.querySelectorAll('.rt-dropdown').forEach(m => m.style.display = 'none');
+}
+
+async function runRuntimeAction(el) {
+  const action = el.dataset.action;
+  const siteId = el.dataset.site;
+  const domain = el.dataset.domain;
+
+  // Confirmation for destructive actions
+  if (action === 'restart-db') {
+    if (!confirm('Restart database container for ' + domain + '?\nThis may cause brief downtime.')) return;
+  } else if (action === 'restart-redis') {
+    if (!confirm('Restart Redis container for ' + domain + '?')) return;
+  } else if (action === 'restart-all') {
+    if (!confirm('Restart ALL containers for ' + domain + '?\nThis will restart web, PHP, database, and Redis.')) return;
+  } else {
+    if (!confirm('Restart ' + (action === 'restart-web' ? 'web' : 'PHP') + ' for ' + domain + '?')) return;
+  }
+
+  closeRtMenus();
+  toast('Restarting...', 'info');
+
+  try {
+    const res = await apiPost('/api/runtime/' + siteId + '/' + action, {});
+    if (res.success && res.data) {
+      toast('Restart queued (job #' + res.data.job_id + ')', 'success');
+    } else if (res.success) {
+      toast('Restart queued', 'success');
+    } else {
+      toast('Error: ' + (res.error || 'Unknown error'), 'error');
+      return;
+    }
+  } catch(e) {
+    toast('Error: ' + e.message, 'error');
+    return;
+  }
+
+  // Refresh runtime status badges after a short delay
+  setTimeout(() => refreshSiteRuntime(siteId), 1500);
+}
+
+function refreshSiteRuntime(siteId) {
+  api('/api/runtime/' + siteId).then(rt => {
+    if (!rt.success) return;
+    const m={'Running':'badge-ok','Active':'badge-ok','Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn','Expiring':'badge-warn','Error':'badge-err','Expired':'badge-err','Disabled':'badge-info','Issuing':'badge-warn','Unknown':'badge-info'};
+    const update = (srv, val) => {
+      const el = document.querySelector(`span[data-rt-id="${siteId}"][data-rt-service="${srv}"]`);
+      if (el) { el.className = 'badge ' + (m[val]||'badge-info'); el.textContent = val; }
+    };
+    update('web', rt.data.web);
+    update('php', rt.data.php);
+    update('https', rt.data.https);
+  }).catch(() => {});
 }
 
 async function removeSite(domain) {
