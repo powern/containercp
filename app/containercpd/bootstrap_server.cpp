@@ -193,7 +193,6 @@ static std::string json_extract(const std::string& json, const std::string& key)
 }
 
 int containercp::core::StartupManager::run_bootstrap(const std::string& data_root) {
-    // Create bootstrap HTTP server on 0.0.0.0:80
     int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
         std::cerr << "[BOOTSTRAP] Failed to create socket" << std::endl;
@@ -216,7 +215,8 @@ int containercp::core::StartupManager::run_bootstrap(const std::string& data_roo
     std::cerr << "[BOOTSTRAP] Listening on http://0.0.0.0:80/" << std::endl;
     std::cerr << "[BOOTSTRAP] Open Setup Wizard in your browser." << std::endl;
 
-    while (true) {
+    bool running = true;
+    while (running) {
         struct sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
         int client_fd = ::accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
@@ -265,7 +265,8 @@ int containercp::core::StartupManager::run_bootstrap(const std::string& data_roo
                 }
             } else if (method == "POST" && path == "/api/bootstrap/complete") {
                 mark_setup_completed(data_root);
-                response = http_json_ok("{\"success\":true,\"data\":{\"message\":\"Setup complete. Restarting daemon...\"}}");
+                response = http_json_ok("{\"success\":true,\"data\":{\"message\":\"Setup complete. Switching to normal mode...\"}}");
+                running = false; // exit the accept loop, systemd will restart
             } else {
                 response = http_404();
             }
@@ -278,5 +279,6 @@ int containercp::core::StartupManager::run_bootstrap(const std::string& data_roo
     }
 
     ::close(server_fd);
-    return 0;
+    // Exit with non-zero so systemd (Restart=on-failure) restarts into Normal Mode
+    return 99;
 }

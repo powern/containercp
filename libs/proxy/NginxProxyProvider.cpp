@@ -1,10 +1,12 @@
 #include "NginxProxyProvider.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <sys/wait.h>
+#include <thread>
 
 namespace containercp::proxy {
 
@@ -190,6 +192,24 @@ bool NginxProxyProvider::validate_nginx_config(const std::string& cfg_path) cons
 }
 
 core::OperationResult NginxProxyProvider::reload() {
+    // Wait for container to be ready (especially after recreate)
+    for (int i = 0; i < 30; ++i) {
+        std::string status_file = "/tmp/containercp-proxy-status.txt";
+        std::system(("docker inspect " + proxy_name() + " --format '{{.State.Status}}' > " + status_file + " 2>/dev/null").c_str());
+        std::ifstream status_in(status_file);
+        std::string status;
+        std::getline(status_in, status);
+        std::remove(status_file.c_str());
+        if (status == "running") break;
+        if (status == "exited" || status == "dead") {
+            logger_.error("PROXY", "Container " + proxy_name() + " is " + status);
+            // Log container logs for debugging
+            std::system(("docker logs " + proxy_name() + " --tail 20 2>/dev/null || true").c_str());
+            return {false, "Container " + proxy_name() + " is " + status};
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
     std::string out_file = "/tmp/containercp-nginx-reload.txt";
     std::string cmd = "docker exec " + proxy_name() + " nginx -s reload";
     int rc = std::system((cmd + " > " + out_file + " 2>&1").c_str());
@@ -291,9 +311,11 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
     }
 
     // Mount SSL directory so nginx can read certificate files
+    // Add host.docker.internal for admin panel access to host's port 8081
     std::string cmd = "docker run -d --name " + proxy_name()
         + " --restart unless-stopped"
         + " --network containercp-public"
+        + " --add-host host.docker.internal:host-gateway"
         + " -p 80:80 -p 443:443"
         + " -v " + cfg_.data_root() + "/proxy/sites/:/etc/nginx/conf.d/"
         + " -v " + cfg_.data_root() + "/ssl/:/srv/containercp/ssl/:ro"
@@ -304,8 +326,23 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
         logger_.error("PROXY", "Failed to create central proxy container");
         return {false, "Failed to create central proxy container"};
     }
-    logger_.info("PROXY", "Central proxy created with SSL mount");
-    return {true, ""};
+
+    // Wait for container to be running
+    for (int i = 0; i < 30; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::string status_file = "/tmp/containercp-proxy-status.txt";
+        std::system(("docker inspect " + proxy_name() + " --format '{{.State.Status}}' > " + status_file + " 2>/dev/null").c_str());
+        std::ifstream status_in(status_file);
+        std::string status;
+        std::getline(status_in, status);
+        std::remove(status_file.c_str());
+        if (status == "running") {
+            logger_.info("PROXY", "Container ready after " + std::to_string((i+1)*500) + "ms");
+            return {true, "Central proxy created and running"};
+        }
+    }
+    logger_.warning("PROXY", "Container created but not yet running. Will retry on reload.");
+    return {true, "Central proxy created (waiting for container)"};
 }
 
 core::OperationResult NginxProxyProvider::remove_central_proxy() {

@@ -215,12 +215,12 @@ void ServiceRegistry::start() {
                 admin_rp.domain = hostname;
                 admin_rp.site_id = 0; // special: admin panel
                 admin_rp.provider = "nginx";
-                admin_rp.upstream = "127.0.0.1:8081";
+                admin_rp.upstream = "host.docker.internal:8081";
                 admin_rp.enabled = true;
                 admin_rp.status = "active";
                 auto create_result = proxy_provider_.create_proxy(admin_rp);
                 if (create_result.success) {
-                    reverse_proxies_.create(hostname, 0, config_.data_root() + "/proxy/sites/" + hostname + ".conf", "127.0.0.1:8081");
+                    reverse_proxies_.create(hostname, 0, config_.data_root() + "/proxy/sites/" + hostname + ".conf", "host.docker.internal:8081");
                     logger_.info("SYSTEM", "Admin proxy created for " + hostname);
 
                     // Check if SSL certificate exists for this domain
