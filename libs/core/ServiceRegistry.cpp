@@ -23,7 +23,7 @@ ServiceRegistry::ServiceRegistry()
     , renewal_scheduler_(logger_, cert_store_, jobs_, job_executor_, cert_providers_)
     , auth_(*this)
     , runtime_(logger_, config_.sites_dir())
-    , site_runtime_(logger_, config_.sites_dir())
+    , site_runtime_(logger_, config_.sites_dir(), config_.data_root() + "/ssl")
     , hosting_provider_(filesystem_, config_, php_versions_, runtime_, profiles_)
 {
     auto loaded_nodes = storage_.load_nodes();

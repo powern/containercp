@@ -24,7 +24,9 @@ struct SiteRuntimeStatus {
 
 class SiteRuntimeManager {
 public:
-    SiteRuntimeManager(logger::Logger& logger, const std::string& sites_root);
+    SiteRuntimeManager(logger::Logger& logger,
+                       const std::string& sites_root,
+                       const std::string& ssl_root);
 
     SiteRuntimeStatus get_status(uint64_t site_id, const std::string& domain) const;
     std::string container_status(const std::string& compose_dir,
@@ -34,8 +36,11 @@ public:
                                                   uint64_t site_id);
 
 private:
+    static std::string path_join(const std::string& a, const std::string& b);
+
     logger::Logger& logger_;
     std::string sites_root_;
+    std::string ssl_root_;
     CommandExecutor executor_;
 };
 

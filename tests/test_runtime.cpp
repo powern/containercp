@@ -62,10 +62,12 @@ TEST_CASE("SiteRuntimeManager::https_status_from_metadata parsing") {
 
     // Helper to write metadata
     auto write_meta = [&](uint64_t site_id, const std::string& json) {
-        std::string dir = root + "/" + std::to_string(site_id);
+        std::string dir = root + "/" + std::to_string(site_id) + "/current";
+        mkdir((root + "/" + std::to_string(site_id)).c_str(), 0755);
         mkdir(dir.c_str(), 0755);
         std::ofstream f(dir + "/metadata.json");
         f << json;
+        f.close();
     };
 
     SUBCASE("no metadata file") {
@@ -105,6 +107,19 @@ TEST_CASE("SiteRuntimeManager::https_status_from_metadata parsing") {
     SUBCASE("active but https not enabled") {
         write_meta(7, R"({"status":"active","https_enabled":false})");
         CHECK(SiteRuntimeManager::https_status_from_metadata(root, 7) == "Disabled");
+    }
+
+    SUBCASE("flat layout fallback - no current/ dir") {
+        std::string dir = root + "/8";
+        mkdir(dir.c_str(), 0755);
+        std::ofstream f(dir + "/metadata.json");
+        f << R"({"status":"active","https_enabled":true,"expires_at":"2030-06-01T00:00:00Z"})";
+        f.close();
+        CHECK(SiteRuntimeManager::https_status_from_metadata(root, 8) == "Active");
+    }
+
+    SUBCASE("no metadata at all") {
+        CHECK(SiteRuntimeManager::https_status_from_metadata(root, 9) == "Disabled");
     }
 
     // Cleanup

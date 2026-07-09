@@ -18,7 +18,6 @@ std::string trim(const std::string& s) {
     return s.substr(start, end - start);
 }
 
-// Parse a simple JSON string value (assumes key: "value" format)
 std::string json_string_field(const std::string& json, const std::string& key) {
     std::string search = "\"" + key + "\":\"";
     size_t pos = json.find(search);
@@ -36,7 +35,6 @@ std::string json_string_field(const std::string& json, const std::string& key) {
     return val;
 }
 
-// Parse a simple JSON boolean value (assumes key: true/false)
 bool json_bool_field(const std::string& json, const std::string& key, bool def) {
     std::string search = "\"" + key + "\":";
     size_t pos = json.find(search);
@@ -50,15 +48,34 @@ bool json_bool_field(const std::string& json, const std::string& key, bool def) 
 
 } // anonymous namespace
 
-SiteRuntimeManager::SiteRuntimeManager(logger::Logger& logger, const std::string& sites_root)
+std::string SiteRuntimeManager::path_join(const std::string& a, const std::string& b) {
+    if (a.empty()) return b;
+    if (b.empty()) return a;
+    bool a_has_slash = (a.back() == '/');
+    bool b_has_slash = (b.front() == '/');
+    if (a_has_slash && b_has_slash) return a + b.substr(1);
+    if (!a_has_slash && !b_has_slash) return a + '/' + b;
+    return a + b;
+}
+
+SiteRuntimeManager::SiteRuntimeManager(logger::Logger& logger,
+                                       const std::string& sites_root,
+                                       const std::string& ssl_root)
     : logger_(logger)
     , sites_root_(sites_root)
+    , ssl_root_(ssl_root)
 {
+    // Normalize: strip trailing slash for consistent joins
+    if (!sites_root_.empty() && sites_root_.back() == '/') {
+        sites_root_.pop_back();
+    }
+    if (!ssl_root_.empty() && ssl_root_.back() == '/') {
+        ssl_root_.pop_back();
+    }
 }
 
 std::string SiteRuntimeManager::container_status(const std::string& compose_dir,
                                                   const std::string& service) const {
-    // Step 1: get container name from docker compose ps
     auto ps_result = executor_.run({
         "docker", "compose", "--project-directory", compose_dir,
         "ps", "--format", "{{.Name}}", service
@@ -74,11 +91,9 @@ std::string SiteRuntimeManager::container_status(const std::string& compose_dir,
 
     std::string container_name = trim(ps_result.out);
     if (container_name.empty()) {
-        // compose ps succeeded but service has no container -> not created / stopped
         return "Stopped";
     }
 
-    // Step 2: inspect container state
     auto inspect_result = executor_.run({
         "docker", "inspect", container_name,
         "--format", "{{.State.Status}}|{{.State.Health.Status}}"
@@ -110,10 +125,19 @@ std::string SiteRuntimeManager::container_status(const std::string& compose_dir,
 
 std::string SiteRuntimeManager::https_status_from_metadata(const std::string& ssl_root,
                                                             uint64_t site_id) {
-    std::string path = ssl_root + "/" + std::to_string(site_id) + "/metadata.json";
+    // Versioned layout: <ssl_root>/<site_id>/current/metadata.json
+    // Flat layout fallback:  <ssl_root>/<site_id>/metadata.json
+    std::string site_dir = path_join(ssl_root, std::to_string(site_id));
+    std::string path = path_join(path_join(site_dir, "current"), "metadata.json");
+
     std::ifstream f(path);
     if (!f.is_open()) {
-        return "Disabled";
+        // Fallback: flat layout (legacy)
+        path = path_join(site_dir, "metadata.json");
+        f.open(path);
+        if (!f.is_open()) {
+            return "Disabled";
+        }
     }
     std::ostringstream ss;
     ss << f.rdbuf();
@@ -165,24 +189,14 @@ std::string SiteRuntimeManager::https_status_from_metadata(const std::string& ss
 SiteRuntimeStatus SiteRuntimeManager::get_status(uint64_t site_id,
                                                   const std::string& domain) const {
     SiteRuntimeStatus s;
-    std::string compose_dir = sites_root_ + domain;
+    std::string compose_dir = path_join(sites_root_, domain);
 
     s.web.status = container_status(compose_dir, "web");
     s.php.status = container_status(compose_dir, "php");
     s.web.name = domain + "-web";
     s.php.name = domain + "-php";
 
-    // HTTPS status from SSL metadata (use sites_root_ to derive ssl_root)
-    // SSL root is parallel to sites root: <base>/ssl/ vs <base>/sites/
-    // Derive it from sites_root_ by replacing "/sites" with "/ssl"
-    std::string ssl_root;
-    size_t p = sites_root_.rfind("/sites");
-    if (p != std::string::npos && p + 6 == sites_root_.size()) {
-        ssl_root = sites_root_.substr(0, p) + "/ssl";
-    } else {
-        ssl_root = sites_root_ + "/../ssl";
-    }
-    s.https_status = https_status_from_metadata(ssl_root, site_id);
+    s.https_status = https_status_from_metadata(ssl_root_, site_id);
 
     return s;
 }

@@ -366,10 +366,10 @@ async function loadSites(p) {
       filtered.forEach(site => {
         api('/api/runtime/' + site.id).then(rt => {
           if (!rt.success) return;
-          const st = (s) => { const m={'Running':'badge-ok','Active':'badge-ok','Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn','Expiring':'badge-warn','Error':'badge-err','Expired':'badge-err','Disabled':'badge-info','Issuing':'badge-warn','Unknown':'badge-info'}; return `<span class="badge ${m[s]||'badge-info'}">${s}</span>`; };
+          const m={'Running':'badge-ok','Active':'badge-ok','Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn','Expiring':'badge-warn','Error':'badge-err','Expired':'badge-err','Disabled':'badge-info','Issuing':'badge-warn','Unknown':'badge-info'};
           const update = (srv, val) => {
             const el = tbl.querySelector(`span[data-rt-id="${site.id}"][data-rt-service="${srv}"]`);
-            if (el) el.outerHTML = st(val);
+            if (el) { el.className = 'badge ' + (m[val]||'badge-info'); el.textContent = val; }
           };
           update('web', rt.data.web);
           update('php', rt.data.php);
