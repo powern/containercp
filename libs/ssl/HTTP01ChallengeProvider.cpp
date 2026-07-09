@@ -87,6 +87,18 @@ core::OperationResult HTTP01ChallengeProvider::prepare(
         logger_.error("HTTP-01", err);
         return {false, err};
     }
+    // Ensure parent directories are world-executable so nginx (inside Docker) can serve files
+    // /srv/containercp/ssl/0/.well-known/acme-challenge/
+    // nginx runs as 'nginx' user, not root inside the container
+    {
+        std::string p = dir;
+        while (p.find("/ssl/") != std::string::npos) {
+            ::chmod(p.c_str(), 0755);
+            auto slash = p.rfind('/');
+            if (slash == std::string::npos || slash < 5) break;
+            p = p.substr(0, slash);
+        }
+    }
     logger_.info("HTTP-01", "challenge_root=" + dir);
 
     // Write token file
