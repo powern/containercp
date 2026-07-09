@@ -1,8 +1,10 @@
 #include "LetsEncryptProvider.h"
 
+#include <cerrno>
 #include <chrono>
 #include <curl/curl.h>
 #include <openssl/bio.h>
+#include <sys/stat.h>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
 #include <fstream>
@@ -233,22 +235,63 @@ core::OperationResult LetsEncryptProvider::issue_certificate(
 
         // Local verification: fetch challenge via HTTP and compare
         {
-            std::string challenge_url = "http://" + authz.domain + "/.well-known/acme-challenge/" + http_challenge->token;
+            std::string challenge_token = http_challenge->token;
+            std::string challenge_url = "http://" + authz.domain + "/.well-known/acme-challenge/" + challenge_token;
             logger_.info("LetsEncrypt", "Verifying challenge at " + challenge_url);
-            CURL* curl = curl_easy_init();
-            if (curl) {
-                std::string resp_body;
-                curl_easy_setopt(curl, CURLOPT_URL, challenge_url.c_str());
-                curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, verify_write_cb);
-                curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp_body);
-                curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
-                CURLcode cr = curl_easy_perform(curl);
-                long http_code = 0;
-                if (cr == CURLE_OK)
-                    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-                curl_easy_cleanup(curl);
-                logger_.info("LetsEncrypt", "Challenge HTTP status=" + std::to_string(http_code)
-                             + " body='" + resp_body + "' expected='" + key_auth + "'");
+
+            // Step A: verify file exists on disk
+            std::string challenge_dir_str = challenge_.challenge_dir(authz.domain);
+            std::string challenge_file_path = challenge_dir_str + "/" + challenge_token;
+            {
+                struct stat st;
+                if (::stat(challenge_file_path.c_str(), &st) == 0) {
+                    logger_.info("LetsEncrypt", "Challenge file exists: " + challenge_file_path
+                                 + " (" + std::to_string(st.st_size) + " bytes)");
+                } else {
+                    logger_.error("LetsEncrypt", "Challenge file MISSING: " + challenge_file_path
+                                  + " (errno=" + std::to_string(errno) + ")");
+                }
+            }
+
+            // Step B: try via docker exec localhost inside proxy container
+            {
+                std::string out_file = "/tmp/containercp-challenge-docker.txt";
+                std::string cmd = "docker exec containercp-proxy wget -qO- --timeout=5"
+                    " http://127.0.0.1/.well-known/acme-challenge/" + challenge_token + " 2>/dev/null"
+                    " > " + out_file;
+                std::system(cmd.c_str());
+                std::ifstream result_in(out_file);
+                std::string docker_body;
+                std::getline(result_in, docker_body);
+                std::remove(out_file.c_str());
+                if (!docker_body.empty()) {
+                    logger_.info("LetsEncrypt", "Docker challenge OK: body='" + docker_body
+                                 + "' match=" + (docker_body == key_auth ? "yes" : "no"));
+                } else {
+                    logger_.warning("LetsEncrypt", "Docker challenge FAILED (check nginx config)");
+                    // Log the nginx config for debugging
+                    std::string cat_cmd = "docker exec containercp-proxy cat /etc/nginx/conf.d/" + authz.domain + ".conf 2>/dev/null | head -30";
+                    std::system(cat_cmd.c_str());
+                }
+            }
+
+            // Step C: try via external domain (for ACME validation)
+            {
+                CURL* curl = curl_easy_init();
+                if (curl) {
+                    std::string resp_body;
+                    curl_easy_setopt(curl, CURLOPT_URL, challenge_url.c_str());
+                    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, verify_write_cb);
+                    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp_body);
+                    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+                    CURLcode cr = curl_easy_perform(curl);
+                    long http_code = 0;
+                    if (cr == CURLE_OK)
+                        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+                    curl_easy_cleanup(curl);
+                    logger_.info("LetsEncrypt", "External challenge status=" + std::to_string(http_code)
+                                 + " body='" + resp_body + "' expected='" + key_auth + "'");
+                }
             }
         }
 

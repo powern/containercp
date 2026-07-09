@@ -23,6 +23,8 @@ public:
     virtual core::OperationResult verify(const std::string& domain) = 0;
 
     virtual core::OperationResult can_validate(const std::string& domain) = 0;
+
+    virtual std::string challenge_dir(const std::string& domain) const = 0;
 };
 
 } // namespace containercp::ssl
