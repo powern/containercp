@@ -9,18 +9,20 @@ std::string ProxyConfigBuilder::build(const Params& params) const {
     std::ostringstream conf;
 
     if (params.https && params.redirect) {
-        // HTTP → HTTPS redirect, then HTTPS block
         conf << build_redirect_block(params.domain);
         conf << build_https_block(params.domain, params.upstream,
                                    params.cert_path, params.key_path);
     } else if (params.https) {
-        // Both HTTP and HTTPS, no redirect
         conf << build_http_block(params.domain, params.upstream);
         conf << build_https_block(params.domain, params.upstream,
                                    params.cert_path, params.key_path);
     } else {
-        // HTTP only
         conf << build_http_block(params.domain, params.upstream);
+    }
+
+    // Add ACME challenge location for admin panel
+    if (!params.acme_challenge_root.empty()) {
+        conf << acme_challenge_location(params.acme_challenge_root);
     }
 
     return conf.str();
@@ -80,9 +82,17 @@ std::string ProxyConfigBuilder::build_redirect_block(const std::string& domain) 
     return conf.str();
 }
 
-std::string ProxyConfigBuilder::acme_challenge_location() const {
-    return "location /.well-known/acme-challenge/ {\n"
-           "    root /srv/containercp/ssl;\n"
+std::string ProxyConfigBuilder::acme_challenge_location(const std::string& challenge_root) {
+    if (challenge_root.empty()) {
+        return "location /.well-known/acme-challenge/ {\n"
+               "    root /srv/containercp/ssl;\n"
+               "}\n";
+    }
+    // For admin panel: serve challenge files from a custom path
+    auto parent = challenge_root.substr(0, challenge_root.rfind('/'));
+    return "location ^~ /.well-known/acme-challenge/ {\n"
+           "    root " + parent + ";\n"
+           "    try_files $uri =404;\n"
            "}\n";
 }
 

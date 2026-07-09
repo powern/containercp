@@ -18,6 +18,7 @@ public:
         bool redirect = false;
         std::string cert_path;
         std::string key_path;
+        std::string acme_challenge_root;
     };
 
     std::string build(const Params& params) const;
@@ -32,7 +33,7 @@ public:
 
     std::string build_redirect_block(const std::string& domain) const;
 
-    std::string acme_challenge_location() const;
+    static std::string acme_challenge_location(const std::string& challenge_root);
 
     static std::string normalize_upstream(const std::string& raw);
 };

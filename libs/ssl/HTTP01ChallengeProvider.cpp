@@ -44,10 +44,16 @@ static bool mkdir_p(const std::string& path, mode_t mode, std::string& error_out
 namespace containercp::ssl {
 
 HTTP01ChallengeProvider::HTTP01ChallengeProvider(logger::Logger& logger,
-                                                  const std::string& sites_root)
+                                                  const std::string& sites_root,
+                                                  const std::string& admin_challenge_root)
     : logger_(logger)
     , sites_root_(sites_root)
+    , admin_challenge_root_(admin_challenge_root)
 {
+}
+
+void HTTP01ChallengeProvider::set_admin_hostname(const std::string& hostname) {
+    admin_hostname_ = hostname;
 }
 
 std::string HTTP01ChallengeProvider::type() const {
@@ -55,8 +61,11 @@ std::string HTTP01ChallengeProvider::type() const {
 }
 
 std::string HTTP01ChallengeProvider::challenge_dir(const std::string& domain) const {
-    // Challenge files are served by the site web container.
-    // The site directory is mounted at /var/www/html/ inside the container.
+    // Admin panel uses a dedicated challenge root (not a site directory)
+    if (!admin_hostname_.empty() && domain == admin_hostname_ && !admin_challenge_root_.empty()) {
+        return admin_challenge_root_;
+    }
+    // Regular sites: challenge files go to the site's public directory
     return sites_root_ + "/" + domain + "/public/.well-known/acme-challenge";
 }
 

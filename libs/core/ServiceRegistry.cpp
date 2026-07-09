@@ -15,7 +15,7 @@ ServiceRegistry::ServiceRegistry()
     , access_provider_(logger_)
     , proxy_provider_(filesystem_, config_, logger_, ssl_, reverse_proxies_)
     , cert_store_(logger_, config_.data_root() + "/ssl")
-    , http01_challenge_(logger_, config_.data_root() + "/sites")
+    , http01_challenge_(logger_, config_.data_root() + "/sites", config_.data_root() + "/ssl/0/.well-known/acme-challenge")
     , cert_provider_(std::make_shared<ssl::LetsEncryptProvider>(logger_, http01_challenge_, cert_store_))
     , pem_cert_provider_(std::make_shared<ssl::PemCertificateProvider>(logger_))
     , storage_(config_.database_dir())
@@ -208,6 +208,8 @@ void ServiceRegistry::start() {
     {
         std::string hostname = config_.server_hostname();
         if (!hostname.empty()) {
+            // Tell HTTP01ChallengeProvider about the admin hostname
+            http01_challenge_.set_admin_hostname(hostname);
             // Auto-detect Docker gateway for admin upstream (host → container communication)
             std::string admin_upstream = "host.docker.internal:8081";
             {
@@ -238,6 +240,18 @@ void ServiceRegistry::start() {
                 if (create_result.success) {
                     reverse_proxies_.create(hostname, 0, config_.data_root() + "/proxy/sites/" + hostname + ".conf", admin_upstream);
                     logger_.info("SYSTEM", "Admin proxy created for " + hostname + " upstream=" + admin_upstream);
+
+                    // Add ACME challenge location to admin config
+                    {
+                        std::string admin_conf = config_.data_root() + "/proxy/sites/" + hostname + ".conf";
+                        std::ofstream acme_append(admin_conf, std::ios::app);
+                        if (acme_append.is_open()) {
+                            std::string acme_loc = proxy::ProxyConfigBuilder::acme_challenge_location(
+                                config_.data_root() + "/ssl/0/.well-known/acme-challenge");
+                            acme_append << acme_loc;
+                            logger_.info("SYSTEM", "Added ACME challenge location for " + hostname);
+                        }
+                    }
 
                     // Reload proxy so the new config takes effect
                     proxy_provider_.reload();

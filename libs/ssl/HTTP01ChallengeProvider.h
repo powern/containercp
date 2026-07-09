@@ -11,7 +11,10 @@ namespace containercp::ssl {
 class HTTP01ChallengeProvider : public ChallengeProvider {
 public:
     explicit HTTP01ChallengeProvider(logger::Logger& logger,
-                                      const std::string& sites_root);
+                                      const std::string& sites_root,
+                                      const std::string& admin_challenge_root = "");
+
+    void set_admin_hostname(const std::string& hostname);
 
     std::string type() const override;
 
@@ -27,10 +30,13 @@ public:
     core::OperationResult can_validate(const std::string& domain) override;
 
     std::string challenge_dir(const std::string& domain) const;
+    std::string admin_hostname() const { return admin_hostname_; }
 
 private:
     logger::Logger& logger_;
     std::string sites_root_;
+    std::string admin_challenge_root_;
+    std::string admin_hostname_;
 };
 
 } // namespace containercp::ssl
