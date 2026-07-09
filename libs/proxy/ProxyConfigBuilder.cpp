@@ -24,10 +24,14 @@ std::string ProxyConfigBuilder::build(const Params& params) const {
          << "    resolver 127.0.0.11 valid=30s;\n"
          << "\n";
     // ACME challenge location (inside server block, before proxy_pass)
+    // root must point to the PARENT of .well-known, not to the challenge dir
     if (!params.acme_challenge_root.empty()) {
-        auto parent = params.acme_challenge_root.substr(0, params.acme_challenge_root.rfind('/'));
+        auto pos = params.acme_challenge_root.find("/.well-known");
+        std::string root_dir = (pos != std::string::npos)
+            ? params.acme_challenge_root.substr(0, pos)
+            : params.acme_challenge_root;
         conf << "    location ^~ /.well-known/acme-challenge/ {\n"
-             << "        root " << parent << ";\n"
+             << "        root " << root_dir << ";\n"
              << "        try_files $uri =404;\n"
              << "    }\n\n";
     }
