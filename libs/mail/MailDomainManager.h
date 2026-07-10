@@ -2,6 +2,7 @@
 #define CONTAINERCP_MAIL_MAIL_DOMAIN_MANAGER_H
 
 #include "mail/MailDomain.h"
+#include "mail/MailModuleState.h"
 
 #include <cstdint>
 #include <string>
@@ -20,9 +21,14 @@ public:
 
     void set_domains(const std::vector<MailDomain>& domains);
 
+    // Mail module lifecycle state
+    MailModuleState module_state() const { return module_state_; }
+    void set_module_state(MailModuleState state) { module_state_ = state; }
+
 private:
     std::vector<MailDomain> domains_;
     uint64_t next_id_ = 1;
+    MailModuleState module_state_ = MailModuleState::Inactive;
 };
 
 } // namespace containercp::mail

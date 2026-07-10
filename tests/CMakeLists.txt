@@ -56,6 +56,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/runtime/SiteRuntimeManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailAliasManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailDomain.cpp
+    ${CMAKE_SOURCE_DIR}/libs/mail/MailModuleState.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailDomainManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailPasswordHasher.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailboxManager.cpp

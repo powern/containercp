@@ -576,7 +576,20 @@ No mail functionality yet, but the resource layer is solid.
 *Leaves project in working state:* mailboxes exist in ContainerCP's
 database.  No mail delivery yet, but all data is prepared.
 
-### Stage 1c — Docker mail stack foundation (estimated: 4-5 days)
+### Stage 1c — Mail module lifecycle (optional feature)
+
+- `MailModuleState` — inactive / active / error
+- Module is inactive by default (no Docker containers, no open ports)
+- `GET /api/mail/status` — query module state with resource counts
+- `POST /api/mail/activate` / `/deactivate` — change module state
+- State persisted in Storage, restored on daemon start
+- Data (domains, mailboxes, aliases) can be configured in any state
+- Future Docker stack stage checks module state before creating containers
+
+*Leaves project in working state:* Mail data model is fully functional.
+Module lifecycle is managed but no Docker containers run until activated.
+
+### Stage 1d — Docker mail stack foundation (estimated: 4-5 days)
 
 - `DockerMailProvider` — implement `MailProvider` interface
 - `MailContainerManager` — Docker Compose lifecycle for Postfix + Dovecot

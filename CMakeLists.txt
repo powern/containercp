@@ -47,6 +47,7 @@ set(CONTAINERCP_SOURCES
     libs/logger/Logger.cpp
     libs/mail/MailAliasManager.cpp
     libs/mail/MailDomain.cpp
+    libs/mail/MailModuleState.cpp
     libs/mail/MailDomainManager.cpp
     libs/mail/MailPasswordHasher.cpp
     libs/mail/MailboxManager.cpp

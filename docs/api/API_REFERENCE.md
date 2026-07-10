@@ -335,7 +335,24 @@ Response format per alias entry:
 }
 ```
 
-### 2.18 Logs
+### 2.18 Mail — Module
+
+| Method | Path | Purpose | Owner |
+|--------|------|---------|-------|
+| GET | `/api/mail/status` | Query mail module state | `MailDomainManager` |
+| POST | `/api/mail/activate` | Activate the mail module | `MailDomainManager` |
+| POST | `/api/mail/deactivate` | Deactivate the mail module | `MailDomainManager` |
+
+States: `inactive` (default), `active`, `error`.
+
+The mail module is optional.  It is inactive by default.  Data (domains,
+mailboxes, aliases) can be configured in any state.  Activating the module
+prepares runtime resources (future stage).  Deactivating stops runtime
+resources without deleting configuration data.
+
+Status response includes counts of configured domains, mailboxes, and aliases.
+
+### 2.19 Logs
 
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|

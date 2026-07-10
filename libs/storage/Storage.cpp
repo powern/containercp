@@ -57,6 +57,10 @@ std::string Storage::mail_aliases_file() const {
     return db_path_ + "mail_aliases.db";
 }
 
+std::string Storage::mail_state_file() const {
+    return db_path_ + "mail_state.db";
+}
+
 std::string Storage::access_users_file() const {
     return db_path_ + "access_users.db";
 }
@@ -512,6 +516,20 @@ std::vector<mail::MailAlias> Storage::load_mail_aliases() {
         aliases.push_back(std::move(a));
     }
     return aliases;
+}
+
+void Storage::save_mail_module_state(const std::string& state) {
+    std::ofstream file(mail_state_file());
+    file << state << "\n";
+}
+
+std::string Storage::load_mail_module_state() {
+    std::ifstream file(mail_state_file());
+    std::string state;
+    if (file.is_open()) {
+        std::getline(file, state);
+    }
+    return state;
 }
 
 void Storage::save_access_users(const std::vector<access::AccessUser>& users) {

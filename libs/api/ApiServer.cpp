@@ -2034,6 +2034,50 @@ bool ApiServer::start() {
         return r;
     });
 
+    // ── Mail Module Status API ──────────────────────────────────────
+    // GET /api/mail/status — query mail module state
+    router_.add("GET", "/api/mail/status", [&s](const Request&) {
+        Response r;
+        auto state = s.mail().module_state();
+        std::string state_str = mail::mail_module_state_to_string(state);
+        std::ostringstream js;
+        js << "{\"success\":true,\"data\":{"
+           << "\"module\":\"mail\""
+           << ",\"state\":\"" << JsonFormatter::escape(state_str) << "\""
+           << ",\"domains\":" << s.mail().list().size()
+           << ",\"mailboxes\":" << s.mailboxes().list().size()
+           << ",\"aliases\":" << s.mail_aliases().list().size()
+           << "}}";
+        r.body = js.str();
+        return r;
+    });
+
+    // POST /api/mail/activate — activate mail module
+    router_.add("POST", "/api/mail/activate", [&s](const Request&) {
+        Response r;
+        if (s.mail().module_state() == mail::MailModuleState::Active) {
+            r.body = "{\"success\":true,\"data\":{\"message\":\"Mail module already active\"}}";
+            return r;
+        }
+        s.mail().set_module_state(mail::MailModuleState::Active);
+        s.save();
+        r.body = "{\"success\":true,\"data\":{\"message\":\"Mail module activated\"}}";
+        return r;
+    });
+
+    // POST /api/mail/deactivate — deactivate mail module
+    router_.add("POST", "/api/mail/deactivate", [&s](const Request&) {
+        Response r;
+        if (s.mail().module_state() == mail::MailModuleState::Inactive) {
+            r.body = "{\"success\":true,\"data\":{\"message\":\"Mail module already inactive\"}}";
+            return r;
+        }
+        s.mail().set_module_state(mail::MailModuleState::Inactive);
+        s.save();
+        r.body = "{\"success\":true,\"data\":{\"message\":\"Mail module deactivated\"}}";
+        return r;
+    });
+
     // Accept loop
     while (running_) {
         struct sockaddr_in client_addr{};
