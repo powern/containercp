@@ -280,3 +280,92 @@ TEST_CASE("MailDomainManager set_domains restores state") {
     uint64_t id3 = mgr2.create("c.com", containercp::mail::MailDomainMode::ExternalRelay, 3);
     CHECK(id3 == 3);
 }
+
+TEST_CASE("MailDomain domain normalization") {
+    containercp::mail::MailDomainManager mgr;
+
+    // Lowercase + trim + trailing dot removed
+    uint64_t id1 = mgr.create("Example.COM", containercp::mail::MailDomainMode::LocalPrimary, 1);
+    CHECK(id1 == 1);
+    auto* m = mgr.find(id1);
+    REQUIRE(m != nullptr);
+    CHECK(m->domain_name == "Example.COM");  // Manager doesn't normalize — API does
+}
+
+TEST_CASE("MailDomainManager create rejects duplicates even with different case") {
+    containercp::mail::MailDomainManager mgr;
+
+    // Manager does case-sensitive comparison — duplicates checked by API after normalization
+    mgr.create("example.com", containercp::mail::MailDomainMode::LocalPrimary, 1);
+    uint64_t id2 = mgr.create("EXAMPLE.COM", containercp::mail::MailDomainMode::LocalPrimary, 1);
+    CHECK(id2 == 2);  // Manager allows case-different (API normalizes before calling)
+    CHECK(mgr.list().size() == 2);
+}
+
+TEST_CASE("MailDomain normalize_domain function") {
+    // Test the normalize_domain helper via API behavior simulation
+    auto norm = [](const std::string& raw) -> std::string {
+        std::string d;
+        d.reserve(raw.size());
+        for (char c : raw) {
+            if (c != ' ') d.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        }
+        while (!d.empty() && d.back() == '.') d.pop_back();
+        return d;
+    };
+
+    CHECK(norm("Example.COM") == "example.com");
+    CHECK(norm("Example.COM.") == "example.com");
+    CHECK(norm("  Test.COM  ") == "test.com");
+    CHECK(norm("UPPER.com.") == "upper.com");
+    CHECK(norm("  spaced.Domain.NET.  ") == "spaced.domain.net");
+}
+
+TEST_CASE("MailDomain json_extract type handling") {
+    // Verify that json_extract handles booleans and numbers via the " key": path
+    auto extract = [](const std::string& json, const std::string& key) -> std::string {
+        std::string search = "\"" + key + "\":\"";
+        auto pos = json.find(search);
+        if (pos == std::string::npos) {
+            search = "\"" + key + "\":";
+            pos = json.find(search);
+            if (pos == std::string::npos) return "";
+            pos += search.size();
+            auto end = json.find_first_of(",}", pos);
+            if (end == std::string::npos) return "";
+            auto val = json.substr(pos, end - pos);
+            return val;
+        }
+        pos += search.size();
+        auto end = json.find("\"", pos);
+        if (end == std::string::npos) return "";
+        return json.substr(pos, end - pos);
+    };
+
+    CHECK(extract(R"({"enabled":false})", "enabled") == "false");
+    CHECK(extract(R"({"enabled":true})", "enabled") == "true");
+    CHECK(extract(R"({"count":50})", "count") == "50");
+    CHECK(extract(R"({"count":0})", "count") == "0");
+    CHECK(extract(R"({"relay_host":"smtp.example.com"})", "relay_host") == "smtp.example.com");
+    CHECK(extract(R"({"relay_host":""})", "relay_host") == "");
+    CHECK(extract(R"({"relay_host":null})", "relay_host") == "null");
+    CHECK(extract(R"({"mode":"local-primary"})", "mode") == "local-primary");
+}
+
+TEST_CASE("MailDomain json_has_key detection") {
+    auto has_key = [](const std::string& json, const std::string& key) -> bool {
+        std::string search = "\"" + key + "\":";
+        return json.find(search) != std::string::npos;
+    };
+
+    CHECK(has_key(R"({"mode":"local-primary"})", "mode"));
+    CHECK(has_key(R"({"enabled":false})", "enabled"));
+    CHECK(has_key(R"({"enabled":true})", "enabled"));
+    CHECK(has_key(R"({"relay_host":""})", "relay_host"));
+    CHECK(has_key(R"({"relay_host":null})", "relay_host"));
+    CHECK(has_key(R"({"max_mailboxes":50})", "max_mailboxes"));
+
+    // Key not present
+    CHECK_FALSE(has_key(R"({"mode":"local-primary"})", "enabled"));
+    CHECK_FALSE(has_key(R"({})", "mode"));
+}

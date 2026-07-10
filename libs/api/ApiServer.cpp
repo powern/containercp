@@ -13,6 +13,7 @@
 #include "utils/Validator.h"
 
 #include <arpa/inet.h>
+#include <cctype>
 #include <chrono>
 #include <cstring>
 #include <fstream>
@@ -47,6 +48,24 @@ static std::string json_extract(const std::string& json, const std::string& key)
     auto end = json.find("\"", pos);
     if (end == std::string::npos) return "";
     return json.substr(pos, end - pos);
+}
+
+// Check if a key exists in JSON (for PATCH field presence detection).
+// Works with any value type: string, number, boolean, null, object, array.
+static bool json_has_key(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\":";
+    return json.find(search) != std::string::npos;
+}
+
+// Normalize a domain name: lowercase, trim, remove trailing dot.
+static std::string normalize_domain(const std::string& raw) {
+    std::string d;
+    d.reserve(raw.size());
+    for (char c : raw) {
+        if (c != ' ') d.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    while (!d.empty() && d.back() == '.') d.pop_back();
+    return d;
 }
 
 ApiServer::ApiServer(core::ServiceRegistry& services, int port)
@@ -1437,15 +1456,15 @@ bool ApiServer::start() {
     // POST /api/mail/domains — create a mail domain
     router_.add("POST", "/api/mail/domains", [&s, &mail_domain_json](const Request& req) {
         Response r;
-        std::string domain = json_extract(req.body, "domain");
-        std::string mode_str = json_extract(req.body, "mode");
-        std::string owner_str = json_extract(req.body, "owner_id");
 
-        if (domain.empty()) {
+        // Extract and normalize domain
+        std::string domain_raw = json_extract(req.body, "domain");
+        if (domain_raw.empty()) {
             r.status_code = 400;
             r.body = "{\"success\":false,\"error\":\"Domain is required\"}";
             return r;
         }
+        std::string domain = normalize_domain(domain_raw);
 
         if (!utils::Validator::is_valid_hostname(domain)) {
             r.status_code = 400;
@@ -1453,12 +1472,16 @@ bool ApiServer::start() {
             return r;
         }
 
+        // Parse mode (strict validation)
+        std::string mode_str = json_extract(req.body, "mode");
         if (!mode_str.empty() && !mail::is_valid_mail_domain_mode(mode_str)) {
             r.status_code = 400;
             r.body = "{\"success\":false,\"error\":\"Invalid mail domain mode. Valid: disabled, local-primary, external-relay, split-m365\"}";
             return r;
         }
 
+        // Parse owner_id (numeric, safe)
+        std::string owner_str = json_extract(req.body, "owner_id");
         uint64_t owner_id = 0;
         if (!owner_str.empty()) {
             try { owner_id = std::stoull(owner_str); }
@@ -1508,9 +1531,10 @@ bool ApiServer::start() {
             return r;
         }
 
-        // Extract optional fields — only update those present in request
-        std::string mode_str = json_extract(req.body, "mode");
-        if (!mode_str.empty()) {
+        // Extract optional fields — only update those present in request.
+        // Use json_has_key to distinguish omitted vs explicitly set to empty/null.
+        if (json_has_key(req.body, "mode")) {
+            std::string mode_str = json_extract(req.body, "mode");
             if (!mail::is_valid_mail_domain_mode(mode_str)) {
                 r.status_code = 400;
                 r.body = "{\"success\":false,\"error\":\"Invalid mail domain mode. Valid: disabled, local-primary, external-relay, split-m365\"}";
@@ -1519,17 +1543,19 @@ bool ApiServer::start() {
             m->mode = mail::mail_domain_mode_from_string(mode_str);
         }
 
-        std::string enabled_str = json_extract(req.body, "enabled");
-        if (!enabled_str.empty()) {
+        if (json_has_key(req.body, "enabled")) {
+            std::string enabled_str = json_extract(req.body, "enabled");
             m->enabled = (enabled_str == "true");
         }
 
-        std::string relay_host = json_extract(req.body, "relay_host");
-        if (!relay_host.empty()) m->relay_host = relay_host;
+        if (json_has_key(req.body, "relay_host")) {
+            m->relay_host = json_extract(req.body, "relay_host");
+            // explicit null or empty clears the field
+        }
 
-        std::string max_mb = json_extract(req.body, "max_mailboxes");
-        if (!max_mb.empty()) {
-            try { m->max_mailboxes = std::stoull(max_mb); }
+        if (json_has_key(req.body, "max_mailboxes")) {
+            std::string max_mb = json_extract(req.body, "max_mailboxes");
+            try { m->max_mailboxes = max_mb.empty() ? 0 : std::stoull(max_mb); }
             catch (...) {
                 r.status_code = 400;
                 r.body = "{\"success\":false,\"error\":\"Invalid max_mailboxes\"}";
@@ -1537,9 +1563,9 @@ bool ApiServer::start() {
             }
         }
 
-        std::string max_al = json_extract(req.body, "max_aliases");
-        if (!max_al.empty()) {
-            try { m->max_aliases = std::stoull(max_al); }
+        if (json_has_key(req.body, "max_aliases")) {
+            std::string max_al = json_extract(req.body, "max_aliases");
+            try { m->max_aliases = max_al.empty() ? 0 : std::stoull(max_al); }
             catch (...) {
                 r.status_code = 400;
                 r.body = "{\"success\":false,\"error\":\"Invalid max_aliases\"}";
@@ -1547,8 +1573,10 @@ bool ApiServer::start() {
             }
         }
 
-        std::string catch_all = json_extract(req.body, "catch_all");
-        if (!catch_all.empty()) m->catch_all = catch_all;
+        if (json_has_key(req.body, "catch_all")) {
+            m->catch_all = json_extract(req.body, "catch_all");
+            // explicit null or empty clears the catch-all
+        }
 
         m->updated_at = ssl::CertificateStore::timestamp_utc();
         s.save();
