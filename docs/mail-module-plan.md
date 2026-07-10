@@ -636,20 +636,32 @@ Local delivery works for `local-primary` mode.
 - Future DKIM lifecycle: multiple selectors, rotation, scheduled key
   replacement supported by design (directory-based storage per selector).
 
-### Stage 3 — External modes and M365 (in progress)
+### Stage 3 — External modes and M365 (completed)
 
 - `external-relay` mode — Postfix relay host configuration
 - `split-m365` mode — M365 split delivery via transport_maps
 - `relay_host` validation (required for ExternalRelay/SplitM365)
-- Postfix `relayhost` + `relay_domains` generation
+- Postfix `relay_domains` generation
 - Tests: transport maps, mode validation
 - Routing design: `docs/mail-routing-design.md`
 - ADR-007: `docs/ADR/ADR-007-m365-split-delivery.md`
 
-Deferred from Stage 3:
-- MX record validation (DNS lookup) → Stage 4 (Health)
-- DKIM DNS records in Domain module → Stage 4
-- Autodiscover endpoint → Stage 5 (Webmail)
+### Stage 4a — Runtime synchronization (completed)
+
+- `RuntimeSynchronizer` generic callback registry in `libs/runtime/`
+- Mail sync registered in ServiceRegistry: checks active state, calls
+  `write_configs()` + `reload()` after every CRUD mutation
+- All 11 mail mutation endpoints now trigger runtime sync
+
+### Stage 4b — Health and recovery (planned)
+
+- MailHealthMonitor — periodic health checks
+- GET /api/mail/health — service status, queue, certs, DNS
+- Integration with RecoveryManager (reload/recreate mail stack)
+- MX record validation (DNS lookup)
+- DKIM DNS records in Domain module
+- API: POST /api/mail/recover, POST /api/mail/reload
+- Tests: health check failures, recovery integration
 
 ### Stage 4 — Health and recovery (estimated: 3-4 days)
 

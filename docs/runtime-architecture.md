@@ -137,11 +137,29 @@ libs/runtime/
 ├── Runtime.h                       # Abstract interface (legacy)
 ├── CommandExecutor.h/.cpp          # Safe fork/exec with poll
 ├── RuntimeActionExecutor.h/.cpp    # Docker Compose execution
+├── RuntimeSynchronizer.h/.cpp      # Generic config sync registry
 ├── ServiceRole.h/.cpp              # Role definitions and mappings
 ├── SiteRuntimeManager.h/.cpp       # Sites-specific bridge
 ├── DockerRuntime.h/.cpp            # Legacy compose management
 └── PortManager.h/.cpp              # Port allocation (not runtime)
 ```
+
+## RuntimeSynchronizer
+
+The `RuntimeSynchronizer` provides a lightweight callback registry for
+runtime configuration synchronization.  Each subsystem (Mail, DNS,
+Proxy) registers a sync callback during ServiceRegistry construction.
+After any data mutation, the API handler calls `sync("name")` once.
+
+This keeps the sync mechanism:
+- **Generic** — not tied to any specific subsystem
+- **Extensible** — new subsystems register their own callbacks
+- **Batching-friendly** — future `queue()` + `flush()` can be added
+  without changing the caller API
+
+Current consumers:
+- `"mail"` — regenerates Postfix/Dovecot configs and reloads after
+  any domain, mailbox, or alias CRUD operation
 
 ## Key principles
 

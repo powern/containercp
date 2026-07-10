@@ -295,17 +295,29 @@
 | TLS cert paths from CertificateStore | ✅ | |
 | Tests | ✅ | |
 
-### Stage 3 — External modes (in progress)
+### Stage 3 — External modes (implemented)
 
 | Task | Status | Notes |
 |------|--------|-------|
-| External-relay mode: Postfix relayhost config | 🔄 | This milestone |
-| Split-M365 mode: catch-all relay transport | 🔄 | This milestone |
-| relay_host validation for ExternalRelay/SplitM365 | 🔄 | This milestone |
-| relay_host on domain creation (API) | 🔄 | This milestone |
-| Transport maps generation tests | 🔄 | This milestone |
+| External-relay mode: Postfix relayhost config | ✅ | Per-domain transport maps, no global relayhost |
+| Split-M365 mode: catch-all relay transport | ✅ | Per-user LMTP entries + domain SMTP catch-all |
+| relay_host validation for ExternalRelay/SplitM365 | ✅ | |
+| relay_host on domain creation (API) | ✅ | |
+| Transport maps generation tests | ✅ | |
+| ADR-007: M365 split delivery routing | ✅ | |
+| Routing design document | ✅ | docs/mail-routing-design.md |
+| Verified Postfix transport_maps behavior | ✅ | transport_maps overrides virtual_transport |
 
-### Stage 4 — Health and recovery
+### Stage 4a — Runtime synchronization (implemented)
+
+| Task | Status | Notes |
+|------|--------|-------|
+| RuntimeSynchronizer generic abstraction | ✅ | Callback registry in libs/runtime/ |
+| Mail sync registration in ServiceRegistry | ✅ | write_configs + reload when active |
+| Sync calls in all 11 mail CRUD handlers | ✅ | Every mutation triggers write_configs + reload |
+| Tests | ✅ | 5 RuntimeSynchronizer tests |
+
+### Stage 4b — Health and recovery (planned)
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -395,7 +407,7 @@
 | RC1 pass | 128/137 (9 stability deferred) |
 | RC2 validation | All items verified on real Debian 13 |
 | Bugs discovered during RC1 | 13 (all fixed) |
-| Current Epic | Mail Module Stage 3 |
+| Current Epic | Mail Module Stage 4b — Health and Recovery |
 
 ---
 
@@ -414,4 +426,4 @@
 ---
 
 *Last updated: 2025-07-10*
-*Current Epic: Mail Module Stage 3 — External Modes (external-relay + split-m365)*
+*Current Epic: Mail Module Stage 4b — Health and Recovery (after runtime sync)*

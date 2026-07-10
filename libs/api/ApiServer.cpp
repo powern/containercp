@@ -1558,6 +1558,7 @@ bool ApiServer::start() {
         auto* created = s.mailboxes().find(id);
         if (created) { created->created_at = now_utc(); created->updated_at = created->created_at; }
         s.save();
+        (void)s.runtime_sync().sync("mail");
         if (created) { r.body = "{\"success\":true,\"data\":" + mailbox_json(*created) + "}"; return r; }
         r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(id) + "}}";
         return r;
@@ -1624,6 +1625,7 @@ bool ApiServer::start() {
         auto* created = s.mail_aliases().find(id);
         if (created) { created->created_at = now_utc(); created->updated_at = created->created_at; }
         s.save();
+        (void)s.runtime_sync().sync("mail");
         if (created) { r.body = "{\"success\":true,\"data\":" + alias_json(*created) + "}"; return r; }
         r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(id) + "}}";
         return r;
@@ -1705,6 +1707,7 @@ bool ApiServer::start() {
         }
 
         s.save();
+        (void)s.runtime_sync().sync("mail");
 
         auto* created = s.mail().find(id);
         if (created) {
@@ -1797,6 +1800,7 @@ bool ApiServer::start() {
 
         m->updated_at = ssl::CertificateStore::timestamp_utc();
         s.save();
+        (void)s.runtime_sync().sync("mail");
 
         r.body = "{\"success\":true,\"data\":" + mail_domain_json(*m) + "}";
         return r;
@@ -1823,6 +1827,7 @@ bool ApiServer::start() {
 
         s.mail().remove(id);
         s.save();
+        (void)s.runtime_sync().sync("mail");
         r.body = "{\"success\":true,\"data\":{\"message\":\"Mail domain removed\"}}";
         return r;
     });
@@ -1922,6 +1927,7 @@ bool ApiServer::start() {
 
         mb->updated_at = now_utc();
         s.save();
+        (void)s.runtime_sync().sync("mail");
         r.body = "{\"success\":true,\"data\":" + mailbox_json(*mb) + "}";
         return r;
     });
@@ -1977,6 +1983,7 @@ bool ApiServer::start() {
         mb->password_hash = hash;
         mb->updated_at = now_utc();
         s.save();
+        (void)s.runtime_sync().sync("mail");
         r.body = "{\"success\":true,\"data\":{\"message\":\"Password changed\"}}";
         return r;
     });
@@ -2001,6 +2008,7 @@ bool ApiServer::start() {
 
         s.mailboxes().remove(id);
         s.save();
+        (void)s.runtime_sync().sync("mail");
         r.body = "{\"success\":true,\"data\":{\"message\":\"Mailbox removed\"}}";
         return r;
     });
@@ -2015,6 +2023,7 @@ bool ApiServer::start() {
         if (!s.mail_aliases().find(id)) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"Alias not found\"}"; return r; }
         s.mail_aliases().remove(id);
         s.save();
+        (void)s.runtime_sync().sync("mail");
         r.body = "{\"success\":true,\"data\":{\"message\":\"Alias removed\"}}";
         return r;
     });
@@ -2043,6 +2052,7 @@ bool ApiServer::start() {
         }
         a->updated_at = now_utc();
         s.save();
+        (void)s.runtime_sync().sync("mail");
         std::ostringstream json;
         json << "{\"success\":true,\"data\":{"
              << "\"id\":" << a->id
@@ -2179,6 +2189,7 @@ bool ApiServer::start() {
 
         domain->dkim_public_key_dns = dns_record;
         s.save();
+        (void)s.runtime_sync().sync("mail");
         r.body = "{\"success\":true,\"data\":{\"message\":\"DKIM key generated\""
                  ",\"dns_record\":\"" + JsonFormatter::escape(dns_record) + "\"}}";
         return r;

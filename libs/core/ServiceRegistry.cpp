@@ -32,6 +32,16 @@ ServiceRegistry::ServiceRegistry()
     , recovery_manager_(logger_, proxy_provider_, *this)
     , mail_provider_(logger_, config_.data_root())
 {
+    // Register mail runtime sync callback
+    runtime_sync_.register_handler("mail", [this]() -> core::OperationResult {
+        if (mail_.module_state() != mail::MailModuleState::Active)
+            return {true, "Mail module not active"};
+        auto r = mail_provider_.write_configs(
+            mail_.list(), mailboxes_, mail_aliases_);
+        if (!r.success) return r;
+        return mail_provider_.reload();
+    });
+
     auto loaded_nodes = storage_.load_nodes();
     if (loaded_nodes.empty()) {
         Resource res;
@@ -539,6 +549,10 @@ runtime::SiteRuntimeManager& ServiceRegistry::site_runtime() {
 
 runtime::RuntimeActionExecutor& ServiceRegistry::runtime_executor() {
     return runtime_action_executor_;
+}
+
+runtime::RuntimeSynchronizer& ServiceRegistry::runtime_sync() {
+    return runtime_sync_;
 }
 
 provider::HostingProvider& ServiceRegistry::hosting_provider() {

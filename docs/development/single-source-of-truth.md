@@ -19,6 +19,7 @@ or duplicate the logic.
 
 | Capability | Owner module | Consumers |
 |------------|-------------|-----------|
+| Runtime synchronization | `RuntimeSynchronizer` (`libs/runtime/`) | Mail, future DNS/Proxy |
 | SSL/HTTPS status | `CertificateStore` (`libs/ssl/`) | Sites page, SSL page |
 | Container runtime actions | `RuntimeActionExecutor` (`libs/runtime/`) | Sites, future Databases/Redis |
 | Container runtime status | `RuntimeActionExecutor::service_status()` | SiteRuntimeManager |
