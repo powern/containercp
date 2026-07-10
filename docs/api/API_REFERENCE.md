@@ -335,7 +335,32 @@ Response format per alias entry:
 }
 ```
 
-### 2.18 Mail — Module
+### 2.18 Mail — DKIM
+
+| Method | Path | Purpose | Owner |
+|--------|------|---------|-------|
+| POST | `/api/mail/domains/<id>/dkim/generate` | Generate DKIM key pair for a domain | `DockerMailProvider` |
+
+Generates a 2048-bit RSA key pair using OpenSSL.  The private key is stored
+in `<data_root>/mail/config/state/dkim/<domain>/<selector>.private`.
+The public key DNS record is stored in `MailDomain::dkim_public_key_dns`
+and returned in the response.
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "DKIM key generated",
+    "dns_record": "v=DKIM1; k=rsa; p=MIGfMA0..."
+  }
+}
+```
+
+The `dns_record` value should be added as a TXT record at
+`<selector>._domainkey.<domain>` in the DNS provider.
+
+### 2.19 Mail — Module
 
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|
@@ -353,7 +378,7 @@ containers without deleting configuration data.
 
 Status response includes counts of configured domains, mailboxes, and aliases.
 
-### 2.19 Mail — Regenerate
+### 2.20 Mail — Regenerate
 
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|
@@ -364,7 +389,7 @@ and Dovecot passwd file from the current ContainerCP data model.  Calls
 `reload()` (postfix reload) after writing configs.  Requires the mail module
 to be active.  Returns error if module is inactive.
 
-### 2.20 Logs
+### 2.21 Logs
 
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|

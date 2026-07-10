@@ -620,12 +620,17 @@ Local delivery works for `local-primary` mode.
 
 ### Stage 2b — TLS, DKIM, security (estimated: 3-4 days)
 
-- TLS/SSL certificates for Postfix and Dovecot
-- DKIM key generation and signing (via Rspamd or OpenDKIM)
-- DKIM DNS record display in API
-- Postfix `transport_maps` for split delivery
-- API: certificate management endpoints
-- Tests: DKIM signing, TLS configuration
+- TLS/SSL certificates for Postfix and Dovecot (paths from CertificateStore)
+- DKIM key generation via OpenSSL (`POST /api/mail/domains/<id>/dkim/generate`)
+- DKIM DNS record stored in `MailDomain::dkim_public_key_dns`, returned in API
+- Postfix `transport_maps` for split delivery (local, external-relay, split-m365)
+- Postfix TLS configuration (smtpd_tls_cert_file, smtpd_tls_key_file)
+- Dovecot TLS configuration (ssl_cert, ssl_key)
+- Rspamd milter configuration prepared for future DKIM signing
+- Docker Compose mounts SSL directory for certificate access
+- Docker Compose mounts DKIM state directory
+- API: `POST /api/mail/domains/<id>/dkim/generate`
+- Tests: DKIM key generation format, transport_maps generation
 
 ### Stage 3 — External modes and M365 (estimated: 4-5 days)
 

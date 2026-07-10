@@ -1437,8 +1437,9 @@ bool ApiServer::start() {
           << "\",\"owner_id\":" << m.owner_id
           << ",\"enabled\":" << (m.enabled ? "true" : "false")
           << ",\"relay_host\":\"" << JsonFormatter::escape(m.relay_host)
-          << "\",\"dkim_selector\":\"" << JsonFormatter::escape(m.dkim_selector)
-          << "\",\"max_mailboxes\":" << m.max_mailboxes
+           << "\",\"dkim_selector\":\"" << JsonFormatter::escape(m.dkim_selector)
+           << "\",\"dkim_public_key_dns\":\"" << JsonFormatter::escape(m.dkim_public_key_dns)
+           << "\",\"max_mailboxes\":" << m.max_mailboxes
           << ",\"max_aliases\":" << m.max_aliases
           << ",\"catch_all\":\"" << JsonFormatter::escape(m.catch_all)
           << "\",\"created_at\":\"" << JsonFormatter::escape(m.created_at)
@@ -2127,6 +2128,39 @@ bool ApiServer::start() {
             return r;
         }
         r.body = "{\"success\":true,\"data\":{\"message\":\"Configuration regenerated and reloaded\"}}";
+        return r;
+    });
+
+    // POST /api/mail/domains/<id>/dkim/generate — generate DKIM key
+    router_.add_prefix("POST", "/api/mail/domains/", [&s](const Request& req) {
+        Response r;
+        std::string remaining = req.path.substr(std::string("/api/mail/domains/").size());
+        // remaining = "<domain_id>/dkim/generate"
+        auto first_slash = remaining.find('/');
+        if (first_slash == std::string::npos) { r.status_code = 404; return r; }
+        std::string id_str = remaining.substr(0, first_slash);
+        std::string sub = remaining.substr(first_slash + 1);
+        if (sub != "dkim/generate") { r.status_code = 404; return r; }
+
+        uint64_t domain_id = 0;
+        try { domain_id = std::stoull(id_str); } catch (...) {}
+        auto* domain = s.mail().find(domain_id);
+        if (!domain) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"Mail domain not found\"}"; return r; }
+
+        std::string dkim_dir = s.config().data_root() + "/mail/config/state/dkim";
+        std::string dns_record = mail::DockerMailProvider::generate_dkim_key(
+            dkim_dir, domain->domain_name, domain->dkim_selector);
+
+        if (dns_record.empty()) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"Failed to generate DKIM key\"}";
+            return r;
+        }
+
+        domain->dkim_public_key_dns = dns_record;
+        s.save();
+        r.body = "{\"success\":true,\"data\":{\"message\":\"DKIM key generated\""
+                 ",\"dns_record\":\"" + JsonFormatter::escape(dns_record) + "\"}}";
         return r;
     });
 
