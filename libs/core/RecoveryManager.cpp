@@ -45,7 +45,7 @@ void RecoveryManager::check_loop() {
     logger_.info("RECOVERY", "check_loop entered");
     while (running_) {
         logger_.info("RECOVERY", "Health check tick (fail_count="
-                     + std::to_string(fail_count_) + ")");
+                     + std::to_string(fail_count_.load()) + ")");
         bool healthy = is_proxy_healthy();
         logger_.info("RECOVERY", "central_proxy_running() returned "
                      + std::string(healthy ? "true" : "false")
@@ -53,15 +53,27 @@ void RecoveryManager::check_loop() {
         if (!running_) break;
 
         if (healthy) {
-            if (fail_count_ > 0) {
+            if (fail_count_.exchange(0) > 0) {
                 logger_.info("RECOVERY", "Proxy healthy again, resetting failure counter");
-                fail_count_ = 0;
             }
         } else {
-            logger_.warning("RECOVERY", "Proxy unhealthy (fail_count="
-                           + std::to_string(fail_count_ + 1) + ")");
+            bool acquired = false;
+            int attempt = 0;
+            bool is_cooldown = false;
+            {
+                std::lock_guard<std::mutex> lock(status_mutex_);
+                if (recovery_active_) {
+                    logger_.info("RECOVERY", "Recovery already in progress, waiting for completion");
+                } else if (fail_count_.load() >= MAX_RETRIES) {
+                    is_cooldown = true;
+                } else {
+                    recovery_active_ = true;
+                    acquired = true;
+                    attempt = fail_count_.fetch_add(1) + 1;
+                }
+            }
 
-            if (fail_count_ >= MAX_RETRIES) {
+            if (is_cooldown) {
                 logger_.error("RECOVERY",
                     "Proxy recovery failed " + std::to_string(MAX_RETRIES)
                     + " times. Entering cooldown for " + std::to_string(COOLDOWN_SEC) + "s. "
@@ -70,27 +82,12 @@ void RecoveryManager::check_loop() {
                     + "docker rm -f containercp-proxy && systemctl restart containercpd");
                 std::this_thread::sleep_for(std::chrono::seconds(COOLDOWN_SEC));
                 fail_count_ = 0;
-            } else {
-                // Check if manual recovery is in progress — don't overlap
-                {
-                    std::lock_guard<std::mutex> lock(status_mutex_);
-                    if (recovery_active_) {
-                        logger_.info("RECOVERY", "Recovery already in progress, waiting for completion");
-                        // Fall through to normal sleep — no busy loop
-                    } else {
-                        recovery_active_ = true;
-                    }
-                }
-                if (recovery_active_) {
-                    fail_count_++;
-                    logger_.info("RECOVERY", "Recovery attempt " + std::to_string(fail_count_)
-                                 + "/" + std::to_string(MAX_RETRIES));
-                    recover();
-                    {
-                        std::lock_guard<std::mutex> lock(status_mutex_);
-                        recovery_active_ = false;
-                    }
-                }
+            } else if (acquired) {
+                logger_.info("RECOVERY", "Recovery attempt " + std::to_string(attempt)
+                             + "/" + std::to_string(MAX_RETRIES));
+                recover();
+                std::lock_guard<std::mutex> lock(status_mutex_);
+                recovery_active_ = false;
             }
         }
 

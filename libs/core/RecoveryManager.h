@@ -69,7 +69,7 @@ private:
     static constexpr int MAX_RETRIES = 3;
     static constexpr int COOLDOWN_SEC = 300;
 
-    int fail_count_ = 0;
+    std::atomic<int> fail_count_{0};
     mutable std::mutex status_mutex_;
     bool recovery_active_ = false;
     std::time_t last_recovery_time_ = 0;
