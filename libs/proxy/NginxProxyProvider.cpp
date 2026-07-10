@@ -32,9 +32,40 @@ std::string NginxProxyProvider::proxy_name() const {
 // Detect Docker bridge gateway IP for host access from inside containers.
 // Tries host.docker.internal first, then falls back to gateway detection.
 static std::string detect_host_gateway() {
-    (void)detect_host_gateway; // suppress unused warning — kept for reference
+    // Try host.docker.internal via getent (only works with --add-host flag)
+    {
+        std::string out_file = "/tmp/containercp-gateway-check.txt";
+        std::string cmd1 = "getent hosts host.docker.internal 2>/dev/null > " + out_file;
+        std::system(cmd1.c_str());
+        std::ifstream in(out_file);
+        std::string host_entry;
+        std::getline(in, host_entry);
+        std::remove(out_file.c_str());
+        if (!host_entry.empty()) {
+            auto space = host_entry.find(' ');
+            if (space != std::string::npos) {
+                return host_entry.substr(0, space);
+            }
+        }
+    }
+    // Fallback: parse docker bridge gateway from network inspect
+    {
+        std::string out_file = "/tmp/containercp-gateway-ip.txt";
+        std::string cmd2 = "docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null > " + out_file;
+        std::system(cmd2.c_str());
+        std::ifstream in(out_file);
+        std::string gw;
+        std::getline(in, gw);
+        std::remove(out_file.c_str());
+        if (!gw.empty()) return gw;
+    }
+    // Last resort: common Docker bridge gateway
     return "172.17.0.1";
 }
+
+// Replace this entire function with upstream resolution in a future refactor.
+// Currently unused but kept for reference (Docker gateway resolved inline in
+// ServiceRegistry::start()).
 
 bool NginxProxyProvider::central_proxy_running() const {
     std::string cmd = "docker inspect " + proxy_name() + " > /dev/null 2>&1";
