@@ -918,7 +918,7 @@ async function loadProxy(p) {
           <div><div style="font-size:11px;color:var(--text3);">Container</div><div style="margin-top:2px;">${stateBadge(container.state)}</div></div>
           <div><div style="font-size:11px;color:var(--text3);">Version</div><div style="margin-top:2px;font-size:12px;color:var(--text2);">nginx ${esc(proxyInfo.version||'?')}</div></div>
           <div><div style="font-size:11px;color:var(--text3);">Configuration</div><div style="margin-top:2px;">${testBadge(configTest)}</div></div>
-          <div><div style="font-size:11px;color:var(--text3);">Config Detail</div><div style="margin-top:2px;font-size:12px;color:var(--text2);word-break:break-word;">${esc(configTest.message||'Not tested since daemon start')}</div></div>
+          <div><div style="font-size:11px;color:var(--text3);">Config Detail</div><div style="margin-top:2px;font-size:12px;color:var(--text2);word-break:break-word;">${esc(configTest.message||'Never tested')}</div></div>
           <div><div style="font-size:11px;color:var(--text3);">Recovery Manager</div><div style="margin-top:2px;">${recoveryRunningBadge(recoveryInfo.manager_running)}</div></div>
           <div><div style="font-size:11px;color:var(--text3);">Recovery In Progress</div><div style="margin-top:2px;">${recoveryProgressBadge(recoveryInfo.recovery_in_progress)}</div></div>
           <div><div style="font-size:11px;color:var(--text3);">Last Recovery</div><div style="margin-top:2px;font-size:12px;color:var(--text2);">${fmtTime(recoveryInfo.last_recovery_at)}</div></div>
@@ -934,7 +934,7 @@ async function loadProxy(p) {
       const rows = (proxyData.data||[]).filter(r=>!searchTerm||r.domain.includes(searchTerm));
       tbl.innerHTML = buildTable([
         {label:'Domain',html:r=>`<span style="font-weight:500;">${esc(r.domain)}</span>${r.protected?` <span class="badge badge-info">system</span>`:''}`},
-        {label:'Type / Site',html:r=>r.entry_type==='system'?'<span class="badge badge-info">Admin Panel</span>':r.site_name?`<span style="font-size:12px;">${esc(r.site_name)}</span>`:'<span class="badge badge-info">Unlinked</span>'},
+        {label:'Type / Site',html:r=>r.entry_type==='system'?'<span class="badge badge-info">Admin Panel</span>':`<span style="font-size:12px;">${esc(r.site_name||'Unlinked')}</span>`},
         {label:'Upstream',html:r=>`<code style="font-size:12px;">${esc(r.upstream)}</code>`},
         {label:'HTTP',html:()=>'<span class="badge badge-ok">ON</span>'},
         {label:'HTTPS',html:r=>r.https_enabled?'<span class="badge badge-ok">ON</span>':'<span class="badge badge-info">OFF</span>'},
