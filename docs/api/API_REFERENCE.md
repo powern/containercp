@@ -198,8 +198,13 @@ subsystems.
 
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|
-| GET | `/api/proxy` | List proxy configs | `ReverseProxyManager` |
-| POST | `/api/proxy/remove` | Remove a proxy entry | `ReverseProxyManager` |
+| GET | `/api/proxy` | List proxy entries (enriched with site + SSL) | `ProxyViewService` |
+| GET | `/api/proxy/health` | Global proxy health (container, config, counts) | `ProxyViewService` + `NginxProxyProvider` |
+| POST | `/api/proxy/test` | Validate nginx configuration (`nginx -t`) | `NginxProxyProvider` |
+| POST | `/api/proxy/reload` | Validate then reload nginx | `NginxProxyProvider` |
+| POST | `/api/proxy/sync` | Regenerate all HTTPS configs from core state | `ServiceRegistry` |
+| POST | `/api/proxy/recover` | Full proxy self-healing | `RecoveryManager` |
+| POST | `/api/proxy/remove` | Remove a proxy entry (protected: admin entries cannot be removed) | `ReverseProxyManager` + `NginxProxyProvider` |
 
 ### 2.11 Databases
 

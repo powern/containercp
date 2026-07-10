@@ -11,6 +11,7 @@
 #include "jobs/JobManager.h"
 #include "jobs/JobExecutor.h"
 #include "proxy/NginxProxyProvider.h"
+#include "proxy/ProxyViewService.h"
 #include "proxy/ReverseProxyManager.h"
 #include "config/Config.h"
 #include "core/ResourceManager.h"
@@ -67,6 +68,7 @@ public:
     access::AccessProvider& access_provider();
     proxy::ReverseProxyManager& reverse_proxies();
     proxy::ProxyProvider& proxy_provider();
+    proxy::ProxyViewService& proxy_view();
     ssl::SslCertificateManager& ssl();
     ssl::CertificateStore& cert_store();
     ssl::CertificateProvider& cert_provider();
@@ -122,6 +124,7 @@ private:
     access::LocalSftpProvider access_provider_;
     proxy::ReverseProxyManager reverse_proxies_;
     proxy::NginxProxyProvider proxy_provider_;
+    proxy::ProxyViewService proxy_view_;
     ssl::SslCertificateManager ssl_;
     ssl::CertificateStore cert_store_;
     domain::DomainViewService domain_view_;

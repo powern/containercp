@@ -423,6 +423,26 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
     return {true, "Central proxy created (waiting for container)"};
 }
 
+core::OperationResult NginxProxyProvider::test_config() const {
+    if (!central_proxy_running()) {
+        return {false, "Proxy container is not running"};
+    }
+    // Use attach_certificate's validate approach: test with a known config path
+    std::string test_cmd = "docker exec " + proxy_name() + " nginx -t 2>&1";
+    std::string out_file = "/tmp/containercp-nginx-test.txt";
+    std::system((test_cmd + " > " + out_file + " 2>/dev/null").c_str());
+    std::ifstream in(out_file);
+    std::string result;
+    std::getline(in, result);
+    std::remove(out_file.c_str());
+    if (result.find("test failed") != std::string::npos || result.find("emerg") != std::string::npos) {
+        logger_.warning("PROXY", "nginx config test failed: " + result);
+        return {false, "nginx configuration test failed: " + result};
+    }
+    logger_.info("PROXY", "nginx config test passed");
+    return {true, "nginx configuration is valid"};
+}
+
 core::OperationResult NginxProxyProvider::remove_central_proxy() {
     std::string cmd = "docker rm -f " + proxy_name() + " > /dev/null 2>&1";
     std::system(cmd.c_str());

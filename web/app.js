@@ -851,24 +851,109 @@ async function loadSsl(p) {
 /* ===== PROXY ===== */
 async function loadProxy(p) {
   try {
-    const data = await api('/api/proxy');
-    p.innerHTML = `<div class="page-header"><h1>Reverse Proxy</h1></div>`;
-    p.innerHTML += tb('All Proxy Configs');
+    const [proxyData, healthData] = await Promise.all([
+      api('/api/proxy'),
+      api('/api/proxy/health')
+    ]);
+    const health = healthData.data || {};
+
+    // Build health card HTML
+    const container = health.container || {};
+    const proxyInfo = health.proxy || {};
+    const configTest = proxyInfo.config_test || {};
+    const entries = health.entries || {};
+
+    const stateBadge = (state) => state === 'running'
+      ? '<span class="badge badge-ok">Running</span>'
+      : '<span class="badge badge-err">Stopped</span>';
+
+    const testBadge = configTest.success
+      ? '<span class="badge badge-ok">Valid</span>'
+      : '<span class="badge badge-err">Failed</span>';
+
+    p.innerHTML = `
+      <div class="page-header"><h1>Reverse Proxy</h1></div>
+      <div class="card" style="margin-bottom:12px;">
+        <h3 style="margin-bottom:8px;">Global Health</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+          <div>
+            <div style="font-size:11px;color:var(--text3);">Container</div>
+            <div style="margin-top:2px;">${stateBadge(container.state)}</div>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text3);">Provider</div>
+            <div style="margin-top:2px;">${esc(proxyInfo.provider||'nginx')}</div>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text3);">Config</div>
+            <div style="margin-top:2px;">${testBadge}</div>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text3);">Proxy Entries</div>
+            <div style="margin-top:2px;">${entries.total||0} total (${entries.system||0} system, ${entries.site||0} site)</div>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text3);">Config Test</div>
+            <div style="margin-top:2px;font-size:12px;color:var(--text2);">${esc(configTest.message||'')}</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:end;">
+            <button class="btn btn-sm" onclick="proxyAction('test')">Test</button>
+            <button class="btn btn-sm" onclick="proxyAction('reload')" ${!configTest.success?'disabled':''}>Reload</button>
+            <button class="btn btn-sm" onclick="proxyAction('sync')">Sync</button>
+            <button class="btn btn-sm btn-primary" onclick="proxyAction('recover')">Recover</button>
+          </div>
+        </div>
+      </div>`;
+    p.innerHTML += tb('Proxy Entries');
     window.renderTable = () => {
       const tbl = $('proxy-table');
       if (!tbl) return;
+      const rows = (proxyData.data||[]).filter(r=>!searchTerm||r.domain.includes(searchTerm));
       tbl.innerHTML = buildTable([
-        {label:'Domain',html:r=>esc(r.domain)},{label:'Provider',html:r=>esc(r.provider)},{label:'Status',html:r=>esc(r.status)},
-        {label:'Actions',html:r=>`<button class="btn-icon" style="color:var(--red)" onclick="removeProxy('${esc(r.domain)}')">&#10005;</button>`}
-      ], data.data||[]);
+        {label:'Domain',html:r=>`<span style="font-weight:500;">${esc(r.domain)}</span>${r.protected?` <span class="badge badge-info">system</span>`:''}`},
+        {label:'Type / Site',html:r=>r.entry_type==='system'?'<span class="badge badge-info">System</span>':r.site_name?esc(r.site_name):'<span class="badge badge-info">Site</span>'},
+        {label:'Upstream',html:r=>`<code style="font-size:12px;">${esc(r.upstream)}</code>`},
+        {label:'HTTP',html:()=>'<span class="badge badge-ok">ON</span>'},
+        {label:'HTTPS',html:r=>r.https_enabled?'<span class="badge badge-ok">ON</span>':'<span class="badge badge-info">OFF</span>'},
+        {label:'State',html:r=>{
+          const m={'active':'badge-ok','disabled':'badge-err','error':'badge-warn'};
+          return `<span class="badge ${m[r.configured_state]||'badge-info'}">${esc(r.configured_state)}</span>`;
+        }},
+        {label:'Health',html:()=>'<span class="badge badge-info">Unknown</span>'},
+        {label:'Actions',html:r=>{
+          let acts = `<button class="btn-icon" onclick="window.open('http://${esc(r.domain)}','_blank')" title="Open">&#8599;</button>`;
+          if (r.site_id > 0) acts += `<button class="btn-icon" onclick="navigate('site-detail',${r.site_id})" title="View site">&#128065;</button>`;
+          if (!r.protected) {
+            acts += `<button class="btn-icon" style="color:var(--red)" onclick="removeProxy('${esc(r.domain)}')" title="Remove">&#10005;</button>`;
+          }
+          return acts;
+        }}
+      ], rows, 'No proxy entries');
     };
     p.innerHTML += `<div id="proxy-table"></div>`;
     window.renderTable();
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load proxy</div>'; }
 }
 
+async function proxyAction(action) {
+  const labels = {'test':'Testing config...','reload':'Reloading nginx...','sync':'Syncing configs...','recover':'Recovering proxy...'};
+  toast(labels[action]||'Working...', 'info');
+  try {
+    const res = await apiPost('/api/proxy/' + action, {});
+    if (res.success) {
+      toast(action + ' completed', 'success');
+    } else {
+      toast('Error: ' + (res.error || 'Unknown'), 'error');
+    }
+  } catch(e) {
+    toast('Error: ' + e.message, 'error');
+  }
+  // Refresh the page to show updated health
+  loadProxy($('page'));
+}
+
 async function removeProxy(domain) {
-  if (!confirm('Remove proxy config?')) return;
+  if (!confirm('Remove proxy entry for '+domain+'?')) return;
   try { const res = await apiPost('/api/proxy/remove',{domain}); if(res.success){toast('Proxy removed','success');loadProxy($('page'));}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
 }
 

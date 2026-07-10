@@ -3,6 +3,7 @@
 #include "proxy/NginxProxyProvider.h"
 
 #include <chrono>
+#include <ctime>
 #include <thread>
 
 namespace containercp::core {
@@ -84,6 +85,22 @@ void RecoveryManager::check_loop() {
         }
     }
     logger_.info("RECOVERY", "check_loop exiting");
+}
+
+core::OperationResult RecoveryManager::recover_now() {
+    logger_.info("RECOVERY", "Manual recovery requested via API");
+    if (recovery_active_.exchange(true)) {
+        return {false, "Recovery already in progress"};
+    }
+    recover();
+    recovery_active_ = false;
+    last_recovery_time_ = std::time(nullptr);
+    if (is_proxy_healthy()) {
+        last_recovery_result_ = "success";
+        return {true, "Recovery completed successfully"};
+    }
+    last_recovery_result_ = "failed";
+    return {false, "Recovery completed but proxy is still unhealthy"};
 }
 
 void RecoveryManager::recover() {

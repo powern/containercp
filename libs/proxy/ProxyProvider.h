@@ -25,6 +25,9 @@ public:
         (void)domain; (void)cert_path; (void)key_path; (void)redirect;
         return {false, "not implemented"};
     }
+    // Validate the proxy configuration (e.g. nginx -t). Returns success/failure.
+    virtual core::OperationResult test_config() const { return {false, "not implemented"}; }
+
     virtual core::OperationResult detach_certificate(const std::string& domain) {
         (void)domain;
         return {false, "not implemented"};

@@ -14,6 +14,7 @@ ServiceRegistry::ServiceRegistry()
     , backup_provider_(logger_)
     , access_provider_(logger_)
     , proxy_provider_(filesystem_, config_, logger_, ssl_, reverse_proxies_)
+    , proxy_view_(logger_, reverse_proxies_, sites_, cert_store_, proxy_provider_)
     , cert_store_(logger_, config_.data_root() + "/ssl")
     , domain_view_(logger_, domains_, sites_, cert_store_)
     , http01_challenge_(logger_, config_.data_root() + "/sites", config_.data_root() + "/ssl/0/.well-known/acme-challenge")
@@ -438,6 +439,10 @@ proxy::ReverseProxyManager& ServiceRegistry::reverse_proxies() {
 
 proxy::ProxyProvider& ServiceRegistry::proxy_provider() {
     return proxy_provider_;
+}
+
+proxy::ProxyViewService& ServiceRegistry::proxy_view() {
+    return proxy_view_;
 }
 
 ssl::SslCertificateManager& ServiceRegistry::ssl() {

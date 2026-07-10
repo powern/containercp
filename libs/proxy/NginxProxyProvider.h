@@ -33,6 +33,7 @@ public:
     core::OperationResult ensure_central_proxy();
     core::OperationResult remove_central_proxy();
     bool central_proxy_running() const;
+    core::OperationResult test_config() const;
 
 private:
     std::string config_path(const std::string& domain) const;

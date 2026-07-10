@@ -163,14 +163,52 @@ Every action calls an existing backend method:
 | Staged rollout | Route percentage of traffic to a different upstream | Advanced nginx config |
 | Multiple providers | Support Traefik, Caddy alongside nginx | ProxyProvider interface |
 
-## 9. Implementation order (recommended)
+## 9. Stage 1 implementation (completed)
 
-1. **Add `GET /api/proxy/health`** — returns global proxy status
-2. **Add `POST /api/proxy/reload`** — calls `proxy_provider_.reload()`
-3. **Add `POST /api/proxy/sync`** — calls `services.sync_all_https_configs()`
-4. **Enrich `GET /api/proxy`** — add site name, SSL status via a `ProxyViewService`
-5. **Redesign frontend** — global health card + enriched table + action buttons
-6. **Add domain enable/disable** — API routes + frontend actions
+### Implemented endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/proxy` | Enriched proxy entry list (was: raw ReverseProxy list) |
+| GET | `/api/proxy/health` | Global proxy health (container, config test, entry counts) |
+| POST | `/api/proxy/test` | Validate nginx configuration (`nginx -t`) |
+| POST | `/api/proxy/reload` | Validate then reload nginx |
+| POST | `/api/proxy/sync` | Regenerate all HTTPS configs from core state |
+| POST | `/api/proxy/recover` | Full proxy self-healing (calls `RecoveryManager::recover_now()`) |
+
+### New core methods
+
+| Method | Class | Purpose |
+|--------|-------|---------|
+| `test_config()` | `NginxProxyProvider` | Runs `nginx -t` inside the proxy container |
+| `recover_now()` | `RecoveryManager` | Synchronous recovery with concurrency protection |
+| `build_enriched_json()` | `ProxyViewService` | Enriched proxy list with site name, SSL, protection flag |
+| `build_health_json()` | `ProxyViewService` | Global health status |
+
+### Protected admin entry
+
+- `ReverseProxy` records with `site_id == 0` are classified as `"system"` (admin)
+- The `protected` field is `true` for admin entries
+- The frontend hides Remove/Disable buttons for protected entries
+- System entries show a `system` badge in the Domain column
+
+### Frontend changes
+
+- **Global health card** at top of page: container state, provider, config
+  test result, entry counts, action buttons (Test, Reload, Sync, Recover)
+- **Enriched table**: Domain (with system badge), Type/Site, Upstream,
+  HTTP, HTTPS, State, Backend Health (Unknown), Actions
+- **Action buttons**: Test, Reload, Sync, Recover — all call the new API
+  endpoints, show progress toast, refresh page on completion
+- Provider column removed (was always "nginx")
+
+### Deferred (Stage 2)
+
+- Per-domain Enable/Disable
+- Per-domain Remove for non-protected entries (already exists via
+  `POST /api/proxy/remove`)
+- Backend health checks (currently "Unknown")
+- Recovery event persistence (currently daemon-start scope)
 
 ## 10. Related documents
 

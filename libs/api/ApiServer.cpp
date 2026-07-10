@@ -261,9 +261,77 @@ bool ApiServer::start() {
         return r;
     });
 
+    // GET /api/proxy — enriched proxy entry list
     router_.add("GET", "/api/proxy", [&s](const Request&) {
         Response r;
-        r.body = JsonFormatter::success(JsonFormatter::proxies(s.reverse_proxies().list()));
+        r.body = "{\"success\":true,\"data\":" + s.proxy_view().build_enriched_json() + "}";
+        return r;
+    });
+
+    // GET /api/proxy/health — global proxy health status
+    router_.add("GET", "/api/proxy/health", [&s](const Request&) {
+        Response r;
+        r.body = "{\"success\":true,\"data\":" + s.proxy_view().build_health_json() + "}";
+        return r;
+    });
+
+    // POST /api/proxy/test — validate nginx configuration
+    router_.add("POST", "/api/proxy/test", [&s](const Request&) {
+        Response r;
+        auto result = s.proxy_provider().test_config();
+        if (result.success) {
+            r.body = "{\"success\":true,\"data\":{\"message\":\"" +
+                     JsonFormatter::escape(result.message) + "\"}}";
+        } else {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"" +
+                     JsonFormatter::escape(result.message) + "\"}";
+        }
+        return r;
+    });
+
+    // POST /api/proxy/reload — reload nginx configuration
+    router_.add("POST", "/api/proxy/reload", [&s](const Request&) {
+        Response r;
+        // Validate before reload
+        auto test = s.proxy_provider().test_config();
+        if (!test.success) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"Config test failed: " +
+                     JsonFormatter::escape(test.message) + "\"}";
+            return r;
+        }
+        auto result = s.proxy_provider().reload();
+        if (result.success) {
+            r.body = "{\"success\":true,\"data\":{\"message\":\"nginx reloaded\"}}";
+        } else {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"" +
+                     JsonFormatter::escape(result.message) + "\"}";
+        }
+        return r;
+    });
+
+    // POST /api/proxy/sync — regenerate all HTTPS proxy configs
+    router_.add("POST", "/api/proxy/sync", [&s](const Request&) {
+        Response r;
+        s.sync_all_https_configs();
+        r.body = "{\"success\":true,\"data\":{\"message\":\"HTTPS configs synced\"}}";
+        return r;
+    });
+
+    // POST /api/proxy/recover — full proxy self-healing
+    router_.add("POST", "/api/proxy/recover", [&s](const Request&) {
+        Response r;
+        auto result = s.recovery().recover_now();
+        if (result.success) {
+            r.body = "{\"success\":true,\"data\":{\"message\":\"" +
+                     JsonFormatter::escape(result.message) + "\"}}";
+        } else {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"" +
+                     JsonFormatter::escape(result.message) + "\"}";
+        }
         return r;
     });
 
