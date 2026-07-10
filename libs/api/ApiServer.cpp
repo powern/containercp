@@ -2149,7 +2149,7 @@ bool ApiServer::start() {
         if (!domain) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"Mail domain not found\"}"; return r; }
 
         std::string dkim_dir = s.config().data_root() + "/mail/config/state/dkim";
-        std::string dns_record = mail::DkimManager::generate_key(
+        std::string dns_record = s.dkim().generate_key(
             dkim_dir, domain->domain_name, domain->dkim_selector);
 
         if (dns_record.empty()) {

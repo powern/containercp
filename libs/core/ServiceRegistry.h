@@ -21,6 +21,7 @@
 #include "domain/DomainManager.h"
 #include "filesystem/Filesystem.h"
 #include "logger/Logger.h"
+#include "mail/DkimManager.h"
 #include "mail/MailDomainManager.h"
 #include "mail/MailAliasManager.h"
 #include "mail/MailboxManager.h"
@@ -79,8 +80,9 @@ public:
     std::unordered_map<std::string, std::shared_ptr<ssl::CertificateProvider>> certificate_providers();
     ssl::RenewalScheduler& renewal_scheduler();
     mail::MailDomainManager& mail();
-    filesystem::Filesystem& filesystem();
     mail::MailboxManager& mailboxes();
+    mail::DkimManager& dkim();
+    filesystem::Filesystem& filesystem();
     mail::MailAliasManager& mail_aliases();
     mail::MailProvider& mail_provider();
     runtime::Runtime& runtime();
@@ -140,6 +142,7 @@ private:
     mail::MailDomainManager mail_;
     mail::MailAliasManager mail_aliases_;
     mail::MailboxManager mailboxes_;
+    mail::DkimManager dkim_;
     storage::Storage storage_;
     jobs::JobExecutor job_executor_;
     ssl::RenewalScheduler renewal_scheduler_;

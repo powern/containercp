@@ -28,6 +28,7 @@ ServiceRegistry::ServiceRegistry()
     , site_runtime_(logger_, config_.sites_dir(), runtime_action_executor_)
     , proxy_view_(logger_, reverse_proxies_, sites_, cert_store_, proxy_provider_, site_runtime_)
     , hosting_provider_(filesystem_, config_, php_versions_, runtime_, profiles_)
+    , dkim_(logger_)
     , recovery_manager_(logger_, proxy_provider_, *this)
     , mail_provider_(logger_, config_.data_root())
 {
@@ -494,6 +495,10 @@ mail::MailDomainManager& ServiceRegistry::mail() {
 
 mail::MailboxManager& ServiceRegistry::mailboxes() {
     return mailboxes_;
+}
+
+mail::DkimManager& ServiceRegistry::dkim() {
+    return dkim_;
 }
 
 mail::MailAliasManager& ServiceRegistry::mail_aliases() {
