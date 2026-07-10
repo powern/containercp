@@ -9,20 +9,42 @@ public domain name.  There is currently no automatic recovery path.
 ## Current architecture
 
 ```
-Normal operation:
+Current (incorrect) production state:
+
+  Browser → http://server-ip:8081/   ← direct access, should not exist
+    → WebServer (0.0.0.0:8081)
+      → ApiServer (127.0.0.1:8080)
 
   Browser → https://admin.domain/
     → nginx (containercp-proxy, ports 80/443)
-      → WebServer (0.0.0.0:8081)
+      → WebServer (0.0.0.0:8081)     ← same WebServer
         → ApiServer (127.0.0.1:8080)
-
-Recovery today: daemon restart (recreates proxy + config)
 ```
 
-The WebServer binds to `0.0.0.0:8081` and is directly accessible
-via `http://<server-ip>:8081/` even without the proxy.  The problem
-is that the **public domain name** stops working when the proxy is
-down.
+The WebServer currently binds to `0.0.0.0:8081`, exposing the admin
+panel directly on all interfaces.  This is acceptable for development
+but not for production — port 8081 should be blocked by firewall and
+all access should go through the proxy.
+
+## Corrected production architecture
+
+```
+Normal operation (target):
+
+  Browser → https://admin.domain/
+    → nginx (containercp-proxy, ports 80/443)
+      → WebServer (127.0.0.1:8081)   ← localhost only
+        → ApiServer (127.0.0.1:8080)
+
+  Port 8081 is NOT externally accessible.
+  No direct access without the reverse proxy.
+
+  If the proxy is down, admin is inaccessible.
+```
+
+The WebServer must bind to `127.0.0.1:8081` (localhost only) in
+normal mode.  External access goes exclusively through the reverse
+proxy on ports 80/443.
 
 ## Key constraints
 
@@ -64,41 +86,67 @@ down.
 └─────────────────────────────────────────────────────┘
 ```
 
+### Recovery order (corrected)
+
+Emergency access on port 80 must not be the first action.
+The correct recovery chain is:
+
+```
+1. Proxy detected as unavailable
+    ↓
+2. Try to restore the proxy:
+   a. Call ensure_central_proxy() to recreate the container
+   b. Wait up to 15s for the container to reach "running" state
+   c. If the proxy is now healthy → done, no emergency access needed
+    ↓ (if proxy still unavailable)
+3. Enable emergency access:
+   a. Bind 0.0.0.0:80 (RecoveryServer or iptables DNAT)
+   b. Admin accessible directly on port 80
+    ↓ (proxy becomes available again later)
+4. Disable emergency access:
+   a. Release port 80
+   b. Ensure proxy is running (ensure_central_proxy if needed)
+   c. Normal operation resumes through proxy only
+```
+
 ### Components
 
-**WebServer** — unchanged, always listens on `127.0.0.1:8081`.
-This is the primary admin interface, always reachable from localhost.
+**WebServer** — binds to `127.0.0.1:8081` (localhost only) in normal
+mode.  This is the primary admin interface, always reachable from
+localhost.  NOT externally accessible.
 
 **RecoveryServer** — new lightweight TCP forwarder:
-- Binds `0.0.0.0:80` when proxy is down
+- Binds `0.0.0.0:80` only when proxy is confirmed down AND proxy
+  restoration has been attempted and failed
 - Forwards accepted connections to `127.0.0.1:8081`
-- Uses `SO_REUSEPORT` if available (graceful coexistence)
 - Releases port 80 when proxy recovers
 - Requires `CAP_NET_BIND_SERVICE` (added to systemd unit)
 
 **Health Monitor** — new background thread:
 - Every 30 seconds: `docker inspect containercp-proxy`
-- Detects UP → DOWN and DOWN → UP transitions
-- Signals RecoveryServer to start/stop
+- On DOWN detection: first calls `ensure_central_proxy()` to attempt
+  proxy restoration.  Only if that fails, activates RecoveryServer.
+- On UP detection: signals RecoveryServer to release port 80
 
 ### Port ownership transition
 
 ```
 Proxy UP:
   docker-proxy binds host:80 → container:80
-  RecoveryServer: NOT listening (no socket on 80)
+  RecoveryServer: NOT listening
+  WebServer: 127.0.0.1:8081 only
 
 Proxy goes DOWN (crash/stop/deletion):
-  docker-proxy releases host:80
   Health Monitor detects DOWN (within 30s)
-  RecoveryServer binds 0.0.0.0:80
+  → FIRST: call ensure_central_proxy() to try restoration
+  → If proxy is back: done
+  → If proxy still down: RecoveryServer binds 0.0.0.0:80
   Admin accessible via http://admin.domain/ (port 80)
 
 Proxy comes back (restart/recreation):
   Health Monitor detects UP (within 30s)
   RecoveryServer closes port 80 socket
-  ensure_central_proxy() recreates container
-  docker-proxy binds host:80 → container:80
+  WebServer returns to 127.0.0.1:8081 only
   Normal operation resumes
 ```
 
@@ -129,30 +177,42 @@ This ensures that at no point are both processes holding port 80.
 ```
 1. daemon starts
 2. Load persisted state (Storage)
-3. Start WebServer on 127.0.0.1:8081
+3. Start WebServer on 127.0.0.1:8081 (localhost only)
 4. Start ApiServer on 127.0.0.1:8080
 5. ensure_central_proxy() → success/failure
 6. If proxy fails:
-   a. Health Monitor starts in "proxy down" state
-   b. RecoveryServer binds 0.0.0.0:80 immediately
-   c. Admin accessible directly on port 80
+   a. Log warning: proxy unavailable
+   b. Health Monitor starts in "proxy down" state
+   c. Immediately call ensure_central_proxy() again (retry)
+   d. If still down: RecoveryServer binds 0.0.0.0:80
+   e. Emergency admin access on port 80 (direct, not through proxy)
 7. If proxy succeeds:
    a. Health Monitor starts in "proxy up" state
    b. RecoveryServer stays idle
-   c. Admin accessible through proxy as usual
-8. Health Monitor begins periodic checks
+   c. Admin accessible through proxy only (127.0.0.1:8081 not public)
+8. Health Monitor begins periodic checks (every 30s)
 ```
 
-### Files to change
+### Required production fix (before recovery)
+
+| File | Change |
+|------|--------|
+| `app/containercpd/main.cpp` | Change WebServer bind address from `"0.0.0.0"` to `"127.0.0.1"` so the admin panel is NOT externally accessible on port 8081. |
+
+This single change eliminates direct external access to the admin
+panel and forces all traffic through the reverse proxy.  Make this
+change FIRST, before implementing any recovery mechanism.
+
+### Recovery implementation
 
 | File | Change |
 |------|--------|
 | `libs/api/RecoveryServer.h` | **New** — TCP forwarder class |
 | `libs/api/RecoveryServer.cpp` | **New** — implementation |
-| `libs/api/WebServer.h` | Add `bind_addr_` as configurable (currently hardcoded `0.0.0.0`) |
+| `libs/api/WebServer.h` | No changes needed (bind address set from constructor) |
 | `libs/core/ServiceRegistry.h` | Add `recovery_server_` member, `health_monitor_` |
 | `libs/core/ServiceRegistry.cpp` | Start/stop recovery in `start()` and `shutdown()` |
-| `app/containercpd/main.cpp` | Update WebServer bind address to `127.0.0.1` |
+| `app/containercpd/main.cpp` | Keep `127.0.0.1:8081` for WebServer |
 | `packaging/containercp.service` | Add `AmbientCapabilities=CAP_NET_BIND_SERVICE` |
 | `CMakeLists.txt` | Add RecoveryServer.cpp |
 
@@ -160,7 +220,7 @@ This ensures that at no point are both processes holding port 80.
 
 | Scenario | Behavior |
 |----------|----------|
-| Proxy was never created (fresh install) | RecoveryServer on port 80 immediately |
+| Proxy was never created (fresh install) | ensure_central_proxy() called first. If it fails, RecoveryServer on port 80 |
 | Proxy crashes while admin is in use | 30s max downtime, then RecoveryServer takes over |
 | Both try port 80 simultaneously | RecoveryServer retries bind with backoff |
 | Proxy comes back during RecoveryServer drain | Drain completes first, then proxy binds |
