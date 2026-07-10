@@ -56,6 +56,8 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/runtime/SiteRuntimeManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailDomain.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailDomainManager.cpp
+    ${CMAKE_SOURCE_DIR}/libs/mail/MailPasswordHasher.cpp
+    ${CMAKE_SOURCE_DIR}/libs/mail/MailboxManager.cpp
 )
 
 target_include_directories(containercp_tests PRIVATE
@@ -72,6 +74,7 @@ target_link_libraries(containercp_tests PRIVATE
     curl
     ssl
     crypto
+    crypt
 )
 
 add_test(NAME containercp_tests COMMAND containercp_tests)

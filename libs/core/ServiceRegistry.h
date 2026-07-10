@@ -22,6 +22,7 @@
 #include "filesystem/Filesystem.h"
 #include "logger/Logger.h"
 #include "mail/MailDomainManager.h"
+#include "mail/MailboxManager.h"
 #include "php/PhpVersionManager.h"
 #include "runtime/PortManager.h"
 #include "runtime/RuntimeActionExecutor.h"
@@ -77,6 +78,7 @@ public:
     ssl::RenewalScheduler& renewal_scheduler();
     mail::MailDomainManager& mail();
     filesystem::Filesystem& filesystem();
+    mail::MailboxManager& mailboxes();
     runtime::Runtime& runtime();
     runtime::PortManager& port_manager();
     runtime::SiteRuntimeManager& site_runtime();
@@ -132,6 +134,7 @@ private:
     std::shared_ptr<ssl::PemCertificateProvider> pem_cert_provider_;
     std::unordered_map<std::string, std::shared_ptr<ssl::CertificateProvider>> cert_providers_;
     mail::MailDomainManager mail_;
+    mail::MailboxManager mailboxes_;
     storage::Storage storage_;
     jobs::JobExecutor job_executor_;
     ssl::RenewalScheduler renewal_scheduler_;

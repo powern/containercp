@@ -8,6 +8,7 @@
 #include "proxy/ReverseProxy.h"
 #include "backup/Backup.h"
 #include "database/Database.h"
+#include "mail/Mailbox.h"
 #include "mail/MailDomain.h"
 #include "ssl/SslCertificate.h"
 #include "domain/Domain.h"
@@ -51,6 +52,8 @@ public:
 
     void save_mail_domains(const std::vector<mail::MailDomain>& domains);
     std::vector<mail::MailDomain> load_mail_domains();
+    void save_mailboxes(const std::vector<mail::Mailbox>& mailboxes);
+    std::vector<mail::Mailbox> load_mailboxes();
 
     void save_access_users(const std::vector<access::AccessUser>& users);
     std::vector<access::AccessUser> load_access_users();
@@ -78,6 +81,7 @@ private:
     std::string backups_file() const;
     std::string ssl_certificates_file() const;
     std::string mail_domains_file() const;
+    std::string mailboxes_file() const;
     std::string access_users_file() const;
     std::string access_grants_file() const;
     std::string reverse_proxies_file() const;

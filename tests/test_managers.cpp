@@ -408,3 +408,114 @@ TEST_CASE("MailDomain boolean validation logic") {
     CHECK_FALSE(is_valid_bool("True"));   // lowercase only
     CHECK_FALSE(is_valid_bool("FALSE"));  // lowercase only
 }
+
+#include "mail/MailboxManager.h"
+#include "mail/MailPasswordHasher.h"
+
+TEST_CASE("MailboxManager create/find/list/remove") {
+    containercp::mail::MailboxManager mgr;
+
+    uint64_t id = mgr.create(1, "user1", "$6$salt$hash");
+    CHECK(id == 1);
+
+    auto* mb = mgr.find(id);
+    REQUIRE(mb != nullptr);
+    CHECK(mb->local_part == "user1");
+    CHECK(mb->domain_id == 1);
+    CHECK(mb->enabled);
+    CHECK(mb->password_hash == "$6$salt$hash");
+
+    CHECK(mgr.list().size() == 1);
+    CHECK(mgr.remove(id));
+    CHECK(mgr.list().empty());
+}
+
+TEST_CASE("MailboxManager find_by_address") {
+    containercp::mail::MailboxManager mgr;
+
+    mgr.create(1, "alice", "hash1");
+    mgr.create(1, "bob", "hash2");
+    mgr.create(2, "alice", "hash3");  // same local_part, different domain
+
+    auto* a = mgr.find_by_address("alice", 1);
+    REQUIRE(a != nullptr);
+    CHECK(a->local_part == "alice");
+    CHECK(a->domain_id == 1);
+
+    auto* a2 = mgr.find_by_address("alice", 2);
+    REQUIRE(a2 != nullptr);
+    CHECK(a2->domain_id == 2);
+
+    // Same local_part different domain — different mailbox
+    CHECK(a->id != a2->id);
+
+    // Non-existent
+    CHECK(mgr.find_by_address("nonexistent", 1) == nullptr);
+}
+
+TEST_CASE("MailboxManager find_by_domain") {
+    containercp::mail::MailboxManager mgr;
+
+    mgr.create(1, "a@d1", "h");
+    mgr.create(1, "b@d1", "h");
+    mgr.create(2, "c@d2", "h");
+
+    auto d1 = mgr.find_by_domain(1);
+    CHECK(d1.size() == 2);
+
+    auto d2 = mgr.find_by_domain(2);
+    CHECK(d2.size() == 1);
+
+    auto d3 = mgr.find_by_domain(999);
+    CHECK(d3.empty());
+}
+
+TEST_CASE("MailboxManager duplicate local_part within domain rejected") {
+    containercp::mail::MailboxManager mgr;
+
+    uint64_t id1 = mgr.create(1, "duplicate", "hash1");
+    CHECK(id1 == 1);
+
+    uint64_t id2 = mgr.create(1, "duplicate", "hash2");
+    CHECK(id2 == 0);  // rejected
+
+    // Same local_part in different domain is OK
+    uint64_t id3 = mgr.create(2, "duplicate", "hash3");
+    CHECK(id3 == 2);
+}
+
+TEST_CASE("MailboxManager set_mailboxes restores state") {
+    containercp::mail::MailboxManager mgr;
+    mgr.create(1, "a", "h1");
+    mgr.create(1, "b", "h2");
+
+    auto saved = mgr.list();
+    containercp::mail::MailboxManager mgr2;
+    mgr2.set_mailboxes(saved);
+
+    CHECK(mgr2.list().size() == 2);
+    auto* a = mgr2.find_by_address("a", 1);
+    REQUIRE(a != nullptr);
+    CHECK(a->password_hash == "h1");
+
+    // Next ID continues
+    uint64_t id3 = mgr2.create(2, "c", "h3");
+    CHECK(id3 == 3);
+}
+
+TEST_CASE("MailPasswordHasher hash and verify") {
+    using containercp::mail::MailPasswordHasher;
+
+    std::string hash = MailPasswordHasher::hash("mypassword");
+    CHECK_FALSE(hash.empty());
+    CHECK(hash.find("$6$") == 0);  // SHA-512-CRYPT prefix
+
+    // Verify correct password
+    CHECK(MailPasswordHasher::verify("mypassword", hash));
+
+    // Verify wrong password
+    CHECK_FALSE(MailPasswordHasher::verify("wrongpassword", hash));
+
+    // Verify with empty hash
+    CHECK_FALSE(MailPasswordHasher::verify("pwd", ""));
+}

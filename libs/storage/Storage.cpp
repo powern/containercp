@@ -49,6 +49,10 @@ std::string Storage::mail_domains_file() const {
     return db_path_ + "mail_domains.db";
 }
 
+std::string Storage::mailboxes_file() const {
+    return db_path_ + "mail_mailboxes.db";
+}
+
 std::string Storage::access_users_file() const {
     return db_path_ + "access_users.db";
 }
@@ -416,6 +420,56 @@ std::vector<mail::MailDomain> Storage::load_mail_domains() {
         domains.push_back(std::move(m));
     }
     return domains;
+}
+
+void Storage::save_mailboxes(const std::vector<mail::Mailbox>& mailboxes) {
+    std::ofstream file(mailboxes_file());
+    for (const auto& mb : mailboxes) {
+        file << mb.id << "|"
+             << mb.domain_id << "|"
+             << mb.local_part << "|"
+             << mb.password_hash << "|"
+             << mb.quota_bytes << "|"
+             << mb.quota_messages << "|"
+             << (mb.enabled ? "1" : "0") << "|"
+             << mb.display_name << "|"
+             << mb.forward_to << "|"
+             << (mb.spam_enabled ? "1" : "0") << "|"
+             << mb.last_login << "|"
+             << mb.created_at << "|"
+             << mb.updated_at << "\n";
+    }
+}
+
+std::vector<mail::Mailbox> Storage::load_mailboxes() {
+    std::vector<mail::Mailbox> mailboxes;
+    std::ifstream file(mailboxes_file());
+    if (!file.is_open()) {
+        return mailboxes;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::istringstream ss(line);
+        std::string token;
+        mail::Mailbox mb;
+        if (std::getline(ss, token, '|')) mb.id = std::stoull(token);
+        if (std::getline(ss, token, '|')) mb.domain_id = std::stoull(token);
+        if (std::getline(ss, token, '|')) mb.local_part = token;
+        if (std::getline(ss, token, '|')) mb.password_hash = token;
+        if (std::getline(ss, token, '|')) mb.quota_bytes = token.empty() ? 0 : std::stoull(token);
+        if (std::getline(ss, token, '|')) mb.quota_messages = token.empty() ? 0 : std::stoull(token);
+        if (std::getline(ss, token, '|')) mb.enabled = (token == "1");
+        if (std::getline(ss, token, '|')) mb.display_name = token;
+        if (std::getline(ss, token, '|')) mb.forward_to = token;
+        if (std::getline(ss, token, '|')) mb.spam_enabled = (token == "1");
+        if (std::getline(ss, token, '|')) mb.last_login = token;
+        if (std::getline(ss, token, '|')) mb.created_at = token;
+        if (std::getline(ss, token, '|')) mb.updated_at = token;
+        mb.name = mb.local_part;
+        mailboxes.push_back(std::move(mb));
+    }
+    return mailboxes;
 }
 
 void Storage::save_access_users(const std::vector<access::AccessUser>& users) {

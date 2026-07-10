@@ -47,6 +47,8 @@ set(CONTAINERCP_SOURCES
     libs/logger/Logger.cpp
     libs/mail/MailDomain.cpp
     libs/mail/MailDomainManager.cpp
+    libs/mail/MailPasswordHasher.cpp
+    libs/mail/MailboxManager.cpp
     libs/node/Node.cpp
     libs/operations/SiteCreateOperation.cpp
     libs/operations/SiteRemoveOperation.cpp
@@ -105,6 +107,7 @@ target_link_libraries(containercpd PRIVATE
     curl
     ssl
     crypto
+    crypt
 )
 
 # CLI client binary (thin)

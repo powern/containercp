@@ -7,6 +7,8 @@
 
 #include "mail/MailDomain.h"
 #include "mail/MailDomainManager.h"
+#include "mail/MailPasswordHasher.h"
+#include "mail/MailboxManager.h"
 
 #include "ssl/CertificateStore.h"
 #include "ssl/CertificateProvider.h"
@@ -1644,6 +1646,165 @@ bool ApiServer::start() {
         }
 
         r.body = "{\"success\":true,\"data\":" + mail_domain_json(*m) + "}";
+        return r;
+    });
+
+    // ── Mailbox API ───────────────────────────────────────────────
+    // Helper: serialize a single Mailbox to JSON
+    auto mailbox_json = [](const mail::Mailbox& mb) -> std::string {
+        std::ostringstream j;
+        j << "{"
+          << "\"id\":" << mb.id
+          << ",\"domain_id\":" << mb.domain_id
+          << ",\"local_part\":\"" << api::JsonFormatter::escape(mb.local_part)
+          << "\",\"address\":\"" << api::JsonFormatter::escape(mb.local_part)
+          << "\",\"quota_bytes\":" << mb.quota_bytes
+          << ",\"quota_messages\":" << mb.quota_messages
+          << ",\"enabled\":" << (mb.enabled ? "true" : "false")
+          << ",\"display_name\":\"" << api::JsonFormatter::escape(mb.display_name)
+          << "\",\"forward_to\":\"" << api::JsonFormatter::escape(mb.forward_to)
+          << "\",\"spam_enabled\":" << (mb.spam_enabled ? "true" : "false")
+          << ",\"last_login\":\"" << api::JsonFormatter::escape(mb.last_login)
+          << "\",\"created_at\":\"" << api::JsonFormatter::escape(mb.created_at)
+          << "\",\"updated_at\":\"" << api::JsonFormatter::escape(mb.updated_at)
+          << "}";
+        return j.str();
+    };
+
+    // GET /api/mail/domains/<id>/mailboxes — list mailboxes for a domain
+    router_.add_prefix("GET", "/api/mail/domains/", [&s, &mailbox_json](const Request& req) {
+        Response r;
+        std::string remaining = req.path.substr(std::string("/api/mail/domains/").size());
+        // remaining = "<domain_id>/mailboxes"
+        auto slash = remaining.find('/');
+        std::string id_str = (slash != std::string::npos) ? remaining.substr(0, slash) : remaining;
+        std::string sub = (slash != std::string::npos) ? remaining.substr(slash + 1) : "";
+
+        if (sub != "mailboxes") {
+            // Let the single-domain handler match this route instead
+            r.status_code = 404;
+            return r;
+        }
+
+        uint64_t domain_id = 0;
+        try { domain_id = std::stoull(id_str); } catch (...) {}
+        if (domain_id == 0) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid domain ID\"}";
+            return r;
+        }
+
+        auto mailboxes = s.mailboxes().find_by_domain(domain_id);
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":[";
+        bool first = true;
+        for (auto* mb : mailboxes) {
+            if (!first) json << ",";
+            first = false;
+            json << mailbox_json(*mb);
+        }
+        json << "]}";
+        r.body = json.str();
+        return r;
+    });
+
+    // POST /api/mail/domains/<id>/mailboxes — create a mailbox
+    router_.add_prefix("POST", "/api/mail/domains/", [&s, &mailbox_json](const Request& req) {
+        Response r;
+        std::string remaining = req.path.substr(std::string("/api/mail/domains/").size());
+        auto slash = remaining.find('/');
+        std::string id_str = (slash != std::string::npos) ? remaining.substr(0, slash) : remaining;
+        std::string sub = (slash != std::string::npos) ? remaining.substr(slash + 1) : "";
+
+        if (sub != "mailboxes") {
+            r.status_code = 404;
+            return r;
+        }
+
+        uint64_t domain_id = 0;
+        try { domain_id = std::stoull(id_str); } catch (...) {}
+        if (domain_id == 0 || !s.mail().find(domain_id)) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Mail domain not found\"}";
+            return r;
+        }
+
+        std::string local_part = json_extract(req.body, "local_part");
+        std::string password = json_extract(req.body, "password");
+
+        if (local_part.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"local_part is required\"}";
+            return r;
+        }
+
+        if (password.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"password is required\"}";
+            return r;
+        }
+
+        // Validate local part: alphanumeric, dot, underscore, hyphen
+        bool valid = true;
+        for (char c : local_part) {
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '_' && c != '-') {
+                valid = false;
+                break;
+            }
+        }
+        if (!valid || local_part.empty() || local_part[0] == '.') {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid local_part format\"}";
+            return r;
+        }
+
+        // Hash password
+        std::string hash = mail::MailPasswordHasher::hash(password);
+        if (hash.empty()) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"Failed to hash password\"}";
+            return r;
+        }
+
+        uint64_t id = s.mailboxes().create(domain_id, local_part, hash);
+        if (id == 0) {
+            r.status_code = 409;
+            r.body = "{\"success\":false,\"error\":\"Mailbox already exists for this local part\"}";
+            return r;
+        }
+
+        s.save();
+
+        auto* created = s.mailboxes().find(id);
+        if (created) {
+            r.body = "{\"success\":true,\"data\":" + mailbox_json(*created) + "}";
+        } else {
+            r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(id) + "}}";
+        }
+        return r;
+    });
+
+    // DELETE /api/mail/mailboxes/<id> — remove a mailbox
+    router_.add_prefix("DELETE", "/api/mail/mailboxes/", [&s](const Request& req) {
+        Response r;
+        std::string id_str = req.path.substr(std::string("/api/mail/mailboxes/").size());
+        uint64_t id = 0;
+        try { id = std::stoull(id_str); } catch (...) {}
+        if (id == 0) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid mailbox ID\"}";
+            return r;
+        }
+
+        if (!s.mailboxes().find(id)) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Mailbox not found\"}";
+            return r;
+        }
+
+        s.mailboxes().remove(id);
+        s.save();
+        r.body = "{\"success\":true,\"data\":{\"message\":\"Mailbox removed\"}}";
         return r;
     });
 
