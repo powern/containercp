@@ -636,14 +636,20 @@ Local delivery works for `local-primary` mode.
 - Future DKIM lifecycle: multiple selectors, rotation, scheduled key
   replacement supported by design (directory-based storage per selector).
 
-### Stage 3 — External modes and M365 (estimated: 4-5 days)
+### Stage 3 — External modes and M365 (in progress)
 
 - `external-relay` mode — Postfix relay host configuration
 - `split-m365` mode — M365 split delivery via transport_maps
-- MX record validation (DNS lookup, compare with mode)
-- Integration with Domain module (DKIM DNS records)
-- Autodiscover endpoint (basic, IIS-compatible)
-- Tests: transport_maps generation, MX validation
+- `relay_host` validation (required for ExternalRelay/SplitM365)
+- Postfix `relayhost` + `relay_domains` generation
+- Tests: transport maps, mode validation
+- Routing design: `docs/mail-routing-design.md`
+- ADR-007: `docs/ADR/ADR-007-m365-split-delivery.md`
+
+Deferred from Stage 3:
+- MX record validation (DNS lookup) → Stage 4 (Health)
+- DKIM DNS records in Domain module → Stage 4
+- Autodiscover endpoint → Stage 5 (Webmail)
 
 ### Stage 4 — Health and recovery (estimated: 3-4 days)
 

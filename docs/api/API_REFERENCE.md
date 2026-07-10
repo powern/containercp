@@ -244,9 +244,9 @@ subsystems.
 
 Domain modes: `disabled`, `local-primary`, `external-relay`, `split-m365`.
 
-POST body: `{"domain":"example.com","mode":"local-primary","owner_id":1}`
+POST body: `{"domain":"example.com","mode":"local-primary","owner_id":1,"relay_host":"smtp.example.com:587"}`
 
-PATCH body (partial update): `{"mode":"split-m365","catch_all":"postmaster@example.com"}`
+PATCH body (partial update): `{"mode":"split-m365","relay_host":"company-com.mail.protection.outlook.com"}`
 
 Response includes: `id`, `domain`, `mode`, `owner_id`, `enabled`, `relay_host`,
 `dkim_selector`, `max_mailboxes`, `max_aliases`, `catch_all`, `created_at`, `updated_at`.
@@ -255,6 +255,8 @@ Validation:
 - Domain is normalized (lowercase, trimmed, trailing dots removed) before duplicate check.
 - Unknown mode strings return 400 with valid options list.
 - Duplicate domains return 409.
+- `relay_host` is required when mode is `external-relay` or `split-m365`.
+- `relay_host` must be emptied (by changing mode first) before switching to a mode that does not require it.
 
 ### 2.16 Mail — Mailboxes
 

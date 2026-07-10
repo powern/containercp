@@ -4,11 +4,11 @@
 > It tracks every task across all sprints/versions and cross-references
 > the actual codebase.
 >
-> Legend: ✅ Done  ⬜ Pending  🔄 In Progress  ❌ Blocked  ➖ Removed/Deprecated
+> Legend: ✅ Implemented  🔄 In Progress  ⬜ Planned  ❌ Blocked  ➖ Removed/Deprecated
 
 ---
 
-## Version 0.1 — Core Foundation (Complete)
+## Version 0.1 — Core Foundation
 
 | Task | Status | Files |
 |------|--------|-------|
@@ -19,7 +19,7 @@
 | CLI thin client + daemon | ✅ | `libs/cli/`, `libs/daemon/` |
 | UNIX socket communication | ✅ | `libs/daemon/UnixSocketClient.cpp` |
 
-## Version 0.2 — Hosting Engine (Complete)
+## Version 0.2 — Hosting Engine
 
 | Task | Status | Files |
 |------|--------|-------|
@@ -32,7 +32,7 @@
 | Site directory layout | ✅ | `libs/filesystem/SiteLayout.cpp` |
 | Compose hardening (health, restart, limits) | ✅ | `libs/docker/ComposeGenerator.cpp` |
 
-## Version 0.3 — Platform Services (Complete)
+## Version 0.3 — Platform Services
 
 | Task | Status | Files |
 |------|--------|-------|
@@ -43,7 +43,7 @@
 | Router with GET/POST | ✅ | `libs/api/Router.cpp` |
 | JSON formatter | ✅ | `libs/api/JsonFormatter.cpp` |
 
-## Version 0.4 — Infrastructure Resources (Complete)
+## Version 0.4 — Infrastructure Resources
 
 | Task | Status | Files |
 |------|--------|-------|
@@ -55,9 +55,9 @@
 | **CCP-1006**: SSL resource | ✅ | `libs/ssl/SslCertificate.h/.cpp`, `SslCertificateManager` |
 | **CCP-1007**: Mail placeholder resource | ✅ | `libs/mail/MailDomain.h/.cpp`, `MailDomainManager.h/.cpp` |
 
-## Version 0.5 — Web Administration (RC1 Complete)
+## Version 0.5 — Web Administration
 
-### Sprint 4 — Production Ready (Complete)
+### Sprint 4 — Production Ready
 
 | Task | Status | Files |
 |------|--------|-------|
@@ -70,29 +70,29 @@
 | **CCP-2007**: Docker availability cache | ✅ | `libs/runtime/DockerRuntime.cpp` |
 | **CCP-2008**: Recovery support (rollback) | ✅ | `libs/operations/SiteCreateOperation.cpp` |
 
-### Sprint 5 — Tests and Reliability (Complete)
+### Sprint 5 — Tests and Reliability
 
 | Task | Status | Files |
 |------|--------|-------|
 | **CCP-3001**: Test framework (doctest) | ✅ | `libs/doctest/doctest.h`, `tests/CMakeLists.txt` |
-| **CCP-3002**: Validator tests | ✅ | `tests/test_validator.cpp` (20 cases) |
+| **CCP-3002**: Validator tests | ✅ | `tests/test_validator.cpp` |
 | **CCP-3003**: Manager & Storage tests | ✅ | `tests/test_managers.cpp`, `tests/test_storage.cpp` |
 | **CCP-3004**: Filesystem rollback fix | ✅ | `libs/provider/DockerComposeProvider.cpp` |
 | **CCP-3005**: --force for site remove | ✅ | `libs/operations/SiteRemoveOperation.cpp` |
 | **CCP-3006**: Detailed validation messages | ✅ | `libs/utils/Validator.cpp` |
 
-### Sprint 6 — Developer Access Layer (Complete)
+### Sprint 6 — Developer Access Layer
 
 | Task | Status | Files |
 |------|--------|-------|
 | **CCP-4001**: AccessUser resource | ✅ | `libs/access/AccessUser.h/.cpp`, `AccessUserManager` |
 | **CCP-4002**: AccessProvider abstraction | ✅ | `libs/access/AccessProvider.h` |
 | **CCP-4003**: LocalSftpProvider placeholder | ✅ | `libs/access/LocalSftpProvider.h/.cpp` |
-| **CCP-4004**: CLI access user commands | ✅ | `libs/daemon/DaemonApp.cpp` (handlers) |
+| **CCP-4004**: CLI access user commands | ✅ | `libs/daemon/DaemonApp.cpp` |
 | **CCP-4005**: Access directory mapping | ✅ | `libs/access/AccessGrant.cpp` |
 | **CCP-4006**: SFTP documentation | ✅ | `docs/SFTP-PROVIDER.md` |
 
-### Sprint 7 — Admin Panel Phase 2 (Complete)
+### Sprint 7 — Admin Panel Phase 2
 
 | Task | Status | Files |
 |------|--------|-------|
@@ -105,7 +105,7 @@
 | **CCP-5008**: Improved tables + search | ✅ | `web/app.js` |
 | **CCP-5009**: Global error handling | ✅ | `web/app.js` |
 
-### API Layer (Complete)
+### API Layer
 
 | Task | Status | Files |
 |------|--------|-------|
@@ -114,26 +114,26 @@
 | **API-003**: POST /api/backups/create | ✅ | `libs/api/ApiServer.cpp` |
 | **API-004/005**: GET /api/jobs | ✅ | `libs/api/ApiServer.cpp` |
 
-### Job System (Complete)
+### Job System
 
 | Task | Status | Files |
 |------|--------|-------|
 | **JOB-001**: In-memory JobManager | ✅ | `libs/jobs/JobManager.h/.cpp` |
 
-### Backup Subsystem (Complete)
+### Backup Subsystem
 
 | Task | Status | Files |
 |------|--------|-------|
 | **BACKUP-001**: BackupProvider interface | ✅ | `libs/backup/BackupProvider.h` |
 | **BACKUP-002**: TarBackupProvider | ✅ | `libs/backup/TarBackupProvider.h/.cpp` |
 | **BACKUP-003**: Backup file management | ✅ | `/srv/containercp/backups/` |
-| **BACKUP-004**: Backup resource update | ✅ | `struct Backup` (file_path, compression) |
+| **BACKUP-004**: Backup resource update | ✅ | `struct Backup` |
 | **BACKUP-005**: CLI commands | ✅ | backup create/restore/list/show/remove |
 | **BACKUP-006**: REST API endpoint | ✅ | GET /api/backups |
-| **BACKUP-007**: SiteRemove integration | ✅ (modified: preserves backups after BUG-013) | `libs/operations/SiteRemoveOperation.cpp` |
+| **BACKUP-007**: SiteRemove integration | ✅ | `libs/operations/SiteRemoveOperation.cpp` |
 | **BACKUP-008**: Tests | ✅ | `tests/test_backup.cpp` |
 
-### Architecture Changes (Complete)
+### Architecture Changes
 
 | Task | Status | Files |
 |------|--------|-------|
@@ -155,9 +155,9 @@
 | BUG-011: Login 401 shows daemon error | ✅ | `WebServer.cpp`, `AuthService.cpp` |
 | BUG-012: Missing nginx config on create | ✅ | `DockerComposeProvider.cpp` |
 | BUG-013: Backup restore no feedback, site remove deletes backups | ✅ | `web/app.js`, `SiteRemoveOperation.cpp` |
-| BUG-014: Multi-site port conflict | ✅ | ARCH-004 (Docker network routing) |
+| BUG-014: Multi-site port conflict | ✅ | ARCH-004 |
 
-### RC2 — Stability & Production Foundation (Validated on real Debian 13)
+### RC2 — Stability & Production Foundation (validated on real Debian 13)
 
 | Item | Status | Notes |
 |------|--------|-------|
@@ -167,16 +167,16 @@
 | Single instance PID lock | ✅ | `main.cpp` |
 | Startup recovery (dirs, network, proxy) | ✅ | `main.cpp` |
 | Deployment cleanup on failure (rollback) | ✅ | `SiteCreateOperation.cpp` |
-| Category-based logging [SYSTEM][DOCKER][PROXY] | ✅ | `Logger.h/.cpp` |
+| Category-based logging | ✅ | `Logger.h/.cpp` |
 | Real-time deployment progress in GUI | ✅ | `web/app.js` + job polling |
-| journald logging visibility | ✅ | `Logger.cpp` (std::endl flush fix) |
+| journald logging visibility | ✅ | `Logger.cpp` |
 | Apache backend | ✅ | Default backend validated |
 | Nginx backend | ✅ | Selectable via profiles |
 | Multi-site Docker networking | ✅ | ARCH-004 validated |
 | Central proxy recovery | ✅ | Survives daemon restart |
 | Web UI operations | ✅ | Create, list, detail, backup |
-| Updated docs (README, INSTALL, CHANGELOG) | ✅ | |
-| Version bumped to 0.5.0-rc2 | ✅ | |
+| Updated docs | ✅ | README, INSTALL, CHANGELOG |
+| Version bumped to v0.5.0-rc2 | ✅ | |
 
 ### v0.5.0 Release — pending 24h stability test
 
@@ -200,31 +200,134 @@
 | Backup scheduling not implemented | No cron/systemd timer |
 | Backup rotation not implemented | Old backups fill disk |
 | PortManager deprecated but not removed | `libs/runtime/PortManager.cpp` |
-| SSL auto-renewal | ✅ Implemented in current Epic |
 | No real auth for REST API | AuthMiddleware is AllowAll |
 
 ---
 
-### SSL/HTTPS Management Epic (In Progress — ARCH-005)
+## SSL/HTTPS Management Epic — ARCH-005
 
 | Task | Status | Notes |
 |------|--------|-------|
 | ARCH-005: Architecture Proposal | ✅ | Approved |
-| SSL-001: CertificateProvider abstraction | ✅ | Step 1 complete |
-| SSL-002: CertificateStore (provider-independent storage) | ✅ | Step 2 complete |
-| SSL-003: REST API endpoints | ✅ | Step 3 complete |
-| SSL-004: AcmeClient + LetsEncryptProvider (ACME engine) | ✅ | Step 4 complete |
-| SSL-005: Proxy integration (attach certs, reload, redirect) | ✅ | Step 5 complete |
-| SSL-006: RenewalScheduler | ✅ | Step 6 complete |
-| SSL-007: Web UI SSL page | ✅ | Step 7 complete (minimal) |
-| SSL-008: Real ACME HTTP-01 staging | ✅ | Step 8A complete |
-| SSL-009: Real server validation + bug fixes | ✅ | Step 8B: ACME flow, CSR, finalize, HTTPS paths, renewal policy |
-| SSL-010: Comprehensive SSL/Proxy cleanup | ✅ | Canonical upstream, transactional API, SSL mount, no fallbacks |
-| SSL-011: Production-ready SSL finalization | ✅ | Production LE default, PEM date parsing, env in metadata/GUI, dead code removed |
-| SSL-012: Admin Panel HTTPS | ✅ | Settings hostname, proxy route, Issue/Renew UI, WebServer on localhost only |
-| SSL-013: Bootstrap/Normal mode architecture | ✅ | StartupManager, bootstrap server, setup wizard, recovery |
+| SSL-001: CertificateProvider abstraction | ✅ | |
+| SSL-002: CertificateStore | ✅ | |
+| SSL-003: REST API endpoints | ✅ | |
+| SSL-004: AcmeClient + LetsEncryptProvider | ✅ | |
+| SSL-005: Proxy integration | ✅ | |
+| SSL-006: RenewalScheduler | ✅ | |
+| SSL-007: Web UI SSL page | ✅ | Minimal |
+| SSL-008: Real ACME HTTP-01 staging | ✅ | |
+| SSL-009: Server validation + bug fixes | ✅ | |
+| SSL-010: Comprehensive SSL/Proxy cleanup | ✅ | |
+| SSL-011: Production-ready finalization | ✅ | |
+| SSL-012: Admin Panel HTTPS | ✅ | |
+| SSL-013: Bootstrap/Normal mode | ✅ | |
 
-## Version 0.6 — DNS and Mail (Planned, after v0.5.0)
+**Status:** Implemented
+
+---
+
+## Mail Module
+
+### Stage 1a — MailDomain resource
+
+| Task | Status | Notes |
+|------|--------|-------|
+| MailDomain data model (domain modes) | ✅ | Disabled, LocalPrimary, ExternalRelay, SplitM365 |
+| MailDomainManager CRUD | ✅ | |
+| Persistence via Storage | ✅ | |
+| REST API: GET/POST/DELETE /api/mail/domains | ✅ | |
+| Tests | ✅ | |
+
+### Stage 1b — Mailbox resource
+
+| Task | Status | Notes |
+|------|--------|-------|
+| Mailbox data model | ✅ | |
+| MailboxManager CRUD | ✅ | |
+| Password hashing (SHA-512-CRYPT) | ✅ | |
+| REST API: mailbox endpoints | ✅ | |
+| Tests | ✅ | |
+
+### Stage 1c — Mail module lifecycle
+
+| Task | Status | Notes |
+|------|--------|-------|
+| MailModuleState (inactive / active) | ✅ | Module inactive by default |
+| GET /api/mail/status | ✅ | |
+| POST /api/mail/activate / deactivate | ✅ | |
+| State persisted in Storage | ✅ | |
+
+### Stage 1d — Docker mail stack
+
+| Task | Status | Notes |
+|------|--------|-------|
+| MailProvider interface | ✅ | write_configs / prepare_environment / start / reload / stop |
+| DockerMailProvider implementation | ✅ | Postfix + Dovecot + Redis |
+| CommandExecutor for all external commands | ✅ | No std::system |
+| Docker Compose generation | ✅ | |
+| Config generation separated from runtime | ✅ | |
+| Custom config directory structure | ✅ | generated/ + custom/ |
+| Module lifecycle integration | ✅ | activate → write + start |
+| Tests | ✅ | |
+
+### Stage 2a — Aliases
+
+| Task | Status | Notes |
+|------|--------|-------|
+| MailAlias data model | ✅ | |
+| MailAliasManager CRUD | ✅ | |
+| REST API: alias endpoints | ✅ | |
+| Alias routing before domain routes | ✅ | |
+| Tests | ✅ | |
+
+### Stage 2b — TLS, DKIM, security
+
+| Task | Status | Notes |
+|------|--------|-------|
+| DkimManager service (Logger + CommandExecutor) | ✅ | |
+| DKIM key generation via OpenSSL | ✅ | |
+| DKIM DNS record stored and returned via API | ✅ | |
+| Postfix TLS configuration | ✅ | |
+| Dovecot TLS configuration | ✅ | |
+| Postfix transport_maps skeleton | ✅ | LocalPrimary, ExternalRelay, SplitM365 |
+| Rspamd milter preparation | ✅ | |
+| TLS cert paths from CertificateStore | ✅ | |
+| Tests | ✅ | |
+
+### Stage 3 — External modes (in progress)
+
+| Task | Status | Notes |
+|------|--------|-------|
+| External-relay mode: Postfix relayhost config | 🔄 | This milestone |
+| Split-M365 mode: catch-all relay transport | 🔄 | This milestone |
+| relay_host validation for ExternalRelay/SplitM365 | 🔄 | This milestone |
+| relay_host on domain creation (API) | 🔄 | This milestone |
+| Transport maps generation tests | 🔄 | This milestone |
+
+### Stage 4 — Health and recovery
+
+| Task | Status | Notes |
+|------|--------|-------|
+| MailHealthMonitor | ⬜ | |
+| GET /api/mail/health | ⬜ | |
+| Integration with RecoveryManager | ⬜ | |
+| MX record validation | ⬜ | |
+
+### Stage 5 — Webmail and advanced features
+
+| Task | Status | Notes |
+|------|--------|-------|
+| Webmail container | ⬜ | |
+| Spam filtering UI | ⬜ | |
+| Antivirus (ClamAV) | ⬜ | |
+| Mail backup/restore | ⬜ | |
+| Migration tools | ⬜ | |
+| Web UI pages | ⬜ | |
+
+---
+
+## Version 0.6 — DNS and Mail (planned, after v0.5.0)
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -232,9 +335,8 @@
 | DNS-002: DNS provider interface | ⬜ | |
 | DNS-003: DNS CLI and REST API | ⬜ | |
 | DNS-004: DNS Web UI pages | ⬜ | |
-| MAIL-001: Mail provider implementation | ⬜ | MailDomain resource exists, no provider |
 
-## Version 0.7 — Monitoring (Planned, after v0.6)
+## Version 0.7 — Monitoring (planned, after v0.6)
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -243,7 +345,7 @@
 | MON-003: Log viewer enhancements | ⬜ | |
 | MON-004: Health check configuration | ⬜ | |
 
-## Version 0.8 — Multi-node (Planned, after v0.7)
+## Version 0.8 — Multi-node (planned, after v0.7)
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -253,35 +355,35 @@
 
 ---
 
-## Current Maturity Assessment (SSL/HTTPS Epic)
+## Current Subsystem Maturity
 
-| Subsystem | Completeness | Status |
-|-----------|-------------|--------|
-| Core | 100% | Stable |
-| Config | 100% | Stable |
-| Logger | 100% | Stable |
-| Storage | 95% | Stable |
-| CLI | 90% | Stable |
-| Daemon | 99% | Stable (dual-mode bootstrap/normal) |
-| REST API | 92% | Active |
-| Web UI | 85% | Active |
-| Sites | 95% | Stable |
-| Domains | 95% | Stable |
-| Databases | 75% | Postponed — see `planning/database-module-architecture.md` |
-| Users | 95% | Stable |
-| PHP Versions | 90% | Stable |
-| Docker/Runtime | 92% | Stable |
-| Reverse Proxy | 92% | Active |
-| SSL/Certs | 90% | Production-ready, ACME HTTP-01, auto-renewal, full GUI |
-| Access/SFTP | 75% | Active (placeholder) |
-| Backup | 85% | Active |
-| Profiles | 90% | Stable |
-| Templates | 85% | Stable |
-| Jobs | 80% | Active |
-| Mail | 10% | Placeholder only |
-| DNS | 0% | Not started |
-| Multi-node | 0% | Not started |
-| Tests | 60% | Growing |
+| Subsystem | Status | Notes |
+|-----------|--------|-------|
+| Core | Stable | |
+| Config | Stable | |
+| Logger | Stable | |
+| Storage | Stable | Pipe-delimited, SQLite candidate |
+| CLI | Stable | Thin client over UNIX socket |
+| Daemon | Stable | Dual-mode bootstrap/normal |
+| REST API | Active | |
+| Web UI | Active | |
+| Sites | Stable | |
+| Domains | Stable | |
+| Databases | Deferred | Postponed — see `planning/database-module-architecture.md` |
+| Users | Stable | |
+| PHP Versions | Stable | |
+| Docker/Runtime | Stable | |
+| Reverse Proxy | Active | |
+| SSL/Certs | Implemented | ACME HTTP-01, auto-renewal, full GUI |
+| Access/SFTP | Experimental | Placeholder provider |
+| Backup | Active | |
+| Profiles | Stable | |
+| Templates | Stable | |
+| Jobs | Active | In-memory only |
+| Mail | In Progress | Stages 1a–2b implemented, Stage 3 active |
+| DNS | Planned | |
+| Multi-node | Planned | |
+| Tests | Growing | |
 
 ---
 
@@ -291,35 +393,25 @@
 |--------|-------|
 | Validation checklist items | 148 total |
 | RC1 pass | 128/137 (9 stability deferred) |
-| RC2 validation | ✅ All items verified on real Debian 13 |
+| RC2 validation | All items verified on real Debian 13 |
 | Bugs discovered during RC1 | 13 (all fixed) |
-| Next milestone | SSL/HTTPS Management (ARCH-005) → v0.5.0 stable |
+| Current Epic | Mail Module Stage 3 |
 
 ---
 
-## Key Architecture Decisions (ADRs)
+## Architecture Decisions (ADRs)
 
 | ADR | Status | Summary |
 |-----|--------|---------|
 | ADR-0001: Control Plane / Node separation | ✅ | Resources have node_id, future multi-node ready |
 | ADR-0002: HostingProvider / Runtime separation | ✅ | Provider orchestrates, Runtime executes docker |
-| ADR-003: Let's Encrypt | ✅ | CertificateProvider abstraction, placeholder impl |
-| ADR-004: REST API | ✅ | Built-in HTTP server, JSON envelope, no deps |
+| ADR-003: Let's Encrypt | ✅ | CertificateProvider abstraction |
+| ADR-004: REST API | ✅ | Built-in HTTP server, JSON envelope |
 | ADR-005: Daemon Architecture | ✅ | containercpd + containercp thin client |
 | ADR-006: Web Server Template Profiles | ✅ | Disk-based templates, nginx/Apache selectable |
-
-## Architecture Proposals
-
-| Proposal | Status | Summary |
-|----------|--------|---------|
-| ARCH-001: Complete Web UI v0.5 | ✅ Implemented | Multi-step wizard, job progress, CRUD |
-| ARCH-002: First Production Validation | ✅ Implemented | 137-item checklist, clean VM testing |
-| ARCH-003: Web UI Public Access | ✅ Implemented | Dual listener (8080 API, 8081 UI) |
-| ARCH-004: Docker Network Multi-Site | ✅ Implemented | No host ports, shared public network, per-site private networks |
-| ARCH-005: SSL/HTTPS Management | 🔄 In Progress | Real ACME HTTP-01, auto-renewal, REST API, Web UI |
+| ADR-007: M365 Split Delivery Routing | ✅ | See `docs/ADR/ADR-007-m365-split-delivery.md` |
 
 ---
 
-*Last updated: 2025-07-08*
-*Next planned action: SSL/HTTPS Management (ARCH-005) → v0.5.0 stable → v0.6 DNS*
-*RC2 validated on real Debian 13 — all items complete*
+*Last updated: 2025-07-10*
+*Current Epic: Mail Module Stage 3 — External Modes (external-relay + split-m365)*

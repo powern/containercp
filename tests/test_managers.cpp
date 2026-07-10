@@ -203,14 +203,18 @@ TEST_CASE("MailDomainManager mode persistence") {
     containercp::mail::MailDomainManager mgr;
 
     uint64_t id1 = mgr.create("a.com", containercp::mail::MailDomainMode::LocalPrimary, 1);
-    uint64_t id2 = mgr.create("b.com", containercp::mail::MailDomainMode::ExternalRelay, 2);
-    uint64_t id3 = mgr.create("c.com", containercp::mail::MailDomainMode::SplitM365, 3);
+    uint64_t id2 = mgr.create("b.com", containercp::mail::MailDomainMode::ExternalRelay, 2,
+                              "relay.example.com");
+    uint64_t id3 = mgr.create("c.com", containercp::mail::MailDomainMode::SplitM365, 3,
+                              "c-com.mail.protection.outlook.com");
     uint64_t id4 = mgr.create("d.com", containercp::mail::MailDomainMode::Disabled, 4);
     (void)id4;
 
     CHECK(mgr.find(id1)->mode == containercp::mail::MailDomainMode::LocalPrimary);
     CHECK(mgr.find(id2)->mode == containercp::mail::MailDomainMode::ExternalRelay);
+    CHECK(mgr.find(id2)->relay_host == "relay.example.com");
     CHECK(mgr.find(id3)->mode == containercp::mail::MailDomainMode::SplitM365);
+    CHECK(mgr.find(id3)->relay_host == "c-com.mail.protection.outlook.com");
     CHECK(mgr.find(id4)->mode == containercp::mail::MailDomainMode::Disabled);
 
     // List
@@ -224,7 +228,9 @@ TEST_CASE("MailDomainManager duplicate domain names rejected") {
     CHECK(id1 == 1);
 
     // Second create with same domain returns 0 (rejected)
-    uint64_t id2 = mgr.create("dup.com", containercp::mail::MailDomainMode::ExternalRelay, 2);
+    // Provide relay_host so the rejection is due to duplicate, not validation
+    uint64_t id2 = mgr.create("dup.com", containercp::mail::MailDomainMode::ExternalRelay, 2,
+                              "relay.example.com");
     CHECK(id2 == 0);
 
     // Only one domain in the list
@@ -260,6 +266,42 @@ TEST_CASE("MailDomainMode string conversion") {
     CHECK_FALSE(is_valid_mail_domain_mode(""));
 }
 
+TEST_CASE("MailDomainManager validate_mode_relay") {
+    using namespace containercp::mail;
+
+    // Modes that do NOT require relay_host
+    CHECK(MailDomainManager::validate_mode_relay(MailDomainMode::Disabled, "").empty());
+    CHECK(MailDomainManager::validate_mode_relay(MailDomainMode::LocalPrimary, "").empty());
+    CHECK(MailDomainManager::validate_mode_relay(MailDomainMode::Disabled, "smtp.example.com").empty());
+    CHECK(MailDomainManager::validate_mode_relay(MailDomainMode::LocalPrimary, "smtp.example.com").empty());
+
+    // ExternalRelay requires relay_host
+    CHECK_FALSE(MailDomainManager::validate_mode_relay(MailDomainMode::ExternalRelay, "").empty());
+    CHECK(MailDomainManager::validate_mode_relay(MailDomainMode::ExternalRelay, "relay.example.com").empty());
+
+    // SplitM365 requires relay_host
+    CHECK_FALSE(MailDomainManager::validate_mode_relay(MailDomainMode::SplitM365, "").empty());
+    CHECK(MailDomainManager::validate_mode_relay(MailDomainMode::SplitM365, "c-com.mail.protection.outlook.com").empty());
+}
+
+TEST_CASE("MailDomainManager rejects ExternalRelay without relay_host") {
+    containercp::mail::MailDomainManager mgr;
+
+    uint64_t id = mgr.create("bad.com",
+                              containercp::mail::MailDomainMode::ExternalRelay, 1, "");
+    CHECK(id == 0);  // rejected — relay_host required
+    CHECK(mgr.list().empty());
+}
+
+TEST_CASE("MailDomainManager rejects SplitM365 without relay_host") {
+    containercp::mail::MailDomainManager mgr;
+
+    uint64_t id = mgr.create("bad.com",
+                              containercp::mail::MailDomainMode::SplitM365, 1, "");
+    CHECK(id == 0);  // rejected — relay_host required
+    CHECK(mgr.list().empty());
+}
+
 TEST_CASE("MailDomainManager set_domains restores state") {
     containercp::mail::MailDomainManager mgr;
 
@@ -277,7 +319,8 @@ TEST_CASE("MailDomainManager set_domains restores state") {
     CHECK(a->mode == containercp::mail::MailDomainMode::LocalPrimary);
 
     // Next ID continues from saved max
-    uint64_t id3 = mgr2.create("c.com", containercp::mail::MailDomainMode::ExternalRelay, 3);
+    uint64_t id3 = mgr2.create("c.com", containercp::mail::MailDomainMode::ExternalRelay, 3,
+                              "relay.example.com");
     CHECK(id3 == 3);
 }
 

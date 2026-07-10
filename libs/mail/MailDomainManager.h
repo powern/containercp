@@ -13,7 +13,12 @@ namespace containercp::mail {
 class MailDomainManager {
 public:
     uint64_t create(const std::string& domain_name, MailDomainMode mode,
-                    uint64_t owner_id);
+                    uint64_t owner_id, const std::string& relay_host = "");
+
+    // Validate mode+relay_host combination. Returns empty string on success,
+    // error message on failure.
+    static std::string validate_mode_relay(MailDomainMode mode,
+                                            const std::string& relay_host);
     bool remove(uint64_t id);
     MailDomain* find(uint64_t id);
     MailDomain* find_by_domain(const std::string& domain_name);

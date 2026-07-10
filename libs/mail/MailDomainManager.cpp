@@ -3,15 +3,27 @@
 
 namespace containercp::mail {
 
+std::string MailDomainManager::validate_mode_relay(
+    MailDomainMode mode, const std::string& relay_host) {
+    if ((mode == MailDomainMode::ExternalRelay ||
+         mode == MailDomainMode::SplitM365) && relay_host.empty()) {
+        return "relay_host is required for " +
+               mail_domain_mode_to_string(mode) + " mode";
+    }
+    return "";
+}
+
 uint64_t MailDomainManager::create(const std::string& domain_name,
                                     MailDomainMode mode,
-                                    uint64_t owner_id) {
-    // A mail domain name must be globally unique per ContainerCP instance
-    // because email routing is global — one domain cannot have two different
-    // mail configurations on the same server.
+                                    uint64_t owner_id,
+                                    const std::string& relay_host) {
+    // Validate mode+relay before creating
+    std::string vr = validate_mode_relay(mode, relay_host);
+    if (!vr.empty()) return 0;
+
     for (const auto& existing : domains_) {
         if (existing.domain_name == domain_name) {
-            return 0;  // duplicate — caller should check
+            return 0;
         }
     }
     MailDomain m;
@@ -20,6 +32,7 @@ uint64_t MailDomainManager::create(const std::string& domain_name,
     m.domain_name = domain_name;
     m.mode = mode;
     m.owner_id = owner_id;
+    m.relay_host = relay_host;
     m.enabled = true;
     domains_.push_back(std::move(m));
     return m.id;

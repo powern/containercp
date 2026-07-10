@@ -1686,10 +1686,21 @@ bool ApiServer::start() {
 
         mail::MailDomainMode mode = mail::mail_domain_mode_from_string(mode_str);
 
-        uint64_t id = s.mail().create(domain, mode, owner_id);
+        // Parse optional relay_host
+        std::string relay_host = json_extract(req.body, "relay_host");
+        if (relay_host == "null") relay_host = "";
+
+        uint64_t id = s.mail().create(domain, mode, owner_id, relay_host);
         if (id == 0) {
-            r.status_code = 409;
-            r.body = "{\"success\":false,\"error\":\"Domain already exists\"}";
+            // Check if the failure was due to validation or duplicate
+            std::string vr = mail::MailDomainManager::validate_mode_relay(mode, relay_host);
+            if (!vr.empty()) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(vr) + "\"}";
+            } else {
+                r.status_code = 409;
+                r.body = "{\"success\":false,\"error\":\"Domain already exists\"}";
+            }
             return r;
         }
 
@@ -1774,6 +1785,14 @@ bool ApiServer::start() {
         if (json_has_key(req.body, "catch_all")) {
             std::string val = json_extract(req.body, "catch_all");
             m->catch_all = (val == "null") ? "" : val;
+        }
+
+        // Validate mode+relay combination after all fields updated
+        std::string vr = mail::MailDomainManager::validate_mode_relay(m->mode, m->relay_host);
+        if (!vr.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(vr) + "\"}";
+            return r;
         }
 
         m->updated_at = ssl::CertificateStore::timestamp_utc();

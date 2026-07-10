@@ -91,6 +91,20 @@ core::OperationResult DockerMailProvider::write_postfix_config(
     // Transport maps for split delivery
     pf << "transport_maps = texthash:/etc/postfix/transport_maps\n";
 
+    // Relay domains — domains Postfix is allowed to relay for.
+    // Required for ExternalRelay (no local mailboxes) and SplitM365
+    // (non-local recipients forwarded to M365).
+    bool relay_first = true;
+    for (const auto& d : domains) {
+        if (d.mode != MailDomainMode::ExternalRelay &&
+            d.mode != MailDomainMode::SplitM365) continue;
+        if (!d.enabled) continue;
+        if (relay_first) { pf << "relay_domains = "; relay_first = false; }
+        else { pf << ", "; }
+        pf << d.domain_name;
+    }
+    if (!relay_first) pf << "\n";
+
     // Virtual domains
     pf << "virtual_mailbox_domains = ";
     bool first = true;
@@ -186,8 +200,13 @@ core::OperationResult DockerMailProvider::write_transport_maps(
             out << d.domain_name << " lmtp:127.0.0.1:24\n";
         } else if (d.mode == MailDomainMode::SplitM365) {
             out << d.domain_name << " lmtp:127.0.0.1:24\n";
-            // Wildcard catch-all for non-local mailboxes handled by Postfix
-            // transport maps via RELAY for M365 (future: per-domain MX target)
+            // Bare domain entry acts as catch-all for non-local recipients.
+            // Postfix transport maps match more specific entries first
+            // (user@domain), then fall back to domain-only entries.
+            // relay_host must be set (validated by MailDomainManager).
+            if (!d.relay_host.empty()) {
+                out << d.domain_name << " smtp:[" << d.relay_host << "]:25\n";
+            }
         } else if (d.mode == MailDomainMode::ExternalRelay) {
             if (!d.relay_host.empty()) {
                 out << d.domain_name << " smtp:[" << d.relay_host << "]\n";
