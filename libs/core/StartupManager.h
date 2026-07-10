@@ -19,6 +19,12 @@ public:
     // Should the daemon start in bootstrap mode?
     static bool needs_bootstrap(const std::string& data_root, const std::string& hostname);
 
+    // Detect and fix legacy setup_completed corruption.
+    // If hostname is configured but the flag is "0", check whether the
+    // system was previously initialized (auth database exists).  If so,
+    // the flag was corrupted by a buggy version and needs restoration.
+    static void migrate_legacy_setup_flag(const std::string& data_root, const std::string& hostname);
+
     // Bootstrap mode: runs lightweight HTTP server for Setup Wizard
     static int run_bootstrap(const std::string& data_root);
 

@@ -210,6 +210,37 @@ RecoveryManager handles proxy self-healing.  The `setup_completed`
 flag is only written by the Setup Wizard (Bootstrap), never by
 runtime startup/recovery code.
 
+### Legacy migration for corrupted setup_completed
+
+Old versions of ContainerCP (prior to commit `3c35fe4`) could corrupt
+the `setup_completed` flag by calling `mark_setup_incomplete()` on
+proxy failure.  Systems that were fully initialized would get stuck
+in a bootstrap crash loop after update.
+
+**Migration** (`StartupManager::migrate_legacy_setup_flag()`):
+
+- Called from `needs_bootstrap()` when it finds `setup_completed != "1"`
+  but `hostname` IS configured.
+- Checks whether the system was previously initialized by looking for
+  production indicators:
+  - Auth database exists at `<data_root>/database/auth_users.db`
+- If evidence of prior initialization is found:
+  - Restores `setup_completed = "1"` automatically
+  - Logs migration messages to stderr
+  - Continues normal startup
+- If no evidence found: leaves the flag as-is, bootstrap mode proceeds
+  normally for genuine fresh installations.
+
+**Scenarios:**
+
+| Initial state | Hostname | Auth DB | Flag | Result |
+|---------------|----------|---------|------|--------|
+| Fresh install | empty | absent | missing | Bootstrap (correct) |
+| Fresh install | set | absent | "0" | Bootstrap (correct) |
+| Production | set | present | "0" | Migration restores → Normal |
+| Production | set | present | "1" | Normal (no migration needed) |
+| Production | set | present | missing | Migration restores → Normal |
+
 ## 8. Recommendation
 
 The architecture is ready for RecoveryManager implementation.
