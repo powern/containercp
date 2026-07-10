@@ -414,7 +414,7 @@ async jobs.
 | `/api/jobs/*` | Jobs subsystem (`JobManager`) | Async execution |
 | `/api/backups/*` | Backups subsystem (`BackupManager`, `BackupProvider`) | Archive logic |
 | `/api/settings/*` | Config (`Config`) | File I/O, persistence |
-| `/api/mail/*` | Mail subsystem (`MailDomainManager`, `MailboxManager`) | Postfix/Dovecot config, Docker logic |
+| `/api/mail/*` | Mail resource management (`MailDomainManager`, `MailboxManager`) | Mail server config, Docker logic, Postfix/Dovecot (future stages) |
 
 API handlers must never:
 - Run `docker` commands directly
