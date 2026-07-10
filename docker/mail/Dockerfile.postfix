@@ -1,0 +1,6 @@
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postfix postfix-pcre rsyslog \
+    && rm -rf /var/lib/apt/lists/*
+EXPOSE 25 465 587
+CMD ["postfix", "start-fg"]

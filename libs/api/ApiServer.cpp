@@ -2167,7 +2167,14 @@ bool ApiServer::start() {
             r.body = "{\"success\":true,\"data\":{\"message\":\"Mail module already active\"}}";
             return r;
         }
-        // Write configuration files
+        // Prepare runtime environment (directories, network) first
+        auto env = s.mail_provider().prepare_environment();
+        if (!env.success) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"Environment failed: " + JsonFormatter::escape(env.message) + "\"}";
+            return r;
+        }
+        // Then write configuration files
         auto cfg = s.mail_provider().write_configs(
             s.mail().list(), s.mailboxes(), s.mail_aliases());
         if (!cfg.success) {
@@ -2175,17 +2182,11 @@ bool ApiServer::start() {
             r.body = "{\"success\":false,\"error\":\"Config failed: " + JsonFormatter::escape(cfg.message) + "\"}";
             return r;
         }
-        // Prepare runtime environment and start containers
-        auto env = s.mail_provider().prepare_environment();
-        if (!env.success) {
+        // Start containers
+        auto start_res = s.mail_provider().start();
+        if (!start_res.success) {
             r.status_code = 500;
-            r.body = "{\"success\":false,\"error\":\"Environment failed: " + JsonFormatter::escape(env.message) + "\"}";
-            return r;
-        }
-        auto start = s.mail_provider().start();
-        if (!start.success) {
-            r.status_code = 500;
-            r.body = "{\"success\":false,\"error\":\"Start failed: " + JsonFormatter::escape(start.message) + "\"}";
+            r.body = "{\"success\":false,\"error\":\"Start failed: " + JsonFormatter::escape(start_res.message) + "\"}";
             return r;
         }
         s.mail().set_module_state(mail::MailModuleState::Active);
