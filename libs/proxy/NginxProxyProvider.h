@@ -32,11 +32,11 @@ public:
     core::OperationResult detach_certificate(const std::string& domain) override;
     core::OperationResult ensure_central_proxy();
     core::OperationResult remove_central_proxy();
+    bool central_proxy_running() const;
 
 private:
     std::string config_path(const std::string& domain) const;
     std::string proxy_name() const;
-    bool central_proxy_running() const;
     bool validate_nginx_config(const std::string& config_content) const;
 
     filesystem::Filesystem& fs_;

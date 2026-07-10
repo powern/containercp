@@ -15,6 +15,7 @@
 #include "config/Config.h"
 #include "core/ResourceManager.h"
 #include "core/OperationResult.h"
+#include "core/RecoveryManager.h"
 #include "database/DatabaseManager.h"
 #include "domain/DomainManager.h"
 #include "filesystem/Filesystem.h"
@@ -82,6 +83,7 @@ public:
     auth::AuthUserManager& auth_users();
     auth::AuthService& auth();
     storage::Storage& storage();
+    core::RecoveryManager& recovery();
     // Detect Docker bridge gateway address for Web UI binding and proxy upstream.
     // Returns "host.docker.internal" if detection fails (works with --add-host flag).
     static std::string detect_docker_gateway(logger::Logger& log);
@@ -139,6 +141,7 @@ private:
     runtime::RuntimeActionExecutor runtime_action_executor_;
     runtime::SiteRuntimeManager site_runtime_;
     provider::DockerComposeProvider hosting_provider_;
+    core::RecoveryManager recovery_manager_;
 };
 
 } // namespace containercp::core

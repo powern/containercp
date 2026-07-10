@@ -28,6 +28,7 @@ set(CONTAINERCP_SOURCES
     libs/core/Application.cpp
     libs/core/Resource.cpp
     libs/core/ResourceManager.cpp
+    libs/core/RecoveryManager.cpp
     libs/core/ServiceRegistry.cpp
     libs/core/StartupManager.cpp
     libs/daemon/CommandProtocol.cpp

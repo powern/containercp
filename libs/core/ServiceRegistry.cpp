@@ -27,6 +27,7 @@ ServiceRegistry::ServiceRegistry()
     , runtime_action_executor_(logger_)
     , site_runtime_(logger_, config_.sites_dir(), runtime_action_executor_)
     , hosting_provider_(filesystem_, config_, php_versions_, runtime_, profiles_)
+    , recovery_manager_(logger_, proxy_provider_, *this)
 {
     auto loaded_nodes = storage_.load_nodes();
     if (loaded_nodes.empty()) {
@@ -352,9 +353,13 @@ void ServiceRegistry::start() {
 
     job_executor_.start();
     renewal_scheduler_.start();
+
+    // Start background proxy health monitor (after all startup init is complete)
+    recovery_manager_.start();
 }
 
 void ServiceRegistry::shutdown() {
+    recovery_manager_.shutdown();
     renewal_scheduler_.shutdown();
     job_executor_.shutdown();
 }
@@ -501,6 +506,10 @@ runtime::RuntimeActionExecutor& ServiceRegistry::runtime_executor() {
 
 provider::HostingProvider& ServiceRegistry::hosting_provider() {
     return hosting_provider_;
+}
+
+core::RecoveryManager& ServiceRegistry::recovery() {
+    return recovery_manager_;
 }
 
 void ServiceRegistry::save() {
