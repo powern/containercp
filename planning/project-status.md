@@ -335,6 +335,17 @@
 | Health report enriched with module details | ✅ | domain_count, mailbox_count, alias_count |
 | Response designed for evolution | ✅ | services[], details{} sections |
 
+### Runtime validation (completed)
+
+| Task | Status | Notes |
+|------|--------|-------|
+| Activate Mail module | ✅ | POST /api/mail/activate succeeds |
+| Docker containers start | ✅ | Postfix, Dovecot, Redis all Up |
+| /api/mail/health reports ok | ✅ | All 3 services healthy |
+| Domain + mailbox creation | ✅ | Runtime sync fires after mutations |
+| Config files generated | ✅ | transport_maps, postfix-main.cf, passwd |
+| Validation documented | ✅ | docs/testing.md — Mail Runtime Validation |
+
 ### Stage 4d — Recovery and health integration (planned)
 
 | Task | Status | Notes |

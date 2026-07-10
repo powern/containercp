@@ -15,7 +15,108 @@ It simulates real failure scenarios:
 And verifies that the system returns to a healthy state without manual
 intervention.
 
-## Running the self-test
+## Mail Module Runtime Validation
+
+### Purpose
+
+Validate that the Mail Docker stack starts, stays healthy, and
+synchronizes configuration after data changes.
+
+### Prerequisites
+
+```bash
+# Build the project
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release
+
+# Build the mail Docker images (only needed once)
+docker build -t ghcr.io/containercp/mail-postfix:latest \
+    -f docker/mail/Dockerfile.postfix docker/mail/
+docker build -t ghcr.io/containercp/mail-dovecot:latest \
+    -f docker/mail/Dockerfile.dovecot docker/mail/
+```
+
+### Validation procedure
+
+```bash
+# 1. Start the daemon
+SERVER_HOSTNAME=mail-test.local ./build-release/containercpd &
+
+# 2. Activate the Mail module
+curl -s -X POST http://127.0.0.1:8080/api/mail/activate
+# Expected: {"success":true,"data":{"message":"Mail module activated"}}
+
+# 3. Verify containers are running
+docker ps --format "table {{.Names}}\t{{.Status}}"
+# Expected: containercp-mail-postfix, containercp-mail-dovecot, containercp-mail-redis all "Up"
+
+# 4. Verify health endpoint
+curl -s http://127.0.0.1:8080/api/mail/health | python3 -m json.tool
+# Expected: all services status "ok", module_state "active"
+# {
+#   "status": "ok",
+#   "services": [
+#     {"name": "postfix", "status": "ok", "message": "running"},
+#     {"name": "dovecot", "status": "ok", "message": "running"},
+#     {"name": "redis",   "status": "ok", "message": "running"}
+#   ],
+#   "details": {
+#     "module_state": "active",
+#     "domain_count": 0,
+#     "mailbox_count": 0,
+#     "alias_count": 0
+#   }
+# }
+
+# 5. Create a test domain
+curl -s -X POST http://127.0.0.1:8080/api/mail/domains \
+  -H "Content-Type: application/json" \
+  -d '{"domain":"testmail.local","mode":"local-primary","owner_id":1}'
+# Expected: success true, domain record returned
+
+# 6. Create a test mailbox
+curl -s -X POST http://127.0.0.1:8080/api/mail/domains/1/mailboxes \
+  -H "Content-Type: application/json" \
+  -d '{"local_part":"alice","password":"secret"}'
+# Expected: success true, mailbox record returned
+
+# 7. Verify runtime sync generated config files
+cat /srv/containercp/mail/config/generated/transport_maps
+# Expected: testmail.local lmtp:127.0.0.1:24
+
+cat /srv/containercp/mail/config/generated/postfix-main.cf
+# Expected: virtual_mailbox_domains includes testmail.local
+
+cat /srv/containercp/mail/config/generated/virtual_mailboxes
+# Expected: alice@testmail.local with path
+
+# 8. Verify health reflects new data
+curl -s http://127.0.0.1:8080/api/mail/health | python3 -m json.tool
+# Expected: domain_count=1, mailbox_count=1
+
+# 9. Verify mail status
+curl -s http://127.0.0.1:8080/api/mail/status | python3 -m json.tool
+# Expected: state "active", domains=1, mailboxes=1
+
+# 10. Check daemon logs for errors
+grep -E "ERROR|FATAL|FAILED" /tmp/containercpd.log
+# Expected: no mail-related errors (proxy SSL mount warnings are normal)
+```
+
+### Known issues
+
+| Issue | Status | Notes |
+|-------|--------|-------|
+| Postfix/Dovecot ports not exposed to host | Open | Containers use `network_mode: service:redis`; need port publishing in docker-compose.yml |
+| Dovecot SSL cert on fresh install | Workaround | Create self-signed cert: `mkdir -p /srv/containercp/ssl/0 && openssl req -x509 -newkey rsa:2048 -keyout /srv/containercp/ssl/0/privkey.pem -out /srv/containercp/ssl/0/fullchain.pem -days 365 -nodes -subj "/CN=mail-test.local"` |
+| ghcr.io images not published | Resolved | Build locally with provided Dockerfiles |
+| `prepare_environment` order | Fixed | Moved before `write_configs` in activate handler |
+
+### Validation history
+
+| Date | Validator | Result | Notes |
+|------|-----------|--------|-------|
+| 2025-07-10 | Runtime | ✅ Pass | All 3 containers up, health OK, sync OK |
 
 ```bash
 # Default admin URL (web2.softico.ua):
