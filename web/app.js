@@ -866,15 +866,12 @@ async function loadProxy(p) {
     const entries = health.entries || {};
     const recoveryInfo = health.recovery || {};
 
-    const badge = (state, okClass, errClass) => state
-      ? `<span class="badge ${okClass}">Yes</span>`
-      : `<span class="badge ${errClass}">No</span>`;
-
     const stateBadge = (state) => state === 'running'
       ? '<span class="badge badge-ok">Running</span>'
       : '<span class="badge badge-err">Stopped</span>';
 
     const testBadge = (conf) => {
+      if (!conf.success && (!conf.message || conf.message.indexOf('Not tested') >= 0)) return '<span class="badge badge-info">Not tested</span>';
       if (conf.success === null || conf.success === undefined) return '<span class="badge badge-info">Not tested</span>';
       return conf.success ? '<span class="badge badge-ok">Valid</span>' : '<span class="badge badge-err">Failed</span>';
     };
@@ -884,8 +881,16 @@ async function loadProxy(p) {
       try { return new Date(ts).toLocaleString(); } catch(e) { return ts; }
     };
 
+    const recoveryRunningBadge = (running) => running
+      ? '<span class="badge badge-ok">Running</span>'
+      : '<span class="badge badge-err">Stopped</span>';
+
+    const recoveryProgressBadge = (prog) => prog
+      ? '<span class="badge badge-warn">In progress</span>'
+      : '<span class="badge badge-info">Idle</span>';
+
     const recoveryResultBadge = (res) => {
-      if (!res) return '<span class="badge badge-info">None</span>';
+      if (!res) return '<span class="badge badge-info">Never</span>';
       return res === 'success' ? '<span class="badge badge-ok">Success</span>' : '<span class="badge badge-err">Failed</span>';
     };
 
@@ -914,8 +919,8 @@ async function loadProxy(p) {
           <div><div style="font-size:11px;color:var(--text3);">Version</div><div style="margin-top:2px;font-size:12px;color:var(--text2);">nginx ${esc(proxyInfo.version||'?')}</div></div>
           <div><div style="font-size:11px;color:var(--text3);">Configuration</div><div style="margin-top:2px;">${testBadge(configTest)}</div></div>
           <div><div style="font-size:11px;color:var(--text3);">Config Detail</div><div style="margin-top:2px;font-size:12px;color:var(--text2);word-break:break-word;">${esc(configTest.message||'Not tested since daemon start')}</div></div>
-          <div><div style="font-size:11px;color:var(--text3);">Recovery Manager</div><div style="margin-top:2px;">${badge(recoveryInfo.manager_running, 'badge-ok', 'badge-err')}</div></div>
-          <div><div style="font-size:11px;color:var(--text3);">Recovery In Progress</div><div style="margin-top:2px;">${badge(recoveryInfo.recovery_in_progress, 'badge-warn', 'badge-info')}</div></div>
+          <div><div style="font-size:11px;color:var(--text3);">Recovery Manager</div><div style="margin-top:2px;">${recoveryRunningBadge(recoveryInfo.manager_running)}</div></div>
+          <div><div style="font-size:11px;color:var(--text3);">Recovery In Progress</div><div style="margin-top:2px;">${recoveryProgressBadge(recoveryInfo.recovery_in_progress)}</div></div>
           <div><div style="font-size:11px;color:var(--text3);">Last Recovery</div><div style="margin-top:2px;font-size:12px;color:var(--text2);">${fmtTime(recoveryInfo.last_recovery_at)}</div></div>
           <div><div style="font-size:11px;color:var(--text3);">Last Result</div><div style="margin-top:2px;">${recoveryResultBadge(recoveryInfo.last_recovery_result)}</div></div>
           <div><div style="font-size:11px;color:var(--text3);">Proxy Entries</div><div style="margin-top:4px;">${entryBadges()}</div></div>
@@ -929,7 +934,7 @@ async function loadProxy(p) {
       const rows = (proxyData.data||[]).filter(r=>!searchTerm||r.domain.includes(searchTerm));
       tbl.innerHTML = buildTable([
         {label:'Domain',html:r=>`<span style="font-weight:500;">${esc(r.domain)}</span>${r.protected?` <span class="badge badge-info">system</span>`:''}`},
-        {label:'Type / Site',html:r=>r.entry_type==='system'?'<span class="badge badge-info">System</span>':r.site_name?esc(r.site_name):'<span class="badge badge-info">Unlinked</span>'},
+        {label:'Type / Site',html:r=>r.entry_type==='system'?'<span class="badge badge-info">Admin Panel</span>':r.site_name?`<span style="font-size:12px;">${esc(r.site_name)}</span>`:'<span class="badge badge-info">Unlinked</span>'},
         {label:'Upstream',html:r=>`<code style="font-size:12px;">${esc(r.upstream)}</code>`},
         {label:'HTTP',html:()=>'<span class="badge badge-ok">ON</span>'},
         {label:'HTTPS',html:r=>r.https_enabled?'<span class="badge badge-ok">ON</span>':'<span class="badge badge-info">OFF</span>'},

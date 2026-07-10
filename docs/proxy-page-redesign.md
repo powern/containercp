@@ -255,12 +255,38 @@ Every action calls an existing backend method:
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### Final Review (all items resolved)
+
+| # | Issue | Resolution |
+|---|-------|-----------|
+| 1 | Configuration state contradiction | Fixed: when `last_test_result()` defaults to `{false, "Not tested..."}`, the frontend checks the message content and shows "Not tested" badge instead of "Failed". Only an explicit failed test shows "Failed". |
+| 2 | Backend column (placeholder) | Column renamed from "Health" to "Backend" with "Not checked" text. This is a deliberate placeholder for future backend probing. A probe would perform `HEAD /` through the Docker network with timeout and display Healthy/Down/Timeout. |
+| 3 | Future backend probe | Technically feasible: `docker exec containercp-proxy curl -sI --connect-timeout 5 http://site-3-web:80/` from the nginx container. RuntimeActionExecutor could perform this. Recommended for Stage 2 or a future Observability module. |
+| 4 | Type / Site column duplication | Fixed: now shows "Admin Panel" for system entries (site_id=0) and site owner name for site entries. No longer duplicates the Domain column. |
+| 5 | Recovery labels | Changed: "Yes" → "Running", "No" → "Idle" (Recovery In Progress), "None" → "Never" (Last Result). More user-friendly and operationally descriptive. |
+| 6 | Final UX review | Configuration/Config Detail consistency, Recovery Manager labels, Type/Site column deduplication, badge colors reviewed. All resolved in commit `b38b7fa`. |
+
+### Backend column future design
+
+The Backend column is a placeholder for real upstream health probing.
+
+A future implementation would:
+
+1. Perform `HEAD /` or `GET /` through the Docker network to each upstream
+   (e.g. `http://site-3-web:80/`), with a short timeout (e.g. 5 seconds).
+2. Map results: HTTP 2xx/3xx → "Healthy", connection refused → "Down",
+   timeout → "Timeout".
+3. The probe could use `RuntimeActionExecutor` or `CommandExecutor`
+   from inside the nginx proxy container via `docker exec`.
+4. Cache results with a TTL (e.g. 60 seconds) to avoid hammering backends.
+5. This is explicitly **Stage 2 / deferred** — not implemented yet.
+
 ### Deferred (Stage 2)
 
 - Per-domain Enable/Disable
 - Per-domain Remove for non-protected entries (already exists via
   `POST /api/proxy/remove`)
-- Backend health checks (currently "Not tested")
+- Real backend health probing (currently "Not checked" placeholder)
 - Recovery event persistence (currently daemon-start scope)
 
 ## 10. Related documents
