@@ -294,7 +294,21 @@ Validation:
 
 Response includes full `address` field in the format `local_part@domain`.
 
-### 2.17 Logs
+### 2.17 Mail — Aliases
+
+| Method | Path | Purpose | Owner |
+|--------|------|---------|-------|
+| GET | `/api/mail/domains/<id>/aliases` | List aliases for a domain | `MailAliasManager` |
+| POST | `/api/mail/domains/<id>/aliases` | Create an alias | `MailAliasManager` |
+| DELETE | `/api/mail/aliases/<id>` | Remove an alias | `MailAliasManager` |
+
+POST body: `{"source":"info","destination":"admin@example.com"}`
+
+Aliases map a source local part to one or more destination addresses.
+Multiple aliases with the same source but different destinations are allowed.
+An exact duplicate (same source, same destination, same domain) is rejected (409).
+
+### 2.18 Logs
 
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|

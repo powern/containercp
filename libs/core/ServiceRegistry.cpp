@@ -144,6 +144,10 @@ ServiceRegistry::ServiceRegistry()
     if (!loaded_mailboxes.empty()) {
         mailboxes_.set_mailboxes(loaded_mailboxes);
     }
+    auto loaded_aliases = storage_.load_mail_aliases();
+    if (!loaded_aliases.empty()) {
+        mail_aliases_.set_aliases(loaded_aliases);
+    }
 
     auto loaded_access = storage_.load_access_users();
     if (!loaded_access.empty()) {
@@ -485,6 +489,10 @@ mail::MailboxManager& ServiceRegistry::mailboxes() {
     return mailboxes_;
 }
 
+mail::MailAliasManager& ServiceRegistry::mail_aliases() {
+    return mail_aliases_;
+}
+
 auth::AuthUserManager& ServiceRegistry::auth_users() {
     return auth_users_;
 }
@@ -536,6 +544,7 @@ void ServiceRegistry::save() {
     storage_.save_ssl_certificates(ssl_.list());
     storage_.save_mail_domains(mail_.list());
     storage_.save_mailboxes(mailboxes_.list());
+    storage_.save_mail_aliases(mail_aliases_.list());
     storage_.save_access_users(access_users_.list());
     storage_.save_access_grants(access_grants_.list());
     storage_.save_reverse_proxies(reverse_proxies_.list());

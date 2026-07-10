@@ -519,3 +519,82 @@ TEST_CASE("MailPasswordHasher hash and verify") {
     // Verify with empty hash
     CHECK_FALSE(MailPasswordHasher::verify("pwd", ""));
 }
+
+#include "mail/MailAliasManager.h"
+
+TEST_CASE("MailAliasManager create/find/list/remove") {
+    containercp::mail::MailAliasManager mgr;
+
+    uint64_t id = mgr.create(1, "info", "admin@example.com");
+    CHECK(id == 1);
+
+    auto* a = mgr.find(id);
+    REQUIRE(a != nullptr);
+    CHECK(a->source_local_part == "info");
+    CHECK(a->destination == "admin@example.com");
+    CHECK(a->domain_id == 1);
+
+    CHECK(mgr.list().size() == 1);
+    CHECK(mgr.remove(id));
+    CHECK(mgr.list().empty());
+}
+
+TEST_CASE("MailAliasManager find_by_domain") {
+    containercp::mail::MailAliasManager mgr;
+    mgr.create(1, "a", "dest1@x.com");
+    mgr.create(1, "b", "dest2@x.com");
+    mgr.create(2, "c", "dest3@x.com");
+
+    auto d1 = mgr.find_by_domain(1);
+    CHECK(d1.size() == 2);
+
+    auto d2 = mgr.find_by_domain(2);
+    CHECK(d2.size() == 1);
+
+    CHECK(mgr.find_by_domain(999).empty());
+}
+
+TEST_CASE("MailAliasManager find_by_source") {
+    containercp::mail::MailAliasManager mgr;
+    mgr.create(1, "info", "a@x.com");
+    mgr.create(1, "info", "b@x.com");   // same source, different destination
+    mgr.create(1, "other", "c@x.com");
+
+    auto results = mgr.find_by_source("info", 1);
+    CHECK(results.size() == 2);
+
+    auto no_results = mgr.find_by_source("info", 2);
+    CHECK(no_results.empty());
+}
+
+TEST_CASE("MailAliasManager duplicate detection") {
+    containercp::mail::MailAliasManager mgr;
+    uint64_t id1 = mgr.create(1, "info", "admin@x.com");
+    CHECK(id1 == 1);
+
+    // Same source + domain + destination = duplicate
+    uint64_t id2 = mgr.create(1, "info", "admin@x.com");
+    CHECK(id2 == 0);
+
+    // Same source, different destination = allowed
+    uint64_t id3 = mgr.create(1, "info", "other@x.com");
+    CHECK(id3 == 2);
+}
+
+TEST_CASE("MailAliasManager set_aliases restores state") {
+    containercp::mail::MailAliasManager mgr;
+    mgr.create(1, "a", "d1@x.com");
+    mgr.create(2, "b", "d2@x.com");
+
+    auto saved = mgr.list();
+    containercp::mail::MailAliasManager mgr2;
+    mgr2.set_aliases(saved);
+
+    CHECK(mgr2.list().size() == 2);
+    auto a_list = mgr2.find_by_domain(1);
+    CHECK(a_list.size() == 1);
+    CHECK(a_list[0]->destination == "d1@x.com");
+
+    uint64_t id3 = mgr2.create(3, "c", "d3@x.com");
+    CHECK(id3 == 3);
+}

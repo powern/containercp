@@ -53,6 +53,10 @@ std::string Storage::mailboxes_file() const {
     return db_path_ + "mail_mailboxes.db";
 }
 
+std::string Storage::mail_aliases_file() const {
+    return db_path_ + "mail_aliases.db";
+}
+
 std::string Storage::access_users_file() const {
     return db_path_ + "access_users.db";
 }
@@ -470,6 +474,44 @@ std::vector<mail::Mailbox> Storage::load_mailboxes() {
         mailboxes.push_back(std::move(mb));
     }
     return mailboxes;
+}
+
+void Storage::save_mail_aliases(const std::vector<mail::MailAlias>& aliases) {
+    std::ofstream file(mail_aliases_file());
+    for (const auto& a : aliases) {
+        file << a.id << "|"
+             << a.domain_id << "|"
+             << a.source_local_part << "|"
+             << a.destination << "|"
+             << (a.enabled ? "1" : "0") << "|"
+             << a.created_at << "|"
+             << a.updated_at << "\n";
+    }
+}
+
+std::vector<mail::MailAlias> Storage::load_mail_aliases() {
+    std::vector<mail::MailAlias> aliases;
+    std::ifstream file(mail_aliases_file());
+    if (!file.is_open()) {
+        return aliases;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::istringstream ss(line);
+        std::string token;
+        mail::MailAlias a;
+        if (std::getline(ss, token, '|')) a.id = std::stoull(token);
+        if (std::getline(ss, token, '|')) a.domain_id = std::stoull(token);
+        if (std::getline(ss, token, '|')) a.source_local_part = token;
+        if (std::getline(ss, token, '|')) a.destination = token;
+        if (std::getline(ss, token, '|')) a.enabled = (token == "1");
+        if (std::getline(ss, token, '|')) a.created_at = token;
+        if (std::getline(ss, token, '|')) a.updated_at = token;
+        a.name = a.source_local_part;
+        aliases.push_back(std::move(a));
+    }
+    return aliases;
 }
 
 void Storage::save_access_users(const std::vector<access::AccessUser>& users) {

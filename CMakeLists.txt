@@ -45,6 +45,7 @@ set(CONTAINERCP_SOURCES
     libs/jobs/JobManager.cpp
     libs/jobs/JobExecutor.cpp
     libs/logger/Logger.cpp
+    libs/mail/MailAliasManager.cpp
     libs/mail/MailDomain.cpp
     libs/mail/MailDomainManager.cpp
     libs/mail/MailPasswordHasher.cpp
