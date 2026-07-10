@@ -9,8 +9,8 @@ DATA_ROOT="${DATA_ROOT:-/srv/containercp}"
 ADMIN_URL="${ADMIN_URL:-https://web2.softico.ua}"
 
 info()  { echo "  [INFO] $*"; }
-pass()  { echo "  [PASS] $*"; ((PASS++)); }
-fail()  { echo "  [FAIL] $*"; ((FAIL++)); }
+pass()  { echo "  [PASS] $*"; PASS=$((PASS + 1)); }
+fail()  { echo "  [FAIL] $*"; FAIL=$((FAIL + 1)); }
 
 cleanup() {
     echo ""
