@@ -232,7 +232,51 @@ subsystems.
 |--------|------|---------|-------|
 | GET | `/api/nodes` | List cluster nodes | `ResourceManager` |
 
-### 2.15 Logs
+### 2.15 Mail — Domains
+
+| Method | Path | Purpose | Owner |
+|--------|------|---------|-------|
+| GET | `/api/mail/domains` | List all mail domains | `MailDomainManager` |
+| GET | `/api/mail/domains/<id>` | Get a single mail domain | `MailDomainManager` |
+| POST | `/api/mail/domains` | Create a mail domain | `MailDomainManager` |
+| PATCH | `/api/mail/domains/<id>` | Update a mail domain | `MailDomainManager` |
+| DELETE | `/api/mail/domains/<id>` | Remove a mail domain | `MailDomainManager` |
+
+Domain modes: `disabled`, `local-primary`, `external-relay`, `split-m365`.
+
+POST body: `{"domain":"example.com","mode":"local-primary","owner_id":1}`
+
+PATCH body (partial update): `{"mode":"split-m365","catch_all":"postmaster@example.com"}`
+
+Response includes: `id`, `domain`, `mode`, `owner_id`, `enabled`, `relay_host`,
+`dkim_selector`, `max_mailboxes`, `max_aliases`, `catch_all`, `created_at`, `updated_at`.
+
+Validation:
+- Domain is normalized (lowercase, trimmed, trailing dots removed) before duplicate check.
+- Unknown mode strings return 400 with valid options list.
+- Duplicate domains return 409.
+
+### 2.16 Mail — Mailboxes
+
+| Method | Path | Purpose | Owner |
+|--------|------|---------|-------|
+| GET | `/api/mail/domains/<id>/mailboxes` | List mailboxes for a domain | `MailboxManager` |
+| POST | `/api/mail/domains/<id>/mailboxes` | Create a mailbox | `MailboxManager` |
+| DELETE | `/api/mail/mailboxes/<id>` | Remove a mailbox | `MailboxManager` |
+
+POST body: `{"local_part":"alice","password":"secret"}`
+
+Password is hashed using SHA-512-CRYPT (`$6$`) before storage.  Plaintext
+passwords are never stored.  Hash is compatible with Dovecot's
+`default_password_scheme = SHA512-CRYPT`.
+
+Validation:
+- `local_part` must be non-empty and contain only alphanumeric characters, dots, underscores, or hyphens.
+- Duplicate `local_part` within the same domain returns 409.
+- Password is required (minimum 1 character).
+- Referenced domain must exist (404 if not found).
+
+### 2.17 Logs
 
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|
@@ -352,6 +396,7 @@ async jobs.
 | `/api/jobs/*` | Jobs subsystem (`JobManager`) | Async execution |
 | `/api/backups/*` | Backups subsystem (`BackupManager`, `BackupProvider`) | Archive logic |
 | `/api/settings/*` | Config (`Config`) | File I/O, persistence |
+| `/api/mail/*` | Mail subsystem (`MailDomainManager`, `MailboxManager`) | Postfix/Dovecot config, Docker logic |
 
 API handlers must never:
 - Run `docker` commands directly
