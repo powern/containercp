@@ -37,9 +37,13 @@ Postfix (containercp-mail-postfix)
 domain                      lmtp:127.0.0.1:24     (all recipients local)
 ```
 
-LocalPrimary has no transport map entry — local delivery uses
-`virtual_transport = lmtp:127.0.0.1:24` (set in main.cf).
-Unknown recipients are rejected (domain not in `relay_domans`).
+The domain-level entry sends ALL recipients to Dovecot via LMTP.
+Known mailboxes are delivered normally.  Unknown recipients are
+rejected by Dovecot (which returns a bounce to Postfix).
+
+`virtual_transport = lmtp:127.0.0.1:24` is also set in main.cf as
+a safety net, but the transport map entry takes precedence per
+Postfix precedence rules.
 
 ---
 
@@ -64,10 +68,8 @@ No direct delivery.
 
 **Transport maps:**  `domain → smtp:[relay_host]`
 
-**Postfix main.cf:**
-```
-relayhost = [relay_host]
-```
+Per-domain routing via transport maps — no global `relayhost`.  This
+allows multiple ExternalRelay domains with different relay hosts.
 
 ---
 
@@ -123,19 +125,19 @@ through the M365 smarthost to ensure SPF/DKIM alignment.
 
 ### Transport maps
 
-Only one transport entry per split-m365 domain — the SMTP relay for
-non-local recipients.  Local delivery uses `virtual_transport =
-lmtp:127.0.0.1:24` (global in main.cf):
+Each local mailbox gets a per-user LMTP entry (full address match),
+followed by a domain-level SMTP catch-all for non-local recipients:
 
 ```
+alice@domain                lmtp:127.0.0.1:24     (per-user local delivery)
+bob@domain                  lmtp:127.0.0.1:24     (per-user local delivery)
 domain                      smtp:[relay_host]:25  (non-local catch-all)
 ```
 
-Postfix resolves each recipient:
-1. Recipient in `virtual_mailbox_maps` → deliver via `virtual_transport`
-   (LMTP to Dovecot).
-2. Recipient NOT in `virtual_mailbox_maps` → `transport_maps` domain
-   match → relay to M365 MX.
+Postfix transport(5) lookup: exact match (`user@domain`) first, then
+`domain` fallback.  Per-user LMTP entries ensure local recipients go
+to Dovecot.  Unknown recipients fall through to the domain entry and
+are relayed to M365.
 
 ### Recipient resolution table
 

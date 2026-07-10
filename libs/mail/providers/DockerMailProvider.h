@@ -46,7 +46,8 @@ private:
         const std::vector<MailDomain>& domains,
         const MailboxManager& mailboxes);
     core::OperationResult write_transport_maps(
-        const std::vector<MailDomain>& domains);
+        const std::vector<MailDomain>& domains,
+        const MailboxManager& mailboxes);
 
     logger::Logger& logger_;
     std::string data_root_;

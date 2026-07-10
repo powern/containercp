@@ -689,10 +689,9 @@ TEST_CASE("DockerMailProvider transport maps — LocalPrimary") {
     auto r = prov.write_configs(domains, mailboxes, aliases);
     CHECK(r.success);
 
-    // Verify transport_maps — no entry for LocalPrimary (local delivery
-    // via virtual_transport, unknown recipients rejected by Postfix)
+    // Verify transport_maps — domain entry sends all recipients to LMTP
     std::string tm = read_file(gen_dir + "/transport_maps");
-    CHECK(tm.find("primary.com") == std::string::npos);
+    CHECK(tm.find("primary.com lmtp:127.0.0.1:24") != std::string::npos);
 
     // Verify relay_domains is NOT present (LocalPrimary doesn't relay)
     std::string pf = read_file(gen_dir + "/postfix-main.cf");
@@ -779,6 +778,9 @@ TEST_CASE("DockerMailProvider transport maps — SplitM365") {
     containercp::mail::MailboxManager mailboxes;
     containercp::mail::MailAliasManager aliases;
 
+    // Add a local mailbox to verify per-user LMTP entries
+    mailboxes.create(1, "alice", "$6$salt$localhash");
+
     std::vector<containercp::mail::MailDomain> domains;
     containercp::mail::MailDomain d;
     d.id = 1;
@@ -792,9 +794,10 @@ TEST_CASE("DockerMailProvider transport maps — SplitM365") {
     CHECK(r.success);
 
     std::string tm = read_file(gen_dir + "/transport_maps");
-    // No LMTP entry — local delivery via virtual_transport
-    CHECK(tm.find("lmtp") == std::string::npos);
-    // SMTP relay catch-all for non-local recipients
+    // Per-user LMTP entry for the local mailbox (full address match
+    // takes priority over the domain-level catch-all below)
+    CHECK(tm.find("alice@hybrid.com lmtp:127.0.0.1:24") != std::string::npos);
+    // Domain-level SMTP relay catch-all for non-local recipients
     CHECK(tm.find("hybrid.com smtp:[hybrid-com.mail.protection.outlook.com]:25")
           != std::string::npos);
 

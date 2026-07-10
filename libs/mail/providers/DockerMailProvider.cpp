@@ -190,7 +190,8 @@ core::OperationResult DockerMailProvider::write_dovecot_config(
 }
 
 core::OperationResult DockerMailProvider::write_transport_maps(
-    const std::vector<MailDomain>& domains) {
+    const std::vector<MailDomain>& domains,
+    const MailboxManager& mailboxes) {
     std::string path = config_dir() + "/generated/transport_maps";
     std::ofstream out(path);
     if (!out.is_open()) return {false, "Failed to write " + path};
@@ -198,27 +199,37 @@ core::OperationResult DockerMailProvider::write_transport_maps(
     for (const auto& d : domains) {
         if (!d.enabled) continue;
 
-        // LocalPrimary and SplitM365 deliver local recipients via
-        // virtual_transport = lmtp:127.0.0.1:24 (set in main.cf).
-        // Only ExternalRelay and SplitM365 non-local recipients need
-        // explicit transport map entries.
-
-        if (d.mode == MailDomainMode::SplitM365) {
-            // Transport map catch-all: recipients not in
-            // virtual_mailbox_maps fall back to the domain entry
-            // and are relayed to the M365 MX.
-            if (!d.relay_host.empty()) {
-                out << d.domain_name << " smtp:[" << d.relay_host << "]:25\n";
-            }
-        } else if (d.mode == MailDomainMode::ExternalRelay) {
-            if (!d.relay_host.empty()) {
-                out << d.domain_name << " smtp:[" << d.relay_host << "]\n";
-            }
+        // LocalPrimary — all recipients are local.  Transport overrides
+        // all delivery to LMTP.  Unknown recipients are rejected by
+        // Dovecot (not ideal, but functional).
+        if (d.mode == MailDomainMode::LocalPrimary) {
+            out << d.domain_name << " lmtp:127.0.0.1:24\n";
         }
-        // LocalPrimary and Disabled: no transport entry.
-        // LocalPrimary — local delivery via virtual_transport;
-        // unknown recipients rejected (domain not in relay_domains).
-        // Disabled — no entry means Postfix rejects by default.
+
+        // SplitM365 — generate per-user LMTP entries for every local
+        // mailbox, then a domain-level SMTP catch-all for unknowns.
+        // transport_maps takes precedence over virtual_transport, so
+        // per-user entries are required to keep local delivery local.
+        if (d.mode == MailDomainMode::SplitM365 && !d.relay_host.empty()) {
+            // Per-user LMTP entries: these match full addresses and
+            // take priority over the domain-level SMTP entry below.
+            for (const auto& mb : mailboxes.list()) {
+                if (mb.domain_id != d.id || !mb.enabled) continue;
+                out << mb.local_part << "@" << d.domain_name
+                    << " lmtp:127.0.0.1:24\n";
+            }
+            // Domain-level catch-all: recipients NOT in virtual_mailbox_maps
+            // (and not matched by a per-user LMTP entry above) fall through
+            // to this domain entry and are relayed to M365.
+            out << d.domain_name << " smtp:[" << d.relay_host << "]:25\n";
+        }
+
+        // ExternalRelay — all recipients relayed.
+        if (d.mode == MailDomainMode::ExternalRelay && !d.relay_host.empty()) {
+            out << d.domain_name << " smtp:[" << d.relay_host << "]\n";
+        }
+
+        // Disabled: no entry — Postfix rejects by default
     }
     return {true, ""};
 }
@@ -232,7 +243,7 @@ core::OperationResult DockerMailProvider::write_configs(
     if (!pf.success) return pf;
     auto dv = write_dovecot_config(domains, mailboxes);
     if (!dv.success) return dv;
-    auto tm = write_transport_maps(domains);
+    auto tm = write_transport_maps(domains, mailboxes);
     if (!tm.success) return tm;
     logger_.info("MAIL", "Configuration files written");
     return {true, "Configuration written"};

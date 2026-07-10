@@ -24,34 +24,36 @@ M365).
 
 ## Decision
 
-### Transport maps with domain-level catch-all
+### Transport maps with per-user LMTP entries
 
-Each `split-m365` domain gets one transport map entry:
+Each `split-m365` domain generates per-user LMTP entries for every
+local mailbox, followed by a domain-level SMTP catch-all:
 
 ```
+alice@domain                lmtp:127.0.0.1:24     (explicit local mailbox)
+bob@domain                  lmtp:127.0.0.1:24     (explicit local mailbox)
 domain                      smtp:[relay_host]:25  (domain-level catch-all)
 ```
 
-Local recipients do NOT appear in the transport map.  Instead, they
-are delivered via Postfix's `virtual_transport = lmtp:127.0.0.1:24`
-(global setting in main.cf).  Postfix resolves the recipient:
+Postfix transport(5) specifies the lookup fallback: exact address
+(`user@domain`) → user@.domain → .domain → domain.  Per-user entries
+match first and deliver locally.  Unknown recipients fall through to
+the domain entry and are relayed to M365.
 
-1. Recipient in `virtual_mailbox_maps` → deliver via `virtual_transport`
-   (LMTP to Dovecot).
-2. Recipient NOT in `virtual_mailbox_maps` → check `transport_maps`.
-   Domain match found → relay to M365 MX.
-3. Postfix transport(5) specifies this lookup fallback: exact address
-   → user@.domain → .domain → domain.
+This is required because `transport_maps` takes precedence over
+`virtual_transport`.  Without the per-user LMTP entries, the
+domain-level SMTP entry would catch ALL recipients (including local
+mailboxes) and relay them to M365.
 
-This avoids the `texthash` duplicate-key problem: only one entry per
-domain in transport_maps.
+### LocalPrimary uses domain-level LMTP
 
-### LocalPrimary does not need transport map entries
+For `local-primary` mode, the transport map has a single domain-level
+LMTP entry.  All recipients (including unknown) go to Dovecot via
+LMTP.  Dovecot rejects unknowns.
 
-For `local-primary` mode, all recipients are local.  No transport map
-entry is generated.  Local delivery uses `virtual_transport =
-lmtp:127.0.0.1:24`.  Unknown recipients are rejected (domain not in
-`relay_domains`).
+```
+domain                      lmtp:127.0.0.1:24     (all recipients local)
+```
 
 ### relay_host must be configured explicitly
 
