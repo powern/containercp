@@ -70,7 +70,7 @@ void ProxyViewService::write_enriched(std::ostringstream& json,
          << "\",\"entry_type\":\"" << (is_protected ? "system" : "site")
          << "\",\"site_id\":" << p.site_id
          << ",\"site_name\":\"" << api::JsonFormatter::escape(site_name)
-         << ",\"upstream\":\"" << api::JsonFormatter::escape(p.upstream)
+         << "\",\"upstream\":\"" << api::JsonFormatter::escape(p.upstream)
          << "\",\"configured_state\":\"" << api::JsonFormatter::escape(p.status)
          << "\",\"backend_health\":\"" << api::JsonFormatter::escape(backend_health)
          << "\",\"http_enabled\":true"
