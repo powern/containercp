@@ -1,6 +1,7 @@
 #ifndef CONTAINERCP_LOGGER_LOGGER_H
 #define CONTAINERCP_LOGGER_LOGGER_H
 
+#include <mutex>
 #include <string>
 
 namespace containercp::logger {
@@ -26,6 +27,8 @@ private:
 
     Logger(const Logger&) = delete;
     Logger& operator=(const Logger&) = delete;
+
+    std::mutex mutex_;
 };
 
 } // namespace containercp::logger
