@@ -850,21 +850,14 @@ async function loadSsl(p) {
 
 /* ===== PROXY ===== */
 async function loadProxy(p) {
-  // Prevent duplicate page builds while refreshing
   if (p._loading) return;
   p._loading = true;
-  let proxyData, healthData;
+
   try {
-    [proxyData, healthData] = await Promise.all([
+    const [proxyData, healthData] = await Promise.all([
       api('/api/proxy'),
       api('/api/proxy/health')
     ]);
-  } catch(e) {
-    p._loading = false;
-    p.innerHTML = '<div class="empty-state">Failed to load proxy</div>';
-    return;
-  }
-  p._loading = false;
 
     const health = healthData.data || {};
     const container = health.container || {};
@@ -896,7 +889,6 @@ async function loadProxy(p) {
       return res === 'success' ? '<span class="badge badge-ok">Success</span>' : '<span class="badge badge-err">Failed</span>';
     };
 
-    // Global action buttons with spinner state
     const actionBtns = `
       <div style="display:flex;gap:6px;flex-wrap:wrap;" id="proxy-actions">
         <button class="btn btn-sm" onclick="proxyAction('test')" id="proxy-btn-test">Test</button>
@@ -958,7 +950,11 @@ async function loadProxy(p) {
     };
     p.innerHTML += `<div id="proxy-table"></div>`;
     window.renderTable();
-  } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load proxy</div>'; }
+  } catch (e) {
+    p.innerHTML = '<div class="empty-state">Failed to load proxy</div>';
+  } finally {
+    p._loading = false;
+  }
 }
 
 let _proxyActionPending = false;
