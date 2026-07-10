@@ -75,18 +75,21 @@ void RecoveryManager::check_loop() {
                 {
                     std::lock_guard<std::mutex> lock(status_mutex_);
                     if (recovery_active_) {
-                        logger_.info("RECOVERY", "Recovery already in progress, skipping background attempt");
-                        continue;  // skip sleep, re-check immediately
+                        logger_.info("RECOVERY", "Recovery already in progress, waiting for completion");
+                        // Fall through to normal sleep — no busy loop
+                    } else {
+                        recovery_active_ = true;
                     }
-                    recovery_active_ = true;
                 }
-                fail_count_++;
-                logger_.info("RECOVERY", "Recovery attempt " + std::to_string(fail_count_)
-                             + "/" + std::to_string(MAX_RETRIES));
-                recover();
-                {
-                    std::lock_guard<std::mutex> lock(status_mutex_);
-                    recovery_active_ = false;
+                if (recovery_active_) {
+                    fail_count_++;
+                    logger_.info("RECOVERY", "Recovery attempt " + std::to_string(fail_count_)
+                                 + "/" + std::to_string(MAX_RETRIES));
+                    recover();
+                    {
+                        std::lock_guard<std::mutex> lock(status_mutex_);
+                        recovery_active_ = false;
+                    }
                 }
             }
         }
@@ -123,14 +126,12 @@ core::OperationResult RecoveryManager::recover_now() {
     {
         std::lock_guard<std::mutex> lock(status_mutex_);
         recovery_active_ = false;
-        last_recovery_time_ = std::time(nullptr);
-        if (is_proxy_healthy()) {
-            last_recovery_result_ = "success";
-            return {true, "Recovery completed successfully"};
-        }
-        last_recovery_result_ = "failed";
-        return {false, "Recovery completed but proxy is still unhealthy"};
     }
+    // recover() already updated last_recovery_time_ and last_recovery_result_
+    if (is_proxy_healthy()) {
+        return {true, "Recovery completed successfully"};
+    }
+    return {false, "Recovery completed but proxy is still unhealthy"};
 }
 
 void RecoveryManager::recover() {
@@ -158,13 +159,17 @@ void RecoveryManager::recover() {
     services_.sync_all_https_configs();
     logger_.info("RECOVERY", "sync_all_https_configs completed");
 
-    // Final check
+    // Update recovery status (single source of truth for both manual and background)
+    std::lock_guard<std::mutex> lock(status_mutex_);
+    last_recovery_time_ = std::time(nullptr);
     if (is_proxy_healthy()) {
         logger_.info("RECOVERY", "Recovery successful");
         fail_count_ = 0;
+        last_recovery_result_ = "success";
     } else {
         logger_.error("RECOVERY", "Recovery attempt " + std::to_string(fail_count_)
                       + " failed — proxy still unhealthy");
+        last_recovery_result_ = "failed";
     }
 }
 
