@@ -2,9 +2,17 @@
 #include "site/SiteManager.h"
 
 #include <cstdint>
+#include <cstdio>
+#include <fstream>
+#include <sstream>
 #include <string>
 
 #include "doctest/doctest.h"
+
+#include "logger/Logger.h"
+#include "mail/MailAliasManager.h"
+#include "mail/MailboxManager.h"
+#include "mail/providers/DockerMailProvider.h"
 
 TEST_CASE("UserManager create/find/list/remove") {
     containercp::user::UserManager mgr;
@@ -640,4 +648,224 @@ TEST_CASE("MailAliasManager set_aliases restores state") {
 
     uint64_t id3 = mgr2.create(3, "c", "d3@x.com");
     CHECK(id3 == 3);
+}
+
+// ── DockerMailProvider config generation tests ──────────────────
+
+static std::string read_file(const std::string& path) {
+    std::ifstream in(path);
+    if (!in.is_open()) return "";
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+TEST_CASE("DockerMailProvider transport maps — LocalPrimary") {
+    // Write transport maps for a LocalPrimary domain and verify output
+    std::string tmp = "/tmp/containercp-test-mail-XXXXXX";
+    char* resolved = ::mkdtemp(&tmp[0]);
+    REQUIRE(resolved != nullptr);
+
+    std::string data_root = resolved;
+    std::string mail_dir = data_root + "/mail";
+    std::string cfg_dir = mail_dir + "/config";
+    std::string gen_dir = cfg_dir + "/generated";
+    ::mkdir(mail_dir.c_str(), 0755);
+    ::mkdir(cfg_dir.c_str(), 0755);
+    ::mkdir(gen_dir.c_str(), 0755);
+
+    containercp::mail::DockerMailProvider prov(containercp::logger::Logger::instance(), data_root);
+    containercp::mail::MailboxManager mailboxes;
+    containercp::mail::MailAliasManager aliases;
+
+    std::vector<containercp::mail::MailDomain> domains;
+    containercp::mail::MailDomain d;
+    d.id = 1;
+    d.domain_name = "primary.com";
+    d.mode = containercp::mail::MailDomainMode::LocalPrimary;
+    d.enabled = true;
+    domains.push_back(d);
+
+    auto r = prov.write_configs(domains, mailboxes, aliases);
+    CHECK(r.success);
+
+    // Verify transport_maps
+    std::string tm = read_file(gen_dir + "/transport_maps");
+    CHECK(tm.find("primary.com lmtp:127.0.0.1:24") != std::string::npos);
+
+    // Verify relay_domains is NOT present (LocalPrimary doesn't relay)
+    std::string pf = read_file(gen_dir + "/postfix-main.cf");
+    CHECK(pf.find("relay_domains") == std::string::npos);
+    CHECK(pf.find("virtual_mailbox_domains = primary.com") != std::string::npos);
+
+    // Cleanup
+    std::remove((gen_dir + "/transport_maps").c_str());
+    std::remove((gen_dir + "/postfix-main.cf").c_str());
+    std::remove((gen_dir + "/dovecot.conf").c_str());
+    std::remove((gen_dir + "/passwd").c_str());
+    std::remove((gen_dir + "/virtual_mailboxes").c_str());
+    std::remove(gen_dir.c_str());
+    std::remove(data_root.c_str());
+}
+
+TEST_CASE("DockerMailProvider transport maps — ExternalRelay") {
+    std::string tmp = "/tmp/containercp-test-mail-XXXXXX";
+    char* resolved = ::mkdtemp(&tmp[0]);
+    REQUIRE(resolved != nullptr);
+
+    std::string data_root = resolved;
+    std::string mail_dir = data_root + "/mail";
+    std::string cfg_dir = mail_dir + "/config";
+    std::string gen_dir = cfg_dir + "/generated";
+    ::mkdir(mail_dir.c_str(), 0755);
+    ::mkdir(cfg_dir.c_str(), 0755);
+    ::mkdir(gen_dir.c_str(), 0755);
+
+    containercp::mail::DockerMailProvider prov(containercp::logger::Logger::instance(), data_root);
+    containercp::mail::MailboxManager mailboxes;
+    containercp::mail::MailAliasManager aliases;
+
+    std::vector<containercp::mail::MailDomain> domains;
+    containercp::mail::MailDomain d;
+    d.id = 1;
+    d.domain_name = "relay.com";
+    d.mode = containercp::mail::MailDomainMode::ExternalRelay;
+    d.relay_host = "smtp.relay.com";
+    d.enabled = true;
+    domains.push_back(d);
+
+    auto r = prov.write_configs(domains, mailboxes, aliases);
+    CHECK(r.success);
+
+    std::string tm = read_file(gen_dir + "/transport_maps");
+    CHECK(tm.find("relay.com smtp:[smtp.relay.com]") != std::string::npos);
+
+    // ExternalRelay does NOT appear in virtual_mailbox_domains
+    std::string pf = read_file(gen_dir + "/postfix-main.cf");
+    CHECK(pf.find("relay_domains = relay.com") != std::string::npos);
+    CHECK(pf.find("virtual_mailbox_domains =") != std::string::npos);
+    // virtual_mailbox_domains should be empty (no LocalPrimary or SplitM365 domains)
+    CHECK(pf.find("virtual_mailbox_domains = relay.com") == std::string::npos);
+
+    // Cleanup
+    std::remove((gen_dir + "/transport_maps").c_str());
+    std::remove((gen_dir + "/postfix-main.cf").c_str());
+    std::remove((gen_dir + "/dovecot.conf").c_str());
+    std::remove((gen_dir + "/passwd").c_str());
+    std::remove((gen_dir + "/virtual_mailboxes").c_str());
+    std::remove(gen_dir.c_str());
+    std::remove(data_root.c_str());
+}
+
+TEST_CASE("DockerMailProvider transport maps — SplitM365") {
+    std::string tmp = "/tmp/containercp-test-mail-XXXXXX";
+    char* resolved = ::mkdtemp(&tmp[0]);
+    REQUIRE(resolved != nullptr);
+
+    std::string data_root = resolved;
+    std::string mail_dir = data_root + "/mail";
+    std::string cfg_dir = mail_dir + "/config";
+    std::string gen_dir = cfg_dir + "/generated";
+    ::mkdir(mail_dir.c_str(), 0755);
+    ::mkdir(cfg_dir.c_str(), 0755);
+    ::mkdir(gen_dir.c_str(), 0755);
+
+    containercp::mail::DockerMailProvider prov(containercp::logger::Logger::instance(), data_root);
+    containercp::mail::MailboxManager mailboxes;
+    containercp::mail::MailAliasManager aliases;
+
+    std::vector<containercp::mail::MailDomain> domains;
+    containercp::mail::MailDomain d;
+    d.id = 1;
+    d.domain_name = "hybrid.com";
+    d.mode = containercp::mail::MailDomainMode::SplitM365;
+    d.relay_host = "hybrid-com.mail.protection.outlook.com";
+    d.enabled = true;
+    domains.push_back(d);
+
+    auto r = prov.write_configs(domains, mailboxes, aliases);
+    CHECK(r.success);
+
+    std::string tm = read_file(gen_dir + "/transport_maps");
+    // Local delivery entry
+    CHECK(tm.find("hybrid.com lmtp:127.0.0.1:24") != std::string::npos);
+    // Wildcard catch-all for non-local recipients
+    CHECK(tm.find("hybrid.com smtp:[hybrid-com.mail.protection.outlook.com]:25")
+          != std::string::npos);
+
+    std::string pf = read_file(gen_dir + "/postfix-main.cf");
+    // SplitM365 appears in BOTH relay_domains AND virtual_mailbox_domains
+    CHECK(pf.find("relay_domains = hybrid.com") != std::string::npos);
+    CHECK(pf.find("virtual_mailbox_domains = hybrid.com") != std::string::npos);
+
+    // Cleanup
+    std::remove((gen_dir + "/transport_maps").c_str());
+    std::remove((gen_dir + "/postfix-main.cf").c_str());
+    std::remove((gen_dir + "/dovecot.conf").c_str());
+    std::remove((gen_dir + "/passwd").c_str());
+    std::remove((gen_dir + "/virtual_mailboxes").c_str());
+    std::remove(gen_dir.c_str());
+    std::remove(data_root.c_str());
+}
+
+TEST_CASE("DockerMailProvider transport maps — ExternalRelay multiple domains") {
+    // Verify that two ExternalRelay domains with different relay hosts coexist
+    std::string tmp = "/tmp/containercp-test-mail-XXXXXX";
+    char* resolved = ::mkdtemp(&tmp[0]);
+    REQUIRE(resolved != nullptr);
+
+    std::string data_root = resolved;
+    std::string mail_dir = data_root + "/mail";
+    std::string cfg_dir = mail_dir + "/config";
+    std::string gen_dir = cfg_dir + "/generated";
+    ::mkdir(mail_dir.c_str(), 0755);
+    ::mkdir(cfg_dir.c_str(), 0755);
+    ::mkdir(gen_dir.c_str(), 0755);
+
+    containercp::mail::DockerMailProvider prov(containercp::logger::Logger::instance(), data_root);
+    containercp::mail::MailboxManager mailboxes;
+    containercp::mail::MailAliasManager aliases;
+
+    std::vector<containercp::mail::MailDomain> domains;
+    containercp::mail::MailDomain d1;
+    d1.id = 1;
+    d1.domain_name = "one.com";
+    d1.mode = containercp::mail::MailDomainMode::ExternalRelay;
+    d1.relay_host = "relay-one.com";
+    d1.enabled = true;
+    domains.push_back(d1);
+
+    containercp::mail::MailDomain d2;
+    d2.id = 2;
+    d2.domain_name = "two.com";
+    d2.mode = containercp::mail::MailDomainMode::ExternalRelay;
+    d2.relay_host = "relay-two.com";
+    d2.enabled = true;
+    domains.push_back(d2);
+
+    auto r = prov.write_configs(domains, mailboxes, aliases);
+    CHECK(r.success);
+
+    std::string tm = read_file(gen_dir + "/transport_maps");
+    CHECK(tm.find("one.com smtp:[relay-one.com]") != std::string::npos);
+    CHECK(tm.find("two.com smtp:[relay-two.com]") != std::string::npos);
+
+    std::string pf = read_file(gen_dir + "/postfix-main.cf");
+    // Both domains in relay_domains
+    CHECK(pf.find("relay_domains = one.com, two.com") != std::string::npos);
+    // Neither in virtual_mailbox_domains
+    CHECK(pf.find("virtual_mailbox_domains = one.com") == std::string::npos);
+    CHECK(pf.find("virtual_mailbox_domains = two.com") == std::string::npos);
+
+    // No global relayhost set (relies on per-domain transport maps)
+    CHECK(pf.find("relayhost") == std::string::npos);
+
+    // Cleanup
+    std::remove((gen_dir + "/transport_maps").c_str());
+    std::remove((gen_dir + "/postfix-main.cf").c_str());
+    std::remove((gen_dir + "/dovecot.conf").c_str());
+    std::remove((gen_dir + "/passwd").c_str());
+    std::remove((gen_dir + "/virtual_mailboxes").c_str());
+    std::remove(gen_dir.c_str());
+    std::remove(data_root.c_str());
 }

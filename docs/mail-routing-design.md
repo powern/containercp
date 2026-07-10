@@ -213,6 +213,38 @@ Sender                Postfix              Dovecot              M365
   │                     │                    │              M365 delivers
 ```
 
+## Verified Postfix assumptions
+
+### transport_maps lookup
+
+Postfix transport(5) specifies the lookup fallback chain:
+1. `user@domain` — full address match
+2. `user@.domain` — with partial domain lead-in
+3. `.domain` — organizational domain
+4. `domain` — bare domain
+
+Domain-only entries serve as catch-all for all non-local recipients
+at that domain.  Specific `user@domain` entries take priority.
+
+### relay_domains
+
+Postfix will reject mail for domains it does not serve.  Both
+ExternalRelay and SplitM365 domains must appear in `relay_domains`
+so Postfix accepts mail for them.  SplitM365 domains additionally
+appear in `virtual_mailbox_domains` (for local mailbox lookups).
+
+### No global relayhost
+
+ContainerCP never sets Postfix's global `relayhost`.  All per-domain
+relay routing is handled by transport maps.  This allows multiple
+ExternalRelay domains with different relay hosts to coexist.
+
+### Map type
+
+All maps use `texthash` (simple hash).  No regex or PCRE maps.
+The domain-only fallback is native Postfix behavior, not a map
+feature.
+
 ---
 
 *Document accompanies Mail Module Stage 3 implementation.*

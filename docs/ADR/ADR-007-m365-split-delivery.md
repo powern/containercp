@@ -106,3 +106,61 @@ delivery.  This isolates routing logic but doubles complexity.
   the transport map logic
 - Postfix log analysis may show relayed recipients for unknowns —
   this is correct behavior (M365 decides)
+
+## Verified Postfix behavior
+
+### transport_maps lookup order
+
+Postfix transport(5) specifies the following lookup fallback:
+
+1. `user@domain` — full recipient address
+2. `user@.domain` — full address with partial domain lead-in
+3. `.domain` — partial domain (organizational domain)
+4. `domain` — domain only
+
+When a recipient address does not match an exact `user@domain` entry,
+Postfix drops the local part and retries with just the domain.
+
+This makes the bare-domain catch-all (`domain smtp:[relay]`) correct:
+local recipients match the explicit `user@domain` entry; all others
+fall through to the domain-only entry.
+
+### relay_domains interaction
+
+Postfix rejects mail for domains it does not serve.  `relay_domains`
+tells Postfix: "accept mail for these domains even if they are not
+local, and relay them via transport maps or relayhost."
+
+Without `relay_domains`, Postfix would reject non-local recipients for
+both ExternalRelay and SplitM365 domains.
+
+SplitM365 domains appear in both `virtual_mailbox_domains` (enabling
+local mailbox lookup) and `relay_domains` (enabling relay of non-local
+recipients).  Postfix handles both lists independently — they are not
+mutually exclusive.
+
+### ExternalRelay does not use relayhost
+
+Postfix's `relayhost` parameter specifies a global default relay
+destination.  It is NOT set by ContainerCP.  Instead, each
+ExternalRelay domain uses a per-domain transport map entry:
+
+```
+domain.com smtp:[relay_one.com]
+other.com  smtp:[relay_two.com]
+```
+
+This allows multiple ExternalRelay domains with different relay hosts
+to coexist on the same Postfix instance.  The global `relayhost` is
+not needed when transport maps provide per-domain routing.
+
+### Map type: texthash only
+
+All Postfix maps (transport_maps, virtual_mailbox_maps) use
+`texthash`, a simple hash lookup.  No regex, PCRE, or LDAP maps are
+used.  This means:
+
+- All keys must match exactly — no pattern-based lookup
+- The domain-only fallback is Postfix's native behavior, not a
+  texthash feature
+- texthash is the simplest and fastest Postfix map type
