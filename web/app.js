@@ -851,58 +851,71 @@ async function loadSsl(p) {
 /* ===== PROXY ===== */
 async function loadProxy(p) {
   try {
+    // Prevent duplicate page builds while refreshing
+    if (p._loading) return;
+    p._loading = true;
+
     const [proxyData, healthData] = await Promise.all([
       api('/api/proxy'),
       api('/api/proxy/health')
     ]);
-    const health = healthData.data || {};
+    p._loading = false;
 
-    // Build health card HTML
+    const health = healthData.data || {};
     const container = health.container || {};
     const proxyInfo = health.proxy || {};
     const configTest = proxyInfo.config_test || {};
     const entries = health.entries || {};
+    const recoveryInfo = health.recovery || {};
+
+    const badge = (state, okClass, errClass) => state
+      ? `<span class="badge ${okClass}">Yes</span>`
+      : `<span class="badge ${errClass}">No</span>`;
 
     const stateBadge = (state) => state === 'running'
       ? '<span class="badge badge-ok">Running</span>'
       : '<span class="badge badge-err">Stopped</span>';
 
-    const testBadge = configTest.success
-      ? '<span class="badge badge-ok">Valid</span>'
-      : '<span class="badge badge-err">Failed</span>';
+    const testBadge = (conf) => {
+      if (conf.success === null || conf.success === undefined) return '<span class="badge badge-info">Not tested</span>';
+      return conf.success ? '<span class="badge badge-ok">Valid</span>' : '<span class="badge badge-err">Failed</span>';
+    };
+
+    const fmtTime = (ts) => {
+      if (!ts) return 'Never since daemon start';
+      try { return new Date(ts).toLocaleString(); } catch(e) { return ts; }
+    };
+
+    const recoveryResultBadge = (res) => {
+      if (!res) return '<span class="badge badge-info">None</span>';
+      return res === 'success' ? '<span class="badge badge-ok">Success</span>' : '<span class="badge badge-err">Failed</span>';
+    };
+
+    // Global action buttons with spinner state
+    const actionBtns = `
+      <div style="display:flex;gap:6px;flex-wrap:wrap;" id="proxy-actions">
+        <button class="btn btn-sm" onclick="proxyAction('test')" id="proxy-btn-test">Test</button>
+        <button class="btn btn-sm" onclick="proxyAction('reload')" id="proxy-btn-reload">Reload</button>
+        <button class="btn btn-sm" onclick="proxyAction('sync')" id="proxy-btn-sync">Sync</button>
+        <button class="btn btn-sm btn-primary" onclick="proxyAction('recover')" id="proxy-btn-recover">Recover</button>
+      </div>`;
 
     p.innerHTML = `
       <div class="page-header"><h1>Reverse Proxy</h1></div>
-      <div class="card" style="margin-bottom:12px;">
+      <div class="card" style="margin-bottom:12px;" id="proxy-health-card">
         <h3 style="margin-bottom:8px;">Global Health</h3>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
-          <div>
-            <div style="font-size:11px;color:var(--text3);">Container</div>
-            <div style="margin-top:2px;">${stateBadge(container.state)}</div>
-          </div>
-          <div>
-            <div style="font-size:11px;color:var(--text3);">Provider</div>
-            <div style="margin-top:2px;">${esc(proxyInfo.provider||'nginx')}</div>
-          </div>
-          <div>
-            <div style="font-size:11px;color:var(--text3);">Config</div>
-            <div style="margin-top:2px;">${testBadge}</div>
-          </div>
-          <div>
-            <div style="font-size:11px;color:var(--text3);">Proxy Entries</div>
-            <div style="margin-top:2px;">${entries.total||0} total (${entries.system||0} system, ${entries.site||0} site)</div>
-          </div>
-          <div>
-            <div style="font-size:11px;color:var(--text3);">Config Test</div>
-            <div style="margin-top:2px;font-size:12px;color:var(--text2);">${esc(configTest.message||'')}</div>
-          </div>
-          <div style="display:flex;gap:6px;align-items:end;">
-            <button class="btn btn-sm" onclick="proxyAction('test')">Test</button>
-            <button class="btn btn-sm" onclick="proxyAction('reload')" ${!configTest.success?'disabled':''}>Reload</button>
-            <button class="btn btn-sm" onclick="proxyAction('sync')">Sync</button>
-            <button class="btn btn-sm btn-primary" onclick="proxyAction('recover')">Recover</button>
-          </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px;">
+          <div><div style="font-size:11px;color:var(--text3);">Container</div><div style="margin-top:2px;">${stateBadge(container.state)}</div></div>
+          <div><div style="font-size:11px;color:var(--text3);">Provider</div><div style="margin-top:2px;">nginx</div></div>
+          <div><div style="font-size:11px;color:var(--text3);">Configuration</div><div style="margin-top:2px;">${testBadge(configTest)}</div></div>
+          <div><div style="font-size:11px;color:var(--text3);">Config Detail</div><div style="margin-top:2px;font-size:12px;color:var(--text2);word-break:break-word;">${esc(configTest.message||'Not tested since daemon start')}</div></div>
+          <div><div style="font-size:11px;color:var(--text3);">Recovery Manager</div><div style="margin-top:2px;">${badge(recoveryInfo.manager_running, 'badge-ok', 'badge-err')}</div></div>
+          <div><div style="font-size:11px;color:var(--text3);">Recovery In Progress</div><div style="margin-top:2px;">${badge(recoveryInfo.recovery_in_progress, 'badge-warn', 'badge-info')}</div></div>
+          <div><div style="font-size:11px;color:var(--text3);">Last Recovery</div><div style="margin-top:2px;font-size:12px;color:var(--text2);">${fmtTime(recoveryInfo.last_recovery_at)}</div></div>
+          <div><div style="font-size:11px;color:var(--text3);">Last Result</div><div style="margin-top:2px;">${recoveryResultBadge(recoveryInfo.last_recovery_result)}</div></div>
+          <div><div style="font-size:11px;color:var(--text3);">Proxy Entries</div><div style="margin-top:2px;">${entries.total||0} total (${entries.system||0} system, ${entries.site||0} site)</div></div>
         </div>
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">${actionBtns}</div>
       </div>`;
     p.innerHTML += tb('Proxy Entries');
     window.renderTable = () => {
@@ -911,7 +924,7 @@ async function loadProxy(p) {
       const rows = (proxyData.data||[]).filter(r=>!searchTerm||r.domain.includes(searchTerm));
       tbl.innerHTML = buildTable([
         {label:'Domain',html:r=>`<span style="font-weight:500;">${esc(r.domain)}</span>${r.protected?` <span class="badge badge-info">system</span>`:''}`},
-        {label:'Type / Site',html:r=>r.entry_type==='system'?'<span class="badge badge-info">System</span>':r.site_name?esc(r.site_name):'<span class="badge badge-info">Site</span>'},
+        {label:'Type / Site',html:r=>r.entry_type==='system'?'<span class="badge badge-info">System</span>':r.site_name?esc(r.site_name):'<span class="badge badge-info">Unlinked</span>'},
         {label:'Upstream',html:r=>`<code style="font-size:12px;">${esc(r.upstream)}</code>`},
         {label:'HTTP',html:()=>'<span class="badge badge-ok">ON</span>'},
         {label:'HTTPS',html:r=>r.https_enabled?'<span class="badge badge-ok">ON</span>':'<span class="badge badge-info">OFF</span>'},
@@ -919,7 +932,7 @@ async function loadProxy(p) {
           const m={'active':'badge-ok','disabled':'badge-err','error':'badge-warn'};
           return `<span class="badge ${m[r.configured_state]||'badge-info'}">${esc(r.configured_state)}</span>`;
         }},
-        {label:'Health',html:()=>'<span class="badge badge-info">Unknown</span>'},
+        {label:'Health',html:()=>'<span class="badge badge-info">Not tested</span>'},
         {label:'Actions',html:r=>{
           let acts = `<button class="btn-icon" onclick="window.open('http://${esc(r.domain)}','_blank')" title="Open">&#8599;</button>`;
           if (r.site_id > 0) acts += `<button class="btn-icon" onclick="navigate('site-detail',${r.site_id})" title="View site">&#128065;</button>`;
@@ -935,9 +948,17 @@ async function loadProxy(p) {
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load proxy</div>'; }
 }
 
+let _proxyActionPending = false;
+
 async function proxyAction(action) {
-  const labels = {'test':'Testing config...','reload':'Reloading nginx...','sync':'Syncing configs...','recover':'Recovering proxy...'};
-  toast(labels[action]||'Working...', 'info');
+  if (_proxyActionPending) return;
+  _proxyActionPending = true;
+
+  const btn = document.getElementById('proxy-btn-' + action);
+  const labels = {'test':'Testing...','reload':'Reloading...','sync':'Syncing...','recover':'Recovering...'};
+
+  if (btn) { btn.disabled = true; btn.textContent = labels[action]||'...'; }
+
   try {
     const res = await apiPost('/api/proxy/' + action, {});
     if (res.success) {
@@ -948,13 +969,33 @@ async function proxyAction(action) {
   } catch(e) {
     toast('Error: ' + e.message, 'error');
   }
-  // Refresh the page to show updated health
-  loadProxy($('page'));
+
+  _proxyActionPending = false;
+  // Refresh health card and proxy entries without full page reload
+  try {
+    const [newProxy, newHealth] = await Promise.all([
+      api('/api/proxy'),
+      api('/api/proxy/health')
+    ]);
+
+    // Update health card
+    const card = document.getElementById('proxy-health-card');
+    if (card) {
+      // Re-call loadProxy to rebuild the view with fresh data
+      // Store data temporarily to avoid re-fetch
+      const p = document.getElementById('page');
+      if (p && !p._loading) loadProxy(p);
+    }
+  } catch(e) {
+    // If refresh fails, just reload the page
+    const p = document.getElementById('page');
+    if (p) loadProxy(p);
+  }
 }
 
 async function removeProxy(domain) {
   if (!confirm('Remove proxy entry for '+domain+'?')) return;
-  try { const res = await apiPost('/api/proxy/remove',{domain}); if(res.success){toast('Proxy removed','success');loadProxy($('page'));}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
+  try { const res = await apiPost('/api/proxy/remove',{domain}); if(res.success){toast('Proxy removed','success');window.renderTable&&renderTable();}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
 }
 
 /* ===== ACCESS ===== */

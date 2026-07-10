@@ -202,12 +202,55 @@ Every action calls an existing backend method:
   endpoints, show progress toast, refresh page on completion
 - Provider column removed (was always "nginx")
 
+### Stage 1 Polish (UX improvements)
+
+- **Recovery info in health card**: Recovery Manager status (Running/Stopped),
+  recovery in progress indicator, last recovery timestamp, last recovery
+  result (Success/Failed).  Data sourced from `RecoveryManager::status()`.
+- **Auto-refresh after actions**: Action buttons disable on click, show
+  spinner text, refresh health card and proxy entries via API (no full
+  page reload).  Uses `_proxyActionPending` guard to prevent double-clicks.
+- **Better health labels**: "Not tested" instead of "Unknown" for config
+  test and backend health.  "Never since daemon start" for recovery time
+  when no recovery has occurred.
+- **Health card layout**: 3-column responsive grid with 10 data fields:
+  Container, Provider, Configuration, Config Detail, Recovery Manager,
+  Recovery In Progress, Last Recovery, Last Result, Proxy Entries.
+  Action buttons placed below a separator.
+- **Button feedback**: Each button shows action-specific text while running
+  (e.g. "Testing...", "Reloading...").  Buttons are disabled during the
+  operation and the `_proxyActionPending` flag prevents concurrent clicks.
+
+### Final page layout (approximate)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Reverse Proxy                              [admin panel]   │
+├─────────────────────────────────────────────────────────────┤
+│  ┌─ Global Health ───────────────────────────────────────┐  │
+│  │  Container     Running     │ Provider    nginx         │  │
+│  │  Configuration Valid       │ Config Det. config valid  │  │
+│  │  Recovery Mgr  Yes         │ Recov. Prog. No           │  │
+│  │  Last Recovery Never...    │ Last Result None          │  │
+│  │  Proxy Entries  3 total (1 system, 2 site)             │  │
+│  │  ───────────────────────────────────────────────────  │  │
+│  │  [Test] [Reload] [Sync] [Recover]                     │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                                                             │
+│  ┌─ Proxy Entries ───────────────────────────────────────┐  │
+│  │  Domain       │ Type   │ Upstream      │ H │ S │ Act  │  │
+│  │  web2.sof...  │ System │ 172.17.0.1:80 │ ✓ │ ✓ │ […]  │  │
+│  │  site.com     │ Site   │ site-3-web:80 │ ✓ │ ✗ │ […]  │  │
+│  └──────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ### Deferred (Stage 2)
 
 - Per-domain Enable/Disable
 - Per-domain Remove for non-protected entries (already exists via
   `POST /api/proxy/remove`)
-- Backend health checks (currently "Unknown")
+- Backend health checks (currently "Not tested")
 - Recovery event persistence (currently daemon-start scope)
 
 ## 10. Related documents
