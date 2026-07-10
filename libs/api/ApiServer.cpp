@@ -1650,14 +1650,48 @@ bool ApiServer::start() {
     });
 
     // ── Mailbox API ───────────────────────────────────────────────
-    // Helper: serialize a single Mailbox to JSON
-    auto mailbox_json = [](const mail::Mailbox& mb) -> std::string {
+    // Helper: normalize a local part (lowercase, trim, reject invalid)
+    auto normalize_local_part = [](std::string raw) -> std::string {
+        // Trim whitespace
+        size_t s = 0, e = raw.size();
+        while (s < e && (raw[s] == ' ' || raw[s] == '\t')) ++s;
+        while (e > s && (raw[e-1] == ' ' || raw[e-1] == '\t')) --e;
+        raw = raw.substr(s, e - s);
+        // Lowercase
+        for (auto& c : raw) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return raw;
+    };
+
+    // Validate a normalized local part.  Returns error message or empty string.
+    auto validate_local_part = [](const std::string& lp) -> std::string {
+        if (lp.empty()) return "local_part is required";
+        if (lp[0] == '.') return "local_part must not start with a dot";
+        if (lp.back() == '.') return "local_part must not end with a dot";
+        if (lp.find("..") != std::string::npos) return "local_part must not contain consecutive dots";
+        for (char c : lp) {
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '_' && c != '-') {
+                return "Invalid character in local_part. Allowed: a-z, 0-9, ., _, -";
+            }
+        }
+        return "";
+    };
+
+    // Helper: resolve domain name from a domain_id
+    auto domain_name_by_id = [&s](uint64_t domain_id) -> std::string {
+        auto* domain = s.mail().find(domain_id);
+        return domain ? domain->domain_name : "";
+    };
+
+    // Helper: serialize a single Mailbox to JSON (with full address from domain)
+    auto mailbox_json = [&domain_name_by_id](const mail::Mailbox& mb) -> std::string {
+        std::string domain_name = domain_name_by_id(mb.domain_id);
+        std::string address = mb.local_part + (domain_name.empty() ? "" : "@" + domain_name);
         std::ostringstream j;
         j << "{"
           << "\"id\":" << mb.id
           << ",\"domain_id\":" << mb.domain_id
           << ",\"local_part\":\"" << api::JsonFormatter::escape(mb.local_part)
-          << "\",\"address\":\"" << api::JsonFormatter::escape(mb.local_part)
+          << "\",\"address\":\"" << api::JsonFormatter::escape(address)
           << "\",\"quota_bytes\":" << mb.quota_bytes
           << ",\"quota_messages\":" << mb.quota_messages
           << ",\"enabled\":" << (mb.enabled ? "true" : "false")
@@ -1665,10 +1699,21 @@ bool ApiServer::start() {
           << "\",\"forward_to\":\"" << api::JsonFormatter::escape(mb.forward_to)
           << "\",\"spam_enabled\":" << (mb.spam_enabled ? "true" : "false")
           << ",\"last_login\":\"" << api::JsonFormatter::escape(mb.last_login)
-          << "\",\"created_at\":\"" << api::JsonFormatter::escape(mb.created_at)
-          << "\",\"updated_at\":\"" << api::JsonFormatter::escape(mb.updated_at)
+          << ",\"created_at\":\"" << api::JsonFormatter::escape(mb.created_at)
+          << ",\"updated_at\":\"" << api::JsonFormatter::escape(mb.updated_at)
           << "}";
         return j.str();
+    };
+
+    // Helper: generate ISO 8601 UTC timestamp
+    auto now_utc = []() -> std::string {
+        auto now = std::chrono::system_clock::now();
+        auto tt = std::chrono::system_clock::to_time_t(now);
+        struct tm tm_buf;
+        gmtime_r(&tt, &tm_buf);
+        char buf[32];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
+        return std::string(buf);
     };
 
     // GET /api/mail/domains/<id>/mailboxes — list mailboxes for a domain
@@ -1709,7 +1754,7 @@ bool ApiServer::start() {
     });
 
     // POST /api/mail/domains/<id>/mailboxes — create a mailbox
-    router_.add_prefix("POST", "/api/mail/domains/", [&s, &mailbox_json](const Request& req) {
+    router_.add_prefix("POST", "/api/mail/domains/", [&s, &mailbox_json, &now_utc, &normalize_local_part, &validate_local_part](const Request& req) {
         Response r;
         std::string remaining = req.path.substr(std::string("/api/mail/domains/").size());
         auto slash = remaining.find('/');
@@ -1729,12 +1774,23 @@ bool ApiServer::start() {
             return r;
         }
 
-        std::string local_part = json_extract(req.body, "local_part");
+        std::string local_part_raw = json_extract(req.body, "local_part");
         std::string password = json_extract(req.body, "password");
+
+        // Normalize local part
+        std::string local_part = normalize_local_part(local_part_raw);
 
         if (local_part.empty()) {
             r.status_code = 400;
             r.body = "{\"success\":false,\"error\":\"local_part is required\"}";
+            return r;
+        }
+
+        // Validate
+        std::string val_err = validate_local_part(local_part);
+        if (!val_err.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(val_err) + "\"}";
             return r;
         }
 
@@ -1744,17 +1800,10 @@ bool ApiServer::start() {
             return r;
         }
 
-        // Validate local part: alphanumeric, dot, underscore, hyphen
-        bool valid = true;
-        for (char c : local_part) {
-            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '_' && c != '-') {
-                valid = false;
-                break;
-            }
-        }
-        if (!valid || local_part.empty() || local_part[0] == '.') {
+        // Validate password length
+        if (password.size() < 3) {
             r.status_code = 400;
-            r.body = "{\"success\":false,\"error\":\"Invalid local_part format\"}";
+            r.body = "{\"success\":false,\"error\":\"Password must be at least 3 characters\"}";
             return r;
         }
 
@@ -1773,14 +1822,149 @@ bool ApiServer::start() {
             return r;
         }
 
+        // Set timestamps
+        auto* created = s.mailboxes().find(id);
+        if (created) {
+            created->created_at = now_utc();
+            created->updated_at = created->created_at;
+        }
         s.save();
 
-        auto* created = s.mailboxes().find(id);
         if (created) {
             r.body = "{\"success\":true,\"data\":" + mailbox_json(*created) + "}";
         } else {
             r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(id) + "}}";
         }
+        return r;
+    });
+
+    // PATCH /api/mail/mailboxes/<id> — update a mailbox
+    router_.add_prefix("PATCH", "/api/mail/mailboxes/", [&s, &mailbox_json, &now_utc](const Request& req) {
+        Response r;
+        std::string id_str = req.path.substr(std::string("/api/mail/mailboxes/").size());
+        uint64_t id = 0;
+        try { id = std::stoull(id_str); } catch (...) {}
+        if (id == 0) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid mailbox ID\"}";
+            return r;
+        }
+
+        auto* mb = s.mailboxes().find(id);
+        if (!mb) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Mailbox not found\"}";
+            return r;
+        }
+
+        if (json_has_key(req.body, "enabled")) {
+            std::string v = json_extract(req.body, "enabled");
+            if (v != "true" && v != "false") {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"enabled must be true or false\"}";
+                return r;
+            }
+            mb->enabled = (v == "true");
+        }
+
+        if (json_has_key(req.body, "quota_bytes")) {
+            std::string v = json_extract(req.body, "quota_bytes");
+            try { mb->quota_bytes = v.empty() ? 0 : std::stoull(v); }
+            catch (...) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Invalid quota_bytes\"}";
+                return r;
+            }
+        }
+
+        if (json_has_key(req.body, "quota_messages")) {
+            std::string v = json_extract(req.body, "quota_messages");
+            try { mb->quota_messages = v.empty() ? 0 : std::stoull(v); }
+            catch (...) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Invalid quota_messages\"}";
+                return r;
+            }
+        }
+
+        if (json_has_key(req.body, "display_name")) {
+            std::string v = json_extract(req.body, "display_name");
+            mb->display_name = (v == "null") ? "" : v;
+        }
+
+        if (json_has_key(req.body, "forward_to")) {
+            std::string v = json_extract(req.body, "forward_to");
+            mb->forward_to = (v == "null") ? "" : v;
+        }
+
+        if (json_has_key(req.body, "spam_enabled")) {
+            std::string v = json_extract(req.body, "spam_enabled");
+            if (v != "true" && v != "false") {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"spam_enabled must be true or false\"}";
+                return r;
+            }
+            mb->spam_enabled = (v == "true");
+        }
+
+        mb->updated_at = now_utc();
+        s.save();
+        r.body = "{\"success\":true,\"data\":" + mailbox_json(*mb) + "}";
+        return r;
+    });
+
+    // POST /api/mail/mailboxes/<id>/password — change mailbox password
+    router_.add_prefix("POST", "/api/mail/mailboxes/", [&s, &now_utc](const Request& req) {
+        Response r;
+        std::string remaining = req.path.substr(std::string("/api/mail/mailboxes/").size());
+        // remaining = "<id>/password"
+        auto slash = remaining.find('/');
+        std::string id_str = (slash != std::string::npos) ? remaining.substr(0, slash) : remaining;
+        std::string sub = (slash != std::string::npos) ? remaining.substr(slash + 1) : "";
+
+        if (sub != "password") {
+            r.status_code = 404;
+            return r;
+        }
+
+        uint64_t id = 0;
+        try { id = std::stoull(id_str); } catch (...) {}
+        if (id == 0) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid mailbox ID\"}";
+            return r;
+        }
+
+        auto* mb = s.mailboxes().find(id);
+        if (!mb) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Mailbox not found\"}";
+            return r;
+        }
+
+        std::string password = json_extract(req.body, "password");
+        if (password.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"password is required\"}";
+            return r;
+        }
+        if (password.size() < 3) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Password must be at least 3 characters\"}";
+            return r;
+        }
+
+        std::string hash = mail::MailPasswordHasher::hash(password);
+        if (hash.empty()) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"Failed to hash password\"}";
+            return r;
+        }
+
+        mb->password_hash = hash;
+        mb->updated_at = now_utc();
+        s.save();
+        r.body = "{\"success\":true,\"data\":{\"message\":\"Password changed\"}}";
         return r;
     });
 

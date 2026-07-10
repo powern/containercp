@@ -262,19 +262,37 @@ Validation:
 |--------|------|---------|-------|
 | GET | `/api/mail/domains/<id>/mailboxes` | List mailboxes for a domain | `MailboxManager` |
 | POST | `/api/mail/domains/<id>/mailboxes` | Create a mailbox | `MailboxManager` |
+| PATCH | `/api/mail/mailboxes/<id>` | Update a mailbox | `MailboxManager` |
+| POST | `/api/mail/mailboxes/<id>/password` | Change mailbox password | `MailboxManager` |
 | DELETE | `/api/mail/mailboxes/<id>` | Remove a mailbox | `MailboxManager` |
 
-POST body: `{"local_part":"alice","password":"secret"}`
+POST body (create): `{"local_part":"alice","password":"secret"}`
+
+PATCH body (partial update): `{"enabled":false,"quota_bytes":1073741824,"display_name":"Alice","forward_to":"","spam_enabled":true}`
+
+PATCH updates only fields present in the request.  Empty string or JSON null clears
+`display_name` and `forward_to`.  `enabled` and `spam_enabled` accept only `true` or `false`.
+
+POST body (password change): `{"password":"newsecret"}`
+
+Password validation:
+- Minimum 3 characters.
+- Must not be empty.
 
 Password is hashed using SHA-512-CRYPT (`$6$`) before storage.  Plaintext
 passwords are never stored.  Hash is compatible with Dovecot's
 `default_password_scheme = SHA512-CRYPT`.
+`password_hash` is never exposed in API responses.
 
 Validation:
-- `local_part` must be non-empty and contain only alphanumeric characters, dots, underscores, or hyphens.
-- Duplicate `local_part` within the same domain returns 409.
-- Password is required (minimum 1 character).
+- `local_part` is normalized (lowercased, trimmed) before validation and duplicate check.
+- Allowed characters: a-z, 0-9, `.`, `_`, `-` (after normalization).
+- Leading dot, trailing dot, consecutive dots, and whitespace are rejected.
+- Duplicate `local_part` within the same domain returns 409 (after normalization).
+- Password is required (minimum 3 characters).
 - Referenced domain must exist (404 if not found).
+
+Response includes full `address` field in the format `local_part@domain`.
 
 ### 2.17 Logs
 
