@@ -2059,12 +2059,19 @@ bool ApiServer::start() {
             r.body = "{\"success\":true,\"data\":{\"message\":\"Mail module already active\"}}";
             return r;
         }
-        // Apply configuration and start mail containers
-        auto cfg = s.mail_provider().apply_config(
+        // Write configuration files
+        auto cfg = s.mail_provider().write_configs(
             s.mail().list(), s.mailboxes(), s.mail_aliases());
         if (!cfg.success) {
             r.status_code = 500;
             r.body = "{\"success\":false,\"error\":\"Config failed: " + JsonFormatter::escape(cfg.message) + "\"}";
+            return r;
+        }
+        // Prepare runtime environment and start containers
+        auto env = s.mail_provider().prepare_environment();
+        if (!env.success) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"Environment failed: " + JsonFormatter::escape(env.message) + "\"}";
             return r;
         }
         auto start = s.mail_provider().start();
@@ -2106,14 +2113,20 @@ bool ApiServer::start() {
             r.body = "{\"success\":false,\"error\":\"Mail module is not active\"}";
             return r;
         }
-        auto cfg = s.mail_provider().apply_config(
+        auto cfg = s.mail_provider().write_configs(
             s.mail().list(), s.mailboxes(), s.mail_aliases());
         if (!cfg.success) {
             r.status_code = 500;
             r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(cfg.message) + "\"}";
             return r;
         }
-        r.body = "{\"success\":true,\"data\":{\"message\":\"Configuration regenerated\"}}";
+        auto reload = s.mail_provider().reload();
+        if (!reload.success) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(reload.message) + "\"}";
+            return r;
+        }
+        r.body = "{\"success\":true,\"data\":{\"message\":\"Configuration regenerated and reloaded\"}}";
         return r;
     });
 

@@ -14,26 +14,40 @@ namespace containercp::mail {
 //
 // The API and UI depend on this interface, not on specific
 // mail server software.  Future providers (external relay,
-// Microsoft 365, Google Workspace) implement this interface.
+// Microsoft 365, Google Workspace, Podman) implement this
+// interface without changes to the API layer.
+//
+// Lifecycle:
+//   write_configs() → start() → [reload()] → stop()
+//   Config generation is separate from runtime management.
 class MailProvider {
 public:
     virtual ~MailProvider() = default;
 
-    // Apply the current configuration to the mail server.
-    // Called after any domain/mailbox/alias change.
-    // Implementations should regenerate configs and reload services.
-    virtual core::OperationResult apply_config(
+    // Write configuration files from the current data model.
+    // Does NOT start or restart services.
+    // Called before start() and by regenerate endpoint.
+    virtual core::OperationResult write_configs(
         const std::vector<MailDomain>& domains,
         const MailboxManager& mailboxes,
         const MailAliasManager& aliases) = 0;
 
-    // Start the mail server (create containers, start services).
+    // Prepare runtime resources (directories, network, etc.)
+    // Called before start().  Idempotent — safe to call multiple times.
+    virtual core::OperationResult prepare_environment() = 0;
+
+    // Start the mail service.  Creates containers, starts daemons.
+    // Requires write_configs() and prepare_environment() to have
+    // been called first.
     virtual core::OperationResult start() = 0;
 
-    // Stop the mail server (stop containers, preserve config).
+    // Stop the mail service.  Preserves configuration and data.
     virtual core::OperationResult stop() = 0;
 
-    // Check if the mail server is running.
+    // Reload configuration without full restart.
+    virtual core::OperationResult reload() = 0;
+
+    // Check if the mail service is running.
     virtual bool is_running() const = 0;
 
     // Get a human-readable status description.

@@ -360,8 +360,9 @@ Status response includes counts of configured domains, mailboxes, and aliases.
 | POST | `/api/mail/regenerate` | Regenerate mail server config and reload | `DockerMailProvider` |
 
 Regenerates Postfix `main.cf`, Dovecot `dovecot.conf`, virtual mailbox maps,
-and Dovecot passwd file from the current ContainerCP data model.  Requires
-the mail module to be active.  Returns error if module is inactive.
+and Dovecot passwd file from the current ContainerCP data model.  Calls
+`reload()` (postfix reload) after writing configs.  Requires the mail module
+to be active.  Returns error if module is inactive.
 
 ### 2.20 Logs
 

@@ -1,5 +1,4 @@
 #include "DockerMailProvider.h"
-#include "api/JsonFormatter.h"
 
 #include <fstream>
 #include <sstream>
@@ -21,90 +20,51 @@ std::string DockerMailProvider::config_dir() const {
     return data_root_ + "/mail/config";
 }
 
-std::string DockerMailProvider::container_name(const std::string& service) {
-    return "containercp-mail-" + service;
+std::string DockerMailProvider::compose_project_flag() const {
+    return "--project-directory " + compose_dir();
 }
 
-core::OperationResult DockerMailProvider::ensure_directories() {
-    std::string cmd = "mkdir -p " + config_dir() + "/generated "
-                    + config_dir() + "/custom "
-                    + config_dir() + "/custom/postfix "
-                    + config_dir() + "/custom/dovecot "
-                    + config_dir() + "/state";
-    int rc = std::system(cmd.c_str());
-    if (rc != 0) {
-        return {false, "Failed to create mail directories"};
+// ── Environment preparation (directories + Docker network) ──────────
+
+core::OperationResult DockerMailProvider::prepare_environment() {
+    // Create directory structure via CommandExecutor
+    auto mkdir = executor_.run({
+        "mkdir", "-p",
+        config_dir() + "/generated",
+        config_dir() + "/custom",
+        config_dir() + "/custom/postfix",
+        config_dir() + "/custom/dovecot",
+        config_dir() + "/state"
+    });
+    if (mkdir.exit_code != 0) {
+        return {false, "Failed to create mail directories: " + mkdir.err};
     }
+
+    // Ensure Docker network exists
+    auto net = executor_.run({
+        "docker", "network", "inspect", "containercp-mail"
+    });
+    if (net.exit_code != 0) {
+        auto create = executor_.run({
+            "docker", "network", "create", "containercp-mail"
+        });
+        if (create.exit_code != 0) {
+            return {false, "Failed to create Docker network: " + create.err};
+        }
+    }
+
     return {true, ""};
 }
 
-core::OperationResult DockerMailProvider::ensure_network() {
-    std::string cmd = "docker network inspect containercp-mail > /dev/null 2>&1"
-                      " || docker network create containercp-mail > /dev/null 2>&1";
-    int rc = std::system(cmd.c_str());
-    if (rc != 0) {
-        return {false, "Failed to create Docker network"};
-    }
-    return {true, ""};
-}
+// ── Configuration generation (no Docker/runtime logic) ─────────────
 
-std::string DockerMailProvider::generate_compose() const {
-    std::ostringstream yml;
-    yml << "services:\n";
-
-    // Postfix
-    yml << "  postfix:\n"
-        << "    image: ghcr.io/containercp/mail-postfix:latest\n"
-        << "    container_name: " << container_name("postfix") << "\n"
-        << "    restart: unless-stopped\n"
-        << "    network_mode: service:redis\n"
-        << "    volumes:\n"
-        << "      - " << config_dir() << "/generated/postfix-main.cf:/etc/postfix/main.cf:ro\n"
-        << "      - " << config_dir() << "/custom/postfix/:/etc/postfix/custom/:ro\n"
-        << "    depends_on:\n"
-        << "      - redis\n";
-
-    // Dovecot
-    yml << "  dovecot:\n"
-        << "    image: ghcr.io/containercp/mail-dovecot:latest\n"
-        << "    container_name: " << container_name("dovecot") << "\n"
-        << "    restart: unless-stopped\n"
-        << "    network_mode: service:redis\n"
-        << "    volumes:\n"
-        << "      - " << config_dir() << "/generated/dovecot.conf:/etc/dovecot/dovecot.conf:ro\n"
-        << "      - " << config_dir() << "/custom/dovecot/:/etc/dovecot/custom/:ro\n"
-        << "      - " << config_dir() << "/state/:/var/mail/:rw\n"
-        << "    depends_on:\n"
-        << "      - redis\n";
-
-    // Redis (cache, Rspamd backend)
-    yml << "  redis:\n"
-        << "    image: redis:7-alpine\n"
-        << "    container_name: " << container_name("redis") << "\n"
-        << "    restart: unless-stopped\n"
-        << "    networks:\n"
-        << "      - containercp-mail\n"
-        << "    volumes:\n"
-        << "      - redis-data:/data\n";
-
-    yml << "networks:\n"
-        << "  containercp-mail:\n"
-        << "    external: true\n";
-
-    yml << "volumes:\n"
-        << "  redis-data:\n";
-
-    return yml.str();
-}
-
-core::OperationResult DockerMailProvider::apply_config(
+core::OperationResult DockerMailProvider::write_postfix_config(
     const std::vector<MailDomain>& domains,
-    const MailboxManager& mailboxes,
-    const MailAliasManager& aliases) {
-    (void)aliases;
-    // Generate Postfix main.cf
+    const MailboxManager& mailboxes) {
+    (void)mailboxes;
+
     std::ostringstream pf;
-    pf << "# ContainerCP generated Postfix configuration\n"
+    pf << "# ContainerCP generated configuration\n"
        << "# Do not edit manually — changes will be overwritten.\n\n"
        << "myhostname = mail.local\n"
        << "mydomain = local\n"
@@ -121,33 +81,35 @@ core::OperationResult DockerMailProvider::apply_config(
         first = false;
         pf << d.domain_name;
     }
-    pf << "\n";
+    pf << "\n"
+       << "virtual_mailbox_maps = texthash:/etc/postfix/virtual_mailboxes\n";
 
-    // Virtual mailbox maps
-    pf << "virtual_mailbox_maps = texthash:/etc/postfix/virtual_mailboxes\n";
+    std::string path = config_dir() + "/generated/postfix-main.cf";
+    std::ofstream out(path);
+    if (!out.is_open()) return {false, "Failed to write " + path};
+    out << pf.str();
 
-    // Write Postfix config
-    std::string pf_path = config_dir() + "/generated/postfix-main.cf";
-    std::ofstream pf_out(pf_path);
-    if (!pf_out.is_open()) return {false, "Failed to write Postfix config"};
-    pf_out << pf.str();
-
-    // Write virtual mailbox map
+    // Virtual mailbox map
     std::string vmb_path = config_dir() + "/generated/virtual_mailboxes";
     std::ofstream vmb_out(vmb_path);
-    if (!vmb_out.is_open()) return {false, "Failed to write virtual mailbox map"};
+    if (!vmb_out.is_open()) return {false, "Failed to write " + vmb_path};
     for (const auto& mb : mailboxes.list()) {
-        std::string domain_name;
+        std::string domain;
         for (const auto& d : domains) {
-            if (d.id == mb.domain_id) { domain_name = d.domain_name; break; }
+            if (d.id == mb.domain_id) { domain = d.domain_name; break; }
         }
-        if (domain_name.empty()) continue;
-        vmb_out << mb.local_part << "@" << domain_name << " " << domain_name << "/" << mb.local_part << "/\n";
+        if (domain.empty()) continue;
+        vmb_out << mb.local_part << "@" << domain << " "
+                << domain << "/" << mb.local_part << "/\n";
     }
+    return {true, ""};
+}
 
-    // Generate Dovecot config
+core::OperationResult DockerMailProvider::write_dovecot_config(
+    const std::vector<MailDomain>& domains,
+    const MailboxManager& mailboxes) {
     std::ostringstream dv;
-    dv << "# ContainerCP generated Dovecot configuration\n"
+    dv << "# ContainerCP generated configuration\n"
        << "# Do not edit manually — changes will be overwritten.\n\n"
        << "mail_location = maildir:/var/mail/%d/%n\n"
        << "passdb {\n"
@@ -158,56 +120,99 @@ core::OperationResult DockerMailProvider::apply_config(
        << "  driver = static\n"
        << "  args = uid=1000 gid=1000 home=/var/mail/%d/%n\n"
        << "}\n"
-       << "service auth {\n"
-       << "  unix_listener auth-userdb {\n"
-       << "    mode = 0660\n"
-       << "  }\n"
-       << "}\n"
        << "protocols = imap pop3 lmtp\n";
 
     std::string dv_path = config_dir() + "/generated/dovecot.conf";
     std::ofstream dv_out(dv_path);
-    if (!dv_out.is_open()) return {false, "Failed to write Dovecot config"};
+    if (!dv_out.is_open()) return {false, "Failed to write " + dv_path};
     dv_out << dv.str();
 
-    // Write passwd file for Dovecot SASL auth
+    // Dovecot passwd file (SHA-512-CRYPT hashes from MailboxManager)
     std::string pw_path = config_dir() + "/generated/passwd";
     std::ofstream pw_out(pw_path);
-    if (!pw_out.is_open()) return {false, "Failed to write passwd file"};
+    if (!pw_out.is_open()) return {false, "Failed to write " + pw_path};
     for (const auto& mb : mailboxes.list()) {
-        std::string domain_name;
+        std::string domain;
         for (const auto& d : domains) {
-            if (d.id == mb.domain_id) { domain_name = d.domain_name; break; }
+            if (d.id == mb.domain_id) { domain = d.domain_name; break; }
         }
-        if (domain_name.empty() || !mb.enabled) continue;
-        pw_out << mb.local_part << "@" << domain_name
+        if (domain.empty() || !mb.enabled) continue;
+        pw_out << mb.local_part << "@" << domain
                << ":" << mb.password_hash
-               << ":1000:1000::/var/mail/" << domain_name << "/" << mb.local_part << "/::\n";
+               << ":1000:1000::/var/mail/" << domain << "/" << mb.local_part << "/::\n";
     }
+    return {true, ""};
+}
 
-    return {true, "Configuration applied"};
+core::OperationResult DockerMailProvider::write_configs(
+    const std::vector<MailDomain>& domains,
+    const MailboxManager& mailboxes,
+    const MailAliasManager& aliases) {
+    (void)aliases;
+    auto pf = write_postfix_config(domains, mailboxes);
+    if (!pf.success) return pf;
+    auto dv = write_dovecot_config(domains, mailboxes);
+    if (!dv.success) return dv;
+    logger_.info("MAIL", "Configuration files written");
+    return {true, "Configuration written"};
+}
+
+// ── Docker Compose management ─────────────────────────────────────
+
+core::OperationResult DockerMailProvider::write_docker_compose() {
+    std::ostringstream yml;
+    yml << "services:\n"
+        << "  postfix:\n"
+        << "    image: ghcr.io/containercp/mail-postfix:latest\n"
+        << "    container_name: containercp-mail-postfix\n"
+        << "    restart: unless-stopped\n"
+        << "    network_mode: service:redis\n"
+        << "    volumes:\n"
+        << "      - " << config_dir() << "/generated/postfix-main.cf:/etc/postfix/main.cf:ro\n"
+        << "      - " << config_dir() << "/custom/postfix/:/etc/postfix/custom/:ro\n"
+        << "    depends_on:\n"
+        << "      - redis\n"
+        << "  dovecot:\n"
+        << "    image: ghcr.io/containercp/mail-dovecot:latest\n"
+        << "    container_name: containercp-mail-dovecot\n"
+        << "    restart: unless-stopped\n"
+        << "    network_mode: service:redis\n"
+        << "    volumes:\n"
+        << "      - " << config_dir() << "/generated/dovecot.conf:/etc/dovecot/dovecot.conf:ro\n"
+        << "      - " << config_dir() << "/custom/dovecot/:/etc/dovecot/custom/:ro\n"
+        << "      - " << config_dir() << "/state/:/var/mail/:rw\n"
+        << "    depends_on:\n"
+        << "      - redis\n"
+        << "  redis:\n"
+        << "    image: redis:7-alpine\n"
+        << "    container_name: containercp-mail-redis\n"
+        << "    restart: unless-stopped\n"
+        << "    networks:\n"
+        << "      - containercp-mail\n"
+        << "    volumes:\n"
+        << "      - redis-data:/data\n"
+        << "networks:\n"
+        << "  containercp-mail:\n"
+        << "    external: true\n"
+        << "volumes:\n"
+        << "  redis-data:\n";
+
+    std::string path = compose_dir() + "/docker-compose.yml";
+    std::ofstream out(path);
+    if (!out.is_open()) return {false, "Failed to write docker-compose.yml"};
+    out << yml.str();
+    return {true, ""};
 }
 
 core::OperationResult DockerMailProvider::start() {
-    auto dirs = ensure_directories();
-    if (!dirs.success) return dirs;
+    auto dc = write_docker_compose();
+    if (!dc.success) return dc;
 
-    auto net = ensure_network();
-    if (!net.success) return net;
-
-    // Write docker-compose.yml
-    std::string compose_path = compose_dir() + "/docker-compose.yml";
-    std::ofstream compose_out(compose_path);
-    if (!compose_out.is_open()) return {false, "Failed to write docker-compose.yml"};
-    compose_out << generate_compose();
-
-    // Run docker compose up -d
     auto result = executor_.run({
         "docker", "compose",
         "--project-directory", compose_dir(),
         "up", "-d"
     });
-
     if (result.exit_code != 0) {
         logger_.error("MAIL", "Docker compose up failed: " + result.err);
         return {false, "Failed to start mail containers: " + result.err};
@@ -223,23 +228,33 @@ core::OperationResult DockerMailProvider::stop() {
         "--project-directory", compose_dir(),
         "down"
     });
-
     if (result.exit_code != 0) {
         logger_.warning("MAIL", "Docker compose down warning: " + result.err);
     }
-
     logger_.info("MAIL", "Mail containers stopped");
     return {true, "Mail stack stopped"};
 }
 
+core::OperationResult DockerMailProvider::reload() {
+    // Signal Postfix to reload configuration
+    auto result = executor_.run({
+        "docker", "exec", "containercp-mail-postfix",
+        "postfix", "reload"
+    });
+    if (result.exit_code != 0) {
+        return {false, "Failed to reload Postfix: " + result.err};
+    }
+    return {true, "Configuration reloaded"};
+}
+
 bool DockerMailProvider::is_running() const {
-    // Check if the postfix container is running
     auto result = executor_.run({
         "docker", "inspect",
         "--format", "{{.State.Running}}",
-        container_name("postfix")
+        "containercp-mail-postfix"
     });
-    return result.exit_code == 0 && result.out.find("true") != std::string::npos;
+    return result.exit_code == 0 &&
+           result.out.find("true") != std::string::npos;
 }
 
 std::string DockerMailProvider::status_description() const {

@@ -591,14 +591,20 @@ Module lifecycle is managed but no Docker containers run until activated.
 
 ### Stage 1d — Docker mail stack foundation (estimated: 4-5 days)
 
-- `DockerMailProvider` — implement `MailProvider` interface
-- `MailContainerManager` — Docker Compose lifecycle for Postfix + Dovecot
-- `MailConfigProvider` — generate Postfix `main.cf` + Dovecot `dovecot.conf`
-- Docker Compose generation: Postfix, Dovecot, Redis containers
+- `MailProvider` interface — lifecycle: write_configs → prepare_environment
+  → start → reload → stop.  No Docker-specific assumptions in the interface.
+- `DockerMailProvider` — implements MailProvider using Docker Compose
+- Config generation separated from runtime: `write_postfix_config()`,
+  `write_dovecot_config()` are independent of Docker logic
+- All external commands use `CommandExecutor` (fork/exec with poll) —
+  no `std::system()` calls
+- Docker Compose generation for Postfix, Dovecot, Redis
 - Custom config directory structure (`generated/`, `custom/`)
 - Basic SMTP authentication (Dovecot SASL with passwd-file)
-- API: `POST /api/mail/regenerate`
-- `MailViewService` — enriched API responses
+- API: `POST /api/mail/regenerate` — writes configs + reloads
+- Module lifecycle integration: activate → write_configs + prepare_environment + start
+- Config generation structured for future template-based approach
+  (additional services: Rspamd, ClamAV, Roundcube, etc.)
 
 *Leaves project in working state:* mail containers run.  Domains and
 mailboxes from Stages 1a/1b are used to configure Postfix and Dovecot.
