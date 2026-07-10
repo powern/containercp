@@ -31,7 +31,15 @@ Postfix (containercp-mail-postfix)
 
 **Outbound:**  Postfix delivers directly to destination MX.
 
-**Transport maps:**  `domain → lmtp:127.0.0.1:24`
+### Transport maps
+
+```
+domain                      lmtp:127.0.0.1:24     (all recipients local)
+```
+
+LocalPrimary has no transport map entry — local delivery uses
+`virtual_transport = lmtp:127.0.0.1:24` (set in main.cf).
+Unknown recipients are rejected (domain not in `relay_domans`).
 
 ---
 
@@ -115,22 +123,27 @@ through the M365 smarthost to ensure SPF/DKIM alignment.
 
 ### Transport maps
 
+Only one transport entry per split-m365 domain — the SMTP relay for
+non-local recipients.  Local delivery uses `virtual_transport =
+lmtp:127.0.0.1:24` (global in main.cf):
+
 ```
-local-user@domain       lmtp:127.0.0.1:24     (local delivery)
-*@domain                smtp:[relay_host]:25  (relay to M365 MX)
+domain                      smtp:[relay_host]:25  (non-local catch-all)
 ```
 
-The wildcard entry catches every non-local recipient and forwards
-them to the M365 MX endpoint.  Postfix transport maps are evaluated
-in order: specific matches first, wildcard catches the rest.
+Postfix resolves each recipient:
+1. Recipient in `virtual_mailbox_maps` → deliver via `virtual_transport`
+   (LMTP to Dovecot).
+2. Recipient NOT in `virtual_mailbox_maps` → `transport_maps` domain
+   match → relay to M365 MX.
 
 ### Recipient resolution table
 
 | Recipient type | Example | Action |
 |----------------|---------|--------|
-| Local mailbox | `alice@domain` (in virtual_mailbox_maps) | Deliver to Dovecot LMTP |
-| Non-local (M365) | `bob@domain` (not in virtual_mailbox_maps) | Relay to M365 MX |
-| Unknown | `nonexistent@domain` | Relay to M365 MX (M365 decides) |
+| Local mailbox | `alice@domain` (in virtual_mailbox_maps) | `virtual_transport` → LMTP → Dovecot |
+| Non-local (M365) | `bob@domain` (not in virtual_mailbox_maps) | Transport map catch-all → SMTP → M365 MX |
+| Unknown | `nonexistent@domain` | Transport map catch-all → SMTP → M365 MX (M365 decides) |
 
 ---
 

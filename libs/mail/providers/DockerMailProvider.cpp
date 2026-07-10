@@ -116,7 +116,8 @@ core::OperationResult DockerMailProvider::write_postfix_config(
         pf << d.domain_name;
     }
     pf << "\n"
-       << "virtual_mailbox_maps = texthash:/etc/postfix/virtual_mailboxes\n";
+       << "virtual_mailbox_maps = texthash:/etc/postfix/virtual_mailboxes\n"
+       << "virtual_transport = lmtp:127.0.0.1:24\n";
 
     std::string path = config_dir() + "/generated/postfix-main.cf";
     std::ofstream out(path);
@@ -196,14 +197,16 @@ core::OperationResult DockerMailProvider::write_transport_maps(
 
     for (const auto& d : domains) {
         if (!d.enabled) continue;
-        if (d.mode == MailDomainMode::LocalPrimary) {
-            out << d.domain_name << " lmtp:127.0.0.1:24\n";
-        } else if (d.mode == MailDomainMode::SplitM365) {
-            out << d.domain_name << " lmtp:127.0.0.1:24\n";
-            // Bare domain entry acts as catch-all for non-local recipients.
-            // Postfix transport maps match more specific entries first
-            // (user@domain), then fall back to domain-only entries.
-            // relay_host must be set (validated by MailDomainManager).
+
+        // LocalPrimary and SplitM365 deliver local recipients via
+        // virtual_transport = lmtp:127.0.0.1:24 (set in main.cf).
+        // Only ExternalRelay and SplitM365 non-local recipients need
+        // explicit transport map entries.
+
+        if (d.mode == MailDomainMode::SplitM365) {
+            // Transport map catch-all: recipients not in
+            // virtual_mailbox_maps fall back to the domain entry
+            // and are relayed to the M365 MX.
             if (!d.relay_host.empty()) {
                 out << d.domain_name << " smtp:[" << d.relay_host << "]:25\n";
             }
@@ -212,7 +215,10 @@ core::OperationResult DockerMailProvider::write_transport_maps(
                 out << d.domain_name << " smtp:[" << d.relay_host << "]\n";
             }
         }
-        // Disabled mode: no transport entry — Postfix rejects by default
+        // LocalPrimary and Disabled: no transport entry.
+        // LocalPrimary — local delivery via virtual_transport;
+        // unknown recipients rejected (domain not in relay_domains).
+        // Disabled — no entry means Postfix rejects by default.
     }
     return {true, ""};
 }

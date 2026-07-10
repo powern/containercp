@@ -24,18 +24,34 @@ M365).
 
 ## Decision
 
-### Transport maps with wildcard catch-all
+### Transport maps with domain-level catch-all
 
-Each `split-m365` domain gets two transport map entries:
+Each `split-m365` domain gets one transport map entry:
 
 ```
-local-user@domain       lmtp:127.0.0.1:24     (explicit local mailbox)
-*@domain                smtp:[relay_host]:25  (wildcard catch-all)
+domain                      smtp:[relay_host]:25  (domain-level catch-all)
 ```
 
-Postfix evaluates transport maps top-down.  The explicit (local)
-match wins for local mailboxes.  The wildcard catches everything
-else and relays it to the M365 MX target.
+Local recipients do NOT appear in the transport map.  Instead, they
+are delivered via Postfix's `virtual_transport = lmtp:127.0.0.1:24`
+(global setting in main.cf).  Postfix resolves the recipient:
+
+1. Recipient in `virtual_mailbox_maps` → deliver via `virtual_transport`
+   (LMTP to Dovecot).
+2. Recipient NOT in `virtual_mailbox_maps` → check `transport_maps`.
+   Domain match found → relay to M365 MX.
+3. Postfix transport(5) specifies this lookup fallback: exact address
+   → user@.domain → .domain → domain.
+
+This avoids the `texthash` duplicate-key problem: only one entry per
+domain in transport_maps.
+
+### LocalPrimary does not need transport map entries
+
+For `local-primary` mode, all recipients are local.  No transport map
+entry is generated.  Local delivery uses `virtual_transport =
+lmtp:127.0.0.1:24`.  Unknown recipients are rejected (domain not in
+`relay_domains`).
 
 ### relay_host must be configured explicitly
 
