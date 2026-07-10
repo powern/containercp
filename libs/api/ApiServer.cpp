@@ -1398,8 +1398,28 @@ bool ApiServer::start() {
     });
 
     // ── Mail Domain API ────────────────────────────────────────────
+    // Helper: serialize a single MailDomain to JSON
+    auto mail_domain_json = [](const mail::MailDomain& m) -> std::string {
+        std::ostringstream j;
+        j << "{"
+          << "\"id\":" << m.id
+          << ",\"domain\":\"" << JsonFormatter::escape(m.domain_name)
+          << "\",\"mode\":\"" << JsonFormatter::escape(mail::mail_domain_mode_to_string(m.mode))
+          << "\",\"owner_id\":" << m.owner_id
+          << ",\"enabled\":" << (m.enabled ? "true" : "false")
+          << ",\"relay_host\":\"" << JsonFormatter::escape(m.relay_host)
+          << "\",\"dkim_selector\":\"" << JsonFormatter::escape(m.dkim_selector)
+          << "\",\"max_mailboxes\":" << m.max_mailboxes
+          << ",\"max_aliases\":" << m.max_aliases
+          << ",\"catch_all\":\"" << JsonFormatter::escape(m.catch_all)
+          << "\",\"created_at\":\"" << JsonFormatter::escape(m.created_at)
+          << "\",\"updated_at\":\"" << JsonFormatter::escape(m.updated_at)
+          << "}";
+        return j.str();
+    };
+
     // GET /api/mail/domains — list all mail domains
-    router_.add("GET", "/api/mail/domains", [&s](const Request&) {
+    router_.add("GET", "/api/mail/domains", [&s, &mail_domain_json](const Request&) {
         Response r;
         std::ostringstream json;
         json << "{\"success\":true,\"data\":[";
@@ -1407,12 +1427,7 @@ bool ApiServer::start() {
         for (const auto& m : s.mail().list()) {
             if (!first) json << ",";
             first = false;
-            json << "{"
-                 << "\"id\":" << m.id
-                 << ",\"domain\":\"" << JsonFormatter::escape(m.domain_name)
-                 << "\",\"mode\":\"" << JsonFormatter::escape(mail::mail_domain_mode_to_string(m.mode))
-                 << "\",\"enabled\":" << (m.enabled ? "true" : "false")
-                 << "}";
+            json << mail_domain_json(m);
         }
         json << "]}";
         r.body = json.str();
@@ -1420,7 +1435,7 @@ bool ApiServer::start() {
     });
 
     // POST /api/mail/domains — create a mail domain
-    router_.add("POST", "/api/mail/domains", [&s](const Request& req) {
+    router_.add("POST", "/api/mail/domains", [&s, &mail_domain_json](const Request& req) {
         Response r;
         std::string domain = json_extract(req.body, "domain");
         std::string mode_str = json_extract(req.body, "mode");
@@ -1432,30 +1447,113 @@ bool ApiServer::start() {
             return r;
         }
 
-        // Validate domain format
         if (!utils::Validator::is_valid_hostname(domain)) {
             r.status_code = 400;
             r.body = "{\"success\":false,\"error\":\"Invalid domain format\"}";
             return r;
         }
 
-        // Check for duplicates
-        if (s.mail().find_by_domain(domain)) {
+        if (!mode_str.empty() && !mail::is_valid_mail_domain_mode(mode_str)) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid mail domain mode. Valid: disabled, local-primary, external-relay, split-m365\"}";
+            return r;
+        }
+
+        uint64_t owner_id = 0;
+        if (!owner_str.empty()) {
+            try { owner_id = std::stoull(owner_str); }
+            catch (...) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Invalid owner_id\"}";
+                return r;
+            }
+        }
+
+        mail::MailDomainMode mode = mail::mail_domain_mode_from_string(mode_str);
+
+        uint64_t id = s.mail().create(domain, mode, owner_id);
+        if (id == 0) {
             r.status_code = 409;
             r.body = "{\"success\":false,\"error\":\"Domain already exists\"}";
             return r;
         }
 
-        mail::MailDomainMode mode = mail::mail_domain_mode_from_string(mode_str);
-        uint64_t owner_id = owner_str.empty() ? 0 : std::stoull(owner_str);
-
-        uint64_t id = s.mail().create(domain, mode, owner_id);
         s.save();
 
-        r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(id)
-                 + ",\"domain\":\"" + JsonFormatter::escape(domain)
-                 + "\",\"mode\":\"" + JsonFormatter::escape(mode_str.empty() ? "disabled" : mode_str)
-                 + "\"}}";
+        auto* created = s.mail().find(id);
+        if (created) {
+            r.body = "{\"success\":true,\"data\":" + mail_domain_json(*created) + "}";
+        } else {
+            r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(id) + "}}";
+        }
+        return r;
+    });
+
+    // PATCH /api/mail/domains/<id> — update a mail domain
+    router_.add_prefix("PATCH", "/api/mail/domains/", [&s, &mail_domain_json](const Request& req) {
+        Response r;
+        std::string id_str = req.path.substr(std::string("/api/mail/domains/").size());
+        uint64_t id = 0;
+        try { id = std::stoull(id_str); } catch (...) {}
+        if (id == 0) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid mail domain ID\"}";
+            return r;
+        }
+
+        auto* m = s.mail().find(id);
+        if (!m) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Mail domain not found\"}";
+            return r;
+        }
+
+        // Extract optional fields — only update those present in request
+        std::string mode_str = json_extract(req.body, "mode");
+        if (!mode_str.empty()) {
+            if (!mail::is_valid_mail_domain_mode(mode_str)) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Invalid mail domain mode. Valid: disabled, local-primary, external-relay, split-m365\"}";
+                return r;
+            }
+            m->mode = mail::mail_domain_mode_from_string(mode_str);
+        }
+
+        std::string enabled_str = json_extract(req.body, "enabled");
+        if (!enabled_str.empty()) {
+            m->enabled = (enabled_str == "true");
+        }
+
+        std::string relay_host = json_extract(req.body, "relay_host");
+        if (!relay_host.empty()) m->relay_host = relay_host;
+
+        std::string max_mb = json_extract(req.body, "max_mailboxes");
+        if (!max_mb.empty()) {
+            try { m->max_mailboxes = std::stoull(max_mb); }
+            catch (...) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Invalid max_mailboxes\"}";
+                return r;
+            }
+        }
+
+        std::string max_al = json_extract(req.body, "max_aliases");
+        if (!max_al.empty()) {
+            try { m->max_aliases = std::stoull(max_al); }
+            catch (...) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Invalid max_aliases\"}";
+                return r;
+            }
+        }
+
+        std::string catch_all = json_extract(req.body, "catch_all");
+        if (!catch_all.empty()) m->catch_all = catch_all;
+
+        m->updated_at = ssl::CertificateStore::timestamp_utc();
+        s.save();
+
+        r.body = "{\"success\":true,\"data\":" + mail_domain_json(*m) + "}";
         return r;
     });
 
@@ -1481,6 +1579,29 @@ bool ApiServer::start() {
         s.mail().remove(id);
         s.save();
         r.body = "{\"success\":true,\"data\":{\"message\":\"Mail domain removed\"}}";
+        return r;
+    });
+
+    // GET /api/mail/domains/<id> — get single mail domain
+    router_.add_prefix("GET", "/api/mail/domains/", [&s, &mail_domain_json](const Request& req) {
+        Response r;
+        std::string id_str = req.path.substr(std::string("/api/mail/domains/").size());
+        uint64_t id = 0;
+        try { id = std::stoull(id_str); } catch (...) {}
+        if (id == 0) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid ID\"}";
+            return r;
+        }
+
+        auto* m = s.mail().find(id);
+        if (!m) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Mail domain not found\"}";
+            return r;
+        }
+
+        r.body = "{\"success\":true,\"data\":" + mail_domain_json(*m) + "}";
         return r;
     });
 

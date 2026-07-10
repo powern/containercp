@@ -6,6 +6,14 @@ namespace containercp::mail {
 uint64_t MailDomainManager::create(const std::string& domain_name,
                                     MailDomainMode mode,
                                     uint64_t owner_id) {
+    // A mail domain name must be globally unique per ContainerCP instance
+    // because email routing is global — one domain cannot have two different
+    // mail configurations on the same server.
+    for (const auto& existing : domains_) {
+        if (existing.domain_name == domain_name) {
+            return 0;  // duplicate — caller should check
+        }
+    }
     MailDomain m;
     m.id = next_id_++;
     m.name = domain_name;

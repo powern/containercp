@@ -15,6 +15,11 @@ std::string mail_domain_mode_to_string(MailDomainMode mode) {
     return "disabled";
 }
 
+bool is_valid_mail_domain_mode(const std::string& s) {
+    return s == "disabled" || s == "local-primary" ||
+           s == "external-relay" || s == "split-m365";
+}
+
 MailDomainMode mail_domain_mode_from_string(const std::string& s) {
     if (s == "local-primary")   return MailDomainMode::LocalPrimary;
     if (s == "external-relay")  return MailDomainMode::ExternalRelay;

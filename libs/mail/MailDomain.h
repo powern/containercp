@@ -20,7 +20,10 @@ enum class MailDomainMode {
 // Convert mode enum to string.
 std::string mail_domain_mode_to_string(MailDomainMode mode);
 
-// Parse mode string to enum. Returns Disabled for unknown values.
+// Strict validation for API input. Returns true only for known mode strings.
+bool is_valid_mail_domain_mode(const std::string& s);
+
+// Parse mode string to enum. Returns Disabled for unknown values (tolerant).
 MailDomainMode mail_domain_mode_from_string(const std::string& s);
 
 struct MailDomain : core::Resource {

@@ -217,13 +217,18 @@ TEST_CASE("MailDomainManager mode persistence") {
     CHECK(mgr.list().size() == 4);
 }
 
-TEST_CASE("MailDomainManager duplicate domain names allowed") {
+TEST_CASE("MailDomainManager duplicate domain names rejected") {
     containercp::mail::MailDomainManager mgr;
 
-    mgr.create("dup.com", containercp::mail::MailDomainMode::LocalPrimary, 1);
-    mgr.create("dup.com", containercp::mail::MailDomainMode::ExternalRelay, 2);
+    uint64_t id1 = mgr.create("dup.com", containercp::mail::MailDomainMode::LocalPrimary, 1);
+    CHECK(id1 == 1);
 
-    CHECK(mgr.list().size() == 2);
+    // Second create with same domain returns 0 (rejected)
+    uint64_t id2 = mgr.create("dup.com", containercp::mail::MailDomainMode::ExternalRelay, 2);
+    CHECK(id2 == 0);
+
+    // Only one domain in the list
+    CHECK(mgr.list().size() == 1);
 }
 
 TEST_CASE("MailDomainMode string conversion") {
@@ -244,6 +249,15 @@ TEST_CASE("MailDomainMode string conversion") {
     // Unknown string maps to Disabled
     CHECK(mail_domain_mode_from_string("unknown") == MailDomainMode::Disabled);
     CHECK(mail_domain_mode_from_string("") == MailDomainMode::Disabled);
+
+    // is_valid_mail_domain_mode — strict validation for API input
+    CHECK(is_valid_mail_domain_mode("disabled"));
+    CHECK(is_valid_mail_domain_mode("local-primary"));
+    CHECK(is_valid_mail_domain_mode("external-relay"));
+    CHECK(is_valid_mail_domain_mode("split-m365"));
+    CHECK_FALSE(is_valid_mail_domain_mode("split-ms365"));  // typo
+    CHECK_FALSE(is_valid_mail_domain_mode("unknown"));
+    CHECK_FALSE(is_valid_mail_domain_mode(""));
 }
 
 TEST_CASE("MailDomainManager set_domains restores state") {
