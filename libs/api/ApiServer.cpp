@@ -1561,6 +1561,71 @@ bool ApiServer::start() {
         return r;
     });
 
+    // ── Mail Alias routes (registered before domain routes so they match /aliases first) ──
+    auto alias_json = [](const mail::MailAlias& a) -> std::string {
+        std::ostringstream j;
+        j << "{"
+          << "\"id\":" << a.id
+          << ",\"domain_id\":" << a.domain_id
+          << ",\"source\":\"" << api::JsonFormatter::escape(a.source_local_part)
+          << "\",\"destination\":\"" << api::JsonFormatter::escape(a.destination)
+          << "\",\"enabled\":" << (a.enabled ? "true" : "false")
+          << ",\"created_at\":\"" << api::JsonFormatter::escape(a.created_at)
+          << ",\"updated_at\":\"" << api::JsonFormatter::escape(a.updated_at)
+          << "}";
+        return j.str();
+    };
+
+    // GET /api/mail/domains/<id>/aliases — list aliases for a domain
+    router_.add_prefix("GET", "/api/mail/domains/", [&s, &alias_json](const Request& req) {
+        Response r;
+        std::string remaining = req.path.substr(std::string("/api/mail/domains/").size());
+        auto slash = remaining.find('/');
+        std::string sub = (slash != std::string::npos) ? remaining.substr(slash + 1) : "";
+        if (sub != "aliases") { r.status_code = 404; return r; }
+        std::string id_str = (slash != std::string::npos) ? remaining.substr(0, slash) : remaining;
+        uint64_t domain_id = 0;
+        try { domain_id = std::stoull(id_str); } catch (...) {}
+        if (domain_id == 0) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"Invalid domain ID\"}"; return r; }
+        auto aliases = s.mail_aliases().find_by_domain(domain_id);
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":[";
+        bool first = true;
+        for (auto* a : aliases) { if (!first) json << ","; first = false; json << alias_json(*a); }
+        json << "]}";
+        r.body = json.str();
+        return r;
+    });
+
+    // POST /api/mail/domains/<id>/aliases — create an alias
+    router_.add_prefix("POST", "/api/mail/domains/", [&s, &alias_json, &now_utc, &normalize_local_part, &validate_local_part](const Request& req) {
+        Response r;
+        std::string remaining = req.path.substr(std::string("/api/mail/domains/").size());
+        auto slash = remaining.find('/');
+        std::string sub = (slash != std::string::npos) ? remaining.substr(slash + 1) : "";
+        if (sub != "aliases") { r.status_code = 404; return r; }
+        std::string id_str = (slash != std::string::npos) ? remaining.substr(0, slash) : remaining;
+        uint64_t domain_id = 0;
+        try { domain_id = std::stoull(id_str); } catch (...) {}
+        if (domain_id == 0 || !s.mail().find(domain_id)) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"Mail domain not found\"}"; return r; }
+        std::string source_raw = json_extract(req.body, "source");
+        std::string dest = json_extract(req.body, "destination");
+        std::string source = normalize_local_part(source_raw);
+        if (source.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"source is required\"}"; return r; }
+        std::string src_err = validate_local_part(source);
+        if (!src_err.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(src_err) + "\"}"; return r; }
+        if (dest.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination is required\"}"; return r; }
+        if (dest.find('@') == std::string::npos) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination must be a valid email address\"}"; return r; }
+        uint64_t id = s.mail_aliases().create(domain_id, source, dest);
+        if (id == 0) { r.status_code = 409; r.body = "{\"success\":false,\"error\":\"Alias already exists\"}"; return r; }
+        auto* created = s.mail_aliases().find(id);
+        if (created) { created->created_at = now_utc(); created->updated_at = created->created_at; }
+        s.save();
+        if (created) { r.body = "{\"success\":true,\"data\":" + alias_json(*created) + "}"; return r; }
+        r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(id) + "}}";
+        return r;
+    });
+
     // GET /api/mail/domains — list all mail domains
     router_.add("GET", "/api/mail/domains", [&s, &mail_domain_json](const Request&) {
         Response r;
@@ -1918,67 +1983,6 @@ bool ApiServer::start() {
         return r;
     });
 
-    // ── Mail Alias API ──────────────────────────────────────────────
-    auto alias_json = [](const mail::MailAlias& a) -> std::string {
-        std::ostringstream j;
-        j << "{"
-          << "\"id\":" << a.id
-          << ",\"domain_id\":" << a.domain_id
-          << ",\"source\":\"" << api::JsonFormatter::escape(a.source_local_part)
-          << "\",\"destination\":\"" << api::JsonFormatter::escape(a.destination)
-          << "\",\"enabled\":" << (a.enabled ? "true" : "false")
-          << ",\"created_at\":\"" << api::JsonFormatter::escape(a.created_at)
-          << ",\"updated_at\":\"" << api::JsonFormatter::escape(a.updated_at)
-          << "}";
-        return j.str();
-    };
-
-    // GET /api/mail/domains/<id>/aliases — list aliases for a domain
-    router_.add_prefix("GET", "/api/mail/domains/", [&s, &alias_json](const Request& req) {
-        Response r;
-        std::string remaining = req.path.substr(std::string("/api/mail/domains/").size());
-        auto slash = remaining.find('/');
-        std::string sub = (slash != std::string::npos) ? remaining.substr(slash + 1) : "";
-        if (sub != "aliases") { r.status_code = 404; return r; }
-        std::string id_str = (slash != std::string::npos) ? remaining.substr(0, slash) : remaining;
-        uint64_t domain_id = 0;
-        try { domain_id = std::stoull(id_str); } catch (...) {}
-        if (domain_id == 0) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"Invalid domain ID\"}"; return r; }
-        auto aliases = s.mail_aliases().find_by_domain(domain_id);
-        std::ostringstream json;
-        json << "{\"success\":true,\"data\":[";
-        bool first = true;
-        for (auto* a : aliases) { if (!first) json << ","; first = false; json << alias_json(*a); }
-        json << "]}";
-        r.body = json.str();
-        return r;
-    });
-
-    // POST /api/mail/domains/<id>/aliases — create an alias
-    router_.add_prefix("POST", "/api/mail/domains/", [&s, &alias_json, &now_utc](const Request& req) {
-        Response r;
-        std::string remaining = req.path.substr(std::string("/api/mail/domains/").size());
-        auto slash = remaining.find('/');
-        std::string sub = (slash != std::string::npos) ? remaining.substr(slash + 1) : "";
-        if (sub != "aliases") { r.status_code = 404; return r; }
-        std::string id_str = (slash != std::string::npos) ? remaining.substr(0, slash) : remaining;
-        uint64_t domain_id = 0;
-        try { domain_id = std::stoull(id_str); } catch (...) {}
-        if (domain_id == 0 || !s.mail().find(domain_id)) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"Mail domain not found\"}"; return r; }
-        std::string source = json_extract(req.body, "source");
-        std::string dest = json_extract(req.body, "destination");
-        if (source.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"source is required\"}"; return r; }
-        if (dest.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination is required\"}"; return r; }
-        uint64_t id = s.mail_aliases().create(domain_id, source, dest);
-        if (id == 0) { r.status_code = 409; r.body = "{\"success\":false,\"error\":\"Alias already exists\"}"; return r; }
-        auto* created = s.mail_aliases().find(id);
-        if (created) { created->created_at = now_utc(); created->updated_at = created->created_at; }
-        s.save();
-        if (created) { r.body = "{\"success\":true,\"data\":" + alias_json(*created) + "}"; return r; }
-        r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(id) + "}}";
-        return r;
-    });
-
     // DELETE /api/mail/aliases/<id> — remove an alias
     router_.add_prefix("DELETE", "/api/mail/aliases/", [&s](const Request& req) {
         Response r;
@@ -1990,6 +1994,40 @@ bool ApiServer::start() {
         s.mail_aliases().remove(id);
         s.save();
         r.body = "{\"success\":true,\"data\":{\"message\":\"Alias removed\"}}";
+        return r;
+    });
+
+    // PATCH /api/mail/aliases/<id> — update an alias
+    router_.add_prefix("PATCH", "/api/mail/aliases/", [&s, &now_utc](const Request& req) {
+        Response r;
+        std::string id_str = req.path.substr(std::string("/api/mail/aliases/").size());
+        uint64_t id = 0;
+        try { id = std::stoull(id_str); } catch (...) {}
+        if (id == 0) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"Invalid alias ID\"}"; return r; }
+        auto* a = s.mail_aliases().find(id);
+        if (!a) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"Alias not found\"}"; return r; }
+        if (json_has_key(req.body, "destination")) {
+            std::string v = json_extract(req.body, "destination");
+            if (v.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination is required\"}"; return r; }
+            if (v.find('@') == std::string::npos && v != "null") { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination must be a valid email address\"}"; return r; }
+            a->destination = (v == "null") ? "" : v;
+        }
+        if (json_has_key(req.body, "enabled")) {
+            std::string v = json_extract(req.body, "enabled");
+            if (v != "true" && v != "false") { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"enabled must be true or false\"}"; return r; }
+            a->enabled = (v == "true");
+        }
+        a->updated_at = now_utc();
+        s.save();
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":{"
+             << "\"id\":" << a->id
+             << ",\"domain_id\":" << a->domain_id
+             << ",\"source\":\"" << JsonFormatter::escape(a->source_local_part)
+             << "\",\"destination\":\"" << JsonFormatter::escape(a->destination)
+             << "\",\"enabled\":" << (a->enabled ? "true" : "false")
+             << "}}";
+        r.body = json.str();
         return r;
     });
 

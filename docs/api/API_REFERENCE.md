@@ -300,13 +300,37 @@ Response includes full `address` field in the format `local_part@domain`.
 |--------|------|---------|-------|
 | GET | `/api/mail/domains/<id>/aliases` | List aliases for a domain | `MailAliasManager` |
 | POST | `/api/mail/domains/<id>/aliases` | Create an alias | `MailAliasManager` |
+| PATCH | `/api/mail/aliases/<id>` | Update an alias | `MailAliasManager` |
 | DELETE | `/api/mail/aliases/<id>` | Remove an alias | `MailAliasManager` |
 
 POST body: `{"source":"info","destination":"admin@example.com"}`
 
+PATCH body (partial update): `{"destination":"other@example.com","enabled":false}`
+
 Aliases map a source local part to one or more destination addresses.
 Multiple aliases with the same source but different destinations are allowed.
 An exact duplicate (same source, same destination, same domain) is rejected (409).
+
+Validation:
+- `source` is normalized (lowercased, trimmed) before duplicate check using the same
+  rules as Mailbox local_part (alphanumeric, dots, underscores, hyphens only).
+- `destination` must contain `@` (basic email format validation).
+- `enabled` accepts only `true` or `false`.
+- Referenced domain must exist (404 if not found).
+- Read-only fields: `id`, `domain_id`, `created_at`, `updated_at` cannot be changed via PATCH.
+
+Response format per alias entry:
+```json
+{
+  "id": 1,
+  "domain_id": 1,
+  "source": "info",
+  "destination": "admin@example.com",
+  "enabled": true,
+  "created_at": "2025-07-10T12:00:00Z",
+  "updated_at": "2025-07-10T12:00:00Z"
+}
+```
 
 ### 2.18 Logs
 
@@ -428,7 +452,7 @@ async jobs.
 | `/api/jobs/*` | Jobs subsystem (`JobManager`) | Async execution |
 | `/api/backups/*` | Backups subsystem (`BackupManager`, `BackupProvider`) | Archive logic |
 | `/api/settings/*` | Config (`Config`) | File I/O, persistence |
-| `/api/mail/*` | Mail resource management (`MailDomainManager`, `MailboxManager`) | Mail server config, Docker logic, Postfix/Dovecot (future stages) |
+| `/api/mail/*` | Mail resource management (`MailDomainManager`, `MailboxManager`, `MailAliasManager`) | Mail server config, Docker logic, Postfix/Dovecot (future stages) |
 
 API handlers must never:
 - Run `docker` commands directly
