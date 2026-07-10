@@ -175,10 +175,10 @@ Keep `0.0.0.0:8081` and rely on the system firewall (iptables, nftables,
 UFW) to block external access to port 8081 while allowing Docker bridge
 traffic.  Document this as a deployment requirement.
 
-## 7. Recommendation
+## 7. Recommendation (implemented)
 
-**Option A (bind to Docker bridge gateway IP)** is the simplest and
-most secure approach that preserves the architecture:
+**Option A (bind to Docker bridge gateway IP)** was chosen as the
+simplest and most secure approach:
 
 | Criterion | Score |
 |-----------|-------|

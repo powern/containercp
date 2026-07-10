@@ -128,9 +128,15 @@ int main(int argc, char* argv[]) {
     std::thread api_thread([&api_server]() { api_server.start(); });
     api_thread.detach();
 
-    // Start Web UI server on loopback only (external access through reverse proxy on 80/443 or SSH tunnel)
-    // External access must go through containercp-proxy on port 443.
-    containercp::api::WebServer web_server(services, "127.0.0.1", ui_port, api_port);
+    // Detect Docker bridge gateway for Web UI binding.
+    // The Web UI binds to the Docker gateway IP so the nginx proxy container
+    // (running inside Docker) can reach it. 127.0.0.1 would not work because
+    // the nginx container cannot reach the host's loopback interface.
+    std::string ui_bind = containercp::core::ServiceRegistry::detect_docker_gateway(log);
+    log.info("SYSTEM", "Web UI bind address: " + ui_bind);
+
+    // Start Web UI server on Docker bridge gateway (external access only through reverse proxy)
+    containercp::api::WebServer web_server(services, ui_bind, ui_port, api_port);
     std::thread web_thread([&web_server]() { web_server.start(); });
     web_thread.detach();
 

@@ -81,6 +81,10 @@ public:
     auth::AuthUserManager& auth_users();
     auth::AuthService& auth();
     storage::Storage& storage();
+    // Detect Docker bridge gateway address for Web UI binding and proxy upstream.
+    // Returns "host.docker.internal" if detection fails (works with --add-host flag).
+    static std::string detect_docker_gateway(logger::Logger& log);
+
     void start();
     void shutdown();
     void save();

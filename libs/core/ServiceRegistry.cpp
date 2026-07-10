@@ -188,6 +188,28 @@ ServiceRegistry::ServiceRegistry()
     auth_.initialize();
 }
 
+std::string ServiceRegistry::detect_docker_gateway(logger::Logger& log) {
+    std::string gw_file = "/tmp/containercp-gateway.txt";
+    std::string gw_cmd = "docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null > " + gw_file;
+    std::system(gw_cmd.c_str());
+    std::ifstream gw_in(gw_file);
+    std::string gw_ip;
+    std::getline(gw_in, gw_ip);
+    std::remove(gw_file.c_str());
+
+    // Trim whitespace
+    gw_ip.erase(0, gw_ip.find_first_not_of(" \t\n\r"));
+    gw_ip.erase(gw_ip.find_last_not_of(" \t\n\r") + 1);
+
+    if (!gw_ip.empty()) {
+        log.info("SYSTEM", "Docker gateway: " + gw_ip);
+        return gw_ip;
+    }
+
+    log.info("SYSTEM", "Docker gateway not detected, using host.docker.internal");
+    return "host.docker.internal";
+}
+
 void ServiceRegistry::start() {
     // Configure ACME environment: production is default; staging requires explicit opt-in
     const char* staging_env = std::getenv("LETSENCRYPT_STAGING");
@@ -214,20 +236,9 @@ void ServiceRegistry::start() {
             // Tell HTTP01ChallengeProvider about the admin hostname
             http01_challenge_.set_admin_hostname(hostname);
             // Auto-detect Docker gateway for admin upstream (host → container communication)
-            std::string admin_upstream = "host.docker.internal:8081";
-            {
-                std::string gw_file = "/tmp/containercp-admin-gw.txt";
-                std::string gw_cmd = "docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null > " + gw_file;
-                std::system(gw_cmd.c_str());
-                std::ifstream gw_in(gw_file);
-                std::string gw_ip;
-                std::getline(gw_in, gw_ip);
-                std::remove(gw_file.c_str());
-                if (!gw_ip.empty()) {
-                    admin_upstream = gw_ip + ":8081";
-                    logger_.info("SYSTEM", "Docker gateway: " + gw_ip);
-                }
-            }
+            std::string gw_ip = detect_docker_gateway(logger_);
+            std::string admin_upstream = gw_ip + ":8081";
+            logger_.info("SYSTEM", "Admin upstream: " + admin_upstream);
 
             // Ensure ReverseProxy entry exists (idempotent)
             auto* existing = reverse_proxies_.find_by_domain(hostname);
