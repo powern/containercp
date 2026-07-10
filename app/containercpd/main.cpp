@@ -130,7 +130,7 @@ int main(int argc, char* argv[]) {
 
     // Start Web UI server on all interfaces (proxy access via host.docker.internal, SSH tunnel via 127.0.0.1)
     // External access should go through containercp-proxy on port 443. Block port 8081 in firewall.
-    containercp::api::WebServer web_server(services, "0.0.0.0", ui_port, api_port);
+    containercp::api::WebServer web_server(services, "127.0.0.1", ui_port, api_port);
     std::thread web_thread([&web_server]() { web_server.start(); });
     web_thread.detach();
 
