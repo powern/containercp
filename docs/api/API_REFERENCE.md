@@ -314,10 +314,13 @@ An exact duplicate (same source, same destination, same domain) is rejected (409
 Validation:
 - `source` is normalized (lowercased, trimmed) before duplicate check using the same
   rules as Mailbox local_part (alphanumeric, dots, underscores, hyphens only).
-- `destination` must contain `@` (basic email format validation).
+- `destination` must contain `@` (basic email format validation).  Empty string and
+  JSON null are rejected (alias without a destination has no meaning).
 - `enabled` accepts only `true` or `false`.
 - Referenced domain must exist (404 if not found).
 - Read-only fields: `id`, `domain_id`, `created_at`, `updated_at` cannot be changed via PATCH.
+- PATCH semantics: omitted field → unchanged.  Explicit `destination: ""` or
+  `destination: null` → 400 Bad Request.
 
 Response format per alias entry:
 ```json

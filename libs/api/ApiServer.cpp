@@ -1614,6 +1614,7 @@ bool ApiServer::start() {
         if (source.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"source is required\"}"; return r; }
         std::string src_err = validate_local_part(source);
         if (!src_err.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(src_err) + "\"}"; return r; }
+        if (dest == "null") { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination cannot be null\"}"; return r; }
         if (dest.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination is required\"}"; return r; }
         if (dest.find('@') == std::string::npos) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination must be a valid email address\"}"; return r; }
         uint64_t id = s.mail_aliases().create(domain_id, source, dest);
@@ -2008,9 +2009,11 @@ bool ApiServer::start() {
         if (!a) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"Alias not found\"}"; return r; }
         if (json_has_key(req.body, "destination")) {
             std::string v = json_extract(req.body, "destination");
+            // JSON null → reject (alias without destination has no meaning)
+            if (v == "null") { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination cannot be null\"}"; return r; }
             if (v.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination is required\"}"; return r; }
-            if (v.find('@') == std::string::npos && v != "null") { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination must be a valid email address\"}"; return r; }
-            a->destination = (v == "null") ? "" : v;
+            if (v.find('@') == std::string::npos) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination must be a valid email address\"}"; return r; }
+            a->destination = v;
         }
         if (json_has_key(req.body, "enabled")) {
             std::string v = json_extract(req.body, "enabled");
