@@ -1140,7 +1140,7 @@ bool ApiServer::start() {
             // Generate new config with redirect, validate, reload, THEN save
             std::string cert_path = s.cert_store().fullchain_path(site_id);
             std::string key_path = s.cert_store().privkey_path(site_id);
-            auto proxy_result = s.proxy_provider().attach_certificate(domain, cert_path, key_path);
+            auto proxy_result = s.proxy_provider().attach_certificate(domain, cert_path, key_path, true);
             if (!proxy_result.success) {
                 r.status_code = 500;
                 r.body = json_error("PROXY_ERROR", proxy_result.message);
@@ -1166,7 +1166,7 @@ bool ApiServer::start() {
             // Generate new config without redirect
             std::string cert_path = s.cert_store().fullchain_path(site_id);
             std::string key_path = s.cert_store().privkey_path(site_id);
-            auto proxy_result = s.proxy_provider().attach_certificate(domain, cert_path, key_path);
+            auto proxy_result = s.proxy_provider().attach_certificate(domain, cert_path, key_path, false);
             if (!proxy_result.success) {
                 r.status_code = 500;
                 r.body = json_error("PROXY_ERROR", proxy_result.message);
@@ -1212,6 +1212,21 @@ bool ApiServer::start() {
         } else if (type == "proxy") {
             auto* p = s.reverse_proxies().find_by_domain(name);
             if (!p) { r.body = "{\"success\":false,\"error\":\"Not found\"}"; return r; }
+            // Remove nginx config file first, BEFORE removing the record
+            auto remove_result = s.proxy_provider().remove_proxy(name);
+            if (!remove_result.success) {
+                r.status_code = 500;
+                r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(remove_result.message) + "\"}";
+                return r;
+            }
+            // Reload nginx to apply the change
+            auto reload_result = s.proxy_provider().reload();
+            if (!reload_result.success) {
+                r.status_code = 500;
+                r.body = "{\"success\":false,\"error\":\"Config removed but reload failed: "
+                         + JsonFormatter::escape(reload_result.message) + "\"}";
+                return r;
+            }
             s.reverse_proxies().remove(p->id);
         } else if (type == "access-user") {
             auto* u = s.access_users().find(name);

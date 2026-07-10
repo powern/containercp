@@ -20,8 +20,9 @@ public:
     virtual core::OperationResult status(const std::string& domain) = 0;
     virtual core::OperationResult attach_certificate(const std::string& domain,
                                                        const std::string& cert_path,
-                                                       const std::string& key_path) {
-        (void)domain; (void)cert_path; (void)key_path;
+                                                       const std::string& key_path,
+                                                       bool redirect = false) {
+        (void)domain; (void)cert_path; (void)key_path; (void)redirect;
         return {false, "not implemented"};
     }
     virtual core::OperationResult detach_certificate(const std::string& domain) {

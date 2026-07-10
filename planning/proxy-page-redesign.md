@@ -104,10 +104,10 @@ ApiServer (thin)
   → enriched JSON → Web UI
 ```
 
-### Bugs to fix before redesign
+### Bugs fixed (July 2026)
 
-1. **`POST /api/proxy/remove`** — must delete the `.conf` file and reload nginx (currently only removes DB record)
-2. **`redirect/enable`** — must actually generate the redirect nginx config (currently no-ops)
+1. **`POST /api/proxy/remove`** — ✅ now deletes the `.conf` file, validates nginx config, reloads nginx. Previously only removed the DB record.
+2. **`redirect/enable`** — ✅ now passes `redirect=true` to `attach_certificate()`, which generates the redirect+HTTPS nginx config. `ProxyConfigBuilder::Params.redirect` is no longer dead code.
 
 ### What NOT to change
 

@@ -26,8 +26,9 @@ public:
     core::OperationResult reload() override;
     core::OperationResult status(const std::string& domain) override;
     core::OperationResult attach_certificate(const std::string& domain,
-                                              const std::string& cert_path,
-                                              const std::string& key_path) override;
+                                               const std::string& cert_path,
+                                               const std::string& key_path,
+                                               bool redirect = false) override;
     core::OperationResult detach_certificate(const std::string& domain) override;
     core::OperationResult ensure_central_proxy();
     core::OperationResult remove_central_proxy();

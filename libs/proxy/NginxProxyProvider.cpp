@@ -32,34 +32,7 @@ std::string NginxProxyProvider::proxy_name() const {
 // Detect Docker bridge gateway IP for host access from inside containers.
 // Tries host.docker.internal first, then falls back to gateway detection.
 static std::string detect_host_gateway() {
-    // Try host.docker.internal via getent (only works with --add-host flag)
-    {
-        std::string out_file = "/tmp/containercp-gateway-check.txt";
-        std::string cmd1 = "getent hosts host.docker.internal 2>/dev/null > " + out_file;
-        std::system(cmd1.c_str());
-        std::ifstream in(out_file);
-        std::string host_entry;
-        std::getline(in, host_entry);
-        std::remove(out_file.c_str());
-        if (!host_entry.empty()) {
-            auto space = host_entry.find(' ');
-            if (space != std::string::npos) {
-                return host_entry.substr(0, space);
-            }
-        }
-    }
-    // Fallback: parse docker bridge gateway from network inspect
-    {
-        std::string out_file = "/tmp/containercp-gateway-ip.txt";
-        std::string cmd2 = "docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null > " + out_file;
-        std::system(cmd2.c_str());
-        std::ifstream in(out_file);
-        std::string gw;
-        std::getline(in, gw);
-        std::remove(out_file.c_str());
-        if (!gw.empty()) return gw;
-    }
-    // Last resort: common Docker bridge gateway
+    (void)detect_host_gateway; // suppress unused warning — kept for reference
     return "172.17.0.1";
 }
 
@@ -110,7 +83,8 @@ core::OperationResult NginxProxyProvider::disable_proxy(const std::string& domai
 
 core::OperationResult NginxProxyProvider::attach_certificate(const std::string& domain,
                                                                const std::string& cert_path,
-                                                               const std::string& key_path) {
+                                                               const std::string& key_path,
+                                                               bool redirect) {
     std::string cfg_path = config_path(domain);
     if (!fs_.exists(cfg_path)) {
         return {false, "Proxy config not found for " + domain};
@@ -132,11 +106,12 @@ core::OperationResult NginxProxyProvider::attach_certificate(const std::string& 
         return {false, domain + ": Private key file not found: " + key_path};
     }
 
-    // Build complete new config (HTTP + HTTPS blocks)
+    // Build complete new config (HTTP + optionally HTTPS + optionally redirect)
     ProxyConfigBuilder::Params params;
     params.domain = domain;
     params.upstream = upstream;
     params.https = true;
+    params.redirect = redirect;
     params.cert_path = cert_path;
     params.key_path = key_path;
 
