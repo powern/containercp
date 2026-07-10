@@ -57,13 +57,21 @@ static bool json_has_key(const std::string& json, const std::string& key) {
     return json.find(search) != std::string::npos;
 }
 
-// Normalize a domain name: lowercase, trim, remove trailing dot.
+// Trim leading and trailing whitespace.
+static std::string trim(const std::string& s) {
+    size_t start = 0, end = s.size();
+    while (start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r')) ++start;
+    while (end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n' || s[end-1] == '\r')) --end;
+    return s.substr(start, end - start);
+}
+
+// Normalize a domain name: lowercase, trim whitespace, remove trailing dots.
+// Does NOT remove internal spaces — those will be rejected by hostname validation.
+// Normalization happens in the API layer before calling the manager.
+// The manager accepts data as-is; the API is responsible for pre-processing.
 static std::string normalize_domain(const std::string& raw) {
-    std::string d;
-    d.reserve(raw.size());
-    for (char c : raw) {
-        if (c != ' ') d.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-    }
+    std::string d = trim(raw);
+    for (auto& c : d) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     while (!d.empty() && d.back() == '.') d.pop_back();
     return d;
 }
@@ -1545,12 +1553,18 @@ bool ApiServer::start() {
 
         if (json_has_key(req.body, "enabled")) {
             std::string enabled_str = json_extract(req.body, "enabled");
+            if (enabled_str != "true" && enabled_str != "false") {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"enabled must be true or false\"}";
+                return r;
+            }
             m->enabled = (enabled_str == "true");
         }
 
         if (json_has_key(req.body, "relay_host")) {
-            m->relay_host = json_extract(req.body, "relay_host");
-            // explicit null or empty clears the field
+            std::string val = json_extract(req.body, "relay_host");
+            // JSON null becomes "null" — treat as clear
+            m->relay_host = (val == "null") ? "" : val;
         }
 
         if (json_has_key(req.body, "max_mailboxes")) {
@@ -1574,8 +1588,8 @@ bool ApiServer::start() {
         }
 
         if (json_has_key(req.body, "catch_all")) {
-            m->catch_all = json_extract(req.body, "catch_all");
-            // explicit null or empty clears the catch-all
+            std::string val = json_extract(req.body, "catch_all");
+            m->catch_all = (val == "null") ? "" : val;
         }
 
         m->updated_at = ssl::CertificateStore::timestamp_utc();

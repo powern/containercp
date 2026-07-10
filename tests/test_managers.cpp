@@ -303,22 +303,31 @@ TEST_CASE("MailDomainManager create rejects duplicates even with different case"
 }
 
 TEST_CASE("MailDomain normalize_domain function") {
-    // Test the normalize_domain helper via API behavior simulation
-    auto norm = [](const std::string& raw) -> std::string {
-        std::string d;
-        d.reserve(raw.size());
-        for (char c : raw) {
-            if (c != ' ') d.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-        }
+    // Simulate the API-level normalize_domain logic (trim + tolower + trailing dot removal)
+    auto trim = [](const std::string& s) -> std::string {
+        size_t start = 0, end = s.size();
+        while (start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r')) ++start;
+        while (end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n' || s[end-1] == '\r')) --end;
+        return s.substr(start, end - start);
+    };
+    auto norm = [&trim](const std::string& raw) -> std::string {
+        std::string d = trim(raw);
+        for (auto& c : d) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         while (!d.empty() && d.back() == '.') d.pop_back();
         return d;
     };
 
     CHECK(norm("Example.COM") == "example.com");
     CHECK(norm("Example.COM.") == "example.com");
-    CHECK(norm("  Test.COM  ") == "test.com");
+    CHECK(norm("  Example.COM  ") == "example.com");
     CHECK(norm("UPPER.com.") == "upper.com");
-    CHECK(norm("  spaced.Domain.NET.  ") == "spaced.domain.net");
+
+    // Internal spaces are preserved — will be rejected by hostname validation
+    CHECK(norm("exa mple.com") == "exa mple.com");
+
+    // Multiple trailing dots
+    CHECK(norm("test.com..") == "test.com");
+    CHECK(norm("test.com...") == "test.com");
 }
 
 TEST_CASE("MailDomain json_extract type handling") {
@@ -368,4 +377,34 @@ TEST_CASE("MailDomain json_has_key detection") {
     // Key not present
     CHECK_FALSE(has_key(R"({"mode":"local-primary"})", "enabled"));
     CHECK_FALSE(has_key(R"({})", "mode"));
+}
+
+TEST_CASE("MailDomain JSON null and empty string semantics") {
+    // Test the API-level null/empty handling logic
+    auto clear_if_null = [](const std::string& val) -> std::string {
+        return (val == "null") ? "" : val;
+    };
+
+    // String field present with value
+    CHECK(clear_if_null("smtp.example.com") == "smtp.example.com");
+    // String field present with empty string — keep empty
+    CHECK(clear_if_null("") == "");
+    // String field present with JSON null — clear to empty
+    CHECK(clear_if_null("null") == "");
+}
+
+TEST_CASE("MailDomain boolean validation logic") {
+    // Verify boolean acceptance is strict
+    auto is_valid_bool = [](const std::string& val) -> bool {
+        return val == "true" || val == "false";
+    };
+
+    CHECK(is_valid_bool("true"));
+    CHECK(is_valid_bool("false"));
+    CHECK_FALSE(is_valid_bool("yes"));
+    CHECK_FALSE(is_valid_bool("1"));
+    CHECK_FALSE(is_valid_bool("abc"));
+    CHECK_FALSE(is_valid_bool(""));
+    CHECK_FALSE(is_valid_bool("True"));   // lowercase only
+    CHECK_FALSE(is_valid_bool("FALSE"));  // lowercase only
 }
