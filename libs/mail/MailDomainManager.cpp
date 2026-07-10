@@ -1,16 +1,18 @@
 #include "MailDomainManager.h"
+#include "utils/Validator.h"
 
 namespace containercp::mail {
 
-uint64_t MailDomainManager::create(uint64_t domain_id, const std::string& domain, uint64_t owner_id) {
+uint64_t MailDomainManager::create(const std::string& domain_name,
+                                    MailDomainMode mode,
+                                    uint64_t owner_id) {
     MailDomain m;
     m.id = next_id_++;
-    m.name = domain;
-    m.domain_id = domain_id;
-    m.domain = domain;
+    m.name = domain_name;
+    m.domain_name = domain_name;
+    m.mode = mode;
     m.owner_id = owner_id;
     m.enabled = true;
-    m.status = "placeholder";
     domains_.push_back(std::move(m));
     return m.id;
 }
@@ -34,9 +36,9 @@ MailDomain* MailDomainManager::find(uint64_t id) {
     return nullptr;
 }
 
-MailDomain* MailDomainManager::find_by_domain(const std::string& domain) {
+MailDomain* MailDomainManager::find_by_domain(const std::string& domain_name) {
     for (auto& m : domains_) {
-        if (m.domain == domain) {
+        if (m.domain_name == domain_name) {
             return &m;
         }
     }

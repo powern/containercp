@@ -5,8 +5,12 @@
 #include "operations/SiteCreateOperation.h"
 #include "operations/SiteRemoveOperation.h"
 
+#include "mail/MailDomain.h"
+#include "mail/MailDomainManager.h"
+
 #include "ssl/CertificateStore.h"
 #include "ssl/CertificateProvider.h"
+#include "utils/Validator.h"
 
 #include <arpa/inet.h>
 #include <chrono>
@@ -1391,6 +1395,93 @@ bool ApiServer::start() {
     router_.add("POST", "/api/ssl/disable", [&s, &modify_ssl](const Request& req) {
         std::string domain = json_extract(req.body, "domain");
         return modify_ssl(domain, false);
+    });
+
+    // ── Mail Domain API ────────────────────────────────────────────
+    // GET /api/mail/domains — list all mail domains
+    router_.add("GET", "/api/mail/domains", [&s](const Request&) {
+        Response r;
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":[";
+        bool first = true;
+        for (const auto& m : s.mail().list()) {
+            if (!first) json << ",";
+            first = false;
+            json << "{"
+                 << "\"id\":" << m.id
+                 << ",\"domain\":\"" << JsonFormatter::escape(m.domain_name)
+                 << "\",\"mode\":\"" << JsonFormatter::escape(mail::mail_domain_mode_to_string(m.mode))
+                 << "\",\"enabled\":" << (m.enabled ? "true" : "false")
+                 << "}";
+        }
+        json << "]}";
+        r.body = json.str();
+        return r;
+    });
+
+    // POST /api/mail/domains — create a mail domain
+    router_.add("POST", "/api/mail/domains", [&s](const Request& req) {
+        Response r;
+        std::string domain = json_extract(req.body, "domain");
+        std::string mode_str = json_extract(req.body, "mode");
+        std::string owner_str = json_extract(req.body, "owner_id");
+
+        if (domain.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Domain is required\"}";
+            return r;
+        }
+
+        // Validate domain format
+        if (!utils::Validator::is_valid_hostname(domain)) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid domain format\"}";
+            return r;
+        }
+
+        // Check for duplicates
+        if (s.mail().find_by_domain(domain)) {
+            r.status_code = 409;
+            r.body = "{\"success\":false,\"error\":\"Domain already exists\"}";
+            return r;
+        }
+
+        mail::MailDomainMode mode = mail::mail_domain_mode_from_string(mode_str);
+        uint64_t owner_id = owner_str.empty() ? 0 : std::stoull(owner_str);
+
+        uint64_t id = s.mail().create(domain, mode, owner_id);
+        s.save();
+
+        r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(id)
+                 + ",\"domain\":\"" + JsonFormatter::escape(domain)
+                 + "\",\"mode\":\"" + JsonFormatter::escape(mode_str.empty() ? "disabled" : mode_str)
+                 + "\"}}";
+        return r;
+    });
+
+    // DELETE /api/mail/domains/<id> — remove a mail domain
+    router_.add_prefix("DELETE", "/api/mail/domains/", [&s](const Request& req) {
+        Response r;
+        std::string id_str = req.path.substr(std::string("/api/mail/domains/").size());
+        uint64_t id = 0;
+        try { id = std::stoull(id_str); } catch (...) {}
+        if (id == 0) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid ID\"}";
+            return r;
+        }
+
+        auto* m = s.mail().find(id);
+        if (!m) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Mail domain not found\"}";
+            return r;
+        }
+
+        s.mail().remove(id);
+        s.save();
+        r.body = "{\"success\":true,\"data\":{\"message\":\"Mail domain removed\"}}";
+        return r;
     });
 
     // Accept loop

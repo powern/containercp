@@ -289,7 +289,7 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
     if (cmd.name == "mail-list") {
         auto& domains = s.mail().list();
         std::ostringstream out;
-        for (const auto& m : domains) out << m.domain << " [" << m.status << "]\n";
+        for (const auto& m : domains) out << m.domain_name << " [" << mail::mail_domain_mode_to_string(m.mode) << "]\n";
         return Command::success(out.str());
     }
 

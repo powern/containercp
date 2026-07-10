@@ -166,3 +166,103 @@ TEST_CASE("DomainViewService produces valid JSON for various target values") {
     std::string rm_cmd = "rm -rf " + ssl_root_str;
     std::system(rm_cmd.c_str());
 }
+
+#include "mail/MailDomainManager.h"
+
+TEST_CASE("MailDomainManager create/find/list/remove") {
+    containercp::mail::MailDomainManager mgr;
+
+    uint64_t id = mgr.create("example.com", containercp::mail::MailDomainMode::LocalPrimary, 1);
+    CHECK(id == 1);
+
+    auto* m = mgr.find(id);
+    REQUIRE(m != nullptr);
+    CHECK(m->domain_name == "example.com");
+    CHECK(m->mode == containercp::mail::MailDomainMode::LocalPrimary);
+    CHECK(m->owner_id == 1);
+    CHECK(m->enabled);
+
+    // Find by domain name
+    auto* by_domain = mgr.find_by_domain("example.com");
+    REQUIRE(by_domain != nullptr);
+    CHECK(by_domain->id == id);
+
+    // List
+    CHECK(mgr.list().size() == 1);
+
+    // Remove
+    CHECK(mgr.remove(id));
+    CHECK(mgr.find(id) == nullptr);
+    CHECK(mgr.list().empty());
+
+    // Remove non-existent
+    CHECK_FALSE(mgr.remove(999));
+}
+
+TEST_CASE("MailDomainManager mode persistence") {
+    containercp::mail::MailDomainManager mgr;
+
+    uint64_t id1 = mgr.create("a.com", containercp::mail::MailDomainMode::LocalPrimary, 1);
+    uint64_t id2 = mgr.create("b.com", containercp::mail::MailDomainMode::ExternalRelay, 2);
+    uint64_t id3 = mgr.create("c.com", containercp::mail::MailDomainMode::SplitM365, 3);
+    uint64_t id4 = mgr.create("d.com", containercp::mail::MailDomainMode::Disabled, 4);
+    (void)id4;
+
+    CHECK(mgr.find(id1)->mode == containercp::mail::MailDomainMode::LocalPrimary);
+    CHECK(mgr.find(id2)->mode == containercp::mail::MailDomainMode::ExternalRelay);
+    CHECK(mgr.find(id3)->mode == containercp::mail::MailDomainMode::SplitM365);
+    CHECK(mgr.find(id4)->mode == containercp::mail::MailDomainMode::Disabled);
+
+    // List
+    CHECK(mgr.list().size() == 4);
+}
+
+TEST_CASE("MailDomainManager duplicate domain names allowed") {
+    containercp::mail::MailDomainManager mgr;
+
+    mgr.create("dup.com", containercp::mail::MailDomainMode::LocalPrimary, 1);
+    mgr.create("dup.com", containercp::mail::MailDomainMode::ExternalRelay, 2);
+
+    CHECK(mgr.list().size() == 2);
+}
+
+TEST_CASE("MailDomainMode string conversion") {
+    using namespace containercp::mail;
+
+    // to_string
+    CHECK(mail_domain_mode_to_string(MailDomainMode::Disabled) == "disabled");
+    CHECK(mail_domain_mode_to_string(MailDomainMode::LocalPrimary) == "local-primary");
+    CHECK(mail_domain_mode_to_string(MailDomainMode::ExternalRelay) == "external-relay");
+    CHECK(mail_domain_mode_to_string(MailDomainMode::SplitM365) == "split-m365");
+
+    // from_string
+    CHECK(mail_domain_mode_from_string("disabled") == MailDomainMode::Disabled);
+    CHECK(mail_domain_mode_from_string("local-primary") == MailDomainMode::LocalPrimary);
+    CHECK(mail_domain_mode_from_string("external-relay") == MailDomainMode::ExternalRelay);
+    CHECK(mail_domain_mode_from_string("split-m365") == MailDomainMode::SplitM365);
+
+    // Unknown string maps to Disabled
+    CHECK(mail_domain_mode_from_string("unknown") == MailDomainMode::Disabled);
+    CHECK(mail_domain_mode_from_string("") == MailDomainMode::Disabled);
+}
+
+TEST_CASE("MailDomainManager set_domains restores state") {
+    containercp::mail::MailDomainManager mgr;
+
+    mgr.create("a.com", containercp::mail::MailDomainMode::LocalPrimary, 1);
+    mgr.create("b.com", containercp::mail::MailDomainMode::Disabled, 2);
+
+    // Simulate load from storage
+    auto saved = mgr.list();
+    containercp::mail::MailDomainManager mgr2;
+    mgr2.set_domains(saved);
+
+    CHECK(mgr2.list().size() == 2);
+    auto* a = mgr2.find_by_domain("a.com");
+    REQUIRE(a != nullptr);
+    CHECK(a->mode == containercp::mail::MailDomainMode::LocalPrimary);
+
+    // Next ID continues from saved max
+    uint64_t id3 = mgr2.create("c.com", containercp::mail::MailDomainMode::ExternalRelay, 3);
+    CHECK(id3 == 3);
+}

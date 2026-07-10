@@ -377,8 +377,16 @@ std::vector<ssl::SslCertificate> Storage::load_ssl_certificates() {
 void Storage::save_mail_domains(const std::vector<mail::MailDomain>& domains) {
     std::ofstream file(mail_domains_file());
     for (const auto& m : domains) {
-        file << m.id << "|" << m.domain_id << "|" << m.domain << "|"
-             << m.owner_id << "|" << (m.enabled ? "1" : "0") << "|" << m.status << "\n";
+        file << m.id << "|"
+             << mail::mail_domain_mode_to_string(m.mode) << "|"
+             << m.domain_name << "|"
+             << m.owner_id << "|"
+             << (m.enabled ? "1" : "0") << "|"
+             << m.catch_all << "|"
+             << m.dkim_selector << "|"
+             << m.relay_host << "|"
+             << m.max_mailboxes << "|"
+             << m.max_aliases << "\n";
     }
 }
 
@@ -395,12 +403,16 @@ std::vector<mail::MailDomain> Storage::load_mail_domains() {
         std::string token;
         mail::MailDomain m;
         if (std::getline(ss, token, '|')) m.id = std::stoull(token);
-        if (std::getline(ss, token, '|')) m.domain_id = std::stoull(token);
-        if (std::getline(ss, token, '|')) m.domain = token;
+        if (std::getline(ss, token, '|')) m.mode = mail::mail_domain_mode_from_string(token);
+        if (std::getline(ss, token, '|')) m.domain_name = token;
         if (std::getline(ss, token, '|')) m.owner_id = std::stoull(token);
         if (std::getline(ss, token, '|')) m.enabled = (token == "1");
-        if (std::getline(ss, token, '|')) m.status = token;
-        m.name = m.domain;
+        if (std::getline(ss, token, '|')) m.catch_all = token;
+        if (std::getline(ss, token, '|')) m.dkim_selector = token;
+        if (std::getline(ss, token, '|')) m.relay_host = token;
+        if (std::getline(ss, token, '|')) m.max_mailboxes = token.empty() ? 0 : std::stoull(token);
+        if (std::getline(ss, token, '|')) m.max_aliases = token.empty() ? 0 : std::stoull(token);
+        m.name = m.domain_name;
         domains.push_back(std::move(m));
     }
     return domains;

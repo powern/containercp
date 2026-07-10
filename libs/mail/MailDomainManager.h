@@ -11,10 +11,11 @@ namespace containercp::mail {
 
 class MailDomainManager {
 public:
-    uint64_t create(uint64_t domain_id, const std::string& domain, uint64_t owner_id);
+    uint64_t create(const std::string& domain_name, MailDomainMode mode,
+                    uint64_t owner_id);
     bool remove(uint64_t id);
     MailDomain* find(uint64_t id);
-    MailDomain* find_by_domain(const std::string& domain);
+    MailDomain* find_by_domain(const std::string& domain_name);
     const std::vector<MailDomain>& list() const;
 
     void set_domains(const std::vector<MailDomain>& domains);
