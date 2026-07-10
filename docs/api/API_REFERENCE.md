@@ -339,7 +339,7 @@ Response format per alias entry:
 
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|
-| POST | `/api/mail/domains/<id>/dkim/generate` | Generate DKIM key pair for a domain | `DockerMailProvider` |
+| POST | `/api/mail/domains/<id>/dkim/generate` | Generate DKIM key pair for a domain | `DkimManager` |
 
 Generates a 2048-bit RSA key pair using OpenSSL.  The private key is stored
 in `<data_root>/mail/config/state/dkim/<domain>/<selector>.private`.

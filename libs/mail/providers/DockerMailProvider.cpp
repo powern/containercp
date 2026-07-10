@@ -321,38 +321,4 @@ std::string DockerMailProvider::status_description() const {
     return "stopped";
 }
 
-// ── DKIM key generation ──────────────────────────────────────────
-
-std::string DockerMailProvider::generate_dkim_key(
-    const std::string& dkim_dir,
-    const std::string& domain_name,
-    const std::string& selector) {
-    // Create DKIM directory
-    std::string domain_dkim_dir = dkim_dir + "/" + domain_name;
-    std::string mkdir_cmd = "mkdir -p " + domain_dkim_dir;
-    std::system(mkdir_cmd.c_str());
-
-    // Generate private key using openssl
-    std::string priv_path = domain_dkim_dir + "/" + selector + ".private";
-    std::string gen_cmd = "openssl genrsa -out " + priv_path + " 2048 2>/dev/null";
-    if (std::system(gen_cmd.c_str()) != 0) return "";
-
-    // Extract public key in DNS TXT format
-    std::string pub_file = "/tmp/containercp-dkim-pub.txt";
-    std::string pub_cmd = "openssl rsa -in " + priv_path + " -pubout 2>/dev/null | "
-                          "openssl pkey -pubin -outform DER 2>/dev/null | "
-                          "openssl base64 -A > " + pub_file;
-    if (std::system(pub_cmd.c_str()) != 0) return "";
-
-    std::ifstream in(pub_file);
-    std::string pubkey;
-    std::getline(in, pubkey);
-    std::remove(pub_file.c_str());
-
-    if (pubkey.empty()) return "";
-
-    // Build DNS TXT record value
-    return "v=DKIM1; k=rsa; p=" + pubkey;
-}
-
 } // namespace containercp::mail

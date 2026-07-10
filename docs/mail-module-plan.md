@@ -620,6 +620,7 @@ Local delivery works for `local-primary` mode.
 
 ### Stage 2b — TLS, DKIM, security (estimated: 3-4 days)
 
+- `DkimManager` — dedicated DKIM service, independent from any provider
 - TLS/SSL certificates for Postfix and Dovecot (paths from CertificateStore)
 - DKIM key generation via OpenSSL (`POST /api/mail/domains/<id>/dkim/generate`)
 - DKIM DNS record stored in `MailDomain::dkim_public_key_dns`, returned in API
@@ -627,10 +628,13 @@ Local delivery works for `local-primary` mode.
 - Postfix TLS configuration (smtpd_tls_cert_file, smtpd_tls_key_file)
 - Dovecot TLS configuration (ssl_cert, ssl_key)
 - Rspamd milter configuration prepared for future DKIM signing
-- Docker Compose mounts SSL directory for certificate access
-- Docker Compose mounts DKIM state directory
-- API: `POST /api/mail/domains/<id>/dkim/generate`
-- Tests: DKIM key generation format, transport_maps generation
+- Docker Compose mounts SSL directory + DKIM state directory
+- Certificate selection currently uses fixed path (`site_id=0`). Future:
+  per-domain certificate support via `CertificateStore` relationship.
+- DKIM key generation lives in `DkimManager`, not in the runtime provider.
+  Providers consume keys rather than owning creation.
+- Future DKIM lifecycle: multiple selectors, rotation, scheduled key
+  replacement supported by design (directory-based storage per selector).
 
 ### Stage 3 — External modes and M365 (estimated: 4-5 days)
 

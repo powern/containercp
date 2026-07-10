@@ -55,6 +55,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/runtime/ServiceRole.cpp
     ${CMAKE_SOURCE_DIR}/libs/runtime/SiteRuntimeManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailAliasManager.cpp
+    ${CMAKE_SOURCE_DIR}/libs/mail/DkimManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailDomain.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailModuleState.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailDomainManager.cpp

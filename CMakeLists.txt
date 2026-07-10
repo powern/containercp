@@ -46,6 +46,7 @@ set(CONTAINERCP_SOURCES
     libs/jobs/JobExecutor.cpp
     libs/logger/Logger.cpp
     libs/mail/MailAliasManager.cpp
+    libs/mail/DkimManager.cpp
     libs/mail/MailDomain.cpp
     libs/mail/MailModuleState.cpp
     libs/mail/MailDomainManager.cpp

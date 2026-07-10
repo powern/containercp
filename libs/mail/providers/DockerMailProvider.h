@@ -36,12 +36,6 @@ public:
     std::string compose_dir() const;
     std::string config_dir() const;
 
-    // Generate DKIM key pair for a domain.
-    // Returns the DKIM DNS record text (TXT value).
-    static std::string generate_dkim_key(const std::string& dkim_dir,
-                                          const std::string& domain_name,
-                                          const std::string& selector);
-
 private:
     std::string compose_project_flag() const;
     core::OperationResult write_docker_compose();
