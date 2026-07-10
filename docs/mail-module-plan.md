@@ -661,13 +661,18 @@ Local delivery works for `local-primary` mode.
 - Health response designed for evolution: `services[]`, `details{}`
 - Tests: 5 HealthRegistry tests
 
-### Stage 4c — Recovery and health integration (planned)
+### Stage 4c — Mail health API (completed)
+
+- `GET /api/mail/health` — dedicated mail health endpoint
+- Serializes the generic `HealthReport` model (no Mail-specific JSON)
+- Response designed for evolution: `status`, `services[]`, `details{}`
+- Details include module state, domain/mailbox/alias counts
+
+### Stage 4d — Recovery and health integration (planned)
 
 - MailHealthMonitor — periodic health checks
-- GET /api/mail/health — dedicated mail health endpoint
 - Integration with RecoveryManager (reload/recreate mail stack)
 - MX record validation (DNS lookup)
-- DKIM DNS records in Domain module
 - API: POST /api/mail/recover, POST /api/mail/reload
 - Tests: health check failures, recovery integration
 

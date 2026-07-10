@@ -48,10 +48,25 @@ ServiceRegistry::ServiceRegistry()
             runtime::HealthReport r;
             r.status = "ok";
             r.services.push_back({"module", "ok", "inactive"});
+            r.details = "{\"module_state\":\"inactive\"}";
             return r;
         }
-        // Module is active — report per-service health
-        return mail_provider_.check_health();
+        auto report = mail_provider_.check_health();
+
+        // Enrich with module-level operational data
+        uint64_t domain_count = 0, mailbox_count = 0, alias_count = 0;
+        for (const auto& d : mail_.list()) {
+            if (d.enabled) domain_count++;
+        }
+        mailbox_count = static_cast<uint64_t>(mailboxes_.list().size());
+        alias_count = static_cast<uint64_t>(mail_aliases_.list().size());
+
+        report.details = "{\"module_state\":\"active\""
+            ",\"domain_count\":" + std::to_string(domain_count)
+            + ",\"mailbox_count\":" + std::to_string(mailbox_count)
+            + ",\"alias_count\":" + std::to_string(alias_count)
+            + "}";
+        return report;
     });
 
     auto loaded_nodes = storage_.load_nodes();

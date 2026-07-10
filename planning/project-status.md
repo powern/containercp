@@ -327,12 +327,19 @@
 | /api/health extended with module reports | ✅ | Backward-compatible with legacy status field |
 | Tests | ✅ | 5 HealthRegistry tests |
 
-### Stage 4c — Recovery and health integration (planned)
+### Stage 4c — Mail health API (implemented)
+
+| Task | Status | Notes |
+|------|--------|-------|
+| GET /api/mail/health endpoint | ✅ | Serializes generic HealthReport model |
+| Health report enriched with module details | ✅ | domain_count, mailbox_count, alias_count |
+| Response designed for evolution | ✅ | services[], details{} sections |
+
+### Stage 4d — Recovery and health integration (planned)
 
 | Task | Status | Notes |
 |------|--------|-------|
 | MailHealthMonitor | ⬜ | |
-| GET /api/mail/health | ⬜ | |
 | Integration with RecoveryManager | ⬜ | |
 | MX record validation | ⬜ | |
 
@@ -417,7 +424,7 @@
 | RC1 pass | 128/137 (9 stability deferred) |
 | RC2 validation | All items verified on real Debian 13 |
 | Bugs discovered during RC1 | 13 (all fixed) |
-| Current Epic | Mail Module Stage 4c — Recovery and Health Integration |
+| Current Epic | Mail Module Stage 4d — Recovery Integration |
 
 ---
 

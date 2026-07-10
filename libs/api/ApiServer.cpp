@@ -2124,6 +2124,42 @@ bool ApiServer::start() {
         return r;
     });
 
+    // GET /api/mail/health — mail module health report
+    // Serializes the generic HealthReport model (libs/runtime/).
+    // Response evolves with the HealthReport struct — no Mail-specific
+    // JSON construction here.
+    router_.add("GET", "/api/mail/health", [&s](const Request&) {
+        Response r;
+        auto report = s.health().check("mail");
+
+        std::ostringstream js;
+        js << "{\"success\":true,\"data\":{"
+           << "\"status\":\"" << JsonFormatter::escape(report.status) << "\"";
+
+        // Services array
+        if (!report.services.empty()) {
+            js << ",\"services\":[";
+            bool first_svc = true;
+            for (const auto& svc : report.services) {
+                if (!first_svc) js << ",";
+                first_svc = false;
+                js << "{\"name\":\"" << JsonFormatter::escape(svc.name) << "\""
+                   << ",\"status\":\"" << JsonFormatter::escape(svc.status) << "\""
+                   << ",\"message\":\"" << JsonFormatter::escape(svc.message) << "\"}";
+            }
+            js << "]";
+        }
+
+        // Module details (arbitrary JSON from the health check)
+        if (!report.details.empty()) {
+            js << ",\"details\":" << report.details;
+        }
+
+        js << "}}";
+        r.body = js.str();
+        return r;
+    });
+
     // POST /api/mail/activate — activate mail module
     router_.add("POST", "/api/mail/activate", [&s](const Request&) {
         Response r;

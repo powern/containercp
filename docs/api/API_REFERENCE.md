@@ -367,6 +367,7 @@ The `dns_record` value should be added as a TXT record at
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|
 | GET | `/api/mail/status` | Query mail module state | `MailDomainManager` |
+| GET | `/api/mail/health` | Mail module health report | `HealthRegistry` |
 | POST | `/api/mail/activate` | Activate the mail module | `MailDomainManager` |
 | POST | `/api/mail/deactivate` | Deactivate the mail module | `MailDomainManager` |
 
@@ -379,6 +380,39 @@ server configuration from the current data model.  Deactivating stops
 containers without deleting configuration data.
 
 Status response includes counts of configured domains, mailboxes, and aliases.
+
+### Health response
+
+`GET /api/mail/health` returns the generic `HealthReport` model:
+
+- `status` — aggregate: `"ok"`, `"degraded"`, or `"error"`
+- `services` — array of per-service status: `{"name","status","message"}`
+- `details` — arbitrary JSON with module-specific data (module state, counts)
+
+Example (active module, all services running):
+```json
+{
+  "success": true,
+  "data": {
+    "status": "ok",
+    "services": [
+      {"name": "postfix", "status": "ok", "message": "running"},
+      {"name": "dovecot", "status": "ok", "message": "running"},
+      {"name": "redis", "status": "ok", "message": "running"}
+    ],
+    "details": {
+      "module_state": "active",
+      "domain_count": 3,
+      "mailbox_count": 12,
+      "alias_count": 5
+    }
+  }
+}
+```
+
+The response structure is defined by the `HealthReport` model in
+`libs/runtime/`.  Future modules register their own health checks
+using the same model.
 
 ### 2.20 Mail — Regenerate
 
