@@ -157,7 +157,60 @@ directly via CommandExecutor (which it already has access to).
 
 ---
 
-## 7. Recommendation
+## 7. Bootstrap mode safety / production mode detection
+
+### What decides Bootstrap vs normal mode
+
+`StartupManager::needs_bootstrap()` checks two conditions (both must pass
+for normal mode):
+
+1. **`hostname` is not empty** — the admin server hostname must be
+   configured (in `SERVER_HOSTNAME` env var or
+   `/srv/containercp/server_hostname` file).
+
+2. **`setup_completed` flag is `"1"`** — the file
+   `/srv/containercp/setup_completed` must contain `"1"`.
+
+If either condition is false, the daemon enters bootstrap mode (runs
+the Setup Wizard on port 80).
+
+### What marks ContainerCP as initialized
+
+The system is considered initialized when:
+
+- The admin hostname has been configured (via the Setup Wizard,
+  which writes it to `/srv/containercp/server_hostname`).
+- The Setup Wizard marks setup as complete (writes `"1"` to
+  `/srv/containercp/setup_completed`).
+
+### Why initialized systems must not enter Bootstrap mode
+
+If an already-initialized system enters bootstrap mode:
+
+1. The bootstrap server tries to bind port 80.
+2. In production, the containercp-proxy container already owns port 80.
+3. `bind()` fails → bootstrap crashes.
+4. systemd restarts the daemon → same crash loop.
+
+This makes the system completely unreachable through the admin domain.
+
+### How recovery/proxy interacts with Bootstrap
+
+The `mark_setup_incomplete()` call was previously used in the proxy
+failure path in `main.cpp`.  This was dangerous because:
+
+- A transient proxy failure (e.g. Docker not ready yet, container
+  starting slowly) would permanently mark setup as incomplete.
+- On the next restart, the system would enter bootstrap mode and
+  crash-loop because port 80 is occupied.
+- RecoveryManager already handles proxy recovery at runtime.
+
+**Current rule:** proxy failure must NEVER trigger bootstrap mode.
+RecoveryManager handles proxy self-healing.  The `setup_completed`
+flag is only written by the Setup Wizard (Bootstrap), never by
+runtime startup/recovery code.
+
+## 8. Recommendation
 
 The architecture is ready for RecoveryManager implementation.
 

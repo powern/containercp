@@ -175,11 +175,13 @@ int main(int argc, char* argv[]) {
         log.error("SYSTEM", "Failed to ensure central proxy: " + proxy_result.message);
     }
 
-    // If proxy failed and we have no running proxy, go to bootstrap
+    // If proxy failed, log and continue in degraded mode.
+    // RecoveryManager will retry proxy recovery at runtime.
+    // Do NOT mark setup as incomplete — that would force bootstrap mode
+    // on next restart, creating a crash loop when port 80 is already in use.
     if (!proxy_result.success) {
-        log.warning("SYSTEM", "Proxy not available. Falling back to bootstrap mode.");
-        containercp::core::StartupManager::mark_setup_incomplete("/srv/containercp");
-        log.info("SYSTEM", "Restart to enter setup wizard.");
+        log.warning("SYSTEM", "Central proxy unavailable. "
+                    "RecoveryManager will retry automatically.");
     }
 
     containercp::daemon::DaemonApp daemon(services);
