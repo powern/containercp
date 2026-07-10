@@ -2059,6 +2059,20 @@ bool ApiServer::start() {
             r.body = "{\"success\":true,\"data\":{\"message\":\"Mail module already active\"}}";
             return r;
         }
+        // Apply configuration and start mail containers
+        auto cfg = s.mail_provider().apply_config(
+            s.mail().list(), s.mailboxes(), s.mail_aliases());
+        if (!cfg.success) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"Config failed: " + JsonFormatter::escape(cfg.message) + "\"}";
+            return r;
+        }
+        auto start = s.mail_provider().start();
+        if (!start.success) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"Start failed: " + JsonFormatter::escape(start.message) + "\"}";
+            return r;
+        }
         s.mail().set_module_state(mail::MailModuleState::Active);
         s.save();
         r.body = "{\"success\":true,\"data\":{\"message\":\"Mail module activated\"}}";
@@ -2072,9 +2086,34 @@ bool ApiServer::start() {
             r.body = "{\"success\":true,\"data\":{\"message\":\"Mail module already inactive\"}}";
             return r;
         }
+        auto stop = s.mail_provider().stop();
+        if (!stop.success) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"Stop failed: " + JsonFormatter::escape(stop.message) + "\"}";
+            return r;
+        }
         s.mail().set_module_state(mail::MailModuleState::Inactive);
         s.save();
         r.body = "{\"success\":true,\"data\":{\"message\":\"Mail module deactivated\"}}";
+        return r;
+    });
+
+    // POST /api/mail/regenerate — regenerate mail config
+    router_.add("POST", "/api/mail/regenerate", [&s](const Request&) {
+        Response r;
+        if (s.mail().module_state() != mail::MailModuleState::Active) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Mail module is not active\"}";
+            return r;
+        }
+        auto cfg = s.mail_provider().apply_config(
+            s.mail().list(), s.mailboxes(), s.mail_aliases());
+        if (!cfg.success) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(cfg.message) + "\"}";
+            return r;
+        }
+        r.body = "{\"success\":true,\"data\":{\"message\":\"Configuration regenerated\"}}";
         return r;
     });
 

@@ -29,6 +29,7 @@ ServiceRegistry::ServiceRegistry()
     , proxy_view_(logger_, reverse_proxies_, sites_, cert_store_, proxy_provider_, site_runtime_)
     , hosting_provider_(filesystem_, config_, php_versions_, runtime_, profiles_)
     , recovery_manager_(logger_, proxy_provider_, *this)
+    , mail_provider_(logger_, config_.data_root())
 {
     auto loaded_nodes = storage_.load_nodes();
     if (loaded_nodes.empty()) {
@@ -497,6 +498,10 @@ mail::MailboxManager& ServiceRegistry::mailboxes() {
 
 mail::MailAliasManager& ServiceRegistry::mail_aliases() {
     return mail_aliases_;
+}
+
+mail::MailProvider& ServiceRegistry::mail_provider() {
+    return mail_provider_;
 }
 
 auth::AuthUserManager& ServiceRegistry::auth_users() {

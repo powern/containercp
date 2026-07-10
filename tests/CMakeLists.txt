@@ -60,6 +60,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/mail/MailDomainManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailPasswordHasher.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailboxManager.cpp
+    ${CMAKE_SOURCE_DIR}/libs/mail/providers/DockerMailProvider.cpp
 )
 
 target_include_directories(containercp_tests PRIVATE

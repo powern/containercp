@@ -24,6 +24,7 @@
 #include "mail/MailDomainManager.h"
 #include "mail/MailAliasManager.h"
 #include "mail/MailboxManager.h"
+#include "mail/providers/DockerMailProvider.h"
 #include "php/PhpVersionManager.h"
 #include "runtime/PortManager.h"
 #include "runtime/RuntimeActionExecutor.h"
@@ -81,6 +82,7 @@ public:
     filesystem::Filesystem& filesystem();
     mail::MailboxManager& mailboxes();
     mail::MailAliasManager& mail_aliases();
+    mail::MailProvider& mail_provider();
     runtime::Runtime& runtime();
     runtime::PortManager& port_manager();
     runtime::SiteRuntimeManager& site_runtime();
@@ -151,6 +153,7 @@ private:
     proxy::ProxyViewService proxy_view_;
     provider::DockerComposeProvider hosting_provider_;
     core::RecoveryManager recovery_manager_;
+    mail::DockerMailProvider mail_provider_;
 };
 
 } // namespace containercp::core

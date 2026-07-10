@@ -347,12 +347,23 @@ States: `inactive` (default), `active`, `error`.
 
 The mail module is optional.  It is inactive by default.  Data (domains,
 mailboxes, aliases) can be configured in any state.  Activating the module
-prepares runtime resources (future stage).  Deactivating stops runtime
-resources without deleting configuration data.
+creates Docker containers (Postfix + Dovecot + Redis) and generates mail
+server configuration from the current data model.  Deactivating stops
+containers without deleting configuration data.
 
 Status response includes counts of configured domains, mailboxes, and aliases.
 
-### 2.19 Logs
+### 2.19 Mail — Regenerate
+
+| Method | Path | Purpose | Owner |
+|--------|------|---------|-------|
+| POST | `/api/mail/regenerate` | Regenerate mail server config and reload | `DockerMailProvider` |
+
+Regenerates Postfix `main.cf`, Dovecot `dovecot.conf`, virtual mailbox maps,
+and Dovecot passwd file from the current ContainerCP data model.  Requires
+the mail module to be active.  Returns error if module is inactive.
+
+### 2.20 Logs
 
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|
