@@ -281,6 +281,50 @@ core::OperationResult NginxProxyProvider::reload() {
     return {true, ""};
 }
 
+bool NginxProxyProvider::container_config_valid() const {
+    // Check network mode
+    {
+        std::string f = "/tmp/containercp-proxy-mode.txt";
+        std::system(("docker inspect " + proxy_name() + " --format '{{.HostConfig.NetworkMode}}' > " + f + " 2>/dev/null").c_str());
+        std::ifstream in(f);
+        std::string val;
+        std::getline(in, val);
+        std::remove(f.c_str());
+        if (val == "host") {
+            logger_.info("PROXY", "Validation failed: network mode is 'host', expected bridge");
+            return false;
+        }
+    }
+    // Check SSL mount
+    {
+        std::string f = "/tmp/containercp-proxy-ssl.txt";
+        std::system(("docker inspect " + proxy_name() + " --format '{{range .Mounts}}{{.Source}}{{end}}' > " + f + " 2>/dev/null").c_str());
+        std::ifstream in(f);
+        std::string val;
+        std::getline(in, val);
+        std::remove(f.c_str());
+        if (val.find(cfg_.data_root() + "/ssl") == std::string::npos) {
+            logger_.info("PROXY", "Validation failed: SSL mount missing");
+            return false;
+        }
+    }
+    // Check port mapping for 80
+    {
+        std::string f = "/tmp/containercp-proxy-port.txt";
+        std::system(("docker inspect " + proxy_name() + " --format '{{index .NetworkSettings.Ports \"80/tcp\"}}' > " + f + " 2>/dev/null").c_str());
+        std::ifstream in(f);
+        std::string val;
+        std::getline(in, val);
+        std::remove(f.c_str());
+        if (val.empty() || val.find("HostPort") == std::string::npos) {
+            logger_.info("PROXY", "Validation failed: port 80 mapping missing");
+            return false;
+        }
+    }
+    logger_.info("PROXY", "Container configuration is valid");
+    return true;
+}
+
 core::OperationResult NginxProxyProvider::ensure_central_proxy() {
     // Step 1: check if the container exists at all (running or not)
     bool exists = false;
@@ -297,79 +341,43 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
     if (exists) {
         logger_.info("PROXY", "Container " + proxy_name() + " exists");
 
-        if (central_proxy_running()) {
-            // Container is running — validate it
-            logger_.info("PROXY", "Container " + proxy_name() + " is running");
+        // Determine container state
+        bool running = central_proxy_running();
+        logger_.info("PROXY", "Container state: " + std::string(running ? "Running" : "Exited/stopped"));
 
-            std::string mode_file = "/tmp/containercp-proxy-mode.txt";
-            std::system(("docker inspect " + proxy_name() + " --format '{{.HostConfig.NetworkMode}}' > " + mode_file + " 2>/dev/null").c_str());
-            std::ifstream mode_in(mode_file);
-            std::string network_mode;
-            std::getline(mode_in, network_mode);
-            std::remove(mode_file.c_str());
+        // Validate configuration regardless of state (docker inspect works on stopped containers)
+        logger_.info("PROXY", "Running configuration validation...");
+        bool config_ok = container_config_valid();
 
-            bool needs_recreate = false;
-            if (network_mode == "host") {
-                logger_.info("PROXY", "Old proxy on host network, recreating");
-                needs_recreate = true;
-            }
+        if (running && config_ok) {
+            logger_.info("PROXY", "Central proxy already running and valid");
+            return {true, ""};
+        }
 
-            if (!needs_recreate) {
-                std::string ssl_file = "/tmp/containercp-proxy-ssl.txt";
-                std::system(("docker inspect " + proxy_name() + " --format '{{range .Mounts}}{{.Source}}{{end}}' > " + ssl_file + " 2>/dev/null").c_str());
-                std::ifstream ssl_in(ssl_file);
-                std::string mounts;
-                std::getline(ssl_in, mounts);
-                std::remove(ssl_file.c_str());
-                if (mounts.find(cfg_.data_root() + "/ssl") == std::string::npos) {
-                    logger_.info("PROXY", "SSL mount missing, recreating");
-                    needs_recreate = true;
-                }
-            }
-
-            if (!needs_recreate) {
-                std::string port_file = "/tmp/containercp-proxy-port.txt";
-                std::system(("docker inspect " + proxy_name() + " --format '{{index .NetworkSettings.Ports \"80/tcp\"}}' > " + port_file + " 2>/dev/null").c_str());
-                std::ifstream port_in(port_file);
-                std::string port_info;
-                std::getline(port_in, port_info);
-                std::remove(port_file.c_str());
-                if (port_info.empty() || port_info.find("HostPort") == std::string::npos) {
-                    logger_.info("PROXY", "Port mapping missing, recreating");
-                    needs_recreate = true;
-                }
-            }
-
-            if (needs_recreate) {
-                logger_.info("PROXY", "Recreating " + proxy_name());
-                std::system(("docker rm -f " + proxy_name() + " > /dev/null 2>&1").c_str());
-            } else {
-                logger_.info("PROXY", "Central proxy already running and valid");
-                return {true, ""};
-            }
-        } else {
-            // Container exists but is not running — try docker start first
-            logger_.info("PROXY", "Container " + proxy_name() + " exists but is not running, attempting docker start");
+        if (config_ok && !running) {
+            // Configuration is valid, container just needs to be started
+            logger_.info("PROXY", "Validation OK. Starting existing container...");
             int start_rc = std::system(("docker start " + proxy_name() + " > /dev/null 2>&1").c_str());
             if (start_rc == 0) {
-                // Wait for container to reach running state
                 for (int i = 0; i < 30; ++i) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(500));
                     if (central_proxy_running()) {
-                        logger_.info("PROXY", "docker start succeeded");
+                        logger_.info("PROXY", "Container started successfully");
                         return {true, "Container started"};
                     }
                 }
-                logger_.warning("PROXY", "docker start issued but container not yet running, proceeding to recreate");
+                logger_.warning("PROXY", "docker start timed out waiting for running state");
             } else {
-                logger_.warning("PROXY", "docker start failed, will recreate container");
+                logger_.warning("PROXY", "docker start command failed");
             }
-            // Start failed or timed out — remove and recreate
-            std::system(("docker rm -f " + proxy_name() + " > /dev/null 2>&1").c_str());
         }
+
+        // If we reach here, either config is invalid or start failed — recreate
+        logger_.info("PROXY", "Recreating container...");
+        std::system(("docker rm -f " + proxy_name() + " > /dev/null 2>&1").c_str());
     }
 
-    // At this point either container doesn't exist, was removed, or needs recreation
+    // Container doesn't exist or was removed — create fresh
     logger_.info("PROXY", "Creating central proxy container");
     fs_.create_directory(cfg_.data_root() + "/proxy/");
     fs_.create_directory(cfg_.data_root() + "/proxy/sites/");

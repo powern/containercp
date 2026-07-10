@@ -38,6 +38,7 @@ private:
     std::string config_path(const std::string& domain) const;
     std::string proxy_name() const;
     bool validate_nginx_config(const std::string& config_content) const;
+    bool container_config_valid() const;
 
     filesystem::Filesystem& fs_;
     config::Config& cfg_;
