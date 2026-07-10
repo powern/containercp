@@ -1,6 +1,5 @@
 #include "ProxyViewService.h"
 #include "api/JsonFormatter.h"
-#include "core/RecoveryManager.h"
 
 #include <sstream>
 #include <ctime>
@@ -42,6 +41,11 @@ void ProxyViewService::write_enriched(std::ostringstream& json,
 
     bool is_protected = (p.site_id == 0);
 
+    // Build allowed_actions list
+    std::string allowed = is_protected
+        ? "[\"open\",\"test\",\"sync\"]"
+        : "[\"open\",\"remove\"]";
+
     json << "{"
          << "\"id\":" << p.id
          << ",\"domain\":\"" << api::JsonFormatter::escape(p.domain)
@@ -55,6 +59,7 @@ void ProxyViewService::write_enriched(std::ostringstream& json,
          << ",\"https_enabled\":" << (https_enabled ? "true" : "false")
          << ",\"redirect_enabled\":" << (redirect_enabled ? "true" : "false")
          << ",\"protected\":" << (is_protected ? "true" : "false")
+         << ",\"allowed_actions\":" << allowed
          << "}";
 }
 
@@ -79,18 +84,33 @@ std::string ProxyViewService::build_enriched_json(const std::string& domain) con
     return json.str();
 }
 
-std::string ProxyViewService::build_health_json() const {
+std::string ProxyViewService::build_health_json(
+    bool recovery_running, bool recovery_in_progress,
+    std::time_t last_recovery_at,
+    const std::string& last_recovery_result) const {
+
     std::ostringstream json;
 
     bool running = proxy_provider_.central_proxy_running();
-    auto config_test = proxy_provider_.test_config();
+    auto config_test = proxy_provider_.last_test_result();
 
-    // Count entries by type
     int total = 0, system_count = 0, site_count = 0;
     for (const auto& p : proxies_.list()) {
         total++;
         if (p.site_id == 0) system_count++;
         else site_count++;
+    }
+
+    // Format last_recovery_at
+    std::string recovery_time_str;
+    if (last_recovery_at > 0) {
+        char buf[32];
+        struct tm tm_buf;
+        gmtime_r(&last_recovery_at, &tm_buf);
+        std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
+        recovery_time_str = "\"" + std::string(buf) + "\"";
+    } else {
+        recovery_time_str = "null";
     }
 
     json << "{"
@@ -105,6 +125,13 @@ std::string ProxyViewService::build_health_json() const {
          << "\"success\":" << (config_test.success ? "true" : "false")
          << ",\"message\":\"" << api::JsonFormatter::escape(config_test.message)
          << "\"}"
+         << "}"
+         << ",\"recovery\":{"
+         << "\"manager_running\":" << (recovery_running ? "true" : "false")
+         << ",\"recovery_in_progress\":" << (recovery_in_progress ? "true" : "false")
+         << ",\"last_recovery_at\":" << recovery_time_str
+         << ",\"last_recovery_result\":\"" << api::JsonFormatter::escape(last_recovery_result)
+         << "\",\"scope\":\"since_daemon_start\""
          << "}"
          << ",\"entries\":{"
          << "\"total\":" << total

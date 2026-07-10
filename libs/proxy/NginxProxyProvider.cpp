@@ -423,24 +423,49 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
     return {true, "Central proxy created (waiting for container)"};
 }
 
-core::OperationResult NginxProxyProvider::test_config() const {
+core::OperationResult NginxProxyProvider::test_config() {
+    std::lock_guard<std::mutex> lock(config_cache_mutex_);
     if (!central_proxy_running()) {
-        return {false, "Proxy container is not running"};
+        cached_test_ = {false, "Proxy container is not running"};
+        return cached_test_;
     }
-    // Use attach_certificate's validate approach: test with a known config path
-    std::string test_cmd = "docker exec " + proxy_name() + " nginx -t 2>&1";
-    std::string out_file = "/tmp/containercp-nginx-test.txt";
-    std::system((test_cmd + " > " + out_file + " 2>/dev/null").c_str());
-    std::ifstream in(out_file);
-    std::string result;
-    std::getline(in, result);
-    std::remove(out_file.c_str());
-    if (result.find("test failed") != std::string::npos || result.find("emerg") != std::string::npos) {
-        logger_.warning("PROXY", "nginx config test failed: " + result);
-        return {false, "nginx configuration test failed: " + result};
+    auto result = executor_.run({
+        "docker", "exec", proxy_name(), "nginx", "-t"
+    });
+    bool ok = (result.exit_code == 0);
+    if (ok) {
+        logger_.info("PROXY", "nginx config test passed");
+        cached_test_ = {true, "nginx configuration is valid"};
+    } else {
+        // Sanitize: use the last line of stderr as the error, avoid leaking paths
+        std::string err = result.err;
+        // Strip file paths from error message (e.g. "/etc/nginx/nginx.conf:" -> "nginx.conf:")
+        std::string sanitized;
+        size_t pos = 0;
+        while (pos < err.size()) {
+            auto slash = err.find('/', pos);
+            if (slash == std::string::npos || slash > err.size() - 2) break;
+            auto space = err.find(' ', slash);
+            auto colon = err.find(':', slash);
+            size_t end = (space < colon) ? space : colon;
+            if (end != std::string::npos && end > slash) {
+                sanitized += err.substr(pos, slash - pos) + err.substr(end);
+                pos = err.find('\n', end);
+                if (pos == std::string::npos) break;
+                ++pos;
+            } else {
+                sanitized += err[pos++];
+            }
+        }
+        logger_.warning("PROXY", "nginx config test failed");
+        cached_test_ = {false, "nginx configuration test failed"};
     }
-    logger_.info("PROXY", "nginx config test passed");
-    return {true, "nginx configuration is valid"};
+    return cached_test_;
+}
+
+core::OperationResult NginxProxyProvider::last_test_result() const {
+    std::lock_guard<std::mutex> lock(config_cache_mutex_);
+    return cached_test_;
 }
 
 core::OperationResult NginxProxyProvider::remove_central_proxy() {

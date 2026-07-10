@@ -19,7 +19,12 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <mutex>
+
 namespace containercp::api {
+
+// Serialize conflicting proxy management operations (reload, sync, recover)
+static std::mutex proxy_op_mutex;
 
 // Simple JSON value extraction
 static std::string json_extract(const std::string& json, const std::string& key) {
@@ -268,16 +273,29 @@ bool ApiServer::start() {
         return r;
     });
 
-    // GET /api/proxy/health — global proxy health status
+    // GET /api/proxy/health — global proxy health status (lightweight, no docker exec)
     router_.add("GET", "/api/proxy/health", [&s](const Request&) {
         Response r;
-        r.body = "{\"success\":true,\"data\":" + s.proxy_view().build_health_json() + "}";
+        auto rec_status = s.recovery().status();
+        r.body = "{\"success\":true,\"data\":"
+                 + s.proxy_view().build_health_json(
+                     rec_status.manager_running,
+                     rec_status.recovery_in_progress,
+                     rec_status.last_recovery_at,
+                     rec_status.last_recovery_result)
+                 + "}";
         return r;
     });
 
     // POST /api/proxy/test — validate nginx configuration
     router_.add("POST", "/api/proxy/test", [&s](const Request&) {
         Response r;
+        if (!proxy_op_mutex.try_lock()) {
+            r.status_code = 409;
+            r.body = "{\"success\":false,\"error\":\"Another proxy operation is in progress\"}";
+            return r;
+        }
+        std::lock_guard<std::mutex> lock(proxy_op_mutex, std::adopt_lock);
         auto result = s.proxy_provider().test_config();
         if (result.success) {
             r.body = "{\"success\":true,\"data\":{\"message\":\"" +
@@ -293,6 +311,12 @@ bool ApiServer::start() {
     // POST /api/proxy/reload — reload nginx configuration
     router_.add("POST", "/api/proxy/reload", [&s](const Request&) {
         Response r;
+        if (!proxy_op_mutex.try_lock()) {
+            r.status_code = 409;
+            r.body = "{\"success\":false,\"error\":\"Another proxy operation is in progress\"}";
+            return r;
+        }
+        std::lock_guard<std::mutex> lock(proxy_op_mutex, std::adopt_lock);
         // Validate before reload
         auto test = s.proxy_provider().test_config();
         if (!test.success) {
@@ -315,6 +339,12 @@ bool ApiServer::start() {
     // POST /api/proxy/sync — regenerate all HTTPS proxy configs
     router_.add("POST", "/api/proxy/sync", [&s](const Request&) {
         Response r;
+        if (!proxy_op_mutex.try_lock()) {
+            r.status_code = 409;
+            r.body = "{\"success\":false,\"error\":\"Another proxy operation is in progress\"}";
+            return r;
+        }
+        std::lock_guard<std::mutex> lock(proxy_op_mutex, std::adopt_lock);
         s.sync_all_https_configs();
         r.body = "{\"success\":true,\"data\":{\"message\":\"HTTPS configs synced\"}}";
         return r;
@@ -1280,6 +1310,12 @@ bool ApiServer::start() {
         } else if (type == "proxy") {
             auto* p = s.reverse_proxies().find_by_domain(name);
             if (!p) { r.body = "{\"success\":false,\"error\":\"Not found\"}"; return r; }
+            // Protect system/admin proxy entries (site_id == 0)
+            if (p->site_id == 0) {
+                r.status_code = 403;
+                r.body = "{\"success\":false,\"error\":\"System proxy entry cannot be removed\"}";
+                return r;
+            }
             // Remove nginx config file first, BEFORE removing the record
             auto remove_result = s.proxy_provider().remove_proxy(name);
             if (!remove_result.success) {

@@ -7,8 +7,10 @@
 #include "config/Config.h"
 #include "filesystem/Filesystem.h"
 #include "logger/Logger.h"
+#include "runtime/CommandExecutor.h"
 #include "ssl/SslCertificateManager.h"
 
+#include <mutex>
 #include <string>
 
 namespace containercp::proxy {
@@ -33,13 +35,19 @@ public:
     core::OperationResult ensure_central_proxy();
     core::OperationResult remove_central_proxy();
     bool central_proxy_running() const;
-    core::OperationResult test_config() const;
+    core::OperationResult test_config();
+    core::OperationResult last_test_result() const;
 
 private:
     std::string config_path(const std::string& domain) const;
     std::string proxy_name() const;
     bool validate_nginx_config(const std::string& config_content) const;
     bool container_config_valid() const;
+
+    mutable std::mutex operation_mutex_;
+    mutable std::mutex config_cache_mutex_;
+    mutable core::OperationResult cached_test_{false, "Not tested since daemon start"};
+    runtime::CommandExecutor executor_;
 
     filesystem::Filesystem& fs_;
     config::Config& cfg_;

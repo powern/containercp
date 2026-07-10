@@ -26,7 +26,8 @@ public:
         return {false, "not implemented"};
     }
     // Validate the proxy configuration (e.g. nginx -t). Returns success/failure.
-    virtual core::OperationResult test_config() const { return {false, "not implemented"}; }
+    virtual core::OperationResult test_config() { return {false, "not implemented"}; }
+    virtual core::OperationResult last_test_result() const { return {false, "not tested"}; }
 
     virtual core::OperationResult detach_certificate(const std::string& domain) {
         (void)domain;

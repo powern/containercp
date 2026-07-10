@@ -8,6 +8,7 @@
 #include "ssl/CertificateStore.h"
 
 #include <cstdint>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -34,7 +35,10 @@ public:
     std::string build_enriched_json(const std::string& domain) const;
 
     // Build health JSON for the global proxy health endpoint.
-    std::string build_health_json() const;
+    // Recovery state is passed from RecoveryManager (avoids circular dependency).
+    std::string build_health_json(bool recovery_running, bool recovery_in_progress,
+                                  std::time_t last_recovery_at,
+                                  const std::string& last_recovery_result) const;
 
 private:
     void write_enriched(std::ostringstream& json, const ReverseProxy& p) const;

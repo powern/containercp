@@ -124,9 +124,9 @@ private:
     access::LocalSftpProvider access_provider_;
     proxy::ReverseProxyManager reverse_proxies_;
     proxy::NginxProxyProvider proxy_provider_;
-    proxy::ProxyViewService proxy_view_;
     ssl::SslCertificateManager ssl_;
     ssl::CertificateStore cert_store_;
+    proxy::ProxyViewService proxy_view_;
     domain::DomainViewService domain_view_;
     ssl::HTTP01ChallengeProvider http01_challenge_;
     std::shared_ptr<ssl::LetsEncryptProvider> cert_provider_;
