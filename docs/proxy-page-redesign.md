@@ -202,7 +202,7 @@ Every action calls an existing backend method:
   endpoints, show progress toast, refresh page on completion
 - Provider column removed (was always "nginx")
 
-### Stage 1 Polish (UX improvements)
+### Stage 1 Polish Final (UX improvements)
 
 - **Recovery info in health card**: Recovery Manager status (Running/Stopped),
   recovery in progress indicator, last recovery timestamp, last recovery
@@ -220,6 +220,16 @@ Every action calls an existing backend method:
 - **Button feedback**: Each button shows action-specific text while running
   (e.g. "Testing...", "Reloading...").  Buttons are disabled during the
   operation and the `_proxyActionPending` flag prevents concurrent clicks.
+- **Loading guard fix**: `p._loading` always cleared on error (API calls
+  in separate try block before rendering).
+- **All buttons disabled during operation**: `setProxyButtonsEnabled()`
+  disables Test/Reload/Sync/Recover while any proxy action is running.
+- **Health column → Backend**: Column renamed from "Health" to "Backend",
+  displays "Not checked".  Accurate until real backend probing is added.
+- **nginx version**: One-shot `docker exec nginx -v` on first health fetch,
+  cached for daemon lifetime.  Displayed as "nginx 1.27.x" in Global Health.
+- **Entry badges**: Proxy entries summary uses individual badges
+  ("3 Total", "1 System", "2 Sites") instead of inline text.
 
 ### Final page layout (approximate)
 

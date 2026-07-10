@@ -1,6 +1,7 @@
 #include "ProxyViewService.h"
 #include "api/JsonFormatter.h"
 
+#include <fstream>
 #include <sstream>
 #include <ctime>
 
@@ -94,6 +95,25 @@ std::string ProxyViewService::build_health_json(
     bool running = proxy_provider_.central_proxy_running();
     auto config_test = proxy_provider_.last_test_result();
 
+    // Detect nginx version via docker exec (one-shot, cached for daemon lifetime)
+    static std::string cached_version;
+    if (cached_version.empty() && running) {
+        std::string vf = "/tmp/containercp-nginx-version.txt";
+        std::system(("docker exec containercp-proxy nginx -v 2> " + vf).c_str());
+        std::ifstream vin(vf);
+        std::string vline;
+        std::getline(vin, vline);
+        std::remove(vf.c_str());
+        auto vp = vline.find("nginx/");
+        if (vp != std::string::npos) {
+            vp += 6;
+            while (vp < vline.size() && ((vline[vp] >= '0' && vline[vp] <= '9') || vline[vp] == '.')) {
+                cached_version += vline[vp++];
+            }
+        }
+        if (cached_version.empty()) cached_version = "?";
+    }
+
     int total = 0, system_count = 0, site_count = 0;
     for (const auto& p : proxies_.list()) {
         total++;
@@ -121,7 +141,8 @@ std::string ProxyViewService::build_health_json(
          << "}"
          << ",\"proxy\":{"
          << "\"provider\":\"nginx\""
-         << ",\"config_test\":{"
+         << ",\"version\":\"" << api::JsonFormatter::escape(cached_version)
+         << "\",\"config_test\":{"
          << "\"success\":" << (config_test.success ? "true" : "false")
          << ",\"message\":\"" << api::JsonFormatter::escape(config_test.message)
          << "\"}"

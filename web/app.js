@@ -850,16 +850,21 @@ async function loadSsl(p) {
 
 /* ===== PROXY ===== */
 async function loadProxy(p) {
+  // Prevent duplicate page builds while refreshing
+  if (p._loading) return;
+  p._loading = true;
+  let proxyData, healthData;
   try {
-    // Prevent duplicate page builds while refreshing
-    if (p._loading) return;
-    p._loading = true;
-
-    const [proxyData, healthData] = await Promise.all([
+    [proxyData, healthData] = await Promise.all([
       api('/api/proxy'),
       api('/api/proxy/health')
     ]);
+  } catch(e) {
     p._loading = false;
+    p.innerHTML = '<div class="empty-state">Failed to load proxy</div>';
+    return;
+  }
+  p._loading = false;
 
     const health = healthData.data || {};
     const container = health.container || {};
@@ -900,20 +905,28 @@ async function loadProxy(p) {
         <button class="btn btn-sm btn-primary" onclick="proxyAction('recover')" id="proxy-btn-recover">Recover</button>
       </div>`;
 
+    const entryBadges = () => {
+      let html = '';
+      if (entries.total) html += `<span class="badge badge-info" style="margin-right:4px;">${entries.total} Total</span>`;
+      if (entries.system) html += `<span class="badge badge-info" style="margin-right:4px;">${entries.system} System</span>`;
+      if (entries.site) html += `<span class="badge badge-info">${entries.site} Sites</span>`;
+      return html || '0';
+    };
+
     p.innerHTML = `
       <div class="page-header"><h1>Reverse Proxy</h1></div>
       <div class="card" style="margin-bottom:12px;" id="proxy-health-card">
         <h3 style="margin-bottom:8px;">Global Health</h3>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px;">
           <div><div style="font-size:11px;color:var(--text3);">Container</div><div style="margin-top:2px;">${stateBadge(container.state)}</div></div>
-          <div><div style="font-size:11px;color:var(--text3);">Provider</div><div style="margin-top:2px;">nginx</div></div>
+          <div><div style="font-size:11px;color:var(--text3);">Version</div><div style="margin-top:2px;font-size:12px;color:var(--text2);">nginx ${esc(proxyInfo.version||'?')}</div></div>
           <div><div style="font-size:11px;color:var(--text3);">Configuration</div><div style="margin-top:2px;">${testBadge(configTest)}</div></div>
           <div><div style="font-size:11px;color:var(--text3);">Config Detail</div><div style="margin-top:2px;font-size:12px;color:var(--text2);word-break:break-word;">${esc(configTest.message||'Not tested since daemon start')}</div></div>
           <div><div style="font-size:11px;color:var(--text3);">Recovery Manager</div><div style="margin-top:2px;">${badge(recoveryInfo.manager_running, 'badge-ok', 'badge-err')}</div></div>
           <div><div style="font-size:11px;color:var(--text3);">Recovery In Progress</div><div style="margin-top:2px;">${badge(recoveryInfo.recovery_in_progress, 'badge-warn', 'badge-info')}</div></div>
           <div><div style="font-size:11px;color:var(--text3);">Last Recovery</div><div style="margin-top:2px;font-size:12px;color:var(--text2);">${fmtTime(recoveryInfo.last_recovery_at)}</div></div>
           <div><div style="font-size:11px;color:var(--text3);">Last Result</div><div style="margin-top:2px;">${recoveryResultBadge(recoveryInfo.last_recovery_result)}</div></div>
-          <div><div style="font-size:11px;color:var(--text3);">Proxy Entries</div><div style="margin-top:2px;">${entries.total||0} total (${entries.system||0} system, ${entries.site||0} site)</div></div>
+          <div><div style="font-size:11px;color:var(--text3);">Proxy Entries</div><div style="margin-top:4px;">${entryBadges()}</div></div>
         </div>
         <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">${actionBtns}</div>
       </div>`;
@@ -932,7 +945,7 @@ async function loadProxy(p) {
           const m={'active':'badge-ok','disabled':'badge-err','error':'badge-warn'};
           return `<span class="badge ${m[r.configured_state]||'badge-info'}">${esc(r.configured_state)}</span>`;
         }},
-        {label:'Health',html:()=>'<span class="badge badge-info">Not tested</span>'},
+        {label:'Backend',html:()=>'<span class="badge badge-info">Not checked</span>'},
         {label:'Actions',html:r=>{
           let acts = `<button class="btn-icon" onclick="window.open('http://${esc(r.domain)}','_blank')" title="Open">&#8599;</button>`;
           if (r.site_id > 0) acts += `<button class="btn-icon" onclick="navigate('site-detail',${r.site_id})" title="View site">&#128065;</button>`;
@@ -950,14 +963,27 @@ async function loadProxy(p) {
 
 let _proxyActionPending = false;
 
+function setProxyButtonsEnabled(enabled) {
+  for (const id of ['proxy-btn-test', 'proxy-btn-reload', 'proxy-btn-sync', 'proxy-btn-recover']) {
+    const btn = document.getElementById(id);
+    if (btn) btn.disabled = !enabled;
+  }
+}
+
+function setProxyButtonText(action) {
+  const labels = {'test':'Testing...','reload':'Reloading...','sync':'Syncing...','recover':'Recovering...'};
+  for (const [a, label] of Object.entries(labels)) {
+    const btn = document.getElementById('proxy-btn-' + a);
+    if (btn) btn.textContent = (a === action) ? label : {test:'Test',reload:'Reload',sync:'Sync',recover:'Recover'}[a];
+  }
+}
+
 async function proxyAction(action) {
   if (_proxyActionPending) return;
   _proxyActionPending = true;
 
-  const btn = document.getElementById('proxy-btn-' + action);
-  const labels = {'test':'Testing...','reload':'Reloading...','sync':'Syncing...','recover':'Recovering...'};
-
-  if (btn) { btn.disabled = true; btn.textContent = labels[action]||'...'; }
+  setProxyButtonsEnabled(false);
+  setProxyButtonText(action);
 
   try {
     const res = await apiPost('/api/proxy/' + action, {});
@@ -972,25 +998,8 @@ async function proxyAction(action) {
 
   _proxyActionPending = false;
   // Refresh health card and proxy entries without full page reload
-  try {
-    const [newProxy, newHealth] = await Promise.all([
-      api('/api/proxy'),
-      api('/api/proxy/health')
-    ]);
-
-    // Update health card
-    const card = document.getElementById('proxy-health-card');
-    if (card) {
-      // Re-call loadProxy to rebuild the view with fresh data
-      // Store data temporarily to avoid re-fetch
-      const p = document.getElementById('page');
-      if (p && !p._loading) loadProxy(p);
-    }
-  } catch(e) {
-    // If refresh fails, just reload the page
-    const p = document.getElementById('page');
-    if (p) loadProxy(p);
-  }
+  const p = document.getElementById('page');
+  if (p && !p._loading) loadProxy(p);
 }
 
 async function removeProxy(domain) {
