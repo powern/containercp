@@ -126,7 +126,6 @@ private:
     proxy::NginxProxyProvider proxy_provider_;
     ssl::SslCertificateManager ssl_;
     ssl::CertificateStore cert_store_;
-    proxy::ProxyViewService proxy_view_;
     domain::DomainViewService domain_view_;
     ssl::HTTP01ChallengeProvider http01_challenge_;
     std::shared_ptr<ssl::LetsEncryptProvider> cert_provider_;
@@ -143,6 +142,7 @@ private:
     runtime::PortManager port_manager_;
     runtime::RuntimeActionExecutor runtime_action_executor_;
     runtime::SiteRuntimeManager site_runtime_;
+    proxy::ProxyViewService proxy_view_;
     provider::DockerComposeProvider hosting_provider_;
     core::RecoveryManager recovery_manager_;
 };

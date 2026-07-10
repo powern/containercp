@@ -942,7 +942,11 @@ async function loadProxy(p) {
           const m={'active':'badge-ok','disabled':'badge-err','error':'badge-warn'};
           return `<span class="badge ${m[r.configured_state]||'badge-info'}">${esc(r.configured_state)}</span>`;
         }},
-        {label:'Backend',html:()=>'<span class="badge badge-info">Not checked</span>'},
+        {label:'Backend',html:r=>{
+          const m={'Running':'badge-ok','Active':'badge-ok','Healthy':'badge-ok','Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn','Error':'badge-err','Unknown':'badge-info','Missing':'badge-err'};
+          if (r.backend_health === 'Admin UI') return '<span class="badge badge-info">Admin UI</span>';
+          return `<span class="badge ${m[r.backend_health]||'badge-info'}">${esc(r.backend_health)}</span>`;
+        }},
         {label:'Actions',html:r=>{
           let acts = `<button class="btn-icon" onclick="window.open('http://${esc(r.domain)}','_blank')" title="Open">&#8599;</button>`;
           if (r.site_id > 0) acts += `<button class="btn-icon" onclick="navigate('site-detail',${r.site_id})" title="View site">&#128065;</button>`;

@@ -11,12 +11,14 @@ ProxyViewService::ProxyViewService(logger::Logger& logger,
                                    ReverseProxyManager& proxies,
                                    site::SiteManager& sites,
                                    ssl::CertificateStore& cert_store,
-                                   NginxProxyProvider& proxy_provider)
+                                   NginxProxyProvider& proxy_provider,
+                                   runtime::SiteRuntimeManager& site_runtime)
     : logger_(logger)
     , proxies_(proxies)
     , sites_(sites)
     , cert_store_(cert_store)
     , proxy_provider_(proxy_provider)
+    , site_runtime_(site_runtime)
 {
 }
 
@@ -42,6 +44,21 @@ void ProxyViewService::write_enriched(std::ostringstream& json,
 
     bool is_protected = (p.site_id == 0);
 
+    // Backend health from SiteRuntimeManager (reuses existing status logic)
+    std::string backend_health;
+    if (p.site_id == 0) {
+        backend_health = "Admin UI";
+    } else if (site) {
+        try {
+            auto rt = site_runtime_.get_status(p.site_id, site->domain);
+            backend_health = rt.web.status;
+        } catch (...) {
+            backend_health = "Unknown";
+        }
+    } else {
+        backend_health = "Missing";
+    }
+
     // Build allowed_actions list
     std::string allowed = is_protected
         ? "[\"open\",\"test\",\"sync\"]"
@@ -53,9 +70,9 @@ void ProxyViewService::write_enriched(std::ostringstream& json,
          << "\",\"entry_type\":\"" << (is_protected ? "system" : "site")
          << "\",\"site_id\":" << p.site_id
          << ",\"site_name\":\"" << api::JsonFormatter::escape(site_name)
-         << "\",\"upstream\":\"" << api::JsonFormatter::escape(p.upstream)
+         << ",\"upstream\":\"" << api::JsonFormatter::escape(p.upstream)
          << "\",\"configured_state\":\"" << api::JsonFormatter::escape(p.status)
-         << "\",\"backend_health\":\"unknown\""
+         << "\",\"backend_health\":\"" << api::JsonFormatter::escape(backend_health)
          << ",\"http_enabled\":true"
          << ",\"https_enabled\":" << (https_enabled ? "true" : "false")
          << ",\"redirect_enabled\":" << (redirect_enabled ? "true" : "false")

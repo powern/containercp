@@ -260,26 +260,36 @@ Every action calls an existing backend method:
 | # | Issue | Resolution |
 |---|-------|-----------|
 | 1 | Configuration state contradiction | Fixed: when `last_test_result()` defaults to `{false, "Not tested..."}`, the frontend checks the message content and shows "Not tested" badge instead of "Failed". Only an explicit failed test shows "Failed". |
-| 2 | Backend column (placeholder) | Column renamed from "Health" to "Backend" with "Not checked" text. This is a deliberate placeholder for future backend probing. A probe would perform `HEAD /` through the Docker network with timeout and display Healthy/Down/Timeout. |
-| 3 | Future backend probe | Technically feasible: `docker exec containercp-proxy curl -sI --connect-timeout 5 http://site-3-web:80/` from the nginx container. RuntimeActionExecutor could perform this. Recommended for Stage 2 or a future Observability module. |
+| 2 | Backend column | Fixed: Backend status now reuses `SiteRuntimeManager::get_status()` from the Sites runtime module. Site proxy entries show the web service runtime status (Running, Stopped, Unhealthy, etc.). Admin entries (site_id=0) show "Admin UI". No duplicate runtime logic — same `docker compose ps` + `docker inspect` pipeline used by the Sites page. |
 | 4 | Type / Site column duplication | Fixed: now shows "Admin Panel" for system entries (site_id=0) and site owner name for site entries. No longer duplicates the Domain column. |
 | 5 | Recovery labels | Changed: "Yes" → "Running", "No" → "Idle" (Recovery In Progress), "None" → "Never" (Last Result). More user-friendly and operationally descriptive. |
 | 6 | Final UX review | Configuration/Config Detail consistency, Recovery Manager labels, Type/Site column deduplication, badge colors reviewed. All resolved in commit `b38b7fa`. |
 
-### Backend column future design
+### Backend column (Stage 1 implementation)
 
-The Backend column is a placeholder for real upstream health probing.
+The Backend column reuses the existing Sites runtime status via
+`SiteRuntimeManager::get_status()`.  For each proxy entry with a
+valid `site_id`, the web service status from the site's Docker
+Compose project is displayed.  Possible values:
 
-A future implementation would:
+- Running
+- Stopped
+- Unhealthy
+- Starting
+- Error
+- Unknown
+- Missing (site_id references a non-existent site)
+- Admin UI (system/admin proxy entries with site_id=0)
 
-1. Perform `HEAD /` or `GET /` through the Docker network to each upstream
-   (e.g. `http://site-3-web:80/`), with a short timeout (e.g. 5 seconds).
-2. Map results: HTTP 2xx/3xx → "Healthy", connection refused → "Down",
-   timeout → "Timeout".
-3. The probe could use `RuntimeActionExecutor` or `CommandExecutor`
-   from inside the nginx proxy container via `docker exec`.
-4. Cache results with a TTL (e.g. 60 seconds) to avoid hammering backends.
-5. This is explicitly **Stage 2 / deferred** — not implemented yet.
+No duplicate runtime logic — the same `docker compose ps` + `docker inspect`
+pipeline used by the Sites page is reused.
+
+### Future HTTP probing (deferred)
+
+A future enhancement could perform lightweight `HEAD /` probes through
+the Docker network to detect whether the upstream is actually serving
+HTTP, beyond just the container being running.  This is explicitly
+Stage 2 / deferred.
 
 ### Deferred (Stage 2)
 

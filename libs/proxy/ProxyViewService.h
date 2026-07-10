@@ -4,6 +4,7 @@
 #include "logger/Logger.h"
 #include "proxy/ReverseProxyManager.h"
 #include "proxy/NginxProxyProvider.h"
+#include "runtime/SiteRuntimeManager.h"
 #include "site/SiteManager.h"
 #include "ssl/CertificateStore.h"
 
@@ -26,7 +27,8 @@ public:
                      ReverseProxyManager& proxies,
                      site::SiteManager& sites,
                      ssl::CertificateStore& cert_store,
-                     NginxProxyProvider& proxy_provider);
+                     NginxProxyProvider& proxy_provider,
+                     runtime::SiteRuntimeManager& site_runtime);
 
     // Build enriched JSON array for all proxy entries.
     std::string build_enriched_json() const;
@@ -48,6 +50,7 @@ private:
     site::SiteManager& sites_;
     ssl::CertificateStore& cert_store_;
     NginxProxyProvider& proxy_provider_;
+    runtime::SiteRuntimeManager& site_runtime_;
 };
 
 } // namespace containercp::proxy
