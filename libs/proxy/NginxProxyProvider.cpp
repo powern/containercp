@@ -68,11 +68,18 @@ static std::string detect_host_gateway() {
 // ServiceRegistry::start()).
 
 bool NginxProxyProvider::central_proxy_running() const {
-    std::string cmd = "docker inspect " + proxy_name() + " > /dev/null 2>&1";
-    int rc = std::system(cmd.c_str());
-    if (rc == -1) return false;
-    int exit_code = WEXITSTATUS(rc);
-    return exit_code == 0;
+    // Check if the container exists AND is actually in "running" state.
+    // docker inspect with >/dev/null returns 0 even for Exited containers,
+    // so we must check .State.Running explicitly.
+    std::string out_file = "/tmp/containercp-proxy-status.txt";
+    std::string cmd = "docker inspect --format '{{.State.Running}}' " + proxy_name()
+                    + " 2>/dev/null > " + out_file;
+    std::system(cmd.c_str());
+    std::ifstream in(out_file);
+    std::string state;
+    std::getline(in, state);
+    std::remove(out_file.c_str());
+    return state == "true";
 }
 
 core::OperationResult NginxProxyProvider::create_proxy(const ReverseProxy& proxy) {

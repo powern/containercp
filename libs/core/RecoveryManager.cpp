@@ -41,39 +41,49 @@ bool RecoveryManager::is_proxy_healthy() {
 }
 
 void RecoveryManager::check_loop() {
+    logger_.info("RECOVERY", "check_loop entered");
     while (running_) {
-        std::this_thread::sleep_for(std::chrono::seconds(CHECK_INTERVAL_SEC));
+        logger_.info("RECOVERY", "Health check tick (fail_count="
+                     + std::to_string(fail_count_) + ")");
+        bool healthy = is_proxy_healthy();
+        logger_.info("RECOVERY", "central_proxy_running() returned "
+                     + std::string(healthy ? "true" : "false")
+                     + " for container containercp-proxy");
         if (!running_) break;
 
-        if (is_proxy_healthy()) {
+        if (healthy) {
             if (fail_count_ > 0) {
                 logger_.info("RECOVERY", "Proxy healthy again, resetting failure counter");
                 fail_count_ = 0;
             }
-            continue;
+        } else {
+            logger_.warning("RECOVERY", "Proxy unhealthy (fail_count="
+                           + std::to_string(fail_count_ + 1) + ")");
+
+            if (fail_count_ >= MAX_RETRIES) {
+                logger_.error("RECOVERY",
+                    "Proxy recovery failed " + std::to_string(MAX_RETRIES)
+                    + " times. Entering cooldown for " + std::to_string(COOLDOWN_SEC) + "s. "
+                    + "Manual intervention may be required. "
+                    + "Recovery commands: systemctl restart containercpd, "
+                    + "docker rm -f containercp-proxy && systemctl restart containercpd");
+                std::this_thread::sleep_for(std::chrono::seconds(COOLDOWN_SEC));
+                fail_count_ = 0;
+            } else {
+                fail_count_++;
+                logger_.info("RECOVERY", "Recovery attempt " + std::to_string(fail_count_)
+                             + "/" + std::to_string(MAX_RETRIES));
+                recover();
+            }
         }
 
-        logger_.warning("RECOVERY", "Proxy unhealthy (fail_count="
-                       + std::to_string(fail_count_ + 1) + ")");
-
-        if (fail_count_ >= MAX_RETRIES) {
-            logger_.error("RECOVERY",
-                "Proxy recovery failed " + std::to_string(MAX_RETRIES)
-                + " times. Entering cooldown for " + std::to_string(COOLDOWN_SEC) + "s. "
-                + "Manual intervention may be required. "
-                + "Recovery commands: systemctl restart containercpd, "
-                + "docker rm -f containercp-proxy && systemctl restart containercpd");
-            std::this_thread::sleep_for(std::chrono::seconds(COOLDOWN_SEC));
-            fail_count_ = 0;
-            continue;
+        // Sleep before next health check (interruptible on shutdown)
+        logger_.info("RECOVERY", "Sleeping " + std::to_string(CHECK_INTERVAL_SEC) + "s until next check");
+        for (int i = 0; i < CHECK_INTERVAL_SEC && running_; ++i) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
         }
-
-        fail_count_++;
-        logger_.info("RECOVERY", "Recovery attempt " + std::to_string(fail_count_)
-                     + "/" + std::to_string(MAX_RETRIES));
-
-        recover();
     }
+    logger_.info("RECOVERY", "check_loop exiting");
 }
 
 void RecoveryManager::recover() {
