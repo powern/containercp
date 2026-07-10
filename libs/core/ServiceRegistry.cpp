@@ -210,6 +210,123 @@ std::string ServiceRegistry::detect_docker_gateway(logger::Logger& log) {
     return "host.docker.internal";
 }
 
+core::OperationResult ServiceRegistry::ensure_admin_proxy() {
+    std::string hostname = config_.server_hostname();
+    if (hostname.empty()) {
+        return {false, "server_hostname not configured"};
+    }
+
+    http01_challenge_.set_admin_hostname(hostname);
+
+    std::string gw_ip = detect_docker_gateway(logger_);
+    std::string admin_upstream = gw_ip + ":8081";
+    logger_.info("SYSTEM", "Admin upstream: " + admin_upstream);
+
+    // Ensure ReverseProxy entry exists (idempotent)
+    auto* existing = reverse_proxies_.find_by_domain(hostname);
+    if (!existing) {
+        proxy::ReverseProxy admin_rp;
+        admin_rp.domain = hostname;
+        admin_rp.site_id = 0;
+        admin_rp.provider = "nginx";
+        admin_rp.upstream = admin_upstream;
+        admin_rp.enabled = true;
+        admin_rp.status = "active";
+        proxy_provider_.create_proxy(admin_rp);
+        reverse_proxies_.create(hostname, 0, config_.data_root() + "/proxy/sites/" + hostname + ".conf", admin_upstream);
+        logger_.info("SYSTEM", "Admin proxy entry created for " + hostname);
+    }
+
+    // Always regenerate admin proxy config file (supports config updates)
+    {
+        proxy::ProxyConfigBuilder cfg_builder;
+        proxy::ProxyConfigBuilder::Params cfg_p;
+        cfg_p.domain = hostname;
+        cfg_p.upstream = admin_upstream;
+        cfg_p.acme_challenge_root = config_.data_root() + "/ssl/0/.well-known/acme-challenge";
+        std::string cfg = cfg_builder.build(cfg_p);
+        std::string cfg_path = config_.data_root() + "/proxy/sites/" + hostname + ".conf";
+        std::ofstream cfg_out(cfg_path);
+        if (cfg_out.is_open()) { cfg_out << cfg; }
+        logger_.info("SYSTEM", "Admin proxy config regenerated for " + hostname);
+    }
+
+    // Reload proxy so the new config takes effect
+    auto reload_result = proxy_provider_.reload();
+    if (!reload_result.success) {
+        logger_.warning("SYSTEM", "Admin proxy reload failed: " + reload_result.message);
+    }
+
+    // Verify admin route is reachable
+    {
+        std::string verify_file = "/tmp/containercp-admin-verify.txt";
+        std::string verify_cmd = "wget -qO- --timeout=3 http://" + admin_upstream + "/ 2>/dev/null | head -c 100";
+        std::system((verify_cmd + " > " + verify_file + " 2>/dev/null").c_str());
+        std::ifstream vf(verify_file);
+        std::string result;
+        std::getline(vf, result);
+        std::remove(verify_file.c_str());
+        if (!result.empty()) {
+            logger_.info("SYSTEM", "Admin panel reachable via " + admin_upstream);
+        } else {
+            logger_.warning("SYSTEM", "Admin panel NOT reachable via " + admin_upstream
+                           + ". Web UI may not be accessible through proxy.");
+        }
+    }
+
+    // Check if SSL certificate exists for admin domain (site_id=0)
+    auto load_result = cert_store_.load_metadata(0);
+    if (load_result.success && load_result.metadata.status == "active") {
+        std::string cert_path = cert_store_.fullchain_path(0);
+        std::string key_path = cert_store_.privkey_path(0);
+        auto ssl_result = proxy_provider_.attach_certificate(hostname, cert_path, key_path);
+        if (ssl_result.success) {
+            logger_.info("SYSTEM", "Admin HTTPS enabled for " + hostname);
+        }
+    }
+
+    return {true, "Admin proxy configured for " + hostname};
+}
+
+void ServiceRegistry::sync_all_https_configs() {
+    for (auto site_id : cert_store_.enumerate()) {
+        auto load_result = cert_store_.load_metadata(site_id);
+        if (!load_result.success) continue;
+        auto& meta = load_result.metadata;
+        if (meta.status != "active" || !meta.https_enabled) continue;
+
+        std::string domain = meta.domains.empty() ? "" : meta.domains[0];
+        if (domain.empty()) continue;
+
+        bool looks_like_staging = meta.issuer.find("STAGING") != std::string::npos
+                               || meta.issuer.find("Fake") != std::string::npos;
+        if (meta.environment != "staging" && looks_like_staging) {
+            logger_.warning("SYSTEM", domain + ": ACME=production but issuer is STAGING ("
+                           + meta.issuer + "). Reissue certificate.");
+        }
+        logger_.info("SYSTEM", domain + ": env=" + meta.environment
+                     + " issuer=\"" + meta.issuer + "\""
+                     + " decision=" + (looks_like_staging ? "staging cert, reissue for production" : "ok"));
+
+        auto* rp = reverse_proxies_.find_by_domain(domain);
+        logger_.info("SYSTEM", "Pre-sync upstream for " + domain
+                     + ": " + (rp ? (rp->upstream.empty() ? "EMPTY" : rp->upstream) : "NOT_FOUND"));
+
+        std::string cert_path = cert_store_.fullchain_path(site_id);
+        std::string key_path = cert_store_.privkey_path(site_id);
+
+        logger_.info("SYSTEM", "Syncing HTTPS proxy config for " + domain
+                     + ": cert=" + cert_path);
+        auto result = proxy_provider_.attach_certificate(domain, cert_path, key_path);
+        if (result.success) {
+            logger_.info("SYSTEM", "Proxy config synced for " + domain);
+        } else {
+            logger_.warning("SYSTEM", "Proxy config sync failed for "
+                           + domain + ": " + result.message);
+        }
+    }
+}
+
 void ServiceRegistry::start() {
     // Configure ACME environment: production is default; staging requires explicit opt-in
     const char* staging_env = std::getenv("LETSENCRYPT_STAGING");
@@ -229,121 +346,9 @@ void ServiceRegistry::start() {
         }
     }
 
-    // Setup admin panel proxy if server_hostname is configured
-    {
-        std::string hostname = config_.server_hostname();
-        if (!hostname.empty()) {
-            // Tell HTTP01ChallengeProvider about the admin hostname
-            http01_challenge_.set_admin_hostname(hostname);
-            // Auto-detect Docker gateway for admin upstream (host → container communication)
-            std::string gw_ip = detect_docker_gateway(logger_);
-            std::string admin_upstream = gw_ip + ":8081";
-            logger_.info("SYSTEM", "Admin upstream: " + admin_upstream);
-
-            // Ensure ReverseProxy entry exists (idempotent)
-            auto* existing = reverse_proxies_.find_by_domain(hostname);
-            if (!existing) {
-                proxy::ReverseProxy admin_rp;
-                admin_rp.domain = hostname;
-                admin_rp.site_id = 0;
-                admin_rp.provider = "nginx";
-                admin_rp.upstream = admin_upstream;
-                admin_rp.enabled = true;
-                admin_rp.status = "active";
-                proxy_provider_.create_proxy(admin_rp);
-                reverse_proxies_.create(hostname, 0, config_.data_root() + "/proxy/sites/" + hostname + ".conf", admin_upstream);
-                logger_.info("SYSTEM", "Admin proxy entry created for " + hostname);
-            }
-
-            // ALWAYS regenerate admin proxy config file (supports config updates)
-            {
-                proxy::ProxyConfigBuilder cfg_builder;
-                proxy::ProxyConfigBuilder::Params cfg_p;
-                cfg_p.domain = hostname;
-                cfg_p.upstream = admin_upstream;
-                cfg_p.acme_challenge_root = config_.data_root() + "/ssl/0/.well-known/acme-challenge";
-                std::string cfg = cfg_builder.build(cfg_p);
-                std::string cfg_path = config_.data_root() + "/proxy/sites/" + hostname + ".conf";
-                std::ofstream cfg_out(cfg_path);
-                if (cfg_out.is_open()) { cfg_out << cfg; }
-                logger_.info("SYSTEM", "Admin proxy config regenerated for " + hostname);
-            }
-
-            // Reload proxy so the new config takes effect
-            proxy_provider_.reload();
-
-            // Verify admin route is reachable
-            {
-                std::string verify_file = "/tmp/containercp-admin-verify.txt";
-                std::string verify_cmd = "wget -qO- --timeout=3 http://" + admin_upstream + "/ 2>/dev/null | head -c 100";
-                std::system((verify_cmd + " > " + verify_file + " 2>/dev/null").c_str());
-                std::ifstream vf(verify_file);
-                std::string result;
-                std::getline(vf, result);
-                std::remove(verify_file.c_str());
-                if (!result.empty()) {
-                    logger_.info("SYSTEM", "Admin panel reachable via " + admin_upstream);
-                } else {
-                    logger_.warning("SYSTEM", "Admin panel NOT reachable via " + admin_upstream
-                                   + ". Web UI may not be accessible through proxy.");
-                }
-            }
-
-            // Check if SSL certificate exists for this domain
-            auto load_result = cert_store_.load_metadata(0); // site_id=0 for admin
-            if (load_result.success && load_result.metadata.status == "active") {
-                std::string cert_path = cert_store_.fullchain_path(0);
-                std::string key_path = cert_store_.privkey_path(0);
-                auto ssl_result = proxy_provider_.attach_certificate(hostname, cert_path, key_path);
-                if (ssl_result.success) {
-                    logger_.info("SYSTEM", "Admin HTTPS enabled for " + hostname);
-                }
-            }
-        }
-    }
-
-    // Sync all HTTPS proxy configs on startup
-    // Regenerates config from canonical upstream for every active HTTPS site.
-    {
-        for (auto site_id : cert_store_.enumerate()) {
-            auto load_result = cert_store_.load_metadata(site_id);
-            if (!load_result.success) continue;
-            auto& meta = load_result.metadata;
-            if (meta.status != "active" || !meta.https_enabled) continue;
-
-            std::string domain = meta.domains.empty() ? "" : meta.domains[0];
-            if (domain.empty()) continue;
-
-            // Check if ACME environment matches the certificate issuer
-            bool looks_like_staging = meta.issuer.find("STAGING") != std::string::npos
-                                   || meta.issuer.find("Fake") != std::string::npos;
-            if (meta.environment != "staging" && looks_like_staging) {
-                logger_.warning("SYSTEM", domain + ": ACME=production but issuer is STAGING ("
-                               + meta.issuer + "). Reissue certificate.");
-            }
-            logger_.info("SYSTEM", domain + ": env=" + meta.environment
-                         + " issuer=\"" + meta.issuer + "\""
-                         + " decision=" + (looks_like_staging ? "staging cert, reissue for production" : "ok"));
-
-            // Log the upstream value from ReverseProxyManager for debugging
-            auto* rp = reverse_proxies_.find_by_domain(domain);
-            logger_.info("SYSTEM", "Pre-sync upstream for " + domain
-                         + ": " + (rp ? (rp->upstream.empty() ? "EMPTY" : rp->upstream) : "NOT_FOUND"));
-
-            std::string cert_path = cert_store_.fullchain_path(site_id);
-            std::string key_path = cert_store_.privkey_path(site_id);
-
-            logger_.info("SYSTEM", "Syncing HTTPS proxy config for " + domain
-                         + ": cert=" + cert_path);
-            auto result = proxy_provider_.attach_certificate(domain, cert_path, key_path);
-            if (result.success) {
-                logger_.info("SYSTEM", "Proxy config synced for " + domain);
-            } else {
-                logger_.warning("SYSTEM", "Proxy config sync failed for "
-                               + domain + ": " + result.message);
-            }
-        }
-    }
+    // Admin proxy setup + HTTPS config sync
+    ensure_admin_proxy();
+    sync_all_https_configs();
 
     job_executor_.start();
     renewal_scheduler_.start();

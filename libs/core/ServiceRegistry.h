@@ -14,6 +14,7 @@
 #include "proxy/ReverseProxyManager.h"
 #include "config/Config.h"
 #include "core/ResourceManager.h"
+#include "core/OperationResult.h"
 #include "database/DatabaseManager.h"
 #include "domain/DomainManager.h"
 #include "filesystem/Filesystem.h"
@@ -84,6 +85,14 @@ public:
     // Detect Docker bridge gateway address for Web UI binding and proxy upstream.
     // Returns "host.docker.internal" if detection fails (works with --add-host flag).
     static std::string detect_docker_gateway(logger::Logger& log);
+
+    // Create or update the admin panel reverse proxy entry and nginx config.
+    // Idempotent — safe to call multiple times.  No-op if server_hostname is empty.
+    core::OperationResult ensure_admin_proxy();
+
+    // Regenerate HTTPS nginx configs for all sites with active certificates.
+    // Safe to call at any time — validates config before reloading nginx.
+    void sync_all_https_configs();
 
     void start();
     void shutdown();
