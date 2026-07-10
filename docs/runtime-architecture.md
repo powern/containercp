@@ -138,6 +138,7 @@ libs/runtime/
 ├── CommandExecutor.h/.cpp          # Safe fork/exec with poll
 ├── RuntimeActionExecutor.h/.cpp    # Docker Compose execution
 ├── RuntimeSynchronizer.h/.cpp      # Generic config sync registry
+├── HealthReport.h/.cpp             # Generic health reporting
 ├── ServiceRole.h/.cpp              # Role definitions and mappings
 ├── SiteRuntimeManager.h/.cpp       # Sites-specific bridge
 ├── DockerRuntime.h/.cpp            # Legacy compose management
@@ -160,6 +161,25 @@ This keeps the sync mechanism:
 Current consumers:
 - `"mail"` — regenerates Postfix/Dovecot configs and reloads after
   any domain, mailbox, or alias CRUD operation
+
+## HealthRegistry
+
+The `HealthRegistry` provides a generic health check registry, following
+the same callback pattern as `RuntimeSynchronizer`.  Each subsystem
+registers a health check callback.  The `GET /api/health` endpoint
+aggregates all reports into a single response.
+
+Current consumers:
+- `"mail"` — reports Postfix, Dovecot, and Redis container status
+
+Health reports are designed to evolve without breaking existing callers:
+- `status` — aggregate "ok", "degraded", or "error"
+- `services[]` — per-service status with name, status, and message
+- `details` — arbitrary JSON object for module-specific operational data
+  (e.g. domain count, mailbox count, last sync time)
+
+Future modules (DNS, Proxy, SSL) will register their own health checks
+without changing the aggregation mechanism.
 
 ## Key principles
 

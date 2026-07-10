@@ -30,6 +30,7 @@
 #include "runtime/PortManager.h"
 #include "runtime/RuntimeActionExecutor.h"
 #include "runtime/RuntimeSynchronizer.h"
+#include "runtime/HealthReport.h"
 #include "runtime/SiteRuntimeManager.h"
 #include "ssl/CertificateProvider.h"
 #include "ssl/CertificateStore.h"
@@ -91,6 +92,7 @@ public:
     runtime::SiteRuntimeManager& site_runtime();
     runtime::RuntimeActionExecutor& runtime_executor();
     runtime::RuntimeSynchronizer& runtime_sync();
+    runtime::HealthRegistry& health();
     provider::HostingProvider& hosting_provider();
     auth::AuthUserManager& auth_users();
     auth::AuthService& auth();
@@ -156,6 +158,7 @@ private:
     runtime::RuntimeActionExecutor runtime_action_executor_;
     runtime::SiteRuntimeManager site_runtime_;
     runtime::RuntimeSynchronizer runtime_sync_;
+    runtime::HealthRegistry health_;
     proxy::ProxyViewService proxy_view_;
     provider::DockerComposeProvider hosting_provider_;
     core::RecoveryManager recovery_manager_;

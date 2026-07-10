@@ -317,7 +317,17 @@
 | Sync calls in all 11 mail CRUD handlers | ✅ | Every mutation triggers write_configs + reload |
 | Tests | ✅ | 5 RuntimeSynchronizer tests |
 
-### Stage 4b — Health and recovery (planned)
+### Stage 4b — Health reporting (implemented)
+
+| Task | Status | Notes |
+|------|--------|-------|
+| HealthRegistry generic abstraction | ✅ | Callback registry in libs/runtime/ |
+| Mail health check in ServiceRegistry | ✅ | Per-service Postfix/Dovecot/Redis status |
+| Health response designed for evolution | ✅ | services[], details{} extensible |
+| /api/health extended with module reports | ✅ | Backward-compatible with legacy status field |
+| Tests | ✅ | 5 HealthRegistry tests |
+
+### Stage 4c — Recovery and health integration (planned)
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -407,7 +417,7 @@
 | RC1 pass | 128/137 (9 stability deferred) |
 | RC2 validation | All items verified on real Debian 13 |
 | Bugs discovered during RC1 | 13 (all fixed) |
-| Current Epic | Mail Module Stage 4b — Health and Recovery |
+| Current Epic | Mail Module Stage 4c — Recovery and Health Integration |
 
 ---
 

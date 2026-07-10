@@ -12,6 +12,7 @@ add_executable(containercp_tests
     test_template.cpp
     test_runtime.cpp
     test_runtime_sync.cpp
+    test_health.cpp
     test_backup.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/Validator.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/StringUtils.cpp
@@ -54,6 +55,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/runtime/CommandExecutor.cpp
     ${CMAKE_SOURCE_DIR}/libs/runtime/RuntimeActionExecutor.cpp
     ${CMAKE_SOURCE_DIR}/libs/runtime/RuntimeSynchronizer.cpp
+    ${CMAKE_SOURCE_DIR}/libs/runtime/HealthReport.cpp
     ${CMAKE_SOURCE_DIR}/libs/runtime/ServiceRole.cpp
     ${CMAKE_SOURCE_DIR}/libs/runtime/SiteRuntimeManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailAliasManager.cpp

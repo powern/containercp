@@ -357,4 +357,44 @@ std::string DockerMailProvider::status_description() const {
     return "stopped";
 }
 
+runtime::ServiceHealth DockerMailProvider::check_service(
+    const std::string& container_name,
+    const std::string& service_name) const {
+    runtime::ServiceHealth h;
+    h.name = service_name;
+
+    auto result = executor_.run({
+        "docker", "inspect",
+        "--format", "{{.State.Running}}",
+        container_name
+    });
+
+    if (result.exit_code != 0) {
+        h.status = "error";
+        h.message = "container not found";
+    } else if (result.out.find("true") != std::string::npos) {
+        h.status = "ok";
+        h.message = "running";
+    } else {
+        h.status = "error";
+        h.message = "stopped";
+    }
+    return h;
+}
+
+runtime::HealthReport DockerMailProvider::check_health() const {
+    runtime::HealthReport report;
+    report.services.push_back(check_service("containercp-mail-postfix", "postfix"));
+    report.services.push_back(check_service("containercp-mail-dovecot", "dovecot"));
+    report.services.push_back(check_service("containercp-mail-redis", "redis"));
+
+    // Aggregate status: ok if all ok, degraded if any degraded, error if any error
+    bool has_error = false;
+    for (const auto& s : report.services) {
+        if (s.status == "error") has_error = true;
+    }
+    report.status = has_error ? "error" : "ok";
+    return report;
+}
+
 } // namespace containercp::mail

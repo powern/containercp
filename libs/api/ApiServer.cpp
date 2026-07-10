@@ -276,9 +276,50 @@ bool ApiServer::start() {
         return r;
     });
 
-    router_.add("GET", "/api/health", [](const Request&) {
+    router_.add("GET", "/api/health", [&s](const Request&) {
         Response r;
-        r.body = JsonFormatter::success(JsonFormatter::health(true));
+        auto reports = s.health().check_all();
+        std::string modules_json;
+        if (!reports.empty()) {
+            modules_json = ",\"modules\":{";
+            bool first_module = true;
+            for (const auto& [name, report] : reports) {
+                if (!first_module) modules_json += ",";
+                first_module = false;
+                modules_json += "\"" + JsonFormatter::escape(name) + "\":{";
+                modules_json += "\"status\":\"" + JsonFormatter::escape(report.status) + "\"";
+
+                // Services array
+                if (!report.services.empty()) {
+                    modules_json += ",\"services\":[";
+                    bool first_svc = true;
+                    for (const auto& svc : report.services) {
+                        if (!first_svc) modules_json += ",";
+                        first_svc = false;
+                        modules_json += "{\"name\":\"" + JsonFormatter::escape(svc.name) + "\""
+                            + ",\"status\":\"" + JsonFormatter::escape(svc.status) + "\""
+                            + ",\"message\":\"" + JsonFormatter::escape(svc.message) + "\"}";
+                    }
+                    modules_json += "]";
+                }
+
+                // Optional details (JSON object)
+                if (!report.details.empty()) {
+                    modules_json += ",\"details\":" + report.details;
+                }
+
+                modules_json += "}";
+            }
+            modules_json += "}";
+        }
+
+        bool overall_ok = true;
+        for (const auto& [name, report] : reports) {
+            if (report.status != "ok") { overall_ok = false; break; }
+        }
+        r.body = "{\"success\":true,\"data\":{\"status\":\""
+            + std::string(overall_ok ? "ok" : "degraded") + "\""
+            + modules_json + "}}";
         return r;
     });
 

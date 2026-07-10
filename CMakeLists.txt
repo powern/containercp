@@ -69,6 +69,7 @@ set(CONTAINERCP_SOURCES
     libs/runtime/CommandExecutor.cpp
     libs/runtime/RuntimeActionExecutor.cpp
     libs/runtime/RuntimeSynchronizer.cpp
+    libs/runtime/HealthReport.cpp
     libs/runtime/ServiceRole.cpp
     libs/runtime/SiteRuntimeManager.cpp
     libs/site/Site.cpp

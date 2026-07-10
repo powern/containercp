@@ -42,6 +42,18 @@ ServiceRegistry::ServiceRegistry()
         return mail_provider_.reload();
     });
 
+    // Register mail health check
+    health_.register_check("mail", [this]() -> runtime::HealthReport {
+        if (mail_.module_state() != mail::MailModuleState::Active) {
+            runtime::HealthReport r;
+            r.status = "ok";
+            r.services.push_back({"module", "ok", "inactive"});
+            return r;
+        }
+        // Module is active — report per-service health
+        return mail_provider_.check_health();
+    });
+
     auto loaded_nodes = storage_.load_nodes();
     if (loaded_nodes.empty()) {
         Resource res;
@@ -553,6 +565,10 @@ runtime::RuntimeActionExecutor& ServiceRegistry::runtime_executor() {
 
 runtime::RuntimeSynchronizer& ServiceRegistry::runtime_sync() {
     return runtime_sync_;
+}
+
+runtime::HealthRegistry& ServiceRegistry::health() {
+    return health_;
 }
 
 provider::HostingProvider& ServiceRegistry::hosting_provider() {

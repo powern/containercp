@@ -653,10 +653,18 @@ Local delivery works for `local-primary` mode.
   `write_configs()` + `reload()` after every CRUD mutation
 - All 11 mail mutation endpoints now trigger runtime sync
 
-### Stage 4b — Health and recovery (planned)
+### Stage 4b — Health reporting (completed)
+
+- `HealthRegistry` generic callback registry in `libs/runtime/`
+- Mail health check: per-service Postfix/Dovecot/Redis status
+- `GET /api/health` extended with module reports (backward-compatible)
+- Health response designed for evolution: `services[]`, `details{}`
+- Tests: 5 HealthRegistry tests
+
+### Stage 4c — Recovery and health integration (planned)
 
 - MailHealthMonitor — periodic health checks
-- GET /api/mail/health — service status, queue, certs, DNS
+- GET /api/mail/health — dedicated mail health endpoint
 - Integration with RecoveryManager (reload/recreate mail stack)
 - MX record validation (DNS lookup)
 - DKIM DNS records in Domain module

@@ -4,6 +4,7 @@
 #include "mail/providers/MailProvider.h"
 #include "logger/Logger.h"
 #include "runtime/CommandExecutor.h"
+#include "runtime/HealthReport.h"
 
 #include <string>
 
@@ -30,6 +31,14 @@ public:
     core::OperationResult stop() override;
     core::OperationResult reload() override;
     bool is_running() const override;
+
+    // Per-service health check.
+    runtime::ServiceHealth check_service(
+        const std::string& container_name,
+        const std::string& service_name) const;
+
+    // Full module health report.
+    runtime::HealthReport check_health() const;
     std::string status_description() const override;
 
     // Paths
