@@ -55,7 +55,46 @@ core::OperationResult DockerMailProvider::prepare_environment() {
         }
     }
 
+    // Ensure TLS certificate exists
+    auto cert = ensure_certificate();
+    if (!cert.success) {
+        logger_.warning("MAIL", "Certificate check: " + cert.message);
+    }
+
     return {true, ""};
+}
+
+core::OperationResult DockerMailProvider::ensure_certificate() {
+    std::string cert_dir = data_root_ + "/ssl/0";
+    std::string cert_path = cert_dir + "/fullchain.pem";
+    std::string key_path = cert_dir + "/privkey.pem";
+
+    // Check if certificate already exists and is valid
+    auto check = executor_.run({
+        "openssl", "x509", "-in", cert_path, "-noout", "-checkend", "0"
+    });
+    if (check.exit_code == 0) {
+        return {true, "Certificate valid"};
+    }
+
+    // Create directory and generate self-signed certificate
+    executor_.run({"mkdir", "-p", cert_dir});
+    auto gen = executor_.run({
+        "openssl", "req", "-x509", "-newkey", "rsa:2048",
+        "-keyout", key_path,
+        "-out", cert_path,
+        "-days", "365",
+        "-nodes",
+        "-subj", "/CN=mail.local"
+    });
+    if (gen.exit_code != 0) {
+        return {false, "Failed to generate self-signed certificate: " + gen.err};
+    }
+
+    // Secure permissions on private key
+    executor_.run({"chmod", "0600", key_path});
+    logger_.info("MAIL", "Self-signed certificate created at " + cert_path);
+    return {true, "Self-signed certificate created"};
 }
 
 // ── Configuration generation (no Docker/runtime logic) ─────────────

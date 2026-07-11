@@ -62,11 +62,33 @@ ServiceRegistry::ServiceRegistry()
         mailbox_count = static_cast<uint64_t>(mailboxes_.list().size());
         alias_count = static_cast<uint64_t>(mail_aliases_.list().size());
 
+        // Check certificate status
+        std::string cert_path = config_.data_root() + "/ssl/0/fullchain.pem";
+        std::string cert_status = "unknown";
+        {
+            runtime::CommandExecutor exec;
+            auto check = exec.run({"openssl", "x509", "-in", cert_path, "-noout", "-subject"});
+            if (check.exit_code == 0) {
+                // Check if self-signed (subject == issuer)
+                auto issuer = exec.run({"openssl", "x509", "-in", cert_path, "-noout", "-issuer"});
+                auto expiry = exec.run({"openssl", "x509", "-in", cert_path, "-noout", "-checkend", "0"});
+                if (expiry.exit_code != 0) {
+                    cert_status = "expired";
+                } else if (issuer.exit_code == 0 && issuer.out == check.out) {
+                    cert_status = "self-signed";
+                } else {
+                    cert_status = "valid";
+                }
+            } else {
+                cert_status = "missing";
+            }
+        }
+
         report.details = "{\"module_state\":\"active\""
             ",\"domain_count\":" + std::to_string(domain_count)
             + ",\"mailbox_count\":" + std::to_string(mailbox_count)
             + ",\"alias_count\":" + std::to_string(alias_count)
-            + "}";
+            + ",\"certificate\":\"" + cert_status + "\"}";
         return report;
     });
 

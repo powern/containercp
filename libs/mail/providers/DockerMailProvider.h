@@ -52,6 +52,9 @@ public:
         const MailboxManager& mailboxes,
         const MailAliasManager& aliases) override;
 
+    // Ensure TLS certificate exists.  Generates self-signed if missing.
+    core::OperationResult ensure_certificate();
+
 private:
     std::string compose_project_flag() const;
     core::OperationResult write_docker_compose();
