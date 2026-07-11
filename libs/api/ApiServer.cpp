@@ -1541,71 +1541,6 @@ bool ApiServer::start() {
         return j.str();
     };
 
-    auto now_utc = []() -> std::string {
-        auto now = std::chrono::system_clock::now();
-        auto tt = std::chrono::system_clock::to_time_t(now);
-        struct tm tm_buf;
-        gmtime_r(&tt, &tm_buf);
-        char buf[32];
-        std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
-        return std::string(buf);
-    };
-
-    // ── Mailbox sub-routes (registered before domain routes so they match /mailboxes first) ──
-    // GET /api/mail/domains/<id>/mailboxes — list mailboxes for a domain
-    router_.add_prefix("GET", "/api/mail/domains/", [&s, &mailbox_json](const Request& req) {
-        Response r;
-        std::string remaining = req.path.substr(std::string("/api/mail/domains/").size());
-        auto slash = remaining.find('/');
-        std::string sub = (slash != std::string::npos) ? remaining.substr(slash + 1) : "";
-        if (sub != "mailboxes") { r.status_code = 404; return r; }
-        std::string id_str = (slash != std::string::npos) ? remaining.substr(0, slash) : remaining;
-        uint64_t domain_id = 0;
-        try { domain_id = std::stoull(id_str); } catch (...) {}
-        if (domain_id == 0) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"Invalid domain ID\"}"; return r; }
-        auto mailboxes = s.mailboxes().find_by_domain(domain_id);
-        std::ostringstream json;
-        json << "{\"success\":true,\"data\":[";
-        bool first = true;
-        for (auto* mb : mailboxes) { if (!first) json << ","; first = false; json << mailbox_json(*mb); }
-        json << "]}";
-        r.body = json.str();
-        return r;
-    });
-
-    // POST /api/mail/domains/<id>/mailboxes — create a mailbox
-    router_.add_prefix("POST", "/api/mail/domains/", [&s, &mailbox_json, &now_utc, &normalize_local_part, &validate_local_part](const Request& req) {
-        Response r;
-        std::string remaining = req.path.substr(std::string("/api/mail/domains/").size());
-        auto slash = remaining.find('/');
-        std::string sub = (slash != std::string::npos) ? remaining.substr(slash + 1) : "";
-        if (sub != "mailboxes") { r.status_code = 404; return r; }
-        std::string id_str = (slash != std::string::npos) ? remaining.substr(0, slash) : remaining;
-        uint64_t domain_id = 0;
-        try { domain_id = std::stoull(id_str); } catch (...) {}
-        if (domain_id == 0 || !s.mail().find(domain_id)) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"Mail domain not found\"}"; return r; }
-        std::string local_part_raw = json_extract(req.body, "local_part");
-        std::string password = json_extract(req.body, "password");
-        std::string local_part = normalize_local_part(local_part_raw);
-        if (local_part.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"local_part is required\"}"; return r; }
-        std::string val_err = validate_local_part(local_part);
-        if (!val_err.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(val_err) + "\"}"; return r; }
-        if (password.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"password is required\"}"; return r; }
-        if (password.size() < 3) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"Password must be at least 3 characters\"}"; return r; }
-        std::string hash = mail::MailPasswordHasher::hash(password);
-        if (hash.empty()) { r.status_code = 500; r.body = "{\"success\":false,\"error\":\"Failed to hash password\"}"; return r; }
-        uint64_t id = s.mailboxes().create(domain_id, local_part, hash);
-        if (id == 0) { r.status_code = 409; r.body = "{\"success\":false,\"error\":\"Mailbox already exists for this local part\"}"; return r; }
-        auto* created = s.mailboxes().find(id);
-        if (created) { created->created_at = now_utc(); created->updated_at = created->created_at; }
-        s.save();
-        (void)s.runtime_sync().sync("mail");
-        if (created) { r.body = "{\"success\":true,\"data\":" + mailbox_json(*created) + "}"; return r; }
-        r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(id) + "}}";
-        return r;
-    });
-
-    // ── Mail Alias routes (registered before domain routes so they match /aliases first) ──
     auto alias_json = [](const mail::MailAlias& a) -> std::string {
         std::ostringstream j;
         j << "{"
@@ -1620,55 +1555,137 @@ bool ApiServer::start() {
         return j.str();
     };
 
-    // GET /api/mail/domains/<id>/aliases — list aliases for a domain
-    router_.add_prefix("GET", "/api/mail/domains/", [&s, &alias_json](const Request& req) {
+    auto now_utc = []() -> std::string {
+        auto now = std::chrono::system_clock::now();
+        auto tt = std::chrono::system_clock::to_time_t(now);
+        struct tm tm_buf;
+        gmtime_r(&tt, &tm_buf);
+        char buf[32];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
+        return std::string(buf);
+    };
+
+    // ── Mailbox sub-routes (registered before domain routes so they match /mailboxes first) ──
+    // GET /api/mail/domains/<id>/mailboxes — list mailboxes for a domain
+    // ── Mail domain sub-routes (consolidated dispatchers) ───────────
+    //
+    // Single GET and POST prefix handlers for /api/mail/domains/<id>/...
+    // Internal dispatch by sub-path avoids prefix handler conflicts.
+    //
+    // Supported sub-routes:
+    //   GET  /api/mail/domains/<id>           → single domain
+    //   GET  /api/mail/domains/<id>/mailboxes → list mailboxes
+    //   GET  /api/mail/domains/<id>/aliases   → list aliases
+    //   POST /api/mail/domains/<id>/mailboxes → create mailbox
+    //   POST /api/mail/domains/<id>/aliases   → create alias
+    //   POST /api/mail/domains/<id>/dkim/generate → generate DKIM
+
+    router_.add_prefix("GET", "/api/mail/domains/", [&s, &mail_domain_json, &mailbox_json, &alias_json](const Request& req) {
         Response r;
         std::string remaining = req.path.substr(std::string("/api/mail/domains/").size());
         auto slash = remaining.find('/');
-        std::string sub = (slash != std::string::npos) ? remaining.substr(slash + 1) : "";
-        if (sub != "aliases") { r.status_code = 404; return r; }
         std::string id_str = (slash != std::string::npos) ? remaining.substr(0, slash) : remaining;
-        uint64_t domain_id = 0;
-        try { domain_id = std::stoull(id_str); } catch (...) {}
-        if (domain_id == 0) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"Invalid domain ID\"}"; return r; }
-        auto aliases = s.mail_aliases().find_by_domain(domain_id);
-        std::ostringstream json;
-        json << "{\"success\":true,\"data\":[";
-        bool first = true;
-        for (auto* a : aliases) { if (!first) json << ","; first = false; json << alias_json(*a); }
-        json << "]}";
-        r.body = json.str();
+        std::string sub = (slash != std::string::npos) ? remaining.substr(slash + 1) : "";
+        uint64_t id = 0;
+        try { id = std::stoull(id_str); } catch (...) {}
+        if (id == 0) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"Invalid domain ID\"}"; return r; }
+
+        if (sub.empty()) {
+            // GET /api/mail/domains/<id> — single domain
+            auto* m = s.mail().find(id);
+            if (!m) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"Mail domain not found\"}"; return r; }
+            r.body = "{\"success\":true,\"data\":" + mail_domain_json(*m) + "}";
+        } else if (sub == "mailboxes") {
+            // GET /api/mail/domains/<id>/mailboxes — list mailboxes
+            auto mailboxes = s.mailboxes().find_by_domain(id);
+            std::ostringstream json;
+            json << "{\"success\":true,\"data\":[";
+            bool first = true;
+            for (auto* mb : mailboxes) { if (!first) json << ","; first = false; json << mailbox_json(*mb); }
+            json << "]}";
+            r.body = json.str();
+        } else if (sub == "aliases") {
+            // GET /api/mail/domains/<id>/aliases — list aliases
+            auto aliases = s.mail_aliases().find_by_domain(id);
+            std::ostringstream json;
+            json << "{\"success\":true,\"data\":[";
+            bool first = true;
+            for (auto* a : aliases) { if (!first) json << ","; first = false; json << alias_json(*a); }
+            json << "]}";
+            r.body = json.str();
+        } else {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Unknown mail domain sub-resource: " + JsonFormatter::escape(sub) + "\"}";
+        }
         return r;
     });
 
-    // POST /api/mail/domains/<id>/aliases — create an alias
-    router_.add_prefix("POST", "/api/mail/domains/", [&s, &alias_json, &now_utc, &normalize_local_part, &validate_local_part](const Request& req) {
+    router_.add_prefix("POST", "/api/mail/domains/", [&s, &mailbox_json, &alias_json, &now_utc, &normalize_local_part, &validate_local_part](const Request& req) {
         Response r;
         std::string remaining = req.path.substr(std::string("/api/mail/domains/").size());
         auto slash = remaining.find('/');
-        std::string sub = (slash != std::string::npos) ? remaining.substr(slash + 1) : "";
-        if (sub != "aliases") { r.status_code = 404; return r; }
         std::string id_str = (slash != std::string::npos) ? remaining.substr(0, slash) : remaining;
+        std::string sub = (slash != std::string::npos) ? remaining.substr(slash + 1) : "";
         uint64_t domain_id = 0;
         try { domain_id = std::stoull(id_str); } catch (...) {}
-        if (domain_id == 0 || !s.mail().find(domain_id)) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"Mail domain not found\"}"; return r; }
-        std::string source_raw = json_extract(req.body, "source");
-        std::string dest = json_extract(req.body, "destination");
-        std::string source = normalize_local_part(source_raw);
-        if (source.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"source is required\"}"; return r; }
-        std::string src_err = validate_local_part(source);
-        if (!src_err.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(src_err) + "\"}"; return r; }
-        if (dest == "null") { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination cannot be null\"}"; return r; }
-        if (dest.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination is required\"}"; return r; }
-        if (dest.find('@') == std::string::npos) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination must be a valid email address\"}"; return r; }
-        uint64_t id = s.mail_aliases().create(domain_id, source, dest);
-        if (id == 0) { r.status_code = 409; r.body = "{\"success\":false,\"error\":\"Alias already exists\"}"; return r; }
-        auto* created = s.mail_aliases().find(id);
-        if (created) { created->created_at = now_utc(); created->updated_at = created->created_at; }
-        s.save();
-        (void)s.runtime_sync().sync("mail");
-        if (created) { r.body = "{\"success\":true,\"data\":" + alias_json(*created) + "}"; return r; }
-        r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(id) + "}}";
+        if (domain_id == 0) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"Invalid domain ID\"}"; return r; }
+        auto* domain = s.mail().find(domain_id);
+        if (!domain) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"Mail domain not found\"}"; return r; }
+
+        if (sub == "mailboxes") {
+            // POST /api/mail/domains/<id>/mailboxes — create mailbox
+            std::string local_part_raw = json_extract(req.body, "local_part");
+            std::string password = json_extract(req.body, "password");
+            std::string local_part = normalize_local_part(local_part_raw);
+            if (local_part.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"local_part is required\"}"; return r; }
+            std::string val_err = validate_local_part(local_part);
+            if (!val_err.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(val_err) + "\"}"; return r; }
+            if (password.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"password is required\"}"; return r; }
+            if (password.size() < 3) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"Password must be at least 3 characters\"}"; return r; }
+            std::string hash = mail::MailPasswordHasher::hash(password);
+            if (hash.empty()) { r.status_code = 500; r.body = "{\"success\":false,\"error\":\"Failed to hash password\"}"; return r; }
+            uint64_t id = s.mailboxes().create(domain_id, local_part, hash);
+            if (id == 0) { r.status_code = 409; r.body = "{\"success\":false,\"error\":\"Mailbox already exists for this local part\"}"; return r; }
+            auto* created = s.mailboxes().find(id);
+            if (created) { created->created_at = now_utc(); created->updated_at = created->created_at; }
+            s.save();
+            (void)s.runtime_sync().sync("mail");
+            if (created) { r.body = "{\"success\":true,\"data\":" + mailbox_json(*created) + "}"; return r; }
+            r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(id) + "}}";
+        } else if (sub == "aliases") {
+            // POST /api/mail/domains/<id>/aliases — create alias
+            std::string source_raw = json_extract(req.body, "source");
+            std::string dest = json_extract(req.body, "destination");
+            std::string source = normalize_local_part(source_raw);
+            if (source.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"source is required\"}"; return r; }
+            std::string src_err = validate_local_part(source);
+            if (!src_err.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(src_err) + "\"}"; return r; }
+            if (dest == "null") { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination cannot be null\"}"; return r; }
+            if (dest.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination is required\"}"; return r; }
+            if (dest.find('@') == std::string::npos) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination must be a valid email address\"}"; return r; }
+            uint64_t id = s.mail_aliases().create(domain_id, source, dest);
+            if (id == 0) { r.status_code = 409; r.body = "{\"success\":false,\"error\":\"Alias already exists\"}"; return r; }
+            auto* created = s.mail_aliases().find(id);
+            if (created) { created->created_at = now_utc(); created->updated_at = created->created_at; }
+            s.save();
+            (void)s.runtime_sync().sync("mail");
+            if (created) { r.body = "{\"success\":true,\"data\":" + alias_json(*created) + "}"; return r; }
+            r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(id) + "}}";
+        } else if (sub == "dkim/generate") {
+            // POST /api/mail/domains/<id>/dkim/generate — generate DKIM key
+            std::string dkim_dir = s.config().data_root() + "/mail/config/state/dkim";
+            std::string dns_record = s.dkim().generate_key(
+                dkim_dir, domain->domain_name, domain->dkim_selector);
+            if (dns_record.empty()) { r.status_code = 500; r.body = "{\"success\":false,\"error\":\"Failed to generate DKIM key\"}"; return r; }
+            domain->dkim_public_key_dns = dns_record;
+            s.save();
+            (void)s.runtime_sync().sync("mail");
+            r.body = "{\"success\":true,\"data\":{\"message\":\"DKIM key generated\""
+                     ",\"dns_record\":\"" + JsonFormatter::escape(dns_record) + "\"}}";
+        } else {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Unknown mail domain sub-resource: " + JsonFormatter::escape(sub) + "\"}";
+        }
         return r;
     });
 
@@ -1870,29 +1887,6 @@ bool ApiServer::start() {
         s.save();
         (void)s.runtime_sync().sync("mail");
         r.body = "{\"success\":true,\"data\":{\"message\":\"Mail domain removed\"}}";
-        return r;
-    });
-
-    // GET /api/mail/domains/<id> — get single mail domain
-    router_.add_prefix("GET", "/api/mail/domains/", [&s, &mail_domain_json](const Request& req) {
-        Response r;
-        std::string id_str = req.path.substr(std::string("/api/mail/domains/").size());
-        uint64_t id = 0;
-        try { id = std::stoull(id_str); } catch (...) {}
-        if (id == 0) {
-            r.status_code = 400;
-            r.body = "{\"success\":false,\"error\":\"Invalid ID\"}";
-            return r;
-        }
-
-        auto* m = s.mail().find(id);
-        if (!m) {
-            r.status_code = 404;
-            r.body = "{\"success\":false,\"error\":\"Mail domain not found\"}";
-            return r;
-        }
-
-        r.body = "{\"success\":true,\"data\":" + mail_domain_json(*m) + "}";
         return r;
     });
 
@@ -2236,40 +2230,6 @@ bool ApiServer::start() {
             return r;
         }
         r.body = "{\"success\":true,\"data\":{\"message\":\"Configuration regenerated and reloaded\"}}";
-        return r;
-    });
-
-    // POST /api/mail/domains/<id>/dkim/generate — generate DKIM key
-    router_.add_prefix("POST", "/api/mail/domains/", [&s](const Request& req) {
-        Response r;
-        std::string remaining = req.path.substr(std::string("/api/mail/domains/").size());
-        // remaining = "<domain_id>/dkim/generate"
-        auto first_slash = remaining.find('/');
-        if (first_slash == std::string::npos) { r.status_code = 404; return r; }
-        std::string id_str = remaining.substr(0, first_slash);
-        std::string sub = remaining.substr(first_slash + 1);
-        if (sub != "dkim/generate") { r.status_code = 404; return r; }
-
-        uint64_t domain_id = 0;
-        try { domain_id = std::stoull(id_str); } catch (...) {}
-        auto* domain = s.mail().find(domain_id);
-        if (!domain) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"Mail domain not found\"}"; return r; }
-
-        std::string dkim_dir = s.config().data_root() + "/mail/config/state/dkim";
-        std::string dns_record = s.dkim().generate_key(
-            dkim_dir, domain->domain_name, domain->dkim_selector);
-
-        if (dns_record.empty()) {
-            r.status_code = 500;
-            r.body = "{\"success\":false,\"error\":\"Failed to generate DKIM key\"}";
-            return r;
-        }
-
-        domain->dkim_public_key_dns = dns_record;
-        s.save();
-        (void)s.runtime_sync().sync("mail");
-        r.body = "{\"success\":true,\"data\":{\"message\":\"DKIM key generated\""
-                 ",\"dns_record\":\"" + JsonFormatter::escape(dns_record) + "\"}}";
         return r;
     });
 

@@ -11,17 +11,11 @@ void Router::add_prefix(const std::string& method, const std::string& prefix, Ro
 }
 
 Response Router::dispatch(const Request& req) const {
-    Response last_404;
-    bool has_404 = false;
-
     for (const auto& route : routes_) {
         if (route.method != req.method) continue;
         if (route.is_prefix) {
             if (req.path.compare(0, route.path.size(), route.path) == 0) {
-                auto resp = route.handler(req);
-                if (resp.status_code != 404) return resp;
-                // 404 from a prefix handler — try the next matching route
-                if (!has_404) { last_404 = resp; has_404 = true; }
+                return route.handler(req);
             }
         } else {
             if (route.path == req.path) {
@@ -30,7 +24,6 @@ Response Router::dispatch(const Request& req) const {
         }
     }
 
-    if (has_404) return last_404;
     Response resp;
     resp.status_code = 404;
     resp.body = "{\"success\":false,\"error\":\"Not found\"}";
