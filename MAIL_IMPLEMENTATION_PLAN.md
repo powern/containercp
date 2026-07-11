@@ -73,7 +73,7 @@ DockerMailProvider (Postfix + Dovecot + Redis)
 - [ ] SPF/DKIM/DMARC validation in health
 - [ ] Dovecot config validation (`doveconf -n`)
 - [x] Thread-safe password hashing (`crypt_r`)
-- [ ] `relay_host` input validation
+- [x] `relay_host` input validation
 - [ ] Configurable port bindings
 
 ### Phase 4: Web UI
