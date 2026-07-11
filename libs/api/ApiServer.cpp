@@ -2216,19 +2216,16 @@ bool ApiServer::start() {
             r.body = "{\"success\":false,\"error\":\"Mail module is not active\"}";
             return r;
         }
-        auto cfg = s.mail_provider().write_configs(
+        auto result = s.mail_provider().apply_config(
             s.mail().list(), s.mailboxes(), s.mail_aliases());
-        if (!cfg.success) {
+        if (!result.success) {
             r.status_code = 500;
-            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(cfg.message) + "\"}";
+            r.body = "{\"success\":false,\"error\":\"Config apply failed at stage '"
+                + JsonFormatter::escape(result.failed_stage) + "': "
+                + JsonFormatter::escape(result.message) + "\"}";
             return r;
         }
-        auto reload = s.mail_provider().reload();
-        if (!reload.success) {
-            r.status_code = 500;
-            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(reload.message) + "\"}";
-            return r;
-        }
+        r.body = "{\"success\":true,\"data\":{\"message\":\"Configuration regenerated and reloaded\"}}";
         r.body = "{\"success\":true,\"data\":{\"message\":\"Configuration regenerated and reloaded\"}}";
         return r;
     });

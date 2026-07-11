@@ -424,4 +424,86 @@ runtime::HealthReport DockerMailProvider::check_health() const {
     return report;
 }
 
+ApplyResult DockerMailProvider::apply_config(
+    const std::vector<MailDomain>& domains,
+    const MailboxManager& mailboxes,
+    const MailAliasManager& aliases) {
+    // Serialise concurrent applies
+    std::lock_guard<std::mutex> lock(apply_mutex_);
+
+    ApplyResult result;
+
+    // 1. Read current config files into memory (for rollback)
+    std::string gen_dir = config_dir() + "/generated";
+    auto read_file = [](const std::string& path) -> std::string {
+        std::ifstream in(path);
+        if (!in.is_open()) return "";
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        return ss.str();
+    };
+    auto write_file = [](const std::string& path, const std::string& content) -> bool {
+        std::ofstream out(path);
+        if (!out.is_open()) return false;
+        out << content;
+        return true;
+    };
+
+    // Backup: read files before we overwrite them
+    // Use a subset so we only restore what we actually change
+    std::vector<std::pair<std::string, std::string>> backup;
+    auto backup_if_exists = [&](const std::string& fname) {
+        std::string content = read_file(gen_dir + "/" + fname);
+        if (!content.empty()) backup.emplace_back(fname, content);
+    };
+    backup_if_exists("postfix-main.cf");
+    backup_if_exists("dovecot.conf");
+    backup_if_exists("transport_maps");
+    backup_if_exists("virtual_mailboxes");
+    backup_if_exists("passwd");
+    backup_if_exists("virtual_aliases");
+
+    auto restore = [&]() {
+        for (const auto& [fname, content] : backup) {
+            write_file(gen_dir + "/" + fname, content);
+        }
+    };
+
+    // 2. Generate new config files
+    auto cfg = write_configs(domains, mailboxes, aliases);
+    if (!cfg.success) {
+        result.message = cfg.message;
+        result.failed_stage = "generate";
+        return result;
+    }
+
+    // 3. Validate Postfix config
+    auto pf_check = executor_.run({
+        "docker", "exec", "containercp-mail-postfix",
+        "postfix", "check"
+    });
+    if (pf_check.exit_code != 0) {
+        restore();
+        result.message = "Postfix config validation failed: " + pf_check.err;
+        result.failed_stage = "validate";
+        logger_.error("MAIL", result.message);
+        return result;
+    }
+
+    // 4. Reload Postfix
+    auto rl = reload();
+    if (!rl.success) {
+        restore();
+        result.message = rl.message;
+        result.failed_stage = "reload";
+        logger_.error("MAIL", result.message);
+        return result;
+    }
+
+    result.success = true;
+    result.message = "Configuration applied and validated";
+    logger_.info("MAIL", result.message);
+    return result;
+}
+
 } // namespace containercp::mail

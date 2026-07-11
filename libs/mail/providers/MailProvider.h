@@ -7,8 +7,17 @@
 #include "mail/MailAliasManager.h"
 
 #include <string>
+#include <vector>
 
 namespace containercp::mail {
+
+// Result of a transactional config apply.
+// failed_stage identifies where the pipeline stopped.
+struct ApplyResult {
+    bool success = false;
+    std::string message;
+    std::string failed_stage;  // "generate", "validate", "reload", "health"
+};
 
 // Abstract interface for mail server implementations.
 //
@@ -46,6 +55,15 @@ public:
 
     // Reload configuration without full restart.
     virtual core::OperationResult reload() = 0;
+
+    // Transactional config apply: generate → validate → reload.
+    // Validates with postfix check before reloading.
+    // On validation or reload failure, rolls back to previous config.
+    // Thread-safe.
+    virtual ApplyResult apply_config(
+        const std::vector<MailDomain>& domains,
+        const MailboxManager& mailboxes,
+        const MailAliasManager& aliases) = 0;
 
     // Check if the mail service is running.
     virtual bool is_running() const = 0;

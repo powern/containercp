@@ -36,10 +36,11 @@ ServiceRegistry::ServiceRegistry()
     runtime_sync_.register_handler("mail", [this]() -> core::OperationResult {
         if (mail_.module_state() != mail::MailModuleState::Active)
             return {true, "Mail module not active"};
-        auto r = mail_provider_.write_configs(
-            mail_.list(), mailboxes_, mail_aliases_);
-        if (!r.success) return r;
-        return mail_provider_.reload();
+        auto r = mail_provider_.apply_config(mail_.list(), mailboxes_, mail_aliases_);
+        if (!r.success) {
+            logger_.error("MAIL", "Config apply failed at stage '" + r.failed_stage + "': " + r.message);
+        }
+        return {r.success, r.message};
     });
 
     // Register mail health check

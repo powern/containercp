@@ -6,6 +6,7 @@
 #include "runtime/CommandExecutor.h"
 #include "runtime/HealthReport.h"
 
+#include <mutex>
 #include <string>
 
 namespace containercp::mail {
@@ -45,6 +46,12 @@ public:
     std::string compose_dir() const;
     std::string config_dir() const;
 
+    // Transactional apply (MailProvider interface)
+    ApplyResult apply_config(
+        const std::vector<MailDomain>& domains,
+        const MailboxManager& mailboxes,
+        const MailAliasManager& aliases) override;
+
 private:
     std::string compose_project_flag() const;
     core::OperationResult write_docker_compose();
@@ -62,6 +69,7 @@ private:
     logger::Logger& logger_;
     std::string data_root_;
     runtime::CommandExecutor executor_;
+    mutable std::mutex apply_mutex_;
 };
 
 } // namespace containercp::mail
