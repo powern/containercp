@@ -176,6 +176,7 @@ function initApp() {
         <a class="nav-link" data-page="domains" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Domains</a>
         <a class="nav-link" data-page="databases" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg> Databases</a>
         <a class="nav-link" data-page="ssl" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> SSL</a>
+        <a class="nav-link" data-page="mail" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> Mail</a>
         <a class="nav-link" data-page="proxy" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg> Proxy</a>
         <a class="nav-link" data-page="access" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Access</a>
         <a class="nav-link" data-page="backups" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/></svg> Backups</a>
@@ -262,6 +263,9 @@ function navigate(page, params) {
   else if (page === 'sites') loadSites(p);
   else if (page === 'site-detail') loadSiteDetail(p, params);
   else if (page === 'domains') loadDomains(p);
+  else if (page === 'mail') loadMail(p);
+  else if (page === 'mail-domain') loadMailDomain(p, params);
+  else if (page === 'mail-health') loadMailHealth(p);
   else if (page === 'databases') loadDatabases(p);
   else if (page === 'ssl') loadSsl(p);
   else if (page === 'proxy') loadProxy(p);
@@ -294,6 +298,7 @@ async function loadDashboard(p) {
         <div class="health-item"><div class="health-dot ${ok?'ok':'error'}"></div><div><div class="health-name">Daemon</div><div class="health-label">${ok?'Running':'Unavailable'}</div></div></div>
         <div class="health-item"><div class="health-dot ok"></div><div><div class="health-name">REST API</div><div class="health-label">Online</div></div></div>
         <div class="health-item"><div class="health-dot ok"></div><div><div class="health-name">Storage</div><div class="health-label">Loaded</div></div></div>
+        <div class="health-item" id="mail-health-dot"><div class="health-dot"></div><div><div class="health-name">Mail</div><div class="health-label">loading...</div></div></div>
       </div>
       <div style="font-size:13px;color:var(--text2);margin-bottom:12px;font-weight:600;">Recent Jobs</div>
       <div class="activity-list">
@@ -305,6 +310,19 @@ async function loadDashboard(p) {
       if (cards.length >= 4) { cards[2].textContent = (b.data||[]).length; cards[2].className='count'+(cards[2].textContent==='0'?' zero':''); }
       if (cards.length >= 4) { cards[3].textContent = (s.data||[]).length; cards[3].className='count'+(cards[3].textContent==='0'?' zero':''); }
     }).catch(()=>{});
+    // Mail health dot
+    api('/api/mail/health').then(h => {
+      const dot = $('mail-health-dot');
+      if (!dot) return;
+      const status = h.data?.status || 'error';
+      const d = dot.querySelector('.health-dot');
+      if (d) d.className = 'health-dot ' + (status === 'ok' ? 'ok' : status === 'degraded' ? 'warn' : 'error');
+      const l = dot.querySelector('.health-label');
+      if (l) l.textContent = status === 'ok' ? 'Healthy' : status === 'degraded' ? 'Warning' : 'Error';
+    }).catch(() => {
+      const dot = $('mail-health-dot');
+      if (dot) { const d = dot.querySelector('.health-dot'); if(d) d.className = 'health-dot'; const l = dot.querySelector('.health-label'); if(l) l.textContent = 'Inactive'; }
+    });
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load dashboard</div>'; }
 }
 
@@ -714,6 +732,269 @@ function copyText(text) {
 async function removeDomain(domain) {
   if (!confirm('Remove domain '+domain+'?')) return;
   try { const res = await apiPost('/api/domains/remove',{domain}); if(res.success){toast('Domain removed','success');loadDomains($('page'));}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
+}
+
+/* ===== MAIL ===== */
+async function loadMail(p) {
+  try {
+    // Check module status first
+    const status = await api('/api/mail/status');
+    const state = status.data?.state || 'inactive';
+    const dCount = status.data?.domains ?? 0;
+    const mbCount = status.data?.mailboxes ?? 0;
+    const aCount = status.data?.aliases ?? 0;
+
+    let html = `<div class="page-header"><h1>Mail</h1><div class="page-actions">`;
+    if (state === 'inactive') {
+      html += `<button class="btn btn-primary btn-sm" onclick="activateMail()">Activate Mail Module</button>`;
+    } else {
+      html += `<button class="btn btn-sm" onclick="loadMailHealth($('page'))">Health</button> `;
+      html += `<button class="btn btn-sm" onclick="deactivateMail()">Deactivate</button>`;
+    }
+    html += `</div></div>`;
+
+    // Module state card
+    const stateLabel = state === 'active' ? '<span class="badge badge-ok">Active</span>' : '<span class="badge badge-info">Inactive</span>';
+    html += `<div class="card" style="margin-bottom:12px;">
+      <div class="card-header"><h3>Module Status</h3></div>
+      <div style="padding:12px;font-size:13px;">
+        <div style="display:flex;gap:24px;flex-wrap:wrap;">
+          <div><span style="color:var(--text2)">State:</span> ${stateLabel}</div>
+          <div><span style="color:var(--text2)">Domains:</span> <strong>${dCount}</strong></div>
+          <div><span style="color:var(--text2)">Mailboxes:</span> <strong>${mbCount}</strong></div>
+          <div><span style="color:var(--text2)">Aliases:</span> <strong>${aCount}</strong></div>
+        </div>
+      </div>
+    </div>`;
+
+    if (state === 'active') {
+      // List mail domains
+      const res = await api('/api/mail/domains');
+      const domains = res.data || [];
+      html += `<div class="page-header" style="margin-top:8px;"><h3>Mail Domains</h3><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="showCreateMailDomain()">+ Add Domain</button></div></div>`;
+      window.renderTable = () => {
+        const filtered = domains.filter(r => !searchTerm || r.domain.includes(searchTerm));
+        html += buildTable([
+          {label:'Domain',html:r=>`<a href="#" onclick="navigate('mail-domain',${r.id});return false" style="color:var(--primary);text-decoration:none;">${esc(r.domain)}</a>`},
+          {label:'Mode',html:r=>`<span class="badge badge-info">${esc(r.mode)}</span>`},
+          {label:'Mailboxes',html:r=>esc(r.max_mailboxes||'∞')},
+          {label:'Relay',html:r=>esc(r.relay_host||'-')},
+          {label:'DKIM',html:r=>r.dkim_public_key_dns ? '<span class="badge badge-ok">✓</span>' : '<span class="badge badge-info">—</span>'},
+          {label:'Actions',html:r=>`<button class="btn-icon" onclick="navigate('mail-domain',${r.id})" title="View">&#128065;</button><button class="btn-icon" style="color:var(--red)" title="Remove" onclick="removeMailDomain(${r.id})">&#10005;</button>`}
+        ], filtered, 'No mail domains');
+      };
+      window.renderTable();
+    }
+    p.innerHTML = html;
+  } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load mail</div>'; }
+}
+
+async function activateMail() {
+  try {
+    const res = await apiPost('/api/mail/activate', {});
+    if (res.success) { toast('Mail module activated', 'success'); navigate('mail'); }
+    else toast('Error: ' + (res.error||'Activation failed'), 'error');
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+async function deactivateMail() {
+  if (!confirm('Deactivate mail module? This will stop containers.')) return;
+  try {
+    const res = await apiPost('/api/mail/deactivate', {});
+    if (res.success) { toast('Mail module deactivated', 'success'); navigate('mail'); }
+    else toast('Error: ' + (res.error||'Deactivation failed'), 'error');
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+function showCreateMailDomain() {
+  showModal('Add Mail Domain', `
+    <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Domain Name</label><input id="md-domain" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" placeholder="example.com"></div>
+    <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Mode</label>
+      <select id="md-mode" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;">
+        <option value="local-primary">Local Primary</option>
+        <option value="external-relay">External Relay</option>
+        <option value="split-m365">Split M365</option>
+        <option value="disabled">Disabled</option>
+      </select></div>
+    <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Domain ID (from ContainerCP sites, 0 = external)</label><input id="md-domain-id" type="number" value="0" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;"></div>
+    <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Relay Host (for external-relay/split-m365)</label><input id="md-relay" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" placeholder="smtp.example.com"></div>
+    <button class="btn btn-primary btn-sm" onclick="createMailDomain()" style="margin-top:8px;">Create</button>
+  `);
+}
+
+async function createMailDomain() {
+  const domain = $('md-domain').value.trim();
+  const mode = $('md-mode').value;
+  const domain_id = parseInt($('md-domain-id').value) || 0;
+  const relay_host = $('md-relay').value.trim();
+  if (!domain) { toast('Enter a domain', 'error'); return; }
+  try {
+    const res = await apiPost('/api/mail/domains', {domain, mode, domain_id, relay_host});
+    if (res.success) { toast('Mail domain created', 'success'); hideModal(); navigate('mail'); }
+    else toast('Error: ' + (res.error||'Creation failed'), 'error');
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+async function removeMailDomain(id) {
+  if (!confirm('Remove mail domain?')) return;
+  try {
+    const res = await apiPost('/api/mail/domains/' + id, {}, 'DELETE');
+    if (res.success) { toast('Mail domain removed', 'success'); navigate('mail'); }
+    else toast('Error: ' + (res.error||'Remove failed'), 'error');
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+async function loadMailDomain(p, id) {
+  try {
+    const dd = await api('/api/mail/domains/' + id);
+    const domain = dd.data;
+    if (!domain) { p.innerHTML = '<div class="empty-state">Mail domain not found</div>'; return; }
+
+    // Fetch mailboxes and aliases
+    let mailboxes = [], aliases = [];
+    try { const mb = await api('/api/mail/domains/' + id + '/mailboxes'); mailboxes = mb.data||[]; } catch(e) {}
+    try { const al = await api('/api/mail/domains/' + id + '/aliases'); aliases = al.data||[]; } catch(e) {}
+
+    const modeLabel = `<span class="badge badge-info">${esc(domain.mode)}</span>`;
+    const dkimStatus = domain.dkim_public_key_dns ? '<span class="badge badge-ok">✓ Generated</span>' : '<span class="badge badge-info">Not generated</span>';
+
+    let html = `<div class="page-header">
+      <h1><a href="#" onclick="navigate('mail');return false" style="color:var(--text2);text-decoration:none;">Mail</a> / ${esc(domain.domain)}</h1>
+      <div class="page-actions">
+        <button class="btn btn-sm" onclick="generateMailDkim(${id})">Generate DKIM</button>
+        <button class="btn btn-sm" onclick="regenMailConfig()">Regenerate Config</button>
+      </div>
+    </div>
+    <div class="details-panel"><div class="details-grid">
+      <div class="details-field"><div class="details-label">Domain</div><div class="details-value">${esc(domain.domain)}</div></div>
+      <div class="details-field"><div class="details-label">Mode</div><div class="details-value">${modeLabel}</div></div>
+      <div class="details-field"><div class="details-label">Domain ID</div><div class="details-value">${domain.domain_id || 'External'}</div></div>
+      <div class="details-field"><div class="details-label">Site ID</div><div class="details-value">${domain.site_id || 'None'}</div></div>
+      <div class="details-field"><div class="details-label">Relay Host</div><div class="details-value">${esc(domain.relay_host) || '-'}</div></div>
+      <div class="details-field"><div class="details-label">DKIM</div><div class="details-value">${dkimStatus}</div></div>
+    </div></div>`;
+
+    // Mailboxes section
+    html += `<div class="page-header" style="margin-top:16px;"><h3>Mailboxes</h3><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="showCreateMailbox(${id})">+ Add Mailbox</button></div></div>`;
+    html += buildTable([
+      {label:'Local Part',html:r=>esc(r.local_part)},
+      {label:'Address',html:r=>esc(r.address)},
+      {label:'Forward',html:r=>r.forward_to ? esc(r.forward_to) : '-'},
+      {label:'Enabled',html:r=>r.enabled ? '<span class="badge badge-ok">Yes</span>' : '<span class="badge badge-err">No</span>'},
+      {label:'Actions',html:r=>`<button class="btn-icon" style="color:var(--red)" onclick="removeMailbox(${r.id})">&#10005;</button>`}
+    ], mailboxes, 'No mailboxes');
+
+    // Aliases section
+    html += `<div class="page-header" style="margin-top:16px;"><h3>Aliases</h3><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="showCreateAlias(${id})">+ Add Alias</button></div></div>`;
+    html += buildTable([
+      {label:'Source',html:r=>esc(r.source)+'@'+esc(domain.domain)},
+      {label:'Destination',html:r=>esc(r.destination)},
+      {label:'Enabled',html:r=>r.enabled ? '<span class="badge badge-ok">Yes</span>' : '<span class="badge badge-err">No</span>'},
+      {label:'Actions',html:r=>`<button class="btn-icon" style="color:var(--red)" onclick="removeAlias(${r.id})">&#10005;</button>`}
+    ], aliases, 'No aliases');
+
+    // DKIM DNS record if exists
+    if (domain.dkim_public_key_dns) {
+      html += `<div class="card" style="margin-top:16px"><div class="card-header"><h3>DKIM DNS Record</h3></div><div style="padding:12px"><code style="word-break:break-all;font-size:12px;">${esc(domain.dkim_public_key_dns)}</code></div></div>`;
+    }
+
+    p.innerHTML = html;
+  } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load mail domain</div>'; }
+}
+
+function showCreateMailbox(domainId) {
+  showModal('Add Mailbox', `
+    <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Local Part</label><input id="mb-local" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" placeholder="user"></div>
+    <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Password</label><input id="mb-pass" type="password" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;"></div>
+    <button class="btn btn-primary btn-sm" onclick="createMailbox(${domainId})">Create</button>
+  `);
+}
+
+async function createMailbox(did) {
+  const local_part = $('mb-local').value.trim();
+  const password = $('mb-pass').value;
+  if (!local_part || !password) { toast('Fill in all fields', 'error'); return; }
+  try {
+    const res = await apiPost('/api/mail/domains/' + did + '/mailboxes', {local_part, password});
+    if (res.success) { toast('Mailbox created', 'success'); hideModal(); navigate('mail-domain', did); }
+    else toast('Error: ' + (res.error||'Failed'), 'error');
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+async function removeMailbox(id) {
+  if (!confirm('Remove mailbox?')) return;
+  try {
+    const res = await apiPost('/api/mail/mailboxes/' + id, {}, 'DELETE');
+    if (res.success) { toast('Mailbox removed', 'success'); navigate('mail-domain', currentParams); }
+    else toast('Error: ' + (res.error||'Failed'), 'error');
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+function showCreateAlias(domainId) {
+  showModal('Add Alias', `
+    <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Source (local part)</label><input id="al-source" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" placeholder="info"></div>
+    <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Destination (full email)</label><input id="al-dest" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" placeholder="user@example.com"></div>
+    <button class="btn btn-primary btn-sm" onclick="createAlias(${domainId})">Create</button>
+  `);
+}
+
+async function createAlias(did) {
+  const source = $('al-source').value.trim();
+  const dest = $('al-dest').value.trim();
+  if (!source || !dest) { toast('Fill in all fields', 'error'); return; }
+  try {
+    const res = await apiPost('/api/mail/domains/' + did + '/aliases', {source, destination: dest});
+    if (res.success) { toast('Alias created', 'success'); hideModal(); navigate('mail-domain', did); }
+    else toast('Error: ' + (res.error||'Failed'), 'error');
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+async function removeAlias(id) {
+  if (!confirm('Remove alias?')) return;
+  try {
+    const res = await apiPost('/api/mail/aliases/' + id, {}, 'DELETE');
+    if (res.success) { toast('Alias removed', 'success'); navigate('mail-domain', currentParams); }
+    else toast('Error: ' + (res.error||'Failed'), 'error');
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+async function generateMailDkim(did) {
+  try {
+    const res = await apiPost('/api/mail/domains/' + did + '/dkim/generate', {});
+    if (res.success) { toast('DKIM key generated', 'success'); navigate('mail-domain', did); }
+    else toast('Error: ' + (res.error||'Failed'), 'error');
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+async function regenMailConfig() {
+  try {
+    const res = await apiPost('/api/mail/regenerate', {});
+    if (res.success) { toast('Config regenerated', 'success'); }
+    else toast('Error: ' + (res.error||'Failed'), 'error');
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+async function loadMailHealth(p) {
+  try {
+    const res = await api('/api/mail/health');
+    const d = res.data || {};
+    const services = d.services || [];
+    let html = `<div class="page-header"><h1>Mail Health</h1><div class="page-actions"><button class="btn btn-sm" onclick="navigate('mail')">Back to Mail</button></div></div>`;
+    html += `<div class="card"><div class="card-header"><h3>Status: <span class="badge ${d.status === 'ok' ? 'badge-ok' : d.status === 'degraded' ? 'badge-warn' : 'badge-err'}">${esc(d.status)}</span></h3></div><div style="padding:12px">`;
+    for (const svc of services) {
+      const dot = svc.status === 'ok' ? '🟢' : svc.status === 'degraded' ? '🟡' : '🔴';
+      html += `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;"><span>${dot} ${esc(svc.name)}</span><span style="color:var(--text2)">${esc(svc.message)}</span></div>`;
+    }
+    if (d.details) {
+      html += `<div style="margin-top:12px;font-size:12px;color:var(--text3);">`;
+      for (const [k,v] of Object.entries(d.details)) {
+        html += `<div>${esc(k)}: ${esc(String(v))}</div>`;
+      }
+      html += `</div>`;
+    }
+    html += `</div></div>`;
+    p.innerHTML = html;
+  } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load mail health</div>'; }
 }
 
 /* ===== DATABASES ===== */
