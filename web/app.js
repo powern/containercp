@@ -969,7 +969,7 @@ async function createMailbox(did) {
     const res = await apiPost('/api/mail/domains/' + did + '/mailboxes', {local_part, password});
     if (res.success) { toast('Mailbox created', 'success'); hideModal(); navigate('mail-domain', did); }
     else toast('Error: ' + (res.error||'Failed'), 'error');
-  } catch(e) { toast('Network error', 'error'); }
+  } catch(e) { toast(e.message || 'Network error', 'error'); }
 }
 
 async function removeMailbox(id) {
