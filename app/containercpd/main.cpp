@@ -184,6 +184,22 @@ int main(int argc, char* argv[]) {
                     "RecoveryManager will retry automatically.");
     }
 
+    // Mail module recovery — restart containers if module was active
+    if (services.mail().module_state() == containercp::mail::MailModuleState::Active) {
+        log.info("MAIL", "Mail module was active — recovering runtime...");
+        auto env = services.mail_provider().prepare_environment();
+        if (!env.success) {
+            log.warning("MAIL", "Mail environment setup failed: " + env.message);
+        } else {
+            auto start = services.mail_provider().start();
+            if (!start.success) {
+                log.warning("MAIL", "Mail container start failed: " + start.message);
+            } else {
+                log.info("MAIL", "Mail runtime recovered");
+            }
+        }
+    }
+
     containercp::daemon::DaemonApp daemon(services);
     services.start();
 

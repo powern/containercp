@@ -1537,7 +1537,7 @@ bool ApiServer::start() {
           << ",\"last_login\":\"" << api::JsonFormatter::escape(mb.last_login)
           << ",\"created_at\":\"" << api::JsonFormatter::escape(mb.created_at)
           << ",\"updated_at\":\"" << api::JsonFormatter::escape(mb.updated_at)
-          << "}";
+          << "\"}";
         return j.str();
     };
 
@@ -1551,7 +1551,7 @@ bool ApiServer::start() {
           << "\",\"enabled\":" << (a.enabled ? "true" : "false")
           << ",\"created_at\":\"" << api::JsonFormatter::escape(a.created_at)
           << ",\"updated_at\":\"" << api::JsonFormatter::escape(a.updated_at)
-          << "}";
+          << "\"}";
         return j.str();
     };
 
