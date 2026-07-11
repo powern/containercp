@@ -65,8 +65,8 @@ DockerMailProvider (Postfix + Dovecot + Redis)
 - [x] Integration test suite: 8/9 tests passing
 
 ### Phase 3: Production Features (CURRENT)
-- [ ] `POST /api/mail/recover` — restart unhealthy containers
-- [ ] `POST /api/mail/reload` — explicit config reload
+- [x] `POST /api/mail/recover` — restart unhealthy containers
+- [x] `POST /api/mail/reload` — explicit config reload
 - [ ] MX record validation (DNS lookup)
 - [ ] MailHealthMonitor with periodic checks
 - [ ] RecoveryManager integration

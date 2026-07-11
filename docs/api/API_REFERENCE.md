@@ -424,16 +424,24 @@ The response structure is defined by the `HealthReport` model in
 `libs/runtime/`.  Future modules register their own health checks
 using the same model.
 
-### 2.20 Mail — Regenerate
+### 2.20 Mail — Regenerate, Reload, Recover
 
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|
 | POST | `/api/mail/regenerate` | Regenerate mail server config and reload | `DockerMailProvider` |
+| POST | `/api/mail/reload` | Reload Postfix config without full restart | `DockerMailProvider` |
+| POST | `/api/mail/recover` | Full restart of mail containers | `DockerMailProvider` |
 
 Regenerates Postfix `main.cf`, Dovecot `dovecot.conf`, virtual mailbox maps,
 and Dovecot passwd file from the current ContainerCP data model.  Calls
 `reload()` (postfix reload) after writing configs.  Requires the mail module
 to be active.  Returns error if module is inactive.
+
+`reload` signals Postfix to reload its configuration without stopping
+containers.  Useful after manual config edits.
+
+`recover` performs a full stop + config regenerate + start cycle.
+Useful when a container becomes unresponsive or config is corrupted.
 
 ### 2.21 Logs
 
