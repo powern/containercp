@@ -807,6 +807,34 @@ async function deactivateMail() {
 }
 
 function showCreateMailDomain() {
+  // Fetch existing ContainerCP domains for the dropdown
+  api('/api/domains').then(res => {
+    const domains = res.data || [];
+    let domainOptions = '<option value="0">External (no site)</option>';
+    for (const d of domains) {
+      domainOptions += `<option value="${d.id}">${esc(d.domain)} (site #${d.site_id})</option>`;
+    }
+    showModal('Add Mail Domain', `
+      <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Domain Name</label><input id="md-domain" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" placeholder="example.com"></div>
+      <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Mode</label>
+        <select id="md-mode" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;">
+          <option value="local-primary">Local Primary</option>
+          <option value="external-relay">External Relay</option>
+          <option value="split-m365">Split M365</option>
+          <option value="disabled">Disabled</option>
+        </select></div>
+      <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Linked ContainerCP Domain</label>
+        <select id="md-domain-id" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;">${domainOptions}</select></div>
+      <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Relay Host (for external-relay/split-m365)</label><input id="md-relay" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" placeholder="smtp.example.com"></div>
+      <button class="btn btn-primary btn-sm" onclick="createMailDomain()" style="margin-top:8px;">Create</button>
+    `);
+  }).catch(() => {
+    // Fallback if domains API fails
+    showCreateMailDomainSimple();
+  });
+}
+
+function showCreateMailDomainSimple() {
   showModal('Add Mail Domain', `
     <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Domain Name</label><input id="md-domain" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" placeholder="example.com"></div>
     <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Mode</label>
