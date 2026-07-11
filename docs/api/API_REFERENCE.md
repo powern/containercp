@@ -313,6 +313,10 @@ Aliases map a source local part to one or more destination addresses.
 Multiple aliases with the same source but different destinations are allowed.
 An exact duplicate (same source, same destination, same domain) is rejected (409).
 
+Aliases are written to Postfix `virtual_alias_maps` during config generation
+and mounted into the Postfix container.  Changes take effect immediately via
+`RuntimeSynchronizer` (no manual regenerate needed).
+
 Validation:
 - `source` is normalized (lowercased, trimmed) before duplicate check using the same
   rules as Mailbox local_part (alphanumeric, dots, underscores, hyphens only).
@@ -378,6 +382,12 @@ mailboxes, aliases) can be configured in any state.  Activating the module
 creates Docker containers (Postfix + Dovecot + Redis) and generates mail
 server configuration from the current data model.  Deactivating stops
 containers without deleting configuration data.
+
+Published ports:
+| Service | Ports |
+|---------|-------|
+| Postfix | 25 (SMTP), 465 (SMTPS), 587 (submission) |
+| Dovecot | 143 (IMAP), 993 (IMAPS), 24 (LMTP) |
 
 Status response includes counts of configured domains, mailboxes, and aliases.
 

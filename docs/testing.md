@@ -94,11 +94,23 @@ cat /srv/containercp/mail/config/generated/virtual_mailboxes
 curl -s http://127.0.0.1:8080/api/mail/health | python3 -m json.tool
 # Expected: domain_count=1, mailbox_count=1
 
-# 9. Verify mail status
-curl -s http://127.0.0.1:8080/api/mail/status | python3 -m json.tool
-# Expected: state "active", domains=1, mailboxes=1
+# 9. Verify aliases work
+curl -s -X POST http://127.0.0.1:8080/api/mail/domains/1/aliases \
+  -H "Content-Type: application/json" \
+  -d '{"source":"info","destination":"alice@testmail.local"}'
+# Expected: success true, alias record returned
 
-# 10. Check daemon logs for errors
+# 10. Verify alias file generated
+cat /srv/containercp/mail/config/generated/virtual_aliases
+# Expected: info@testmail.local\talice@testmail.local
+
+# 11. Verify ports are published
+docker ps --format "table {{.Names}}\t{{.Ports}}"
+# Expected:
+#   containercp-mail-postfix  0.0.0.0:25->25/tcp, 0.0.0.0:465->465/tcp, 0.0.0.0:587->587/tcp
+#   containercp-mail-dovecot  0.0.0.0:24->24/tcp, 0.0.0.0:143->143/tcp, 0.0.0.0:993->993/tcp
+
+# 12. Check daemon logs for errors
 grep -E "ERROR|FATAL|FAILED" /tmp/containercpd.log
 # Expected: no mail-related errors (proxy SSL mount warnings are normal)
 ```

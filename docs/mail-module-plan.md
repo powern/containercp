@@ -636,6 +636,13 @@ Local delivery works for `local-primary` mode.
 - Future DKIM lifecycle: multiple selectors, rotation, scheduled key
   replacement supported by design (directory-based storage per selector).
 
+### Stage 2a deferred fixes (completed)
+
+- `Postfix virtual_alias_maps generation` — ✅ fixed (was `(void)aliases;`)
+- Port publishing — ✅ Postfix 25/465/587, Dovecot 143/993/24
+- Router prefix chaining — ✅ alias/DKIM endpoints were unreachable
+- `ForwarderManager` — ⬜ deferred (forwarding via alias is sufficient)
+
 ### Stage 3 — External modes and M365 (completed)
 
 - `external-relay` mode — Postfix relay host configuration

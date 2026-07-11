@@ -279,6 +279,10 @@
 | MailAliasManager CRUD | ✅ | |
 | REST API: alias endpoints | ✅ | |
 | Alias routing before domain routes | ✅ | |
+| virtual_alias_maps generation | ✅ | Fixed: was (void)aliases; |
+| Port publishing (25/465/587/143/993) | ✅ | Fixed: was network_mode: service:redis |
+| Router prefix chaining | ✅ | Fixed: alias/DKIM endpoints were unreachable |
+| ForwarderManager | ⬜ | Deferred |
 | Tests | ✅ | |
 
 ### Stage 2b — TLS, DKIM, security
