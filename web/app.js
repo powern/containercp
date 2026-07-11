@@ -1205,6 +1205,25 @@ async function loadSettings(p) {
         </div>
         <div id="admin-ssl-status" style="margin-top:8px;font-size:12px;color:var(--text3);"></div>
       </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h3>Change Password</h3>
+      <div style="padding:12px">
+        <div style="margin-bottom:8px">
+          <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Current Password</label>
+          <input id="cp-old-pass" type="password" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;">
+        </div>
+        <div style="margin-bottom:8px">
+          <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">New Password</label>
+          <input id="cp-new-pass" type="password" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;">
+        </div>
+        <div style="margin-bottom:8px">
+          <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Confirm New Password</label>
+          <input id="cp-confirm-pass" type="password" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;">
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="changeAdminPassword()">Change Password</button>
+        <div id="cp-status" style="margin-top:8px;font-size:12px;color:var(--text3);"></div>
+      </div>
     </div>`;
 }
 
@@ -1239,6 +1258,29 @@ async function renewAdminSsl() {
     if (res.success) toast('Renewal queued', 'success');
     else toast('Error: ' + ((res.error && res.error.message) || res.error), 'error');
   } catch(e) { toast('Network error', 'error'); }
+}
+
+async function changeAdminPassword() {
+  const oldP = $('cp-old-pass').value;
+  const newP = $('cp-new-pass').value;
+  const confirmP = $('cp-confirm-pass').value;
+  const status = $('cp-status');
+  if (!oldP || !newP || !confirmP) { status.textContent = 'Fill in all fields'; return; }
+  if (newP !== confirmP) { status.textContent = 'New passwords do not match'; return; }
+  if (newP.length < 4) { status.textContent = 'Password too short (min 4 chars)'; return; }
+  status.textContent = 'Changing password...';
+  try {
+    const res = await apiPost('/auth/change-password', {old_password: oldP, new_password: newP});
+    if (res.success) {
+      status.textContent = '';
+      $('cp-old-pass').value = '';
+      $('cp-new-pass').value = '';
+      $('cp-confirm-pass').value = '';
+      toast('Password changed successfully', 'success');
+    } else {
+      status.textContent = res.error || 'Failed to change password';
+    }
+  } catch(e) { status.textContent = 'Network error'; }
 }
 
 /* ===== THEME ===== */
