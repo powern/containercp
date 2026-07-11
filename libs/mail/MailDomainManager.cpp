@@ -1,7 +1,20 @@
 #include "MailDomainManager.h"
 #include "utils/Validator.h"
 
+#include <chrono>
+#include <ctime>
+
 namespace containercp::mail {
+
+static std::string now_utc() {
+    auto now = std::chrono::system_clock::now();
+    auto tt = std::chrono::system_clock::to_time_t(now);
+    struct tm tm_buf;
+    gmtime_r(&tt, &tm_buf);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
+    return std::string(buf);
+}
 
 std::string MailDomainManager::validate_mode_relay(
     MailDomainMode mode, const std::string& relay_host) {
@@ -34,6 +47,8 @@ uint64_t MailDomainManager::create(const std::string& domain_name,
     m.owner_id = owner_id;
     m.relay_host = relay_host;
     m.enabled = true;
+    m.created_at = now_utc();
+    m.updated_at = m.created_at;
     domains_.push_back(std::move(m));
     return m.id;
 }

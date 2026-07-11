@@ -1485,8 +1485,8 @@ bool ApiServer::start() {
           << ",\"max_aliases\":" << m.max_aliases
           << ",\"catch_all\":\"" << JsonFormatter::escape(m.catch_all)
           << "\",\"created_at\":\"" << JsonFormatter::escape(m.created_at)
-          << "\",\"updated_at\":\"" << JsonFormatter::escape(m.updated_at)
-          << "}";
+           << "\",\"updated_at\":\"" << JsonFormatter::escape(m.updated_at)
+           << "\"}";
         return j.str();
     };
 

@@ -74,10 +74,18 @@ ServiceRegistry::ServiceRegistry()
                 auto expiry = exec.run({"openssl", "x509", "-in", cert_path, "-noout", "-checkend", "0"});
                 if (expiry.exit_code != 0) {
                     cert_status = "expired";
-                } else if (issuer.exit_code == 0 && issuer.out == check.out) {
-                    cert_status = "self-signed";
                 } else {
-                    cert_status = "valid";
+                    // Compare DN (subject vs issuer) to detect self-signed.
+                    // openssl output: "subject=CN=..." and "issuer=CN=..."
+                    auto dn = [](const std::string& line) -> std::string {
+                        auto eq = line.find('=');
+                        return (eq != std::string::npos) ? line.substr(eq + 1) : line;
+                    };
+                    if (issuer.exit_code == 0 && dn(issuer.out) == dn(check.out)) {
+                        cert_status = "self-signed";
+                    } else {
+                        cert_status = "valid";
+                    }
                 }
             } else {
                 cert_status = "missing";
