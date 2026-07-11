@@ -308,7 +308,7 @@ core::OperationResult ServiceRegistry::ensure_admin_proxy() {
     std::string admin_upstream = gw_ip + ":8081";
     logger_.info("SYSTEM", "Admin upstream: " + admin_upstream);
 
-    // Ensure ReverseProxy entry exists (idempotent)
+    // Ensure ReverseProxy entry exists with correct upstream
     auto* existing = reverse_proxies_.find_by_domain(hostname);
     if (!existing) {
         proxy::ReverseProxy admin_rp;
@@ -321,6 +321,11 @@ core::OperationResult ServiceRegistry::ensure_admin_proxy() {
         proxy_provider_.create_proxy(admin_rp);
         reverse_proxies_.create(hostname, 0, config_.data_root() + "/proxy/sites/" + hostname + ".conf", admin_upstream);
         logger_.info("SYSTEM", "Admin proxy entry created for " + hostname);
+    } else if (existing->upstream != admin_upstream) {
+        // Update upstream if it changed (e.g., site-0-web → admin UI)
+        existing->upstream = admin_upstream;
+        storage_.save_reverse_proxies(reverse_proxies_.list());
+        logger_.info("SYSTEM", "Admin proxy upstream updated to " + admin_upstream);
     }
 
     // Always regenerate admin proxy config file (supports config updates)
