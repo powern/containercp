@@ -1536,7 +1536,7 @@ bool ApiServer::start() {
           << "\",\"forward_to\":\"" << api::JsonFormatter::escape(mb.forward_to)
           << "\",\"spam_enabled\":" << (mb.spam_enabled ? "true" : "false")
           << ",\"last_login\":\"" << api::JsonFormatter::escape(mb.last_login)
-          << ",\"created_at\":\"" << api::JsonFormatter::escape(mb.created_at)
+          << "\",\"created_at\":\"" << api::JsonFormatter::escape(mb.created_at)
           << ",\"updated_at\":\"" << api::JsonFormatter::escape(mb.updated_at)
           << "\"}";
         return j.str();
