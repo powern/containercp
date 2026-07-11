@@ -472,6 +472,14 @@ ApplyResult DockerMailProvider::apply_config(
 
     ApplyResult result;
 
+    // Helper: find domain name by ID
+    auto domain_name_of = [&](uint64_t domain_id) -> std::string {
+        for (const auto& d : domains) {
+            if (d.id == domain_id) return d.domain_name;
+        }
+        return "";
+    };
+
     // 1. Read current config files into memory (for rollback)
     std::string gen_dir = config_dir() + "/generated";
     auto read_file = [](const std::string& path) -> std::string {
@@ -529,7 +537,37 @@ ApplyResult DockerMailProvider::apply_config(
         return result;
     }
 
-    // 4. Reload Postfix
+    // 4. Validate alias map (if any aliases exist)
+    bool has_aliases = false;
+    for (const auto& a : aliases.list()) { if (a.enabled) { has_aliases = true; break; } }
+    if (has_aliases) {
+        // Get the first enabled alias for validation
+        std::string test_source, test_domain;
+        for (const auto& a : aliases.list()) {
+            if (!a.enabled) continue;
+            test_source = a.source_local_part;
+            test_domain = domain_name_of(a.domain_id);
+            if (!test_domain.empty()) break;
+        }
+        if (!test_source.empty() && !test_domain.empty()) {
+            auto alias_check = executor_.run({
+                "docker", "exec", "containercp-mail-postfix",
+                "postmap", "-q",
+                test_source + "@" + test_domain,
+                "texthash:/etc/postfix/virtual_aliases"
+            });
+            if (alias_check.exit_code != 0) {
+                restore();
+                result.message = "Alias lookup validation failed for "
+                    + test_source + "@" + test_domain + ": " + alias_check.err;
+                result.failed_stage = "validate";
+                logger_.error("MAIL", result.message);
+                return result;
+            }
+        }
+    }
+
+    // 5. Reload Postfix
     auto rl = reload();
     if (!rl.success) {
         restore();

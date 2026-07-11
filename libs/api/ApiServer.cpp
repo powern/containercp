@@ -1663,6 +1663,12 @@ bool ApiServer::start() {
             if (dest == "null") { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination cannot be null\"}"; return r; }
             if (dest.empty()) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination is required\"}"; return r; }
             if (dest.find('@') == std::string::npos) { r.status_code = 400; r.body = "{\"success\":false,\"error\":\"destination must be a valid email address\"}"; return r; }
+            // Reject self-loop (alias points to its own source address)
+            if (dest == source + "@" + domain->domain_name) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Alias destination cannot be the same as source\"}";
+                return r;
+            }
             uint64_t id = s.mail_aliases().create(domain_id, source, dest);
             if (id == 0) { r.status_code = 409; r.body = "{\"success\":false,\"error\":\"Alias already exists\"}"; return r; }
             auto* created = s.mail_aliases().find(id);
