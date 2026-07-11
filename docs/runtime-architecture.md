@@ -162,6 +162,14 @@ Current consumers:
 - `"mail"` — regenerates Postfix/Dovecot configs and reloads after
   any domain, mailbox, or alias CRUD operation
 
+The mail sync callback uses a transactional apply pipeline:
+generate candidate config → validate with `postfix check` →
+promote → reload → on failure: rollback to previous known-good
+config.  Concurrent applies are serialized via mutex.  See
+`DockerMailProvider::apply_config()`.
+
+## HealthRegistry
+
 ## HealthRegistry
 
 The `HealthRegistry` provides a generic health check registry, following

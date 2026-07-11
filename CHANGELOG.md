@@ -63,3 +63,20 @@ See `docs/changelog/early-development.md` for detailed entries.
 - Deprecated PortManager not yet removed — cleanup planned
 - `RuntimeActionExecutor` requires Docker Compose v2+
 - Async jobs cancelled/marked failed if daemon shuts down during execution
+
+---
+
+## 2026-07-11 | Mail module hardening
+
+- Network isolation: LMTP port 24 removed from host, ports bound to 127.0.0.1
+- LMTP via Docker DNS (`containercp-mail-dovecot:24`) instead of `127.0.0.1:24`
+- Router consolidation: 6 prefix handlers → 2 dispatchers, no 404 fallthrough
+- Transactional `apply_config()`: generate → `postfix check` → reload → rollback
+- Self-signed TLS cert auto-generated on fresh install (`ensure_certificate()`)
+- Certificate status reported in health endpoint (valid/self-signed/expired/missing)
+- Alias self-loop detection, `postmap -q` validation before apply
+- Process-level health checks: `postfix status`, `doveadm who`, `redis-cli ping`
+- Health status model: ok / degraded / error
+- E2E test script: `scripts/test-mail-routing.sh`
+- All aliases now written to Postfix `virtual_alias_maps` (was `(void)aliases;`)
+- Port publishing fixed: Postfix 25/465/587, Dovecot 143/993 exposed on host

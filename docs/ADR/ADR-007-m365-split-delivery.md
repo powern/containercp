@@ -30,8 +30,8 @@ Each `split-m365` domain generates per-user LMTP entries for every
 local mailbox, followed by a domain-level SMTP catch-all:
 
 ```
-alice@domain                lmtp:127.0.0.1:24     (explicit local mailbox)
-bob@domain                  lmtp:127.0.0.1:24     (explicit local mailbox)
+alice@domain                lmtp:containercp-mail-dovecot:24     (explicit local mailbox)
+bob@domain                  lmtp:containercp-mail-dovecot:24     (explicit local mailbox)
 domain                      smtp:[relay_host]:25  (domain-level catch-all)
 ```
 
@@ -52,7 +52,7 @@ LMTP entry.  All recipients (including unknown) go to Dovecot via
 LMTP.  Dovecot rejects unknowns.
 
 ```
-domain                      lmtp:127.0.0.1:24     (all recipients local)
+domain                      lmtp:containercp-mail-dovecot:24     (all recipients local)
 ```
 
 ### relay_host must be configured explicitly

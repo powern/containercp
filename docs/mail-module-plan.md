@@ -356,7 +356,7 @@ Postfix `transport_maps` for split delivery:
 
 | Recipient match | Transport |
 |-----------------|-----------|
-| `local-user@domain` (in `virtual_mailbox_maps`) | `lmtp:127.0.0.1:24` (Dovecot) |
+| `local-user@domain` (in `virtual_mailbox_maps`) | `lmtp:containercp-mail-dovecot:24` (Dovecot) |
 | `*@domain` (domain in `split-m365` mode) | `smtp:[<mx-target>]:25` (discovered from DNS) |
 
 ### Real-world deployment examples
@@ -674,6 +674,22 @@ Local delivery works for `local-primary` mode.
 - Serializes the generic `HealthReport` model (no Mail-specific JSON)
 - Response designed for evolution: `status`, `services[]`, `details{}`
 - Details include module state, domain/mailbox/alias counts
+
+### Hardening — Security & reliability (completed)
+
+- LMTP port 24 removed from host; all ports bound to `127.0.0.1` by default
+- LMTP transport uses Docker DNS (`lmtp:containercp-mail-dovecot:24`)
+- Router prefix handlers consolidated (no 404-based fallthrough)
+- Transactional `apply_config()` pipeline:
+  generate → `postfix check` → reload → rollback on failure
+  (mutex-serialized, in-memory backup/restore)
+- Self-signed certificate auto-generated on fresh install; status reported in health
+- Alias validation: self-loop rejection, `postmap -q` lookup before apply
+- Health checks extended: `postfix status`, `doveadm who` process-level checks
+- Status model: `ok` / `degraded` / `error`
+- Certificate status reported in health (`valid`, `self-signed`, `expired`, `missing`)
+- E2E test script: `scripts/test-mail-routing.sh`
+- All 146 unit tests passing, zero compiler warnings
 
 ### Stage 4d — Recovery and health integration (planned)
 

@@ -82,7 +82,7 @@ curl -s -X POST http://127.0.0.1:8080/api/mail/domains/1/mailboxes \
 
 # 7. Verify runtime sync generated config files
 cat /srv/containercp/mail/config/generated/transport_maps
-# Expected: testmail.local lmtp:127.0.0.1:24
+# Expected: testmail.local lmtp:containercp-mail-dovecot:24
 
 cat /srv/containercp/mail/config/generated/postfix-main.cf
 # Expected: virtual_mailbox_domains includes testmail.local

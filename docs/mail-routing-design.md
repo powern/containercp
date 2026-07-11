@@ -34,14 +34,14 @@ Postfix (containercp-mail-postfix)
 ### Transport maps
 
 ```
-domain                      lmtp:127.0.0.1:24     (all recipients local)
+domain                      lmtp:containercp-mail-dovecot:24     (all recipients local)
 ```
 
 The domain-level entry sends ALL recipients to Dovecot via LMTP.
 Known mailboxes are delivered normally.  Unknown recipients are
 rejected by Dovecot (which returns a bounce to Postfix).
 
-`virtual_transport = lmtp:127.0.0.1:24` is also set in main.cf as
+`virtual_transport = lmtp:containercp-mail-dovecot:24` is also set in main.cf as
 a safety net, but the transport map entry takes precedence per
 Postfix precedence rules.
 
@@ -129,8 +129,8 @@ Each local mailbox gets a per-user LMTP entry (full address match),
 followed by a domain-level SMTP catch-all for non-local recipients:
 
 ```
-alice@domain                lmtp:127.0.0.1:24     (per-user local delivery)
-bob@domain                  lmtp:127.0.0.1:24     (per-user local delivery)
+alice@domain                lmtp:containercp-mail-dovecot:24     (per-user local delivery)
+bob@domain                  lmtp:containercp-mail-dovecot:24     (per-user local delivery)
 domain                      smtp:[relay_host]:25  (non-local catch-all)
 ```
 
