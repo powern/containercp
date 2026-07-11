@@ -113,7 +113,12 @@ core::OperationResult DockerMailProvider::write_postfix_config(
        << "myorigin = $mydomain\n"
        << "inet_interfaces = all\n"
        << "inet_protocols = ipv4\n"
-       << "mydestination = localhost\n";
+       << "mydestination = localhost\n"
+       << "mynetworks = 127.0.0.0/8, 192.168.0.0/16, 172.16.0.0/12, 10.0.0.0/8\n"
+       << "maillog_file = /var/log/postfix/maillog\n"
+       << "compatibility_level = 3.6\n"
+       << "smtp_address_preference = ipv4\n"
+       << "smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination\n";
 
     // TLS settings (certificates from ContainerCP CertificateStore via mounted path)
     pf << "smtpd_tls_cert_file = /srv/containercp/ssl/0/fullchain.pem\n"
@@ -121,12 +126,6 @@ core::OperationResult DockerMailProvider::write_postfix_config(
        << "smtpd_tls_security_level = may\n"
        << "smtpd_tls_loglevel = 1\n"
        << "smtp_tls_security_level = may\n";
-
-    // DKIM signing via Rspamd milter (when available)
-    pf << "milter_protocol = 2\n"
-       << "milter_default_action = accept\n"
-       << "smtpd_milters = inet:localhost:11332\n"
-       << "non_smtpd_milters = inet:localhost:11332\n";
 
     // Transport maps for split delivery
     pf << "transport_maps = texthash:/etc/postfix/transport_maps\n";
@@ -165,10 +164,11 @@ core::OperationResult DockerMailProvider::write_postfix_config(
     if (!out.is_open()) return {false, "Failed to write " + path};
     out << pf.str();
 
-    // Virtual mailbox map
+    // Virtual mailbox map (always created, even if empty — Postfix needs the file)
     std::string vmb_path = config_dir() + "/generated/virtual_mailboxes";
     std::ofstream vmb_out(vmb_path);
     if (!vmb_out.is_open()) return {false, "Failed to write " + vmb_path};
+    vmb_out << "# ContainerCP virtual mailbox map\n";
     for (const auto& mb : mailboxes.list()) {
         std::string domain;
         for (const auto& d : domains) {
@@ -179,10 +179,11 @@ core::OperationResult DockerMailProvider::write_postfix_config(
                 << domain << "/" << mb.local_part << "/\n";
     }
 
-    // Virtual alias map
+    // Virtual alias map (always created, even if empty)
     std::string ali_path = config_dir() + "/generated/virtual_aliases";
     std::ofstream ali_out(ali_path);
     if (!ali_out.is_open()) return {false, "Failed to write " + ali_path};
+    ali_out << "# ContainerCP virtual alias map\n";
     for (const auto& a : aliases.list()) {
         std::string domain;
         for (const auto& d : domains) {
@@ -192,6 +193,15 @@ core::OperationResult DockerMailProvider::write_postfix_config(
         ali_out << a.source_local_part << "@" << domain
                 << "\t" << a.destination << "\n";
     }
+
+    // Postfix resolver config for external DNS (override Docker's DNS)
+    std::string res_path = config_dir() + "/generated/postfix-resolv.conf";
+    std::ofstream res_out(res_path);
+    if (!res_out.is_open()) return {false, "Failed to write " + res_path};
+    res_out << "# ContainerCP Postfix DNS resolver configuration\n"
+            << "nameserver 8.8.8.8\n"
+            << "nameserver 8.8.4.4\n"
+            << "options ndots:0\n";
 
     return {true, ""};
 }
@@ -314,6 +324,9 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "    image: ghcr.io/containercp/mail-postfix:latest\n"
         << "    container_name: containercp-mail-postfix\n"
         << "    restart: unless-stopped\n"
+        << "    dns:\n"
+        << "      - 8.8.8.8\n"
+        << "      - 8.8.4.4\n"
         << "    ports:\n"
         << "      - 127.0.0.1:25:25\n"
         << "      - 127.0.0.1:465:465\n"
@@ -323,7 +336,9 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "    volumes:\n"
         << "      - " << config_dir() << "/generated/postfix-main.cf:/etc/postfix/main.cf:ro\n"
         << "      - " << config_dir() << "/generated/transport_maps:/etc/postfix/transport_maps:ro\n"
+         << "      - " << config_dir() << "/generated/virtual_mailboxes:/etc/postfix/virtual_mailboxes:ro\n"
         << "      - " << config_dir() << "/generated/virtual_aliases:/etc/postfix/virtual_aliases:ro\n"
+        << "      - " << config_dir() << "/generated/postfix-resolv.conf:/etc/postfix/resolv.conf:ro\n"
         << "      - " << config_dir() << "/custom/postfix/:/etc/postfix/custom/:ro\n"
         << "      - " << data_root_ << "/ssl/:/srv/containercp/ssl/:ro\n"
         << "    depends_on:\n"

@@ -1,6 +1,8 @@
-FROM debian:bookworm-slim
+FROM debian:bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    postfix postfix-pcre rsyslog \
+    postfix postfix-pcre \
     && rm -rf /var/lib/apt/lists/*
 EXPOSE 25 465 587
-CMD ["postfix", "start-fg"]
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
