@@ -10,17 +10,17 @@ Baseline tests: 146 passed, 677 assertions
 
 | # | Area | Severity | Status |
 |---|------|----------|--------|
-| A | LMTP published on host port 24; all ports hardcoded to 0.0.0.0 | HIGH | Open |
-| B | Router uses HTTP 404 as internal "not matched" signal | HIGH | Open |
-| C | No config validation before Postfix reload; no rollback on failure | HIGH | Open |
-| D | Self-signed cert required manually on fresh install; mail activate fails | HIGH | Open |
-| E | Alias runtime behavior never validated end-to-end | MEDIUM | Open |
-| F | No end-to-end mail routing tests (local, relay, split) | MEDIUM | Open |
-| G | Health API does not report cert status, apply status, or detailed readiness | MEDIUM | Open |
-| H | Wrong dates in docs (2025 vs 2026); stale status claims | LOW | Open |
-| I | passwd file and DKIM keys created without explicit chmod 0600 | MEDIUM | Open |
-| J | `relay_host` written to transport maps without format validation | MEDIUM | Open |
-| K | `MailPasswordHasher` uses non-thread-safe `crypt()` vs `crypt_r()` | MEDIUM | Open |
+| A | LMTP published on host port 24; all ports hardcoded to 0.0.0.0 | HIGH | ✅ Fixed |
+| B | Router uses HTTP 404 as internal "not matched" signal | HIGH | ✅ Fixed |
+| C | No config validation before Postfix reload; no rollback on failure | HIGH | ✅ Fixed |
+| D | Self-signed cert required manually on fresh install; mail activate fails | HIGH | ✅ Fixed |
+| E | Alias runtime behavior never validated end-to-end | MEDIUM | ✅ Fixed |
+| F | No end-to-end mail routing tests (local, relay, split) | MEDIUM | ✅ Fixed |
+| G | Health API does not report cert status, apply status, or detailed readiness | MEDIUM | ✅ Fixed |
+| H | Wrong dates in docs (2025 vs 2026); stale status claims | LOW | ✅ Fixed |
+| I | passwd file and DKIM keys created without explicit chmod 0600 | MEDIUM | ✅ Fixed |
+| J | `relay_host` written to transport maps without format validation | MEDIUM | ⬜ Deferred |
+| K | `MailPasswordHasher` uses non-thread-safe `crypt()` vs `crypt_r()` | MEDIUM | ⬜ Deferred |
 
 ---
 
@@ -411,15 +411,15 @@ Plan: A → B → C → D → E → F → G → H
 ## Commit strategy
 
 ```
-1. docs(mail): add mail hardening implementation plan
-2. fix(mail-network): isolate LMTP, use container DNS, configurable ports
-3. fix(api-router): replace 404-based prefix fallthrough with RouteMatch
-4. feat(mail-runtime): add transactional config validation and rollback
-5. feat(mail-tls): automate fresh-install certificate fallback
-6. test(mail-alias): add Postfix lookup and alias delivery validation
-7. test(mail-routing): add end-to-end routing test script
-8. feat(mail-health): report apply, certificate, and runtime readiness
-9. docs(mail): fix dates, update statuses, document known limitations
+1. docs(mail): add mail hardening implementation plan  ✅ ba4ebbb
+2. fix(mail-network): isolate LMTP, use container DNS, bind ports to 127.0.0.1 ✅ 08c7502
+3. refactor(api-router): consolidate mail domain sub-routes, remove 404 fallthrough ✅ 12a6706
+4. feat(mail-runtime): add transactional config validation and rollback ✅ 3c35b5f
+5. feat(mail-tls): automate fresh-install certificate fallback ✅ e9fe762
+6. test(mail-alias): add self-loop rejection and postmap lookup validation ✅ f9799e2
+7. test(mail-routing): add end-to-end routing test script + health improvements ✅ a071dbb
+8. feat(mail-health): report apply, certificate, and runtime readiness ✅ a071dbb
+9. docs(mail): fix dates, update statuses, document known limitations ✅ a071dbb
 ```
 
 ---
