@@ -118,7 +118,9 @@ core::OperationResult DockerMailProvider::write_postfix_config(
        << "maillog_file = /var/log/postfix/maillog\n"
        << "compatibility_level = 3.6\n"
        << "smtp_address_preference = ipv4\n"
-       << "smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination\n";
+       << "smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination\n"
+       << "smtp_host_lookup = dns\n"
+       << "smtp_dns_support_level = enabled\n";
 
     // TLS settings (certificates from ContainerCP CertificateStore via mounted path)
     pf << "smtpd_tls_cert_file = /srv/containercp/ssl/0/fullchain.pem\n"
