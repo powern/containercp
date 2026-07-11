@@ -76,11 +76,13 @@ DockerMailProvider (Postfix + Dovecot + Redis)
 - [x] `relay_host` input validation
 - [ ] Configurable port bindings
 
-### Phase 4: Web UI
-- [ ] Mail Web UI pages (domains, mailboxes, aliases)
-- [ ] Mail health dashboard
-- [ ] DKIM management UI
-- [ ] TLS certificate UI
+### Phase 4: Web UI (DONE ✅)
+- [x] Mail Web UI pages (domains, mailboxes, aliases)
+- [x] Mail health dashboard
+- [x] DKIM management UI
+- [x] TLS certificate UI
+- [x] Mail health dot on dashboard
+- [x] Change password in Settings
 
 ## Current State
 
