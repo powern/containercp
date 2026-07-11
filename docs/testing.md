@@ -71,7 +71,7 @@ curl -s http://127.0.0.1:8080/api/mail/health | python3 -m json.tool
 # 5. Create a test domain
 curl -s -X POST http://127.0.0.1:8080/api/mail/domains \
   -H "Content-Type: application/json" \
-  -d '{"domain":"testmail.local","mode":"local-primary","owner_id":1}'
+  -d '{"domain":"testmail.local","mode":"local-primary","domain_id":1}'
 # Expected: success true, domain record returned
 
 # 6. Create a test mailbox

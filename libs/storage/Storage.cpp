@@ -392,7 +392,8 @@ void Storage::save_mail_domains(const std::vector<mail::MailDomain>& domains) {
         file << m.id << "|"
              << mail::mail_domain_mode_to_string(m.mode) << "|"
              << m.domain_name << "|"
-             << m.owner_id << "|"
+             << m.domain_id << "|"
+             << m.site_id << "|"
              << (m.enabled ? "1" : "0") << "|"
              << m.catch_all << "|"
              << m.dkim_selector << "|"
@@ -417,7 +418,8 @@ std::vector<mail::MailDomain> Storage::load_mail_domains() {
         if (std::getline(ss, token, '|')) m.id = std::stoull(token);
         if (std::getline(ss, token, '|')) m.mode = mail::mail_domain_mode_from_string(token);
         if (std::getline(ss, token, '|')) m.domain_name = token;
-        if (std::getline(ss, token, '|')) m.owner_id = std::stoull(token);
+        if (std::getline(ss, token, '|')) m.domain_id = token.empty() ? 0 : std::stoull(token);
+        if (std::getline(ss, token, '|')) m.site_id = token.empty() ? 0 : std::stoull(token);
         if (std::getline(ss, token, '|')) m.enabled = (token == "1");
         if (std::getline(ss, token, '|')) m.catch_all = token;
         if (std::getline(ss, token, '|')) m.dkim_selector = token;

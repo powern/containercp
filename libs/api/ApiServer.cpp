@@ -1476,7 +1476,8 @@ bool ApiServer::start() {
           << "\"id\":" << m.id
           << ",\"domain\":\"" << JsonFormatter::escape(m.domain_name)
           << "\",\"mode\":\"" << JsonFormatter::escape(mail::mail_domain_mode_to_string(m.mode))
-          << "\",\"owner_id\":" << m.owner_id
+          << "\",\"domain_id\":" << m.domain_id
+          << ",\"site_id\":" << m.site_id
           << ",\"enabled\":" << (m.enabled ? "true" : "false")
           << ",\"relay_host\":\"" << JsonFormatter::escape(m.relay_host)
            << "\",\"dkim_selector\":\"" << JsonFormatter::escape(m.dkim_selector)
@@ -1738,15 +1739,27 @@ bool ApiServer::start() {
             return r;
         }
 
-        // Parse owner_id (numeric, safe)
-        std::string owner_str = json_extract(req.body, "owner_id");
-        uint64_t owner_id = 0;
-        if (!owner_str.empty()) {
-            try { owner_id = std::stoull(owner_str); }
+        // Parse domain_id (FK to ContainerCP Domain). 0 = external domain.
+        std::string domain_id_str = json_extract(req.body, "domain_id");
+        uint64_t domain_id = 0;
+        uint64_t site_id = 0;
+        std::string resolved_domain = domain;
+        if (!domain_id_str.empty()) {
+            try { domain_id = std::stoull(domain_id_str); }
             catch (...) {
                 r.status_code = 400;
-                r.body = "{\"success\":false,\"error\":\"Invalid owner_id\"}";
+                r.body = "{\"success\":false,\"error\":\"Invalid domain_id\"}";
                 return r;
+            }
+            if (domain_id != 0) {
+                auto* dom = s.domains().find(domain_id);
+                if (!dom) {
+                    r.status_code = 400;
+                    r.body = "{\"success\":false,\"error\":\"Domain not found\"}";
+                    return r;
+                }
+                site_id = dom->site_id;
+                resolved_domain = dom->fqdn;
             }
         }
 
@@ -1756,8 +1769,6 @@ bool ApiServer::start() {
         std::string relay_host = json_extract(req.body, "relay_host");
         if (relay_host == "null") relay_host = "";
         if (!relay_host.empty()) {
-            // Validate relay_host format: hostname or hostname:port
-            // Allow only alphanumeric, dots, hyphens, and optional :port
             bool valid = true;
             for (char c : relay_host) {
                 if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '-' && c != ':') {
@@ -1771,7 +1782,7 @@ bool ApiServer::start() {
             }
         }
 
-        uint64_t id = s.mail().create(domain, mode, owner_id, relay_host);
+        uint64_t id = s.mail().create(resolved_domain, mode, domain_id, site_id, relay_host);
         if (id == 0) {
             // Check if the failure was due to validation or duplicate
             std::string vr = mail::MailDomainManager::validate_mode_relay(mode, relay_host);

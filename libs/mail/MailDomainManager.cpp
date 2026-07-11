@@ -28,7 +28,8 @@ std::string MailDomainManager::validate_mode_relay(
 
 uint64_t MailDomainManager::create(const std::string& domain_name,
                                     MailDomainMode mode,
-                                    uint64_t owner_id,
+                                    uint64_t domain_id,
+                                    uint64_t site_id,
                                     const std::string& relay_host) {
     // Validate mode+relay before creating
     std::string vr = validate_mode_relay(mode, relay_host);
@@ -43,8 +44,9 @@ uint64_t MailDomainManager::create(const std::string& domain_name,
     m.id = next_id_++;
     m.name = domain_name;
     m.domain_name = domain_name;
+    m.domain_id = domain_id;
+    m.site_id = site_id;
     m.mode = mode;
-    m.owner_id = owner_id;
     m.relay_host = relay_host;
     m.enabled = true;
     m.created_at = now_utc();

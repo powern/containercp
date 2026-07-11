@@ -27,9 +27,10 @@ bool is_valid_mail_domain_mode(const std::string& s);
 MailDomainMode mail_domain_mode_from_string(const std::string& s);
 
 struct MailDomain : core::Resource {
-    std::string domain_name;            // e.g. "example.com"
+    uint64_t domain_id = 0;             // FK to ContainerCP Domain (0 = external)
+    uint64_t site_id = 0;               // FK to Site (derived from Domain, 0 = external)
+    std::string domain_name;            // e.g. "example.com" (duplicated from Domain for convenience)
     MailDomainMode mode = MailDomainMode::Disabled;
-    uint64_t owner_id = 0;
 
     // External relay settings
     std::string relay_host;             // SMTP relay host for external-relay mode

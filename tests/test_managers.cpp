@@ -180,14 +180,15 @@ TEST_CASE("DomainViewService produces valid JSON for various target values") {
 TEST_CASE("MailDomainManager create/find/list/remove") {
     containercp::mail::MailDomainManager mgr;
 
-    uint64_t id = mgr.create("example.com", containercp::mail::MailDomainMode::LocalPrimary, 1);
+    uint64_t id = mgr.create("example.com", containercp::mail::MailDomainMode::LocalPrimary, 0, 0);
     CHECK(id == 1);
 
     auto* m = mgr.find(id);
     REQUIRE(m != nullptr);
     CHECK(m->domain_name == "example.com");
     CHECK(m->mode == containercp::mail::MailDomainMode::LocalPrimary);
-    CHECK(m->owner_id == 1);
+    CHECK(m->domain_id == 0);
+    CHECK(m->site_id == 0);
     CHECK(m->enabled);
 
     // Find by domain name
@@ -210,12 +211,10 @@ TEST_CASE("MailDomainManager create/find/list/remove") {
 TEST_CASE("MailDomainManager mode persistence") {
     containercp::mail::MailDomainManager mgr;
 
-    uint64_t id1 = mgr.create("a.com", containercp::mail::MailDomainMode::LocalPrimary, 1);
-    uint64_t id2 = mgr.create("b.com", containercp::mail::MailDomainMode::ExternalRelay, 2,
-                              "relay.example.com");
-    uint64_t id3 = mgr.create("c.com", containercp::mail::MailDomainMode::SplitM365, 3,
-                              "c-com.mail.protection.outlook.com");
-    uint64_t id4 = mgr.create("d.com", containercp::mail::MailDomainMode::Disabled, 4);
+    uint64_t id1 = mgr.create("a.com", containercp::mail::MailDomainMode::LocalPrimary, 0, 0);
+    uint64_t id2 = mgr.create("b.com", containercp::mail::MailDomainMode::ExternalRelay, 0, 0, "relay.example.com");
+    uint64_t id3 = mgr.create("c.com", containercp::mail::MailDomainMode::SplitM365, 0, 0, "c-com.mail.protection.outlook.com");
+    uint64_t id4 = mgr.create("d.com", containercp::mail::MailDomainMode::Disabled, 0, 0);
     (void)id4;
 
     CHECK(mgr.find(id1)->mode == containercp::mail::MailDomainMode::LocalPrimary);
@@ -232,13 +231,12 @@ TEST_CASE("MailDomainManager mode persistence") {
 TEST_CASE("MailDomainManager duplicate domain names rejected") {
     containercp::mail::MailDomainManager mgr;
 
-    uint64_t id1 = mgr.create("dup.com", containercp::mail::MailDomainMode::LocalPrimary, 1);
+    uint64_t id1 = mgr.create("dup.com", containercp::mail::MailDomainMode::LocalPrimary, 0, 0);
     CHECK(id1 == 1);
 
     // Second create with same domain returns 0 (rejected)
     // Provide relay_host so the rejection is due to duplicate, not validation
-    uint64_t id2 = mgr.create("dup.com", containercp::mail::MailDomainMode::ExternalRelay, 2,
-                              "relay.example.com");
+    uint64_t id2 = mgr.create("dup.com", containercp::mail::MailDomainMode::ExternalRelay, 0, 0, "relay.example.com");
     CHECK(id2 == 0);
 
     // Only one domain in the list
@@ -296,7 +294,7 @@ TEST_CASE("MailDomainManager rejects ExternalRelay without relay_host") {
     containercp::mail::MailDomainManager mgr;
 
     uint64_t id = mgr.create("bad.com",
-                              containercp::mail::MailDomainMode::ExternalRelay, 1, "");
+                              containercp::mail::MailDomainMode::ExternalRelay, 0, 0, "");
     CHECK(id == 0);  // rejected — relay_host required
     CHECK(mgr.list().empty());
 }
@@ -305,7 +303,7 @@ TEST_CASE("MailDomainManager rejects SplitM365 without relay_host") {
     containercp::mail::MailDomainManager mgr;
 
     uint64_t id = mgr.create("bad.com",
-                              containercp::mail::MailDomainMode::SplitM365, 1, "");
+                              containercp::mail::MailDomainMode::SplitM365, 0, 0, "");
     CHECK(id == 0);  // rejected — relay_host required
     CHECK(mgr.list().empty());
 }
@@ -313,8 +311,8 @@ TEST_CASE("MailDomainManager rejects SplitM365 without relay_host") {
 TEST_CASE("MailDomainManager set_domains restores state") {
     containercp::mail::MailDomainManager mgr;
 
-    mgr.create("a.com", containercp::mail::MailDomainMode::LocalPrimary, 1);
-    mgr.create("b.com", containercp::mail::MailDomainMode::Disabled, 2);
+    mgr.create("a.com", containercp::mail::MailDomainMode::LocalPrimary, 0, 0);
+    mgr.create("b.com", containercp::mail::MailDomainMode::Disabled, 0, 0);
 
     // Simulate load from storage
     auto saved = mgr.list();
@@ -327,8 +325,7 @@ TEST_CASE("MailDomainManager set_domains restores state") {
     CHECK(a->mode == containercp::mail::MailDomainMode::LocalPrimary);
 
     // Next ID continues from saved max
-    uint64_t id3 = mgr2.create("c.com", containercp::mail::MailDomainMode::ExternalRelay, 3,
-                              "relay.example.com");
+    uint64_t id3 = mgr2.create("c.com", containercp::mail::MailDomainMode::ExternalRelay, 0, 0, "relay.example.com");
     CHECK(id3 == 3);
 }
 
@@ -336,7 +333,7 @@ TEST_CASE("MailDomain domain normalization") {
     containercp::mail::MailDomainManager mgr;
 
     // Lowercase + trim + trailing dot removed
-    uint64_t id1 = mgr.create("Example.COM", containercp::mail::MailDomainMode::LocalPrimary, 1);
+    uint64_t id1 = mgr.create("Example.COM", containercp::mail::MailDomainMode::LocalPrimary, 0, 0);
     CHECK(id1 == 1);
     auto* m = mgr.find(id1);
     REQUIRE(m != nullptr);
@@ -347,8 +344,8 @@ TEST_CASE("MailDomainManager create rejects duplicates even with different case"
     containercp::mail::MailDomainManager mgr;
 
     // Manager does case-sensitive comparison — duplicates checked by API after normalization
-    mgr.create("example.com", containercp::mail::MailDomainMode::LocalPrimary, 1);
-    uint64_t id2 = mgr.create("EXAMPLE.COM", containercp::mail::MailDomainMode::LocalPrimary, 1);
+    mgr.create("example.com", containercp::mail::MailDomainMode::LocalPrimary, 0, 0);
+    uint64_t id2 = mgr.create("EXAMPLE.COM", containercp::mail::MailDomainMode::LocalPrimary, 0, 0);
     CHECK(id2 == 2);  // Manager allows case-different (API normalizes before calling)
     CHECK(mgr.list().size() == 2);
 }

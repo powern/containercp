@@ -59,7 +59,7 @@ check "All services ok" echo "$HEALTH" | grep -q '"status":"ok"'
 echo "=== Data setup ==="
 check "Create domain" curl -sf -X POST http://127.0.0.1:8080/api/mail/domains \
   -H "Content-Type: application/json" \
-  -d '{"domain":"e2e-test.local","mode":"local-primary","owner_id":1}' | grep -q '"success":true'
+  -d '{"domain":"e2e-test.local","mode":"local-primary","domain_id":1}' | grep -q '"success":true'
 check "Create mailbox" curl -sf -X POST http://127.0.0.1:8080/api/mail/domains/1/mailboxes \
   -H "Content-Type: application/json" \
   -d '{"local_part":"alice","password":"testpass123"}' | grep -q '"success":true'
