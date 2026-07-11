@@ -1537,7 +1537,7 @@ bool ApiServer::start() {
           << "\",\"spam_enabled\":" << (mb.spam_enabled ? "true" : "false")
           << ",\"last_login\":\"" << api::JsonFormatter::escape(mb.last_login)
           << "\",\"created_at\":\"" << api::JsonFormatter::escape(mb.created_at)
-          << ",\"updated_at\":\"" << api::JsonFormatter::escape(mb.updated_at)
+          << "\",\"updated_at\":\"" << api::JsonFormatter::escape(mb.updated_at)
           << "\"}";
         return j.str();
     };
