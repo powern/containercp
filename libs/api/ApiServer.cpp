@@ -2232,7 +2232,56 @@ bool ApiServer::start() {
             return r;
         }
         r.body = "{\"success\":true,\"data\":{\"message\":\"Configuration regenerated and reloaded\"}}";
-        r.body = "{\"success\":true,\"data\":{\"message\":\"Configuration regenerated and reloaded\"}}";
+        return r;
+    });
+
+    // POST /api/mail/reload — reload Postfix/Dovecot config without full restart
+    router_.add("POST", "/api/mail/reload", [&s](const Request&) {
+        Response r;
+        if (s.mail().module_state() != mail::MailModuleState::Active) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Mail module is not active\"}";
+            return r;
+        }
+        auto result = s.mail_provider().reload();
+        if (!result.success) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
+            return r;
+        }
+        r.body = "{\"success\":true,\"data\":{\"message\":\"Mail configuration reloaded\"}}";
+        return r;
+    });
+
+    // POST /api/mail/recover — full restart of mail containers
+    router_.add("POST", "/api/mail/recover", [&s](const Request&) {
+        Response r;
+        if (s.mail().module_state() != mail::MailModuleState::Active) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Mail module is not active\"}";
+            return r;
+        }
+        auto regen = s.mail_provider().apply_config(
+            s.mail().list(), s.mailboxes(), s.mail_aliases());
+        if (!regen.success) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"Config regeneration failed: "
+                + JsonFormatter::escape(regen.message) + "\"}";
+            return r;
+        }
+        auto stop = s.mail_provider().stop();
+        if (!stop.success) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"Stop failed: " + JsonFormatter::escape(stop.message) + "\"}";
+            return r;
+        }
+        auto start = s.mail_provider().start();
+        if (!start.success) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"Start failed: " + JsonFormatter::escape(start.message) + "\"}";
+            return r;
+        }
+        r.body = "{\"success\":true,\"data\":{\"message\":\"Mail stack recovered and restarted\"}}";
         return r;
     });
 
