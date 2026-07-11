@@ -128,7 +128,7 @@ grep -E "ERROR|FATAL|FAILED" /tmp/containercpd.log
 
 | Date | Validator | Result | Notes |
 |------|-----------|--------|-------|
-| 2025-07-10 | Runtime | ✅ Pass | All 3 containers up, health OK, sync OK |
+| 2026-07-10 | Runtime | ✅ Pass | All 3 containers up, health OK, sync OK |
 
 ```bash
 # Default admin URL (web2.softico.ua):

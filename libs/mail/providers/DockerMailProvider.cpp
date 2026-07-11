@@ -454,12 +454,48 @@ runtime::HealthReport DockerMailProvider::check_health() const {
     report.services.push_back(check_service("containercp-mail-dovecot", "dovecot"));
     report.services.push_back(check_service("containercp-mail-redis", "redis"));
 
-    // Aggregate status: ok if all ok, degraded if any degraded, error if any error
+    // Process-level checks for services that support them
+    // These verify the daemon is actually responding, not just the container
+    auto postfix_proc = executor_.run({
+        "docker", "exec", "containercp-mail-postfix",
+        "postfix", "status"
+    });
+    runtime::ServiceHealth postfix_ready;
+    postfix_ready.name = "postfix-process";
+    if (postfix_proc.exit_code == 0) {
+        postfix_ready.status = "ok";
+        postfix_ready.message = "postfix status ok";
+    } else {
+        postfix_ready.status = "degraded";
+        postfix_ready.message = "postfix status check failed: " + postfix_proc.err;
+    }
+    report.services.push_back(postfix_ready);
+
+    auto dovecot_proc = executor_.run({
+        "docker", "exec", "containercp-mail-dovecot",
+        "doveadm", "who"
+    });
+    runtime::ServiceHealth dovecot_ready;
+    dovecot_ready.name = "dovecot-process";
+    if (dovecot_proc.exit_code == 0) {
+        dovecot_ready.status = "ok";
+        dovecot_ready.message = "dovecot responding";
+    } else {
+        dovecot_ready.status = "degraded";
+        dovecot_ready.message = "dovecot check failed: " + dovecot_proc.err;
+    }
+    report.services.push_back(dovecot_ready);
+
+    // Aggregate status
     bool has_error = false;
+    bool has_degraded = false;
     for (const auto& s : report.services) {
         if (s.status == "error") has_error = true;
+        if (s.status == "degraded") has_degraded = true;
     }
-    report.status = has_error ? "error" : "ok";
+    if (has_error) report.status = "error";
+    else if (has_degraded) report.status = "degraded";
+    else report.status = "ok";
     return report;
 }
 
