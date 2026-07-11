@@ -119,7 +119,7 @@ core::OperationResult DockerMailProvider::write_postfix_config(
     }
     pf << "\n"
        << "virtual_mailbox_maps = texthash:/etc/postfix/virtual_mailboxes\n"
-       << "virtual_transport = lmtp:127.0.0.1:24\n";
+       << "virtual_transport = lmtp:containercp-mail-dovecot:24\n";
 
     std::string path = config_dir() + "/generated/postfix-main.cf";
     std::ofstream out(path);
@@ -220,7 +220,7 @@ core::OperationResult DockerMailProvider::write_transport_maps(
         // all delivery to LMTP.  Unknown recipients are rejected by
         // Dovecot (not ideal, but functional).
         if (d.mode == MailDomainMode::LocalPrimary) {
-            out << d.domain_name << " lmtp:127.0.0.1:24\n";
+            out << d.domain_name << " lmtp:containercp-mail-dovecot:24\n";
         }
 
         // SplitM365 — generate per-user LMTP entries for every local
@@ -233,7 +233,7 @@ core::OperationResult DockerMailProvider::write_transport_maps(
             for (const auto& mb : mailboxes.list()) {
                 if (mb.domain_id != d.id || !mb.enabled) continue;
                 out << mb.local_part << "@" << d.domain_name
-                    << " lmtp:127.0.0.1:24\n";
+                    << " lmtp:containercp-mail-dovecot:24\n";
             }
             // Domain-level catch-all: recipients NOT in virtual_mailbox_maps
             // (and not matched by a per-user LMTP entry above) fall through
@@ -276,9 +276,9 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "    container_name: containercp-mail-postfix\n"
         << "    restart: unless-stopped\n"
         << "    ports:\n"
-        << "      - 25:25\n"
-        << "      - 465:465\n"
-        << "      - 587:587\n"
+        << "      - 127.0.0.1:25:25\n"
+        << "      - 127.0.0.1:465:465\n"
+        << "      - 127.0.0.1:587:587\n"
         << "    networks:\n"
         << "      - containercp-mail\n"
         << "    volumes:\n"
@@ -294,9 +294,8 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "    container_name: containercp-mail-dovecot\n"
         << "    restart: unless-stopped\n"
         << "    ports:\n"
-        << "      - 143:143\n"
-        << "      - 993:993\n"
-        << "      - 24:24\n"
+        << "      - 127.0.0.1:143:143\n"
+        << "      - 127.0.0.1:993:993\n"
         << "    networks:\n"
         << "      - containercp-mail\n"
         << "    volumes:\n"

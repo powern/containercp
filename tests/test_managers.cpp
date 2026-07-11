@@ -691,13 +691,13 @@ TEST_CASE("DockerMailProvider transport maps — LocalPrimary") {
 
     // Verify transport_maps — domain entry sends all recipients to LMTP
     std::string tm = read_file(gen_dir + "/transport_maps");
-    CHECK(tm.find("primary.com lmtp:127.0.0.1:24") != std::string::npos);
+    CHECK(tm.find("primary.com lmtp:containercp-mail-dovecot:24") != std::string::npos);
 
     // Verify relay_domains is NOT present (LocalPrimary doesn't relay)
     std::string pf = read_file(gen_dir + "/postfix-main.cf");
     CHECK(pf.find("relay_domains") == std::string::npos);
     CHECK(pf.find("virtual_mailbox_domains = primary.com") != std::string::npos);
-    CHECK(pf.find("virtual_transport = lmtp:127.0.0.1:24") != std::string::npos);
+    CHECK(pf.find("virtual_transport = lmtp:containercp-mail-dovecot:24") != std::string::npos);
 
     // Cleanup
     std::remove((gen_dir + "/transport_maps").c_str());
@@ -747,7 +747,7 @@ TEST_CASE("DockerMailProvider transport maps — ExternalRelay") {
     CHECK(pf.find("virtual_mailbox_domains =") != std::string::npos);
     // ExternalRelay doesn't have mailboxes, so virtual_transport is irrelevant
     // but the setting must still be present
-    CHECK(pf.find("virtual_transport = lmtp:127.0.0.1:24") != std::string::npos);
+    CHECK(pf.find("virtual_transport = lmtp:containercp-mail-dovecot:24") != std::string::npos);
     // virtual_mailbox_domains should be empty (no LocalPrimary or SplitM365 domains)
     CHECK(pf.find("virtual_mailbox_domains = relay.com") == std::string::npos);
 
@@ -796,7 +796,7 @@ TEST_CASE("DockerMailProvider transport maps — SplitM365") {
     std::string tm = read_file(gen_dir + "/transport_maps");
     // Per-user LMTP entry for the local mailbox (full address match
     // takes priority over the domain-level catch-all below)
-    CHECK(tm.find("alice@hybrid.com lmtp:127.0.0.1:24") != std::string::npos);
+    CHECK(tm.find("alice@hybrid.com lmtp:containercp-mail-dovecot:24") != std::string::npos);
     // Domain-level SMTP relay catch-all for non-local recipients
     CHECK(tm.find("hybrid.com smtp:[hybrid-com.mail.protection.outlook.com]:25")
           != std::string::npos);
@@ -805,7 +805,7 @@ TEST_CASE("DockerMailProvider transport maps — SplitM365") {
     // SplitM365 appears in BOTH relay_domains AND virtual_mailbox_domains
     CHECK(pf.find("relay_domains = hybrid.com") != std::string::npos);
     CHECK(pf.find("virtual_mailbox_domains = hybrid.com") != std::string::npos);
-    CHECK(pf.find("virtual_transport = lmtp:127.0.0.1:24") != std::string::npos);
+    CHECK(pf.find("virtual_transport = lmtp:containercp-mail-dovecot:24") != std::string::npos);
 
     // Cleanup
     std::remove((gen_dir + "/transport_maps").c_str());
