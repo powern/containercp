@@ -24,7 +24,9 @@ static std::string generate_salt(size_t length = 16) {
 
 std::string MailPasswordHasher::hash(const std::string& password) {
     std::string salt = generate_salt();
-    char* result = ::crypt(password.c_str(), salt.c_str());
+    struct crypt_data data;
+    memset(&data, 0, sizeof(data));
+    char* result = ::crypt_r(password.c_str(), salt.c_str(), &data);
     if (result == nullptr || result[0] == '*') {
         return "";
     }
@@ -39,7 +41,9 @@ bool MailPasswordHasher::verify(const std::string& password,
     if (last_dollar == std::string::npos || last_dollar < 3) return false;
     std::string salt = hash.substr(0, last_dollar + 1);
 
-    char* result = ::crypt(password.c_str(), salt.c_str());
+    struct crypt_data data;
+    memset(&data, 0, sizeof(data));
+    char* result = ::crypt_r(password.c_str(), salt.c_str(), &data);
     if (result == nullptr) return false;
     return hash == result;
 }
