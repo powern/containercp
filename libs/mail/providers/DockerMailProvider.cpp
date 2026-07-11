@@ -97,6 +97,15 @@ core::OperationResult DockerMailProvider::ensure_certificate() {
     return {true, "Self-signed certificate created"};
 }
 
+void DockerMailProvider::set_smarthost(const std::string& host, int port,
+                                        const std::string& username,
+                                        const std::string& password) {
+    smarthost_host_ = host;
+    smarthost_port_ = port;
+    smarthost_user_ = username;
+    smarthost_pass_ = password;
+}
+
 // ── Configuration generation (no Docker/runtime logic) ─────────────
 
 core::OperationResult DockerMailProvider::write_postfix_config(
@@ -134,6 +143,18 @@ core::OperationResult DockerMailProvider::write_postfix_config(
 
     // Virtual alias maps
     pf << "virtual_alias_maps = texthash:/etc/postfix/virtual_aliases\n";
+
+    // Smarthost (external SMTP relay) for all outbound mail
+    if (!smarthost_host_.empty() && smarthost_port_ > 0) {
+        pf << "relayhost = [" << smarthost_host_ << "]:" << smarthost_port_ << "\n";
+        if (!smarthost_user_.empty()) {
+            pf << "smtp_sasl_auth_enable = yes\n"
+               << "smtp_sasl_password_maps = texthash:/etc/postfix/sasl_passwd\n"
+               << "smtp_sasl_security_options = noanonymous\n"
+               << "smtp_tls_security_level = encrypt\n"
+               << "smtp_tls_CApath = /etc/ssl/certs\n";
+        }
+    }
 
     // Relay domains
     bool relay_first = true;
@@ -194,6 +215,20 @@ core::OperationResult DockerMailProvider::write_postfix_config(
         if (domain.empty() || !a.enabled) continue;
         ali_out << a.source_local_part << "@" << domain
                 << "\t" << a.destination << "\n";
+    }
+
+    // SASL password file for smarthost authentication
+    std::string sasl_path = config_dir() + "/generated/sasl_passwd";
+    if (!smarthost_user_.empty()) {
+        std::ofstream sasl_out(sasl_path);
+        if (!sasl_out.is_open()) return {false, "Failed to write " + sasl_path};
+        sasl_out << "[" << smarthost_host_ << "]:" << smarthost_port_
+                 << "\t" << smarthost_user_ << ":" << smarthost_pass_ << "\n";
+    } else {
+        // Create empty file (Postfix needs the file for texthash)
+        std::ofstream sasl_out(sasl_path);
+        if (!sasl_out.is_open()) return {false, "Failed to write " + sasl_path};
+        sasl_out << "# ContainerCP SASL password file (empty)\n";
     }
 
     // Postfix resolver config for external DNS (override Docker's DNS)
@@ -341,6 +376,7 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
          << "      - " << config_dir() << "/generated/virtual_mailboxes:/etc/postfix/virtual_mailboxes:ro\n"
         << "      - " << config_dir() << "/generated/virtual_aliases:/etc/postfix/virtual_aliases:ro\n"
         << "      - " << config_dir() << "/generated/postfix-resolv.conf:/etc/postfix/resolv.conf:ro\n"
+        << "      - " << config_dir() << "/generated/sasl_passwd:/etc/postfix/sasl_passwd:ro\n"
         << "      - " << config_dir() << "/custom/postfix/:/etc/postfix/custom/:ro\n"
         << "      - " << data_root_ << "/ssl/:/srv/containercp/ssl/:ro\n"
         << "    depends_on:\n"

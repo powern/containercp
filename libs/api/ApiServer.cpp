@@ -2321,6 +2321,69 @@ bool ApiServer::start() {
         return r;
     });
 
+    // GET /api/mail/smarthost — get smarthost config
+    router_.add("GET", "/api/mail/smarthost", [&s](const Request&) {
+        Response r;
+        auto& sc = s.mail().smarthost();
+        std::ostringstream js;
+        js << "{\"success\":true,\"data\":{"
+           << "\"enabled\":" << (sc.enabled ? "true" : "false")
+           << ",\"host\":\"" << JsonFormatter::escape(sc.host) << "\""
+           << ",\"port\":" << sc.port
+           << ",\"username\":\"" << JsonFormatter::escape(sc.username) << "\""
+           << ",\"password_set\":" << (sc.password.empty() ? "false" : "true")
+           << "}}";
+        r.body = js.str();
+        return r;
+    });
+
+    // POST /api/mail/smarthost — set smarthost config
+    router_.add("POST", "/api/mail/smarthost", [&s](const Request& req) {
+        Response r;
+        mail::MailDomainManager::SmarthostConfig cfg;
+        cfg.enabled = json_extract(req.body, "enabled") == "true";
+
+        std::string host = json_extract(req.body, "host");
+        if (host.empty() && cfg.enabled) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"host is required when enabled\"}";
+            return r;
+        }
+        cfg.host = host;
+
+        std::string port_str = json_extract(req.body, "port");
+        if (!port_str.empty()) {
+            try { cfg.port = std::stoi(port_str); }
+            catch (...) { cfg.port = 587; }
+        }
+
+        cfg.username = json_extract(req.body, "username");
+        std::string password = json_extract(req.body, "password");
+        if (!password.empty() && password != "null") {
+            cfg.password = password;
+        } else {
+            // Keep existing password if not provided in update
+            cfg.password = s.mail().smarthost().password;
+        }
+
+        s.mail().set_smarthost(cfg);
+        s.mail_provider().set_smarthost(cfg.host, cfg.port, cfg.username, cfg.password);
+        s.save();
+
+        // Regenerate config and reload
+        auto result = s.mail_provider().apply_config(
+            s.mail().list(), s.mailboxes(), s.mail_aliases());
+        if (!result.success) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"Config apply failed: "
+                + JsonFormatter::escape(result.message) + "\"}";
+            return r;
+        }
+
+        r.body = "{\"success\":true,\"data\":{\"message\":\"Smarthost configured\"}}";
+        return r;
+    });
+
     // Accept loop
     while (running_) {
         struct sockaddr_in client_addr{};

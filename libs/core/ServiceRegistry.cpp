@@ -224,6 +224,13 @@ ServiceRegistry::ServiceRegistry()
     if (!mail_state.empty()) {
         mail_.set_module_state(mail::mail_module_state_from_string(mail_state));
     }
+    // Load smarthost config
+    mail_.smarthost_from_string(storage_.load_mail_smarthost());
+    // Propagate to mail provider for config generation
+    const auto& sc = mail_.smarthost();
+    if (sc.enabled && !sc.host.empty()) {
+        mail_provider_.set_smarthost(sc.host, sc.port, sc.username, sc.password);
+    }
 
     auto loaded_access = storage_.load_access_users();
     if (!loaded_access.empty()) {
@@ -643,6 +650,7 @@ void ServiceRegistry::save() {
     storage_.save_mailboxes(mailboxes_.list());
     storage_.save_mail_aliases(mail_aliases_.list());
     storage_.save_mail_module_state(mail::mail_module_state_to_string(mail_.module_state()));
+    storage_.save_mail_smarthost(mail_.smarthost_to_string());
     storage_.save_access_users(access_users_.list());
     storage_.save_access_grants(access_grants_.list());
     storage_.save_reverse_proxies(reverse_proxies_.list());

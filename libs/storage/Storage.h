@@ -55,6 +55,8 @@ public:
     std::vector<mail::MailDomain> load_mail_domains();
     void save_mail_module_state(const std::string& state);
     std::string load_mail_module_state();
+    void save_mail_smarthost(const std::string& config);
+    std::string load_mail_smarthost();
     void save_mailboxes(const std::vector<mail::Mailbox>& mailboxes);
     std::vector<mail::Mailbox> load_mailboxes();
     void save_mail_aliases(const std::vector<mail::MailAlias>& aliases);
@@ -89,6 +91,7 @@ private:
     std::string mailboxes_file() const;
     std::string mail_aliases_file() const;
     std::string mail_state_file() const;
+    std::string mail_smarthost_file() const;
     std::string access_users_file() const;
     std::string access_grants_file() const;
     std::string reverse_proxies_file() const;

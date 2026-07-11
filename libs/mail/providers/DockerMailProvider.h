@@ -46,6 +46,11 @@ public:
     std::string compose_dir() const;
     std::string config_dir() const;
 
+    // Configure external SMTP relay (smarthost) for outbound mail
+    void set_smarthost(const std::string& host, int port,
+                        const std::string& username,
+                        const std::string& password);
+
     // Transactional apply (MailProvider interface)
     ApplyResult apply_config(
         const std::vector<MailDomain>& domains,
@@ -73,6 +78,12 @@ private:
     std::string data_root_;
     runtime::CommandExecutor executor_;
     mutable std::mutex apply_mutex_;
+
+    // Smarthost config for outbound relay
+    std::string smarthost_host_;
+    int smarthost_port_ = 0;
+    std::string smarthost_user_;
+    std::string smarthost_pass_;
 };
 
 } // namespace containercp::mail

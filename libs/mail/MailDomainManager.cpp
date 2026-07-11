@@ -26,6 +26,29 @@ std::string MailDomainManager::validate_mode_relay(
     return "";
 }
 
+void MailDomainManager::set_smarthost(const SmarthostConfig& cfg) {
+    smarthost_ = cfg;
+}
+
+std::string MailDomainManager::smarthost_to_string() const {
+    return std::string(smarthost_.enabled ? "1" : "0") + "|"
+        + smarthost_.host + "|"
+        + std::to_string(smarthost_.port) + "|"
+        + smarthost_.username + "|"
+        + smarthost_.password;
+}
+
+void MailDomainManager::smarthost_from_string(const std::string& s) {
+    if (s.empty()) return;
+    std::istringstream ss(s);
+    std::string token;
+    if (std::getline(ss, token, '|')) smarthost_.enabled = (token == "1");
+    if (std::getline(ss, token, '|')) smarthost_.host = token;
+    if (std::getline(ss, token, '|')) smarthost_.port = token.empty() ? 587 : std::stoi(token);
+    if (std::getline(ss, token, '|')) smarthost_.username = token;
+    if (std::getline(ss, token, '|')) smarthost_.password = token;
+}
+
 uint64_t MailDomainManager::create(const std::string& domain_name,
                                     MailDomainMode mode,
                                     uint64_t domain_id,

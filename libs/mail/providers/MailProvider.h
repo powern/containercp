@@ -70,6 +70,16 @@ public:
 
     // Get a human-readable status description.
     virtual std::string status_description() const = 0;
+
+    // Configure external SMTP relay for outbound mail.
+    // Empty host disables relay (direct delivery).
+    // Default implementation does nothing (for providers that don't
+    // support smarthost relay).
+    virtual void set_smarthost(const std::string& host, int port,
+                                const std::string& username,
+                                const std::string& password) {
+        (void)host; (void)port; (void)username; (void)password;
+    }
 };
 
 } // namespace containercp::mail

@@ -61,6 +61,10 @@ std::string Storage::mail_state_file() const {
     return db_path_ + "mail_state.db";
 }
 
+std::string Storage::mail_smarthost_file() const {
+    return db_path_ + "mail_smarthost.db";
+}
+
 std::string Storage::access_users_file() const {
     return db_path_ + "access_users.db";
 }
@@ -532,6 +536,20 @@ std::string Storage::load_mail_module_state() {
         std::getline(file, state);
     }
     return state;
+}
+
+void Storage::save_mail_smarthost(const std::string& config) {
+    std::ofstream file(mail_smarthost_file());
+    file << config << "\n";
+}
+
+std::string Storage::load_mail_smarthost() {
+    std::ifstream file(mail_smarthost_file());
+    std::string config;
+    if (file.is_open()) {
+        std::getline(file, config);
+    }
+    return config;
 }
 
 void Storage::save_access_users(const std::vector<access::AccessUser>& users) {

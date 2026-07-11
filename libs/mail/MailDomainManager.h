@@ -20,6 +20,21 @@ public:
     // error message on failure.
     static std::string validate_mode_relay(MailDomainMode mode,
                                             const std::string& relay_host);
+
+    // Smarthost (external SMTP relay) for all outbound mail
+    struct SmarthostConfig {
+        std::string host;
+        int port = 587;
+        std::string username;
+        std::string password;
+        bool enabled = false;
+    };
+
+    void set_smarthost(const SmarthostConfig& cfg);
+    const SmarthostConfig& smarthost() const { return smarthost_; }
+    std::string smarthost_to_string() const;
+    void smarthost_from_string(const std::string& s);
+
     bool remove(uint64_t id);
     MailDomain* find(uint64_t id);
     MailDomain* find_by_domain(const std::string& domain_name);
@@ -35,6 +50,7 @@ private:
     std::vector<MailDomain> domains_;
     uint64_t next_id_ = 1;
     MailModuleState module_state_ = MailModuleState::Inactive;
+    SmarthostConfig smarthost_;
 };
 
 } // namespace containercp::mail

@@ -1,6 +1,6 @@
 FROM debian:bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    postfix postfix-pcre \
+    postfix postfix-pcre ca-certificates libsasl2-modules \
     && rm -rf /var/lib/apt/lists/*
 EXPOSE 25 465 587
 COPY docker-entrypoint.sh /usr/local/bin/
