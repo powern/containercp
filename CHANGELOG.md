@@ -80,3 +80,27 @@ See `docs/changelog/early-development.md` for detailed entries.
 - E2E test script: `scripts/test-mail-routing.sh`
 - All aliases now written to Postfix `virtual_alias_maps` (was `(void)aliases;`)
 - Port publishing fixed: Postfix 25/465/587, Dovecot 143/993 exposed on host
+
+---
+
+## 2026-07-11 | SMTP + DNS + Smarthost
+
+- SMTP server fixes: Postfix master starts reliably (base image → debian:bookworm,
+  stale socket cleanup in entrypoint, virtual_mailboxes mount, empty map files,
+  Rspamd milter removed)
+- Postfix config: compatibility_level, mynetworks, smtpd_relay_restrictions,
+  smtp_host_lookup, maillog_file (direct file logging, no syslog dependency)
+- Docker DNS fix: resolv.conf with Google DNS, chroot jail copy, `dns: 8.8.8.8`
+- Smarthost API: `GET /api/mail/smarthost`, `POST /api/mail/smarthost`
+  ```json
+  {"enabled":true,"host":"smtp.gmail.com","port":587,
+   "username":"user@gmail.com","password":"app-password"}
+  ```
+- DKIM DNS record format (add TXT to your DNS provider):
+  ```
+  Type:  TXT
+  Name:  dkim._domainkey.<your-domain>
+  Value: v=DKIM1; k=rsa; p=<your-public-key>
+  ```
+- Direct MX delivery verified: admin@maillab.softi.co → powern76@gmail.com
+  (SPF: PASS, DMARC: PASS, TLS: AES_256_GCM_SHA384)
