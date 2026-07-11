@@ -62,7 +62,8 @@ core::OperationResult DockerMailProvider::prepare_environment() {
 
 core::OperationResult DockerMailProvider::write_postfix_config(
     const std::vector<MailDomain>& domains,
-    const MailboxManager& mailboxes) {
+    const MailboxManager& mailboxes,
+    const MailAliasManager& aliases) {
     (void)mailboxes;
 
     std::ostringstream pf;
@@ -91,9 +92,10 @@ core::OperationResult DockerMailProvider::write_postfix_config(
     // Transport maps for split delivery
     pf << "transport_maps = texthash:/etc/postfix/transport_maps\n";
 
-    // Relay domains — domains Postfix is allowed to relay for.
-    // Required for ExternalRelay (no local mailboxes) and SplitM365
-    // (non-local recipients forwarded to M365).
+    // Virtual alias maps
+    pf << "virtual_alias_maps = texthash:/etc/postfix/virtual_aliases\n";
+
+    // Relay domains
     bool relay_first = true;
     for (const auto& d : domains) {
         if (d.mode != MailDomainMode::ExternalRelay &&
@@ -137,6 +139,21 @@ core::OperationResult DockerMailProvider::write_postfix_config(
         vmb_out << mb.local_part << "@" << domain << " "
                 << domain << "/" << mb.local_part << "/\n";
     }
+
+    // Virtual alias map
+    std::string ali_path = config_dir() + "/generated/virtual_aliases";
+    std::ofstream ali_out(ali_path);
+    if (!ali_out.is_open()) return {false, "Failed to write " + ali_path};
+    for (const auto& a : aliases.list()) {
+        std::string domain;
+        for (const auto& d : domains) {
+            if (d.id == a.domain_id) { domain = d.domain_name; break; }
+        }
+        if (domain.empty() || !a.enabled) continue;
+        ali_out << a.source_local_part << "@" << domain
+                << "\t" << a.destination << "\n";
+    }
+
     return {true, ""};
 }
 
@@ -239,7 +256,7 @@ core::OperationResult DockerMailProvider::write_configs(
     const MailboxManager& mailboxes,
     const MailAliasManager& aliases) {
     (void)aliases;
-    auto pf = write_postfix_config(domains, mailboxes);
+    auto pf = write_postfix_config(domains, mailboxes, aliases);
     if (!pf.success) return pf;
     auto dv = write_dovecot_config(domains, mailboxes);
     if (!dv.success) return dv;
@@ -258,10 +275,16 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "    image: ghcr.io/containercp/mail-postfix:latest\n"
         << "    container_name: containercp-mail-postfix\n"
         << "    restart: unless-stopped\n"
-        << "    network_mode: service:redis\n"
+        << "    ports:\n"
+        << "      - 25:25\n"
+        << "      - 465:465\n"
+        << "      - 587:587\n"
+        << "    networks:\n"
+        << "      - containercp-mail\n"
         << "    volumes:\n"
         << "      - " << config_dir() << "/generated/postfix-main.cf:/etc/postfix/main.cf:ro\n"
         << "      - " << config_dir() << "/generated/transport_maps:/etc/postfix/transport_maps:ro\n"
+        << "      - " << config_dir() << "/generated/virtual_aliases:/etc/postfix/virtual_aliases:ro\n"
         << "      - " << config_dir() << "/custom/postfix/:/etc/postfix/custom/:ro\n"
         << "      - " << data_root_ << "/ssl/:/srv/containercp/ssl/:ro\n"
         << "    depends_on:\n"
@@ -270,7 +293,12 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "    image: ghcr.io/containercp/mail-dovecot:latest\n"
         << "    container_name: containercp-mail-dovecot\n"
         << "    restart: unless-stopped\n"
-        << "    network_mode: service:redis\n"
+        << "    ports:\n"
+        << "      - 143:143\n"
+        << "      - 993:993\n"
+        << "      - 24:24\n"
+        << "    networks:\n"
+        << "      - containercp-mail\n"
         << "    volumes:\n"
         << "      - " << config_dir() << "/generated/dovecot.conf:/etc/dovecot/dovecot.conf:ro\n"
         << "      - " << config_dir() << "/custom/dovecot/:/etc/dovecot/custom/:ro\n"

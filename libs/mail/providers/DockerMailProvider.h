@@ -50,7 +50,8 @@ private:
     core::OperationResult write_docker_compose();
     core::OperationResult write_postfix_config(
         const std::vector<MailDomain>& domains,
-        const MailboxManager& mailboxes);
+        const MailboxManager& mailboxes,
+        const MailAliasManager& aliases);
     core::OperationResult write_dovecot_config(
         const std::vector<MailDomain>& domains,
         const MailboxManager& mailboxes);
