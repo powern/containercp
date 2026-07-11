@@ -1755,6 +1755,21 @@ bool ApiServer::start() {
         // Parse optional relay_host
         std::string relay_host = json_extract(req.body, "relay_host");
         if (relay_host == "null") relay_host = "";
+        if (!relay_host.empty()) {
+            // Validate relay_host format: hostname or hostname:port
+            // Allow only alphanumeric, dots, hyphens, and optional :port
+            bool valid = true;
+            for (char c : relay_host) {
+                if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '-' && c != ':') {
+                    valid = false; break;
+                }
+            }
+            if (!valid) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Invalid relay_host format\"}";
+                return r;
+            }
+        }
 
         uint64_t id = s.mail().create(domain, mode, owner_id, relay_host);
         if (id == 0) {
@@ -1826,7 +1841,17 @@ bool ApiServer::start() {
         if (json_has_key(req.body, "relay_host")) {
             std::string val = json_extract(req.body, "relay_host");
             // JSON null becomes "null" — treat as clear
-            m->relay_host = (val == "null") ? "" : val;
+            val = (val == "null") ? "" : val;
+            if (!val.empty()) {
+                for (char c : val) {
+                    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '-' && c != ':') {
+                        r.status_code = 400;
+                        r.body = "{\"success\":false,\"error\":\"Invalid relay_host format\"}";
+                        return r;
+                    }
+                }
+            }
+            m->relay_host = val;
         }
 
         if (json_has_key(req.body, "max_mailboxes")) {
