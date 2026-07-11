@@ -810,6 +810,8 @@ function showCreateMailDomain() {
   // Fetch existing ContainerCP domains for the dropdown
   api('/api/domains').then(res => {
     const domains = res.data || [];
+    // Store for onchange handler
+    window._mailDomains = domains;
     let domainOptions = '<option value="0">External (no site)</option>';
     for (const d of domains) {
       domainOptions += `<option value="${d.id}">${esc(d.domain)} (site #${d.site_id})</option>`;
@@ -824,7 +826,7 @@ function showCreateMailDomain() {
           <option value="disabled">Disabled</option>
         </select></div>
       <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Linked ContainerCP Domain</label>
-        <select id="md-domain-id" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;">${domainOptions}</select></div>
+        <select id="md-domain-id" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" onchange="onMailDomainSelectChange(this)">${domainOptions}</select></div>
       <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Relay Host (for external-relay/split-m365)</label><input id="md-relay" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" placeholder="smtp.example.com"></div>
       <button class="btn btn-primary btn-sm" onclick="createMailDomain()" style="margin-top:8px;">Create</button>
     `);
@@ -848,6 +850,27 @@ function showCreateMailDomainSimple() {
     <div style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Relay Host (for external-relay/split-m365)</label><input id="md-relay" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" placeholder="smtp.example.com"></div>
     <button class="btn btn-primary btn-sm" onclick="createMailDomain()" style="margin-top:8px;">Create</button>
   `);
+}
+
+function onMailDomainSelectChange(sel) {
+  const val = parseInt(sel.value);
+  const domainInput = $('md-domain');
+  if (val === 0) {
+    // External — clear and make editable
+    domainInput.value = '';
+    domainInput.placeholder = 'example.com';
+    domainInput.readOnly = false;
+    domainInput.style.background = '';
+  } else {
+    // Find domain in stored list and auto-fill
+    const domains = window._mailDomains || [];
+    const found = domains.find(d => d.id === val);
+    if (found) {
+      domainInput.value = found.domain;
+      domainInput.readOnly = true;
+      domainInput.style.background = 'var(--bg2)';
+    }
+  }
 }
 
 async function createMailDomain() {
