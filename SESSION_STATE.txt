@@ -1,6 +1,6 @@
 ContainerCP - Session State
 Last updated: 2026-07-12
-Git HEAD: 956e7c8
+Git HEAD: 706a3dd
 
 ====================================================================
 TEST ENVIRONMENT
@@ -71,19 +71,18 @@ VERIFIED WORKING
 9. DKIM DNS record resolves                                      ✅
 10. Rspamd container running, milter listening on port 11332     ✅
 11. Postfix → Rspamd milter connection configured                 ✅
-12. DKIM signing via Rspamd                                        ❌
+12. DKIM signing via Rspamd                                        🔄
 
 ====================================================================
 KNOWN ISSUES
 ====================================================================
 
-1. DKIM signing via Rspamd: configured but not yet verified.
-   - Rspamd milter proxy on port 11332
-   - Postfix milter points to containercp-mail-rspamd:11332
-   - DKIM keys from config/state/dkim/ mounted at /etc/rspamd/keys/
-   - Rspamd config worker-normal.inc, worker-proxy.inc, dkim_signing.conf
-   - Key permissions must be 644 (Rspamd runs as _rspamd user in container)
-   - Previous root cause: worker-normal.inc was not generated (mount created dir instead of file)
+1. DKIM signing via Rspamd: config bugs fixed (commit 706a3dd).
+   - Root cause fixed: worker-normal.inc now generated (was missing, mount created dir)
+   - Key permissions fixed: 644 (was 640, Rspamd runs as _rspamd user)
+   - milter_protocol: 2 (was 6, Rspamd needs protocol 2)
+   - Postfix/Dovecot base: bookworm (was trixie, stability)
+   - Needs verification on production server
 
 2. Test sites created on server:
    - test-gui-apache.local (site 1)
@@ -108,7 +107,7 @@ WHAT WAS DONE THIS SESSION
 - crypt_r (thread-safe password hashing)
 - relay_host input validation
 - POST /api/mail/smarthost (external SMTP relay)
-- OpenDKIM Docker container + config generation
+- Replaced OpenDKIM with Rspamd for DKIM signing (milter proxy)
 - Dovecot: LMTP inet listener, passwd mount, mail dir permissions
 - Postfix Dockerfile: bookworm-slim → bookworm + ca-certs + libsasl2
 - docker-entrypoint with stale socket cleanup + DNS fix
@@ -122,7 +121,8 @@ WHAT WAS DONE THIS SESSION
 NEXT STEPS (suggested)
 ====================================================================
 
-1. Debug DKIM milter signing
+1. Verify DKIM signing on production (deploy + test)
+2. Debug DKIM milter signing if still failing
 2. Add Reverse Proxy (mail ports for external access)
 3. Web UI pages for Smarthost configuration
 4. MailHealthMonitor with periodic checks
