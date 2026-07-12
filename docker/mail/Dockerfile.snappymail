@@ -20,7 +20,7 @@ RUN apk add --no-cache \
     php82-fileinfo \
     curl
 
-ARG SNAPPYMAIL_VERSION=2.39.2
+ARG SNAPPYMAIL_VERSION=2.38.2
 ARG SNAPPYMAIL_URL=https://github.com/the-djmaze/snappymail/releases/download/v${SNAPPYMAIL_VERSION}/snappymail-${SNAPPYMAIL_VERSION}.tar.gz
 
 WORKDIR /tmp
