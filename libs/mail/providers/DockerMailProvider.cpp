@@ -553,6 +553,8 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "    restart: unless-stopped\n"
         << "    networks:\n"
         << "      - containercp-mail\n"
+        << "    volumes:\n"
+        << "      - snappymail-data:/var/www/snappymail/data\n"
         << "    depends_on:\n"
         << "      - dovecot\n"
         << "      - postfix\n"
@@ -561,7 +563,8 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "  containercp-mail:\n"
         << "    external: true\n"
         << "volumes:\n"
-        << "  redis-data:\n";
+        << "  redis-data:\n"
+        << "  snappymail-data:\n";
 
     std::string path = compose_dir() + "/docker-compose.yml";
     std::ofstream out(path);
