@@ -47,6 +47,16 @@ mkdir -p /var/log/postfix
 # Initialize aliases database
 newaliases 2>/dev/null || true
 
+# Enable submission (port 587) and submissions (port 465) for client access
+postconf -M submission/inet="submission inet n - n - - smtpd" 2>/dev/null
+postconf -P submission/inet/syslog_name=postfix/submission
+postconf -P submission/inet/smtpd_tls_security_level=encrypt
+postconf -P submission/inet/smtpd_sasl_auth_enable=yes
+postconf -P submission/inet/smtpd_sasl_type=dovecot
+postconf -P submission/inet/smtpd_sasl_path=inet:containercp-mail-dovecot:24
+postconf -P submission/inet/smtpd_sasl_security_options=noanonymous
+postconf -P submission/inet/smtpd_relay_restrictions=permit_sasl_authenticated,reject
+
 # Start Postfix
 postfix start 2>&1
 

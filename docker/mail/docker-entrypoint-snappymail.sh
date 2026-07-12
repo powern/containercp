@@ -52,7 +52,7 @@ if [ ! -f "${DATA_DIR}/_data_/_default_/domains/default.json" ]; then
             "allow_self_signed": false,
             "SNI_enabled": true,
             "disable_compression": true,
-            "security_level": 1
+            "security_level": 2
         },
         "useAuth": true,
         "setSender": false,
