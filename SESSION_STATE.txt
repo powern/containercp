@@ -1,6 +1,6 @@
 ContainerCP - Session State
 Last updated: 2026-07-12
-Git HEAD: 706a3dd
+Git HEAD: 8188843+
 
 ====================================================================
 TEST ENVIRONMENT
@@ -71,18 +71,19 @@ VERIFIED WORKING
 9. DKIM DNS record resolves                                      ✅
 10. Rspamd container running, milter listening on port 11332     ✅
 11. Postfix → Rspamd milter connection configured                 ✅
-12. DKIM signing via Rspamd                                        🔄
+12. DKIM signing via Rspamd                                        ✅
 
 ====================================================================
 KNOWN ISSUES
 ====================================================================
 
-1. DKIM signing via Rspamd: config bugs fixed (commit 706a3dd).
-   - Root cause fixed: worker-normal.inc now generated (was missing, mount created dir)
-   - Key permissions fixed: 644 (was 640, Rspamd runs as _rspamd user)
-   - milter_protocol: 2 (was 6, Rspamd needs protocol 2)
-   - Postfix/Dovecot base: bookworm (was trixie, stability)
-   - Needs verification on production server
+1. DKIM signing via Rspamd: ✅ VERIFIED WORKING (commit 8188843+).
+   - Root cause: use_esld = true converted maillab.softi.co → softi.co,
+     domain key lookup failed (domain{ maillab.softi.co {} } never matched)
+   - Fix: use_esld = false in dkim_signing.conf
+   - Secondary fixes: worker-normal.inc missing, key perms 640→644,
+     milter_protocol 6→2, worker-proxy.inc not in compose
+   - Production verification: DKIM-Signature header present on all outbound mail
 
 2. Test sites created on server:
    - test-gui-apache.local (site 1)
@@ -108,6 +109,12 @@ WHAT WAS DONE THIS SESSION
 - relay_host input validation
 - POST /api/mail/smarthost (external SMTP relay)
 - Replaced OpenDKIM with Rspamd for DKIM signing (milter proxy)
+- Debugged and fixed DKIM signing via Rspamd:
+  - Fixed worker-normal.inc not generated (bind mount created dir)
+  - Fixed key permissions 640→644 (_rspamd user couldn't read)
+  - Fixed worker-proxy.inc not mounted in docker-compose
+  - Fixed use_esld=true causing domain key lookup failure (maillab.softi.co→softi.co)
+  - DKIM signing VERIFIED WORKING on production (DKIM-Signature header present)
 - Dovecot: LMTP inet listener, passwd mount, mail dir permissions
 - Postfix Dockerfile: bookworm-slim → bookworm + ca-certs + libsasl2
 - docker-entrypoint with stale socket cleanup + DNS fix
@@ -121,8 +128,11 @@ WHAT WAS DONE THIS SESSION
 NEXT STEPS (suggested)
 ====================================================================
 
-1. Verify DKIM signing on production (deploy + test)
-2. Debug DKIM milter signing if still failing
+1. Deploy new daemon binary (build with use_esld=false fix)
+2. Add Reverse Proxy (mail ports for external access)
+3. Web UI pages for Smarthost configuration
+4. MailHealthMonitor with periodic checks
+5. Rate limiting / spam filtering (Rspamd) enhancement
 2. Add Reverse Proxy (mail ports for external access)
 3. Web UI pages for Smarthost configuration
 4. MailHealthMonitor with periodic checks

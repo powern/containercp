@@ -433,7 +433,7 @@
 | Profiles | Stable | |
 | Templates | Stable | |
 | Jobs | Active | In-memory only |
-| Mail | Active | Stages 1a–4d implemented, DKIM via Rspamd |
+| Mail | Active | Stages 1a–4d implemented, DKIM via Rspamd ✅ |
 | DNS | Planned | |
 | Multi-node | Planned | |
 | Tests | Growing | |

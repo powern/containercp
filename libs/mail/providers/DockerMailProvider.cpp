@@ -371,6 +371,7 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
              << "use_domain = \"header\";\n"
              << "use_redis = false;\n"
              << "try_fallback = false;\n"
+             << "use_esld = false;\n"
              << "selector = \"dkim\";\n"
              << "path = \"/etc/rspamd/keys/\";\n\n"
              << "domain {\n";
@@ -504,6 +505,7 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "    volumes:\n"
         << "      - " << config_dir() << "/generated/rspamd/dkim_signing.conf:/etc/rspamd/local.d/dkim_signing.conf:ro\n"
         << "      - " << config_dir() << "/generated/rspamd/worker-normal.inc:/etc/rspamd/local.d/worker-normal.inc:ro\n"
+        << "      - " << config_dir() << "/generated/rspamd/worker-proxy.inc:/etc/rspamd/local.d/worker-proxy.inc:ro\n"
         << "      - " << config_dir() << "/generated/rspamd/logging.inc:/etc/rspamd/local.d/logging.inc:ro\n"
         << "      - " << config_dir() << "/state/dkim/:/etc/rspamd/keys/:ro\n"
         << "  redis:\n"
