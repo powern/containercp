@@ -368,7 +368,9 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
              << "allow_hdrfrom_mismatch = false;\n"
              << "use_domain = \"header\";\n"
              << "use_redis = false;\n"
-             << "dkim_cache = false;\n\n"
+             << "try_fallback = false;\n"
+             << "selector = \"dkim\";\n"
+             << "path = \"/etc/rspamd/keys/\";\n\n"
              << "domain {\n";
 
     for (const auto& d : domains) {
