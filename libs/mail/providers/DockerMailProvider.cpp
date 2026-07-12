@@ -388,13 +388,25 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
 
     dkim_out << "}\n";
 
+    // logging.inc — log to stderr for Docker
+    std::string log_path = conf_dir + "/logging.inc";
+    std::ofstream log_out(log_path);
+    if (!log_out.is_open()) return {false, "Failed to write " + log_path};
+    log_out << "# ContainerCP generated Rspamd logging override\n"
+            << "type = \"console\";\n";
+
     // worker-proxy.inc — bind to all interfaces for milter connections
     std::string worker_path = conf_dir + "/worker-proxy.inc";
     std::ofstream worker_out(worker_path);
     if (!worker_out.is_open()) return {false, "Failed to write " + worker_path};
     worker_out << "# ContainerCP generated Rspamd proxy worker override\n"
                << "# Bind to all interfaces for milter connections from Postfix\n\n"
-               << "bind_socket = \"0.0.0.0:11332\";\n";
+               << "bind_socket = \"0.0.0.0:11332\";\n"
+               << "milter = true;\n"
+               << "upstream \"local\" {\n"
+               << "  default = yes;\n"
+               << "  self_scan = yes;\n"
+               << "}\n";
 
     return {true, ""};
 }
@@ -480,6 +492,7 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "    volumes:\n"
         << "      - " << config_dir() << "/generated/rspamd/dkim_signing.conf:/etc/rspamd/local.d/dkim_signing.conf:ro\n"
         << "      - " << config_dir() << "/generated/rspamd/worker-proxy.inc:/etc/rspamd/local.d/worker-proxy.inc:ro\n"
+        << "      - " << config_dir() << "/generated/rspamd/logging.inc:/etc/rspamd/local.d/logging.inc:ro\n"
         << "      - " << config_dir() << "/state/dkim/:/etc/rspamd/keys/:ro\n"
         << "  redis:\n"
         << "    image: redis:7-alpine\n"
