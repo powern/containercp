@@ -1,8 +1,10 @@
 #include "DockerMailProvider.h"
 
 #include <cstdio>
+#include <chrono>
 #include <fstream>
 #include <sstream>
+#include <thread>
 #include <sys/stat.h>
 
 namespace containercp::mail {
@@ -143,8 +145,8 @@ core::OperationResult DockerMailProvider::write_postfix_config(
     // DKIM signing via Rspamd milter
     pf << "milter_protocol = 6\n"
        << "milter_default_action = accept\n"
-       << "smtpd_milters = inet:containercp-mail-rspamd:11333\n"
-       << "non_smtpd_milters = inet:containercp-mail-rspamd:11333\n";
+       << "smtpd_milters = inet:containercp-mail-rspamd:11332\n"
+       << "non_smtpd_milters = inet:containercp-mail-rspamd:11332\n";
 
     // Transport maps for split delivery
     pf << "transport_maps = texthash:/etc/postfix/transport_maps\n";
@@ -397,14 +399,18 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
     log_out << "# ContainerCP generated Rspamd logging override\n"
             << "type = \"console\";\n";
 
-    // worker-normal.inc — bind normal worker to all interfaces for milter
-    std::string worker_path = conf_dir + "/worker-normal.inc";
+    // worker-proxy.inc — bind proxy worker to all interfaces for milter
+    std::string worker_path = conf_dir + "/worker-proxy.inc";
     std::ofstream worker_out(worker_path);
     if (!worker_out.is_open()) return {false, "Failed to write " + worker_path};
-    worker_out << "# ContainerCP generated Rspamd normal worker override\n"
+    worker_out << "# ContainerCP generated Rspamd proxy worker override\n"
                << "# Bind to all interfaces for milter connections from Postfix\n\n"
-               << "bind_socket = \"0.0.0.0:11333\";\n"
-               << "mime = true;\n";
+               << "bind_socket = \"0.0.0.0:11332\";\n"
+               << "milter = true;\n"
+               << "upstream \"local\" {\n"
+               << "  default = yes;\n"
+               << "  self_scan = yes;\n"
+               << "}\n";
 
     return {true, ""};
 }
@@ -427,7 +433,7 @@ core::OperationResult DockerMailProvider::write_configs(
     // Ensure DKIM keys are readable
     executor_.run({
         "find", config_dir() + "/state/dkim",
-        "-name", "*.private", "-exec", "chmod", "644", "{}", "+"
+        "-name", "*.private", "-exec", "chmod", "640", "{}", "+"
     });
 
     logger_.info("MAIL", "Configuration files written");
@@ -651,12 +657,10 @@ ApplyResult DockerMailProvider::apply_config(
     const std::vector<MailDomain>& domains,
     const MailboxManager& mailboxes,
     const MailAliasManager& aliases) {
-    // Serialise concurrent applies
     std::lock_guard<std::mutex> lock(apply_mutex_);
 
     ApplyResult result;
 
-    // Helper: find domain name by ID
     auto domain_name_of = [&](uint64_t domain_id) -> std::string {
         for (const auto& d : domains) {
             if (d.id == domain_id) return d.domain_name;
@@ -664,7 +668,6 @@ ApplyResult DockerMailProvider::apply_config(
         return "";
     };
 
-    // 1. Read current config files into memory (for rollback)
     std::string gen_dir = config_dir() + "/generated";
     auto read_file = [](const std::string& path) -> std::string {
         std::ifstream in(path);
@@ -679,9 +682,15 @@ ApplyResult DockerMailProvider::apply_config(
         out << content;
         return true;
     };
+    auto ensure_dir = [](const std::string& path) {
+        size_t pos = path.rfind('/');
+        if (pos != std::string::npos) {
+            std::string dir = path.substr(0, pos);
+            mkdir(dir.c_str(), 0755);
+        }
+    };
 
-    // Backup: read files before we overwrite them
-    // Use a subset so we only restore what we actually change
+    // 1. Backup all managed config files (Postfix, Dovecot, Rspamd)
     std::vector<std::pair<std::string, std::string>> backup;
     auto backup_if_exists = [&](const std::string& fname) {
         std::string content = read_file(gen_dir + "/" + fname);
@@ -693,14 +702,25 @@ ApplyResult DockerMailProvider::apply_config(
     backup_if_exists("virtual_mailboxes");
     backup_if_exists("passwd");
     backup_if_exists("virtual_aliases");
+    backup_if_exists("rspamd/dkim_signing.conf");
+    backup_if_exists("rspamd/worker-proxy.inc");
+    backup_if_exists("rspamd/logging.inc");
 
     auto restore = [&]() {
+        logger_.warning("MAIL", "Rolling back to previous config");
         for (const auto& [fname, content] : backup) {
-            write_file(gen_dir + "/" + fname, content);
+            std::string path = gen_dir + "/" + fname;
+            ensure_dir(path);
+            write_file(path, content);
         }
+        // After restoring files on disk, reload both services
+        reload();
+        executor_.run({"docker", "restart", "containercp-mail-rspamd"});
+        logger_.info("MAIL", "Rollback complete, services restarted with previous config");
     };
 
     // 2. Generate new config files
+    logger_.info("MAIL", "Generating new configuration files");
     auto cfg = write_configs(domains, mailboxes, aliases);
     if (!cfg.success) {
         result.message = cfg.message;
@@ -709,6 +729,7 @@ ApplyResult DockerMailProvider::apply_config(
     }
 
     // 3. Validate Postfix config
+    logger_.info("MAIL", "Validating Postfix configuration");
     auto pf_check = executor_.run({
         "docker", "exec", "containercp-mail-postfix",
         "postfix", "check"
@@ -721,11 +742,24 @@ ApplyResult DockerMailProvider::apply_config(
         return result;
     }
 
-    // 4. Validate alias map (if any aliases exist)
+    // 4. Validate Rspamd config
+    logger_.info("MAIL", "Validating Rspamd configuration");
+    auto rs_check = executor_.run({
+        "docker", "exec", "containercp-mail-rspamd",
+        "rspamadm", "configtest"
+    });
+    if (rs_check.exit_code != 0) {
+        restore();
+        result.message = "Rspamd config validation failed: " + rs_check.out + rs_check.err;
+        result.failed_stage = "rspamd_validate";
+        logger_.error("MAIL", result.message);
+        return result;
+    }
+
+    // 5. Validate alias map (if any aliases exist)
     bool has_aliases = false;
     for (const auto& a : aliases.list()) { if (a.enabled) { has_aliases = true; break; } }
     if (has_aliases) {
-        // Get the first enabled alias for validation
         std::string test_source, test_domain;
         for (const auto& a : aliases.list()) {
             if (!a.enabled) continue;
@@ -751,7 +785,8 @@ ApplyResult DockerMailProvider::apply_config(
         }
     }
 
-    // 5. Reload Postfix
+    // 6. Reload Postfix
+    logger_.info("MAIL", "Reloading Postfix");
     auto rl = reload();
     if (!rl.success) {
         restore();
@@ -761,8 +796,63 @@ ApplyResult DockerMailProvider::apply_config(
         return result;
     }
 
+    // 7. Apply Rspamd config — try graceful reload first, fall back to restart
+    logger_.info("MAIL", "Applying Rspamd configuration");
+    auto rs_reload = executor_.run({
+        "docker", "exec", "containercp-mail-rspamd",
+        "rspamadm", "control", "reload"
+    });
+    if (rs_reload.exit_code != 0) {
+        logger_.warning("MAIL",
+            "Rspamd graceful reload failed, restarting container: " + rs_reload.err);
+        auto rs_restart = executor_.run({
+            "docker", "restart", "containercp-mail-rspamd"
+        });
+        if (rs_restart.exit_code != 0) {
+            restore();
+            result.message = "Rspamd reload failed. Reload error: "
+                + rs_reload.err + "; restart error: " + rs_restart.err;
+            result.failed_stage = "rspamd_reload";
+            logger_.error("MAIL", result.message);
+            return result;
+        }
+    }
+
+    // 8. Wait for Rspamd to become ready (up to 10s)
+    bool rspamd_ready = false;
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        auto ready_check = executor_.run({
+            "docker", "exec", "containercp-mail-rspamd",
+            "rspamadm", "configtest"
+        });
+        if (ready_check.exit_code == 0) {
+            rspamd_ready = true;
+            break;
+        }
+    }
+    if (!rspamd_ready) {
+        restore();
+        result.message = "Rspamd did not become ready after configuration reload";
+        result.failed_stage = "rspamd_health";
+        logger_.error("MAIL", result.message);
+        return result;
+    }
+
+    // 9. Log DKIM signing domains
+    for (const auto& d : domains) {
+        if (!d.enabled || d.mode == MailDomainMode::Disabled) continue;
+        std::string key_path = config_dir() + "/state/dkim/"
+            + d.domain_name + "/" + d.dkim_selector + ".private";
+        auto key_check = executor_.run({"test", "-f", key_path});
+        if (key_check.exit_code == 0) {
+            logger_.info("MAIL", "DKIM key found for " + d.domain_name
+                + " selector " + d.dkim_selector);
+        }
+    }
+
     result.success = true;
-    result.message = "Configuration applied and validated";
+    result.message = "Configuration applied and validated (Postfix + Rspamd)";
     logger_.info("MAIL", result.message);
     return result;
 }

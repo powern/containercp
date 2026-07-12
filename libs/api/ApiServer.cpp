@@ -1686,7 +1686,16 @@ bool ApiServer::start() {
             if (dns_record.empty()) { r.status_code = 500; r.body = "{\"success\":false,\"error\":\"Failed to generate DKIM key\"}"; return r; }
             domain->dkim_public_key_dns = dns_record;
             s.save();
-            (void)s.runtime_sync().sync("mail");
+            {
+                auto sync_result = s.runtime_sync().sync("mail");
+                if (!sync_result.success) {
+                    r.status_code = 500;
+                    r.body = "{\"success\":false,\"error\":\"DKIM key generated, "
+                        "but mail configuration apply failed: " +
+                        JsonFormatter::escape(sync_result.message) + "\"}";
+                    return r;
+                }
+            }
             r.body = "{\"success\":true,\"data\":{\"message\":\"DKIM key generated\""
                      ",\"dns_record\":\"" + JsonFormatter::escape(dns_record) + "\"}}";
         } else {
