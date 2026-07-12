@@ -4,7 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /var/mail
 EXPOSE 143 993 24
-COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+COPY docker-entrypoint-dovecot.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint-dovecot.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint-dovecot.sh"]
 CMD ["dovecot", "-F"]

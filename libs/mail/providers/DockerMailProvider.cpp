@@ -272,6 +272,12 @@ core::OperationResult DockerMailProvider::write_dovecot_config(
        << "  args = uid=1000 gid=1000 home=/var/mail/%d/%n\n"
        << "}\n"
        << "protocols = imap pop3 lmtp\n"
+       << "service lmtp {\n"
+       << "  inet_listener lmtp {\n"
+       << "    address = 0.0.0.0\n"
+       << "    port = 24\n"
+       << "  }\n"
+       << "}\n"
        << "service auth {\n"
        << "  unix_listener auth-userdb {\n"
        << "    mode = 0660\n"
@@ -354,7 +360,8 @@ core::OperationResult DockerMailProvider::write_opendkim_config(
     std::ofstream conf_out(conf_path);
     if (!conf_out.is_open()) return {false, "Failed to write " + conf_path};
     conf_out << "# ContainerCP generated OpenDKIM configuration\n"
-             << "Syslog                  yes\n"
+             << "Syslog                  no\n"
+             << "LogWhy                  yes\n"
              << "UMask                   002\n"
              << "UserID                  opendkim\n"
              << "KeyTable                /etc/opendkim/KeyTable\n"
@@ -370,7 +377,8 @@ core::OperationResult DockerMailProvider::write_opendkim_config(
              << "SignatureAlgorithm      rsa-sha256\n"
              << "Socket                  inet:8891\n"
              << "PidFile                 /var/run/opendkim/opendkim.pid\n"
-             << "LogWhy                  yes\n";
+             << "Syslog                  no\n"
+             << "LogWhy                  no\n";
 
     // KeyTable — maps selector@domain to key file
     std::string kt_path = conf_dir + "/KeyTable";
@@ -475,6 +483,7 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "      - containercp-mail\n"
         << "    volumes:\n"
         << "      - " << config_dir() << "/generated/dovecot.conf:/etc/dovecot/dovecot.conf:ro\n"
+        << "      - " << config_dir() << "/generated/passwd:/etc/dovecot/passwd:ro\n"
         << "      - " << config_dir() << "/custom/dovecot/:/etc/dovecot/custom/:ro\n"
         << "      - " << config_dir() << "/state/:/var/mail/:rw\n"
         << "      - " << data_root_ << "/ssl/:/srv/containercp/ssl/:ro\n"
