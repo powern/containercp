@@ -74,6 +74,9 @@ private:
         const std::vector<MailDomain>& domains,
         const MailboxManager& mailboxes);
 
+    core::OperationResult write_opendkim_config(
+        const std::vector<MailDomain>& domains);
+
     logger::Logger& logger_;
     std::string data_root_;
     runtime::CommandExecutor executor_;
