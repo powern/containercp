@@ -141,7 +141,7 @@ core::OperationResult DockerMailProvider::write_postfix_config(
        << "smtp_tls_security_level = may\n";
 
     // DKIM signing via OpenDKIM milter (separate container, Docker DNS)
-    pf << "milter_protocol = 6\n"
+    pf << "milter_protocol = 2\n"
        << "milter_default_action = accept\n"
        << "smtpd_milters = inet:containercp-mail-opendkim:8891\n"
        << "non_smtpd_milters = inet:containercp-mail-opendkim:8891\n";
@@ -369,7 +369,8 @@ core::OperationResult DockerMailProvider::write_opendkim_config(
              << "DNSTimeout              5\n"
              << "SignatureAlgorithm      rsa-sha256\n"
              << "Socket                  inet:8891\n"
-             << "PidFile                 /var/run/opendkim/opendkim.pid\n";
+             << "PidFile                 /var/run/opendkim/opendkim.pid\n"
+             << "LogWhy                  yes\n";
 
     // KeyTable — maps selector@domain to key file
     std::string kt_path = conf_dir + "/KeyTable";
