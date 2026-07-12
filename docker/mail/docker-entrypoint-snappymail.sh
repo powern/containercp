@@ -72,7 +72,7 @@ server {
 EOF
 
 # Start PHP-FPM
-php-fpm84 -R --nodaemonize --fpm-config /etc/php84/php-fpm.conf &
+php-fpm82 -R --nodaemonize --fpm-config /etc/php82/php-fpm.conf &
 sleep 1
 
 # Start nginx
