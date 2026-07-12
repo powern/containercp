@@ -1,0 +1,130 @@
+ContainerCP - Session State
+Last updated: 2026-07-12
+Git HEAD: 956e7c8
+
+====================================================================
+TEST ENVIRONMENT
+====================================================================
+
+Production server:    web2.softico.ua (116.202.231.94)
+SSH:                  ai-agent@maillab.softi.co (passwordless sudo)
+Dev machine:          debian (192.168.7.200)
+
+Mail domains:
+  maillab.softi.co    - Local mail server (SMTP, IMAP, aliases, DKIM)
+  relay.softi.co      - External SMTP relay testing
+  mailhub.softi.co    - Split delivery / M365 routing
+
+DNS: all 3 domains have A, MX, SPF, DMARC. DKIM generated.
+
+====================================================================
+MAIL MODULE STATUS
+====================================================================
+
+Containers running (4):
+  containercp-mail-postfix   - SMTP server (ports 25, 465, 587)
+  containercp-mail-dovecot   - IMAP server (ports 143, 993, 24 LMTP)
+  containercp-mail-redis     - Cache
+  containercp-mail-opendkim  - DKIM signing (port 8891)
+
+API endpoints:
+  POST /api/mail/activate          - Activate mail module
+  POST /api/mail/deactivate        - Deactivate
+  POST /api/mail/regenerate        - Regenerate config
+  POST /api/mail/reload            - Reload Postfix
+  POST /api/mail/recover           - Full restart
+  GET  /api/mail/status            - Module state + counts
+  GET  /api/mail/health            - Health report
+  GET  /api/mail/domains           - List mail domains
+  POST /api/mail/domains           - Create mail domain (domain_id, mode)
+  GET  /api/mail/domains/<id>      - Get domain
+  PATCH /api/mail/domains/<id>     - Update domain
+  DELETE /api/mail/domains/<id>    - Remove domain
+  GET  /api/mail/domains/<id>/mailboxes  - List mailboxes
+  POST /api/mail/domains/<id>/mailboxes  - Create mailbox
+  GET  /api/mail/domains/<id>/aliases    - List aliases
+  POST /api/mail/domains/<id>/aliases    - Create alias
+  POST /api/mail/domains/<id>/dkim/generate  - Generate DKIM key
+  GET  /api/mail/smarthost         - Get smarthost config
+  POST /api/mail/smarthost         - Set smarthost config
+
+Mail test accounts:
+  admin@maillab.softi.co / test123  (exists, mailbox ready)
+
+Access:
+  Web UI: https://web2.softico.ua/
+  Admin login: admin / admin123
+  API (internal): http://127.0.0.1:8080
+
+====================================================================
+VERIFIED WORKING
+====================================================================
+
+1. SMTP submission (port 25)                                     ✅
+2. LMTP delivery to Dovecot mailbox                              ✅
+3. IMAP access (port 143)                                        ✅
+4. TLS encryption (AES_256_GCM_SHA384)                           ✅
+5. Direct MX delivery (Gmail, Outlook)                           ✅
+6. Smarthost relay (smtp.gmail.com:587 with SASL)                ✅
+7. SPF: PASS                                                     ✅
+8. DMARC: PASS                                                   ✅
+9. DKIM DNS record resolves                                      ✅
+10. OpenDKIM container running, port 8891 listening              ✅
+11. Postfix → OpenDKIM milter connection (TCP established)       ✅
+12. DKIM signing                                                  ❌
+
+====================================================================
+KNOWN ISSUES
+====================================================================
+
+1. DKIM milter: OpenDKIM accepts connections from Postfix but
+   doesn't sign outgoing messages.  Cause unknown.
+   - OpenDKIM v2.11.0, Postfix 3.7.11
+   - milter_protocol = 2 (tried 6 as well)
+   - Key file exists, readable (644), opendkim-testkey passes
+   - InternalHosts includes 192.168.0.0/16
+   - Syslog disabled (no rsyslogd in container)
+   - Possible cause: milter protocol negotiation failure
+
+2. Test sites created on server:
+   - test-gui-apache.local (site 1)
+   - test-gui-nginx.local (site 2)
+   - test-gui-progress.local (site 3)
+   - testssl.softico.ua (site 4)
+   - maillab.softi.co (site 8)
+   - relay.softi.co (site 9)
+   - mailhub.softi.co (site 10)
+
+====================================================================
+WHAT WAS DONE THIS SESSION
+====================================================================
+
+- MailDomain refactored: owner_id → domain_id + site_id (links to Site)
+- JSON serialization fixed: missing closing quotes in 3 lambdas
+- Router consolidation: 6 prefix handlers → 2 dispatchers
+- Transactional apply_config: postfix check → reload → rollback
+- Self-signed cert auto-generation
+- Daemon startup mail recovery
+- POST /api/mail/reload + /api/mail/recover endpoints
+- crypt_r (thread-safe password hashing)
+- relay_host input validation
+- POST /api/mail/smarthost (external SMTP relay)
+- OpenDKIM Docker container + config generation
+- Dovecot: LMTP inet listener, passwd mount, mail dir permissions
+- Postfix Dockerfile: bookworm-slim → bookworm + ca-certs + libsasl2
+- docker-entrypoint with stale socket cleanup + DNS fix
+- Web UI: Mail pages (domains, mailboxes, aliases, health, DKIM)
+- Web UI: Domain dropdown when creating mail domain
+- Web UI: Change password in Settings
+- CHANGELOG updated with all changes
+- 146 unit tests, 678 assertions, zero warnings
+
+====================================================================
+NEXT STEPS (suggested)
+====================================================================
+
+1. Debug DKIM milter signing
+2. Add Reverse Proxy (mail ports for external access)
+3. Web UI pages for Smarthost configuration
+4. MailHealthMonitor with periodic checks
+5. Rate limiting / spam filtering (Rspamd)

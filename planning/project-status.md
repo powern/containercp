@@ -350,13 +350,22 @@
 | Config files generated | ✅ | transport_maps, postfix-main.cf, passwd |
 | Validation documented | ✅ | docs/testing.md — Mail Runtime Validation |
 
-### Stage 4d — Recovery and health integration (planned)
+### Stage 4d — Recovery, SMTP, smarthost, DKIM (implemented)
 
 | Task | Status | Notes |
 |------|--------|-------|
-| MailHealthMonitor | ⬜ | |
-| Integration with RecoveryManager | ⬜ | |
-| MX record validation | ⬜ | |
+| POST /api/mail/reload | ✅ | Reload Postfix config without full restart |
+| POST /api/mail/recover | ✅ | Full stop + regenerate + start cycle |
+| SMTP server fixes | ✅ | bookworm base image, stale socket cleanup, maillog_file |
+| DNS MX resolution | ✅ | resolv.conf + chroot fix + smtp_host_lookup |
+| Smarthost API | ✅ | GET/POST /api/mail/smarthost with TLS+SASL |
+| Thread-safe crypt_r | ✅ | Replaced crypt() with crypt_r() |
+| relay_host validation | ✅ | Format check on POST/PATCH |
+| OpenDKIM milter | ✅ | Docker container, KeyTable, SigningTable generation |
+| Dovecot LMTP | ✅ | inet listener, passwd mount, mail dir permissions |
+| Tests | ✅ | 146 unit tests, 678 assertions |
+
+### Stage 5 — Webmail and advanced features (planned)
 
 ### Stage 5 — Webmail and advanced features
 
@@ -424,7 +433,7 @@
 | Profiles | Stable | |
 | Templates | Stable | |
 | Jobs | Active | In-memory only |
-| Mail | In Progress | Stages 1a–2b implemented, Stage 3 active |
+| Mail | Active | Stages 1a–4d implemented, DKIM signing pending |
 | DNS | Planned | |
 | Multi-node | Planned | |
 | Tests | Growing | |
@@ -457,5 +466,5 @@
 
 ---
 
-*Last updated: 2026-07-10*
-*Current Epic: Mail Module Stage 4b — Health and Recovery (after runtime sync)*
+*Last updated: 2026-07-12*
+*Current Epic: Mail Module — SMTP/DKIM/Smarthost hardening (Stage 4d implemented)*
