@@ -401,6 +401,7 @@ void Storage::save_mail_domains(const std::vector<mail::MailDomain>& domains) {
              << (m.enabled ? "1" : "0") << "|"
              << m.catch_all << "|"
              << m.dkim_selector << "|"
+             << m.dkim_public_key_dns << "|"
              << m.relay_host << "|"
              << m.max_mailboxes << "|"
              << m.max_aliases << "\n";
@@ -419,17 +420,37 @@ std::vector<mail::MailDomain> Storage::load_mail_domains() {
         std::istringstream ss(line);
         std::string token;
         mail::MailDomain m;
+
+        // Count pipes to detect old format (pre-site_id/pre-dkim_public_key_dns)
+        int pipes = 0;
+        for (char c : line) { if (c == '|') ++pipes; }
+
         if (std::getline(ss, token, '|')) m.id = std::stoull(token);
         if (std::getline(ss, token, '|')) m.mode = mail::mail_domain_mode_from_string(token);
         if (std::getline(ss, token, '|')) m.domain_name = token;
-        if (std::getline(ss, token, '|')) m.domain_id = token.empty() ? 0 : std::stoull(token);
-        if (std::getline(ss, token, '|')) m.site_id = token.empty() ? 0 : std::stoull(token);
-        if (std::getline(ss, token, '|')) m.enabled = (token == "1");
-        if (std::getline(ss, token, '|')) m.catch_all = token;
-        if (std::getline(ss, token, '|')) m.dkim_selector = token;
-        if (std::getline(ss, token, '|')) m.relay_host = token;
-        if (std::getline(ss, token, '|')) m.max_mailboxes = token.empty() ? 0 : std::stoull(token);
-        if (std::getline(ss, token, '|')) m.max_aliases = token.empty() ? 0 : std::stoull(token);
+
+        if (pipes <= 9) {
+            // Old format (10 fields): id|mode|domain_name|owner_id|enabled|catch_all|dkim_selector|relay_host|max_mailboxes|max_aliases
+            // Map owner_id → domain_id, shift remaining fields
+            if (std::getline(ss, token, '|')) m.domain_id = token.empty() ? 0 : std::stoull(token);
+            if (std::getline(ss, token, '|')) m.enabled = (token == "1");
+            if (std::getline(ss, token, '|')) m.catch_all = token;
+            if (std::getline(ss, token, '|')) m.dkim_selector = token;
+            if (std::getline(ss, token, '|')) m.relay_host = token;
+            if (std::getline(ss, token, '|')) m.max_mailboxes = token.empty() ? 0 : std::stoull(token);
+            if (std::getline(ss, token, '|')) m.max_aliases = token.empty() ? 0 : std::stoull(token);
+        } else {
+            // Current format
+            if (std::getline(ss, token, '|')) m.domain_id = token.empty() ? 0 : std::stoull(token);
+            if (std::getline(ss, token, '|')) m.site_id = token.empty() ? 0 : std::stoull(token);
+            if (std::getline(ss, token, '|')) m.enabled = (token == "1");
+            if (std::getline(ss, token, '|')) m.catch_all = token;
+            if (std::getline(ss, token, '|')) m.dkim_selector = token;
+            if (std::getline(ss, token, '|')) m.dkim_public_key_dns = token;
+            if (std::getline(ss, token, '|')) m.relay_host = token;
+            if (std::getline(ss, token, '|')) m.max_mailboxes = token.empty() ? 0 : std::stoull(token);
+            if (std::getline(ss, token, '|')) m.max_aliases = token.empty() ? 0 : std::stoull(token);
+        }
         m.name = m.domain_name;
         domains.push_back(std::move(m));
     }
