@@ -59,6 +59,15 @@ core::OperationResult DockerMailProvider::prepare_environment() {
         }
     }
 
+    // Ensure central proxy is connected to mail network (for SnappyMail)
+    auto proxy_connect = executor_.run({
+        "docker", "network", "connect", "containercp-mail", "containercp-proxy"
+    });
+    if (proxy_connect.exit_code != 0) {
+        // Not critical — snappymail will be unreachable via proxy, but mail itself works
+        logger_.warning("MAIL", "Failed to connect proxy to mail network: " + proxy_connect.err);
+    }
+
     // Ensure TLS certificate exists
     auto cert = ensure_certificate();
     if (!cert.success) {
@@ -740,7 +749,10 @@ ApplyResult DockerMailProvider::apply_config(
         logger_.info("MAIL", "Rollback complete, services restarted with previous config");
     };
 
-    // 2. Generate new config files
+    // 2. Regenerate docker-compose.yml (in case new services were added)
+    write_docker_compose();
+
+    // 3. Generate new config files
     logger_.info("MAIL", "Generating new configuration files");
     auto cfg = write_configs(domains, mailboxes, aliases);
     if (!cfg.success) {
