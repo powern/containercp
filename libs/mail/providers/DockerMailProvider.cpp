@@ -311,6 +311,10 @@ core::OperationResult DockerMailProvider::write_dovecot_config(
         << "  unix_listener auth-userdb {\n"
         << "    mode = 0660\n"
         << "  }\n"
+        << "  inet_listener {\n"
+        << "    address = 0.0.0.0\n"
+        << "    port = 12345\n"
+        << "  }\n"
         << "}\n";
 
     std::string dv_path = config_dir() + "/generated/dovecot.conf";
