@@ -107,6 +107,18 @@ See `docs/changelog/early-development.md` for detailed entries.
 
 ---
 
+## 2026-07-12 | SnappyMail webmail integration
+
+- New container: `containercp-mail-snappymail` (alpine + nginx + php84)
+- Image: `ghcr.io/containercp/mail-snappymail:latest`
+- Accessible at `https://<server-hostname>/webmail/` via nginx proxy
+- Connects to Dovecot IMAP and Postfix SMTP (STARTTLS auth)
+- New `webmail_upstream` param in `ProxyConfigBuilder::Params`
+- Web UI sidebar: Webmail link added between Mail and Proxy
+- Health check: snappymail container status reported in /api/health
+
+---
+
 ## 2026-07-12 | Rspamd DKIM signing (replaced OpenDKIM)
 
 - OpenDKIM milter was not signing — replaced with Rspamd milter proxy

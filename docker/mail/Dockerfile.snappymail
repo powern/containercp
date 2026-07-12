@@ -1,0 +1,40 @@
+FROM alpine:3.20
+
+RUN apk add --no-cache \
+    nginx \
+    php84 \
+    php84-fpm \
+    php84-json \
+    php84-session \
+    php84-pdo \
+    php84-pdo_sqlite \
+    php84-sqlite3 \
+    php84-openssl \
+    php84-mbstring \
+    php84-xml \
+    php84-curl \
+    php84-ctype \
+    php84-dom \
+    php84-iconv \
+    php84-tokenizer \
+    php84-fileinfo \
+    curl
+
+ARG SNAPPYMAIL_VERSION=2.39.2
+ARG SNAPPYMAIL_URL=https://github.com/the-djmaze/snappymail/releases/download/v${SNAPPYMAIL_VERSION}/snappymail-${SNAPPYMAIL_VERSION}.tar.gz
+
+WORKDIR /tmp
+RUN curl -fsSL ${SNAPPYMAIL_URL} -o snappymail.tar.gz \
+    && mkdir -p /var/www/snappymail \
+    && tar xzf snappymail.tar.gz -C /var/www/snappymail \
+    && rm snappymail.tar.gz \
+    && chown -R nobody:nobody /var/www/snappymail
+
+RUN mkdir -p /run/nginx /var/log/nginx
+
+COPY docker-entrypoint-snappymail.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint-snappymail.sh
+
+EXPOSE 80
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint-snappymail.sh"]

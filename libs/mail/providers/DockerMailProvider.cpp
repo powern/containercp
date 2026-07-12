@@ -516,6 +516,16 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "      - containercp-mail\n"
         << "    volumes:\n"
         << "      - redis-data:/data\n"
+        << "  snappymail:\n"
+        << "    image: ghcr.io/containercp/mail-snappymail:latest\n"
+        << "    container_name: containercp-mail-snappymail\n"
+        << "    restart: unless-stopped\n"
+        << "    networks:\n"
+        << "      - containercp-mail\n"
+        << "    depends_on:\n"
+        << "      - dovecot\n"
+        << "      - postfix\n"
+        << "      - redis\n"
         << "networks:\n"
         << "  containercp-mail:\n"
         << "    external: true\n"
@@ -617,6 +627,7 @@ runtime::HealthReport DockerMailProvider::check_health() const {
     report.services.push_back(check_service("containercp-mail-postfix", "postfix"));
     report.services.push_back(check_service("containercp-mail-dovecot", "dovecot"));
     report.services.push_back(check_service("containercp-mail-redis", "redis"));
+    report.services.push_back(check_service("containercp-mail-snappymail", "snappymail"));
 
     // Process-level checks for services that support them
     // These verify the daemon is actually responding, not just the container

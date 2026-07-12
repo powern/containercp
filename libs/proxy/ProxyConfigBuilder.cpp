@@ -6,15 +6,26 @@
 namespace containercp::proxy {
 
 std::string ProxyConfigBuilder::build(const Params& params) const {
+    std::string webmail_loc;
+    if (!params.webmail_upstream.empty()) {
+        webmail_loc = "    location /webmail/ {\n"
+            "        proxy_pass http://" + params.webmail_upstream + "/;\n"
+            "        proxy_set_header Host $host;\n"
+            "        proxy_set_header X-Real-IP $remote_addr;\n"
+            "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+            "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+            "    }\n";
+    }
+
     if (params.https && params.redirect) {
         return build_redirect_block(params.domain)
              + build_https_block(params.domain, params.upstream,
-                                  params.cert_path, params.key_path);
+                                  params.cert_path, params.key_path, webmail_loc);
     }
     if (params.https) {
         return build_http_block(params.domain, params.upstream)
              + build_https_block(params.domain, params.upstream,
-                                  params.cert_path, params.key_path);
+                                  params.cert_path, params.key_path, webmail_loc);
     }
     // HTTP only — build server block with optional ACME location INSIDE
     std::ostringstream conf;
@@ -36,6 +47,7 @@ std::string ProxyConfigBuilder::build(const Params& params) const {
          << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
          << "        proxy_set_header X-Forwarded-Proto $scheme;\n"
          << "    }\n"
+         << webmail_loc
          << "}\n";
     return conf.str();
 }
@@ -63,7 +75,8 @@ std::string ProxyConfigBuilder::build_http_block(const std::string& domain,
 std::string ProxyConfigBuilder::build_https_block(const std::string& domain,
                                                     const std::string& upstream,
                                                     const std::string& cert_path,
-                                                    const std::string& key_path) const {
+                                                    const std::string& key_path,
+                                                    const std::string& webmail_loc) const {
     std::ostringstream conf;
     conf << "server {\n"
          << "    listen 443 ssl;\n"
@@ -80,6 +93,7 @@ std::string ProxyConfigBuilder::build_https_block(const std::string& domain,
          << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
          << "        proxy_set_header X-Forwarded-Proto https;\n"
          << "    }\n"
+         << webmail_loc
          << "}\n";
     return conf.str();
 }

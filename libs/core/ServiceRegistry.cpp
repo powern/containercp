@@ -342,6 +342,7 @@ core::OperationResult ServiceRegistry::ensure_admin_proxy() {
         cfg_p.domain = hostname;
         cfg_p.upstream = admin_upstream;
         cfg_p.acme_challenge_root = config_.data_root() + "/ssl/0/.well-known/acme-challenge";
+        cfg_p.webmail_upstream = "containercp-mail-snappymail:80";
         std::string cfg = cfg_builder.build(cfg_p);
         std::string cfg_path = config_.data_root() + "/proxy/sites/" + hostname + ".conf";
         std::ofstream cfg_out(cfg_path);

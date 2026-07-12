@@ -19,6 +19,7 @@ public:
         std::string cert_path;
         std::string key_path;
         std::string acme_challenge_root;
+        std::string webmail_upstream;
     };
 
     std::string build(const Params& params) const;
@@ -27,9 +28,10 @@ public:
                                   const std::string& upstream) const;
 
     std::string build_https_block(const std::string& domain,
-                                   const std::string& upstream,
-                                   const std::string& cert_path,
-                                   const std::string& key_path) const;
+                                    const std::string& upstream,
+                                    const std::string& cert_path,
+                                    const std::string& key_path,
+                                    const std::string& webmail_loc = "") const;
 
     std::string build_redirect_block(const std::string& domain) const;
 

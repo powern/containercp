@@ -177,6 +177,7 @@ function initApp() {
         <a class="nav-link" data-page="databases" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg> Databases</a>
         <a class="nav-link" data-page="ssl" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> SSL</a>
         <a class="nav-link" data-page="mail" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> Mail</a>
+        <a class="nav-link" data-page="webmail" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> Webmail</a>
         <a class="nav-link" data-page="proxy" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg> Proxy</a>
         <a class="nav-link" data-page="access" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Access</a>
         <a class="nav-link" data-page="backups" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/></svg> Backups</a>
@@ -266,6 +267,7 @@ function navigate(page, params) {
   else if (page === 'mail') loadMail(p);
   else if (page === 'mail-domain') loadMailDomain(p, params);
   else if (page === 'mail-health') loadMailHealth(p);
+  else if (page === 'webmail') loadWebmail(p);
   else if (page === 'databases') loadDatabases(p);
   else if (page === 'ssl') loadSsl(p);
   else if (page === 'proxy') loadProxy(p);
@@ -732,6 +734,19 @@ function copyText(text) {
 async function removeDomain(domain) {
   if (!confirm('Remove domain '+domain+'?')) return;
   try { const res = await apiPost('/api/domains/remove',{domain}); if(res.success){toast('Domain removed','success');loadDomains($('page'));}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
+}
+
+/* ===== WEBMAIL ===== */
+async function loadWebmail(p) {
+  p.innerHTML = `<div class="page-header"><h1>Webmail</h1></div>
+    <div class="card">
+      <div class="card-header"><h3>SnappyMail Webmail</h3></div>
+      <div style="padding:16px;text-align:center;">
+        <p style="margin-bottom:16px;color:var(--text2);">Access your mail via SnappyMail webmail client.</p>
+        <a href="/webmail/" target="_blank" class="btn btn-primary">Open Webmail</a>
+        <p style="margin-top:12px;font-size:12px;color:var(--text2);">Login with your full email address and mailbox password.</p>
+      </div>
+    </div>`;
 }
 
 /* ===== MAIL ===== */
