@@ -295,7 +295,7 @@
 | Postfix TLS configuration | ✅ | |
 | Dovecot TLS configuration | ✅ | |
 | Postfix transport_maps skeleton | ✅ | LocalPrimary, ExternalRelay, SplitM365 |
-| Rspamd milter preparation | ✅ | |
+| Rspamd DKIM signing | ✅ | milter proxy on port 11332, dkim_signing.conf |
 | TLS cert paths from CertificateStore | ✅ | |
 | Tests | ✅ | |
 

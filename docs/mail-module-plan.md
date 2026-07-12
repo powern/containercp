@@ -17,17 +17,16 @@ per domain.
 │                    containercp-mail                      │
 │                    (Docker Compose project)              │
 │                                                         │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐ │
-│  │  Postfix  │  │  Dovecot │  │  Rspamd  │  │  Redis │ │
-│  │  (SMTP)   │  │ (IMAP/   │  │ (spam/   │  │ (queue │ │
-│  │  25/465/  │  │  POP3)   │  │  virus)  │  │  cache)│ │
-│  │  587/993  │  │  143/993 │  │          │  │        │ │
-│  └──────────┘  └──────────┘  └──────────┘  └────────┘ │
-│                                                         │
-│  ┌──────────┐  ┌──────────────────────────────────────┐ │
-│  │  DKIM    │  │  Adminer / RainLoop / SnappyMail     │ │
-│  │  signing │  │  (webmail — future stage)            │ │
-│  └──────────┘  └──────────────────────────────────────┘ │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────────┐  ┌────────┐ │
+│  │  Postfix  │  │  Dovecot │  │  Rspamd          │  │  Redis │ │
+│  │  (SMTP)   │  │ (IMAP/   │  │ (spam/DKIM       │  │ (queue │ │
+│  │  25/465/  │  │  POP3)   │  │  signing/virus)  │  │  cache)│ │
+│  │  587/993  │  │  143/993 │  │                  │  │        │ │
+│  └──────────┘  └──────────┘  └──────────────────┘  └────────┘ │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │  Adminer / RainLoop / SnappyMail (webmail — future stage)│ │
+│  └───────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -627,14 +626,15 @@ Local delivery works for `local-primary` mode.
 - Postfix `transport_maps` for split delivery (local, external-relay, split-m365)
 - Postfix TLS configuration (smtpd_tls_cert_file, smtpd_tls_key_file)
 - Dovecot TLS configuration (ssl_cert, ssl_key)
-- Rspamd milter configuration prepared for future DKIM signing
+- Rspamd milter DKIM signing implemented via dkim_signing module
 - Docker Compose mounts SSL directory + DKIM state directory
 - Certificate selection currently uses fixed path (`site_id=0`). Future:
   per-domain certificate support via `CertificateStore` relationship.
 - DKIM key generation lives in `DkimManager`, not in the runtime provider.
   Providers consume keys rather than owning creation.
-- Future DKIM lifecycle: multiple selectors, rotation, scheduled key
-  replacement supported by design (directory-based storage per selector).
+- DKIM signing verified working on production (DKIM-Signature header present,
+  DNS verification passing). Future: multiple selectors, rotation, scheduled
+  key replacement (directory-based storage per selector).
 
 ### Stage 2a deferred fixes (completed)
 

@@ -87,7 +87,7 @@ See `docs/changelog/early-development.md` for detailed entries.
 
 - SMTP server fixes: Postfix master starts reliably (base image → debian:bookworm,
   stale socket cleanup in entrypoint, virtual_mailboxes mount, empty map files,
-  Rspamd milter removed)
+   Rspamd milter temporarily disabled, later re-enabled for DKIM signing)
 - Postfix config: compatibility_level, mynetworks, smtpd_relay_restrictions,
   smtp_host_lookup, maillog_file (direct file logging, no syslog dependency)
 - Docker DNS fix: resolv.conf with Google DNS, chroot jail copy, `dns: 8.8.8.8`
@@ -107,11 +107,15 @@ See `docs/changelog/early-development.md` for detailed entries.
 
 ---
 
-## 2026-07-12 | OpenDKIM milter for DKIM signing
+## 2026-07-12 | Rspamd DKIM signing (replaced OpenDKIM)
 
-- New Docker container: `containercp-mail-opendkim` (debian:bookworm + opendkim)
-- OpenDKIM config: KeyTable, SigningTable, opendkim.conf (auto-generated)
-- Postfix milter re-enabled: `smtpd_milters = inet:localhost:8891`
-- DKIM keys from `config/state/dkim/` mounted into OpenDKIM container
-- Signing rules: all outbound mail from managed domains is signed
-- Docker image: `ghcr.io/containercp/mail-opendkim:latest`
+- OpenDKIM milter was not signing — replaced with Rspamd milter proxy
+- `POST /api/mail/domains/<id>/dkim/generate` generates 2048-bit RSA key
+- DKIM DNS record stored in `MailDomain::dkim_public_key_dns`, returned via API
+- Rspamd `dkim_signing` module signs outbound mail via milter on port 11332
+- Postfix milter: `smtpd_milters = inet:containercp-mail-rspamd:11332`
+- Config: `worker-proxy.inc`, `worker-normal.inc`, `dkim_signing.conf`, `logging.inc`
+- Key permissions: 644 (Rspamd runs as `_rspamd` user in container)
+- Bug fixes: `use_esld=false` (eSLD mismatch broke domain key lookup),
+  `worker-normal.inc` not generated, `worker-proxy.inc` not mounted in compose
+- Docker images: `ghcr.io/containercp/mail-rspamd:latest` (debian:trixie + rspamd)
