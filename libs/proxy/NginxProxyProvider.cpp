@@ -152,6 +152,7 @@ core::OperationResult NginxProxyProvider::attach_certificate(const std::string& 
     params.redirect = redirect;
     params.cert_path = cert_path;
     params.key_path = key_path;
+    params.webmail_upstream = webmail_upstream_;
 
     std::string config = config_builder_.build(params);
     logger_.info("PROXY", domain + ": generated config (" + std::to_string(config.size()) + " bytes)");
@@ -421,6 +422,10 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
     }
     logger_.warning("PROXY", "Container created but not yet running. Will retry on reload.");
     return {true, "Central proxy created (waiting for container)"};
+}
+
+void NginxProxyProvider::set_webmail_upstream(const std::string& upstream) {
+    webmail_upstream_ = upstream;
 }
 
 core::OperationResult NginxProxyProvider::test_config() {

@@ -38,6 +38,8 @@ public:
     core::OperationResult test_config();
     core::OperationResult last_test_result() const;
 
+    void set_webmail_upstream(const std::string& upstream);
+
 private:
     std::string config_path(const std::string& domain) const;
     std::string proxy_name() const;
@@ -55,6 +57,7 @@ private:
     ssl::SslCertificateManager& ssl_mgr_;
     proxy::ReverseProxyManager& proxy_mgr_;
     ProxyConfigBuilder config_builder_;
+    std::string webmail_upstream_;
 };
 
 } // namespace containercp::proxy

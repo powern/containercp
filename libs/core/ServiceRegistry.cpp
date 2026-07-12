@@ -309,6 +309,12 @@ core::OperationResult ServiceRegistry::ensure_admin_proxy() {
         return {false, "server_hostname not configured"};
     }
 
+    {
+        auto* nginx_proxy = dynamic_cast<proxy::NginxProxyProvider*>(&proxy_provider_);
+        if (nginx_proxy) {
+            nginx_proxy->set_webmail_upstream("containercp-mail-snappymail:80");
+        }
+    }
     http01_challenge_.set_admin_hostname(hostname);
 
     std::string gw_ip = detect_docker_gateway(logger_);
