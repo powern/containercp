@@ -9,6 +9,78 @@ CONFIG_DIR=${DATA_DIR}/_data_/_default_/configs
 mkdir -p "${CONFIG_DIR}"
 chown -R nobody:nobody "${DATA_DIR}"
 
+# Generate SnappyMail domain config (IMAP/SMTP settings) if not present
+if [ ! -f "${DATA_DIR}/_data_/_default_/domains/default.json" ]; then
+    mkdir -p "${DATA_DIR}/_data_/_default_/domains"
+    cat > "${DATA_DIR}/_data_/_default_/domains/default.json" << EOF
+{
+    "IMAP": {
+        "host": "containercp-mail-dovecot",
+        "port": 143,
+        "type": 0,
+        "timeout": 300,
+        "shortLogin": false,
+        "lowerLogin": true,
+        "sasl": ["SCRAM-SHA3-512", "SCRAM-SHA-512", "SCRAM-SHA-256", "SCRAM-SHA-1", "PLAIN", "LOGIN"],
+        "ssl": {
+            "verify_peer": false,
+            "verify_peer_name": false,
+            "allow_self_signed": false,
+            "SNI_enabled": true,
+            "disable_compression": true,
+            "security_level": 1
+        },
+        "disabled_capabilities": ["METADATA", "OBJECTID", "PREVIEW", "STATUS=SIZE"],
+        "use_expunge_all_on_delete": false,
+        "fast_simple_search": true,
+        "force_select": false,
+        "message_all_headers": false,
+        "message_list_limit": 10000,
+        "search_filter": ""
+    },
+    "SMTP": {
+        "host": "containercp-mail-postfix",
+        "port": 587,
+        "type": 0,
+        "timeout": 60,
+        "shortLogin": false,
+        "lowerLogin": true,
+        "sasl": ["SCRAM-SHA3-512", "SCRAM-SHA-512", "SCRAM-SHA-256", "SCRAM-SHA-1", "PLAIN", "LOGIN"],
+        "ssl": {
+            "verify_peer": false,
+            "verify_peer_name": false,
+            "allow_self_signed": false,
+            "SNI_enabled": true,
+            "disable_compression": true,
+            "security_level": 1
+        },
+        "useAuth": true,
+        "setSender": false,
+        "usePhpMail": false
+    },
+    "Sieve": {
+        "host": "localhost",
+        "port": 4190,
+        "type": 0,
+        "timeout": 10,
+        "shortLogin": false,
+        "lowerLogin": true,
+        "sasl": ["SCRAM-SHA3-512", "SCRAM-SHA-512", "SCRAM-SHA-256", "SCRAM-SHA-1", "PLAIN", "LOGIN"],
+        "ssl": {
+            "verify_peer": false,
+            "verify_peer_name": false,
+            "allow_self_signed": false,
+            "SNI_enabled": true,
+            "disable_compression": true,
+            "security_level": 1
+        },
+        "enabled": false
+    },
+    "whiteList": ""
+}
+EOF
+fi
+
 # Generate SnappyMail config if not present
 if [ ! -f "${CONFIG_DIR}/application.ini" ]; then
     cat > "${CONFIG_DIR}/application.ini" << EOF
