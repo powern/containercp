@@ -1,6 +1,6 @@
 ContainerCP - Session State
 Last updated: 2026-07-12
-Git HEAD: 8188843+
+Git HEAD: bda2c8e
 
 ====================================================================
 TEST ENVIRONMENT
@@ -21,10 +21,11 @@ DNS: all 3 domains have A, MX, SPF, DMARC. DKIM generated.
 MAIL MODULE STATUS
 ====================================================================
 
-Containers running (4):
+Containers running (5):
   containercp-mail-postfix   - SMTP server (ports 25, 465, 587)
-  containercp-mail-dovecot   - IMAP server (ports 143, 993, 24 LMTP)
+  containercp-mail-dovecot   - IMAP server (ports 143, 993, 24 LMTP, 12345 SASL)
   containercp-mail-rspamd    - Spam filtering + DKIM signing (milter port 11332)
+  containercp-mail-snappymail - Webmail (SnappyMail, port 80 internal)
   containercp-mail-redis     - Cache
 
 API endpoints:
@@ -115,7 +116,14 @@ WHAT WAS DONE THIS SESSION
   - Fixed worker-proxy.inc not mounted in docker-compose
   - Fixed use_esld=true causing domain key lookup failure (maillab.softi.co→softi.co)
   - DKIM signing VERIFIED WORKING on production (DKIM-Signature header present)
-- Dovecot: LMTP inet listener, passwd mount, mail dir permissions
+- Dovecot: LMTP inet listener, passwd mount, mail dir permissions, SASL auth TCP
+- SnappyMail webmail integration (ARCH-006):
+  - Docker image: ghcr.io/containercp/mail-snappymail (alpine+nginx+php82)
+  - Persistent volume for user data
+  - Postfix submission (587) enabled with TLS + SASL via Dovecot
+  - Dovecot namespace inbox with auto-created folders (Drafts, Sent, Trash, Junk, Archive)
+  - Proxy /webmail/ + /snappymail/ locations in nginx
+  - Web UI: Webmail nav link added
 - Postfix Dockerfile: bookworm-slim → bookworm + ca-certs + libsasl2
 - docker-entrypoint with stale socket cleanup + DNS fix
 - Web UI: Mail pages (domains, mailboxes, aliases, health, DKIM)
@@ -123,17 +131,3 @@ WHAT WAS DONE THIS SESSION
 - Web UI: Change password in Settings
 - CHANGELOG updated with all changes
 - 146 unit tests, 678 assertions, zero warnings
-
-====================================================================
-NEXT STEPS (suggested)
-====================================================================
-
-1. Deploy new daemon binary (build with use_esld=false fix)
-2. Add Reverse Proxy (mail ports for external access)
-3. Web UI pages for Smarthost configuration
-4. MailHealthMonitor with periodic checks
-5. Rate limiting / spam filtering (Rspamd) enhancement
-2. Add Reverse Proxy (mail ports for external access)
-3. Web UI pages for Smarthost configuration
-4. MailHealthMonitor with periodic checks
-5. Rate limiting / spam filtering (Rspamd)
