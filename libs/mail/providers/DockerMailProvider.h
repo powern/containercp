@@ -74,7 +74,7 @@ private:
         const std::vector<MailDomain>& domains,
         const MailboxManager& mailboxes);
 
-    core::OperationResult write_opendkim_config(
+    core::OperationResult write_rspamd_config(
         const std::vector<MailDomain>& domains);
 
     logger::Logger& logger_;

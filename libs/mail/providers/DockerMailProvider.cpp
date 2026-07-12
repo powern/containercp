@@ -38,7 +38,7 @@ core::OperationResult DockerMailProvider::prepare_environment() {
         config_dir() + "/custom/dovecot",
         config_dir() + "/state/dkim",
         config_dir() + "/state",
-        config_dir() + "/generated/opendkim"
+        config_dir() + "/generated/rspamd"
     });
     if (mkdir.exit_code != 0) {
         return {false, "Failed to create mail directories: " + mkdir.err};
@@ -140,11 +140,11 @@ core::OperationResult DockerMailProvider::write_postfix_config(
        << "smtpd_tls_loglevel = 1\n"
        << "smtp_tls_security_level = may\n";
 
-    // DKIM signing via OpenDKIM milter (separate container, Docker DNS)
-    pf << "milter_protocol = 2\n"
+    // DKIM signing via Rspamd milter
+    pf << "milter_protocol = 6\n"
        << "milter_default_action = accept\n"
-       << "smtpd_milters = inet:containercp-mail-opendkim:8891\n"
-       << "non_smtpd_milters = inet:containercp-mail-opendkim:8891\n";
+       << "smtpd_milters = inet:containercp-mail-rspamd:11332\n"
+       << "non_smtpd_milters = inet:containercp-mail-rspamd:11332\n";
 
     // Transport maps for split delivery
     pf << "transport_maps = texthash:/etc/postfix/transport_maps\n";
@@ -351,73 +351,59 @@ core::OperationResult DockerMailProvider::write_transport_maps(
     return {true, ""};
 }
 
-core::OperationResult DockerMailProvider::write_opendkim_config(
+core::OperationResult DockerMailProvider::write_rspamd_config(
     const std::vector<MailDomain>& domains) {
-    std::string conf_dir = config_dir() + "/generated/opendkim";
+    std::string conf_dir = config_dir() + "/generated/rspamd";
+    executor_.run({"mkdir", "-p", conf_dir});
 
-    // opendkim.conf — main configuration
-    std::string conf_path = conf_dir + "/opendkim.conf";
-    std::ofstream conf_out(conf_path);
-    if (!conf_out.is_open()) return {false, "Failed to write " + conf_path};
-    conf_out << "# ContainerCP generated OpenDKIM configuration\n"
-             << "Syslog                  no\n"
-             << "LogWhy                  yes\n"
-             << "UMask                   002\n"
-             << "UserID                  opendkim\n"
-             << "KeyTable                /etc/opendkim/KeyTable\n"
-             << "SigningTable            /etc/opendkim/SigningTable\n"
-             << "InternalHosts           127.0.0.0/8, 192.168.0.0/16, 172.16.0.0/12, 10.0.0.0/8\n"
-             << "Canonicalization        relaxed/simple\n"
-             << "Mode                    sv\n"
-             << "SubDomains              no\n"
-             << "AutoRestart             yes\n"
-             << "AutoRestartRate         10/1h\n"
-             << "Background              no\n"
-             << "DNSTimeout              5\n"
-             << "SignatureAlgorithm      rsa-sha256\n"
-             << "Socket                  inet:8891\n"
-             << "PidFile                 /var/run/opendkim/opendkim.pid\n"
-             << "Syslog                  no\n"
-             << "LogWhy                  no\n";
-
-    // KeyTable — maps selector@domain to key file
-    std::string kt_path = conf_dir + "/KeyTable";
-    std::ofstream kt_out(kt_path);
-    if (!kt_out.is_open()) return {false, "Failed to write " + kt_path};
-
-    // SigningTable — maps email patterns to signing rules
-    std::string st_path = conf_dir + "/SigningTable";
-    std::ofstream st_out(st_path);
-    if (!st_out.is_open()) return {false, "Failed to write " + st_path};
+    // dkim_signing.conf — Rspamd DKIM signing module configuration
+    // Rspamd reads per-domain signing config from dkim_signing.conf
+    std::string dkim_path = conf_dir + "/dkim_signing.conf";
+    std::ofstream dkim_out(dkim_path);
+    if (!dkim_out.is_open()) return {false, "Failed to write " + dkim_path};
+    dkim_out << "# ContainerCP generated Rspamd DKIM signing configuration\n"
+             << "# Do not edit manually — changes will be overwritten.\n\n"
+             << "sign_authenticated = true;\n"
+             << "sign_local = true;\n"
+             << "allow_hdrfrom_mismatch = false;\n"
+             << "use_domain = \"header\";\n"
+             << "use_redis = false;\n"
+             << "dkim_cache = false;\n\n"
+             << "domain {\n";
 
     bool has_keys = false;
     for (const auto& d : domains) {
         if (!d.enabled || d.mode == MailDomainMode::Disabled) continue;
         std::string host_key_path = config_dir() + "/state/dkim/"
             + d.domain_name + "/" + d.dkim_selector + ".private";
-        std::string container_key_path = "/etc/opendkim/keys/"
-            + d.domain_name + "/" + d.dkim_selector + ".private";
 
-        // Only add if key file exists
         auto check = executor_.run({"test", "-f", host_key_path});
         if (check.exit_code != 0) continue;
 
         has_keys = true;
-        kt_out << d.dkim_selector << "._domainkey." << d.domain_name
-               << " " << d.domain_name << ":" << d.dkim_selector
-               << ":" << container_key_path << "\n";
-        st_out << "*@" << d.domain_name
-               << " " << d.dkim_selector << "._domainkey." << d.domain_name << "\n";
+        dkim_out << "  " << d.domain_name << " {\n"
+                 << "    path = \"/etc/rspamd/keys/"
+                 << d.domain_name << "/" << d.dkim_selector << ".private\";\n"
+                 << "    selector = \"" << d.dkim_selector << "\";\n"
+                 << "  }\n";
     }
 
+    dkim_out << "}\n";
+
     if (!has_keys) {
-        // Write placeholder — OpenDKIM needs the files to exist even if empty
-        kt_out << "# No DKIM keys configured\n";
-        st_out << "# No DKIM keys configured\n";
+        dkim_out << "# No DKIM keys configured\n";
     }
+
+    // local.lua — enable DKIM signing module
+    std::string lua_path = conf_dir + "/local.lua";
+    std::ofstream lua_out(lua_path);
+    if (!lua_out.is_open()) return {false, "Failed to write " + lua_path};
+    lua_out << "-- ContainerCP generated Rspamd local config\n"
+            << "local_d = rspamd_config:create_module('dkim_signing', 'dkim_signing');\n";
 
     return {true, ""};
 }
+
 
 core::OperationResult DockerMailProvider::write_configs(
     const std::vector<MailDomain>& domains,
@@ -430,10 +416,10 @@ core::OperationResult DockerMailProvider::write_configs(
     if (!dv.success) return dv;
     auto tm = write_transport_maps(domains, mailboxes);
     if (!tm.success) return tm;
-    auto dkim = write_opendkim_config(domains);
+    auto dkim = write_rspamd_config(domains);
     if (!dkim.success) return dkim;
 
-    // Ensure DKIM keys are readable by the opendkim user inside the container
+    // Ensure DKIM keys are readable
     executor_.run({
         "find", config_dir() + "/state/dkim",
         "-name", "*.private", "-exec", "chmod", "644", "{}", "+"
@@ -472,6 +458,7 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "      - " << data_root_ << "/ssl/:/srv/containercp/ssl/:ro\n"
         << "    depends_on:\n"
         << "      - redis\n"
+        << "      - rspamd\n"
         << "  dovecot:\n"
         << "    image: ghcr.io/containercp/mail-dovecot:latest\n"
         << "    container_name: containercp-mail-dovecot\n"
@@ -489,17 +476,16 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "      - " << data_root_ << "/ssl/:/srv/containercp/ssl/:ro\n"
         << "    depends_on:\n"
         << "      - redis\n"
-        << "  opendkim:\n"
-        << "    image: ghcr.io/containercp/mail-opendkim:latest\n"
-        << "    container_name: containercp-mail-opendkim\n"
+        << "  rspamd:\n"
+        << "    image: ghcr.io/containercp/mail-rspamd:latest\n"
+        << "    container_name: containercp-mail-rspamd\n"
         << "    restart: unless-stopped\n"
         << "    networks:\n"
         << "      - containercp-mail\n"
         << "    volumes:\n"
-        << "      - " << config_dir() << "/generated/opendkim/opendkim.conf:/etc/opendkim/opendkim.conf:ro\n"
-        << "      - " << config_dir() << "/generated/opendkim/KeyTable:/etc/opendkim/KeyTable:ro\n"
-        << "      - " << config_dir() << "/generated/opendkim/SigningTable:/etc/opendkim/SigningTable:ro\n"
-        << "      - " << config_dir() << "/state/dkim/:/etc/opendkim/keys/:ro\n"
+        << "      - " << config_dir() << "/generated/rspamd/dkim_signing.conf:/etc/rspamd/local.d/dkim_signing.conf:ro\n"
+        << "      - " << config_dir() << "/generated/rspamd/local.lua:/etc/rspamd/rspamd.local.lua:ro\n"
+        << "      - " << config_dir() << "/state/dkim/:/etc/rspamd/keys/:ro\n"
         << "  redis:\n"
         << "    image: redis:7-alpine\n"
         << "    container_name: containercp-mail-redis\n"
