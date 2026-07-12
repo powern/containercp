@@ -104,3 +104,14 @@ See `docs/changelog/early-development.md` for detailed entries.
   ```
 - Direct MX delivery verified: admin@maillab.softi.co → powern76@gmail.com
   (SPF: PASS, DMARC: PASS, TLS: AES_256_GCM_SHA384)
+
+---
+
+## 2026-07-12 | OpenDKIM milter for DKIM signing
+
+- New Docker container: `containercp-mail-opendkim` (debian:bookworm + opendkim)
+- OpenDKIM config: KeyTable, SigningTable, opendkim.conf (auto-generated)
+- Postfix milter re-enabled: `smtpd_milters = inet:localhost:8891`
+- DKIM keys from `config/state/dkim/` mounted into OpenDKIM container
+- Signing rules: all outbound mail from managed domains is signed
+- Docker image: `ghcr.io/containercp/mail-opendkim:latest`
