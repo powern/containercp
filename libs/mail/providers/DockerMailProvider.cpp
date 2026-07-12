@@ -388,6 +388,14 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
 
     dkim_out << "}\n";
 
+    // worker-normal.conf — bind to all interfaces for milter connections
+    std::string worker_path = conf_dir + "/worker-normal.conf";
+    std::ofstream worker_out(worker_path);
+    if (!worker_out.is_open()) return {false, "Failed to write " + worker_path};
+    worker_out << "# ContainerCP generated Rspamd worker config\n"
+               << "# Bind to all interfaces for milter connections from Postfix\n\n"
+               << "bind_socket = \"0.0.0.0:11332\";\n";
+
     return {true, ""};
 }
 
@@ -471,6 +479,7 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "      - containercp-mail\n"
         << "    volumes:\n"
         << "      - " << config_dir() << "/generated/rspamd/dkim_signing.conf:/etc/rspamd/local.d/dkim_signing.conf:ro\n"
+        << "      - " << config_dir() << "/generated/rspamd/worker-normal.conf:/etc/rspamd/local.d/worker-normal.conf:ro\n"
         << "      - " << config_dir() << "/state/dkim/:/etc/rspamd/keys/:ro\n"
         << "  redis:\n"
         << "    image: redis:7-alpine\n"
