@@ -143,8 +143,8 @@ core::OperationResult DockerMailProvider::write_postfix_config(
     // DKIM signing via Rspamd milter
     pf << "milter_protocol = 6\n"
        << "milter_default_action = accept\n"
-       << "smtpd_milters = inet:containercp-mail-rspamd:11332\n"
-       << "non_smtpd_milters = inet:containercp-mail-rspamd:11332\n";
+       << "smtpd_milters = inet:containercp-mail-rspamd:11333\n"
+       << "non_smtpd_milters = inet:containercp-mail-rspamd:11333\n";
 
     // Transport maps for split delivery
     pf << "transport_maps = texthash:/etc/postfix/transport_maps\n";
@@ -397,18 +397,14 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
     log_out << "# ContainerCP generated Rspamd logging override\n"
             << "type = \"console\";\n";
 
-    // worker-proxy.inc — bind to all interfaces for milter connections
-    std::string worker_path = conf_dir + "/worker-proxy.inc";
+    // worker-normal.inc — bind normal worker to all interfaces for milter
+    std::string worker_path = conf_dir + "/worker-normal.inc";
     std::ofstream worker_out(worker_path);
     if (!worker_out.is_open()) return {false, "Failed to write " + worker_path};
-    worker_out << "# ContainerCP generated Rspamd proxy worker override\n"
+    worker_out << "# ContainerCP generated Rspamd normal worker override\n"
                << "# Bind to all interfaces for milter connections from Postfix\n\n"
-               << "bind_socket = \"0.0.0.0:11332\";\n"
-               << "milter = true;\n"
-               << "upstream \"local\" {\n"
-               << "  default = yes;\n"
-               << "  self_scan = yes;\n"
-               << "}\n";
+               << "bind_socket = \"0.0.0.0:11333\";\n"
+               << "mime = true;\n";
 
     return {true, ""};
 }
@@ -493,7 +489,7 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "      - containercp-mail\n"
         << "    volumes:\n"
         << "      - " << config_dir() << "/generated/rspamd/dkim_signing.conf:/etc/rspamd/local.d/dkim_signing.conf:ro\n"
-        << "      - " << config_dir() << "/generated/rspamd/worker-proxy.inc:/etc/rspamd/local.d/worker-proxy.inc:ro\n"
+        << "      - " << config_dir() << "/generated/rspamd/worker-normal.inc:/etc/rspamd/local.d/worker-normal.inc:ro\n"
         << "      - " << config_dir() << "/generated/rspamd/logging.inc:/etc/rspamd/local.d/logging.inc:ro\n"
         << "      - " << config_dir() << "/state/dkim/:/etc/rspamd/keys/:ro\n"
         << "  redis:\n"
