@@ -371,7 +371,6 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
              << "dkim_cache = false;\n\n"
              << "domain {\n";
 
-    bool has_keys = false;
     for (const auto& d : domains) {
         if (!d.enabled || d.mode == MailDomainMode::Disabled) continue;
         std::string host_key_path = config_dir() + "/state/dkim/"
@@ -380,7 +379,6 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
         auto check = executor_.run({"test", "-f", host_key_path});
         if (check.exit_code != 0) continue;
 
-        has_keys = true;
         dkim_out << "  " << d.domain_name << " {\n"
                  << "    path = \"/etc/rspamd/keys/"
                  << d.domain_name << "/" << d.dkim_selector << ".private\";\n"
@@ -389,17 +387,6 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
     }
 
     dkim_out << "}\n";
-
-    if (!has_keys) {
-        dkim_out << "# No DKIM keys configured\n";
-    }
-
-    // local.lua — enable DKIM signing module
-    std::string lua_path = conf_dir + "/local.lua";
-    std::ofstream lua_out(lua_path);
-    if (!lua_out.is_open()) return {false, "Failed to write " + lua_path};
-    lua_out << "-- ContainerCP generated Rspamd local config\n"
-            << "local_d = rspamd_config:create_module('dkim_signing', 'dkim_signing');\n";
 
     return {true, ""};
 }
@@ -484,7 +471,6 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "      - containercp-mail\n"
         << "    volumes:\n"
         << "      - " << config_dir() << "/generated/rspamd/dkim_signing.conf:/etc/rspamd/local.d/dkim_signing.conf:ro\n"
-        << "      - " << config_dir() << "/generated/rspamd/local.lua:/etc/rspamd/rspamd.local.lua:ro\n"
         << "      - " << config_dir() << "/state/dkim/:/etc/rspamd/keys/:ro\n"
         << "  redis:\n"
         << "    image: redis:7-alpine\n"
