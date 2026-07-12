@@ -361,7 +361,7 @@
 | Smarthost API | ✅ | GET/POST /api/mail/smarthost with TLS+SASL |
 | Thread-safe crypt_r | ✅ | Replaced crypt() with crypt_r() |
 | relay_host validation | ✅ | Format check on POST/PATCH |
-| OpenDKIM milter | ✅ | Docker container, KeyTable, SigningTable generation |
+| Rspamd DKIM signing | ✅ | milter proxy on port 11332, dkim_signing.conf |
 | Dovecot LMTP | ✅ | inet listener, passwd mount, mail dir permissions |
 | Tests | ✅ | 146 unit tests, 678 assertions |
 
@@ -433,7 +433,7 @@
 | Profiles | Stable | |
 | Templates | Stable | |
 | Jobs | Active | In-memory only |
-| Mail | Active | Stages 1a–4d implemented, DKIM signing pending |
+| Mail | Active | Stages 1a–4d implemented, DKIM via Rspamd |
 | DNS | Planned | |
 | Multi-node | Planned | |
 | Tests | Growing | |
@@ -467,4 +467,4 @@
 ---
 
 *Last updated: 2026-07-12*
-*Current Epic: Mail Module — SMTP/DKIM/Smarthost hardening (Stage 4d implemented)*
+*Current Epic: Mail Module — SMTP/Rspamd DKIM/Smarthost hardening (Stage 4d implemented)*

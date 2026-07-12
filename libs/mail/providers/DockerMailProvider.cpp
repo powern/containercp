@@ -143,7 +143,7 @@ core::OperationResult DockerMailProvider::write_postfix_config(
        << "smtp_tls_security_level = may\n";
 
     // DKIM signing via Rspamd milter
-    pf << "milter_protocol = 6\n"
+    pf        << "milter_protocol = 2\n"
        << "milter_default_action = accept\n"
        << "smtpd_milters = inet:containercp-mail-rspamd:11332\n"
        << "non_smtpd_milters = inet:containercp-mail-rspamd:11332\n";
@@ -412,6 +412,14 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
                << "  self_scan = yes;\n"
                << "}\n";
 
+    // worker-normal.inc — normal HTTP controller worker (needed for rspamadm control)
+    std::string norm_path = conf_dir + "/worker-normal.inc";
+    std::ofstream norm_out(norm_path);
+    if (!norm_out.is_open()) return {false, "Failed to write " + norm_path};
+    norm_out << "# ContainerCP generated Rspamd normal worker override\n\n"
+             << "bind_socket = \"*:11334\";\n"
+             << "type = \"normal\";\n";
+
     return {true, ""};
 }
 
@@ -433,7 +441,7 @@ core::OperationResult DockerMailProvider::write_configs(
     // Ensure DKIM keys are readable
     executor_.run({
         "find", config_dir() + "/state/dkim",
-        "-name", "*.private", "-exec", "chmod", "640", "{}", "+"
+        "-name", "*.private", "-exec", "chmod", "644", "{}", "+"
     });
 
     logger_.info("MAIL", "Configuration files written");

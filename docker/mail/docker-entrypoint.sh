@@ -22,7 +22,7 @@ mkdir -p /var/log/postfix
 mkdir -p /var/spool/postfix/etc
 cp /etc/resolv.conf /var/spool/postfix/etc/resolv.conf
 
-# Fix DKIM private key permissions — OpenDKIM container runs as opendkim user
+# DKIM keys mounted to Rspamd container — permissions set by DockerMailProvider
 
 # Clean Postfix state from previous runs
 rm -f /var/spool/postfix/pid/master.pid 2>/dev/null || true
@@ -58,5 +58,5 @@ for i in 1 2 3 4 5; do
     sleep 1
 done
 
-# Keep container alive
-exec tail -q -f /var/log/postfix/maillog 2>/dev/null
+# Keep container alive — use -F to follow by name (waits for file to appear)
+exec tail -q -F /var/log/postfix/maillog

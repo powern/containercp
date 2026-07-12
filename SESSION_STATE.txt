@@ -24,8 +24,8 @@ MAIL MODULE STATUS
 Containers running (4):
   containercp-mail-postfix   - SMTP server (ports 25, 465, 587)
   containercp-mail-dovecot   - IMAP server (ports 143, 993, 24 LMTP)
+  containercp-mail-rspamd    - Spam filtering + DKIM signing (milter port 11332)
   containercp-mail-redis     - Cache
-  containercp-mail-opendkim  - DKIM signing (port 8891)
 
 API endpoints:
   POST /api/mail/activate          - Activate mail module
@@ -69,22 +69,21 @@ VERIFIED WORKING
 7. SPF: PASS                                                     ✅
 8. DMARC: PASS                                                   ✅
 9. DKIM DNS record resolves                                      ✅
-10. OpenDKIM container running, port 8891 listening              ✅
-11. Postfix → OpenDKIM milter connection (TCP established)       ✅
-12. DKIM signing                                                  ❌
+10. Rspamd container running, milter listening on port 11332     ✅
+11. Postfix → Rspamd milter connection configured                 ✅
+12. DKIM signing via Rspamd                                        ❌
 
 ====================================================================
 KNOWN ISSUES
 ====================================================================
 
-1. DKIM milter: OpenDKIM accepts connections from Postfix but
-   doesn't sign outgoing messages.  Cause unknown.
-   - OpenDKIM v2.11.0, Postfix 3.7.11
-   - milter_protocol = 2 (tried 6 as well)
-   - Key file exists, readable (644), opendkim-testkey passes
-   - InternalHosts includes 192.168.0.0/16
-   - Syslog disabled (no rsyslogd in container)
-   - Possible cause: milter protocol negotiation failure
+1. DKIM signing via Rspamd: configured but not yet verified.
+   - Rspamd milter proxy on port 11332
+   - Postfix milter points to containercp-mail-rspamd:11332
+   - DKIM keys from config/state/dkim/ mounted at /etc/rspamd/keys/
+   - Rspamd config worker-normal.inc, worker-proxy.inc, dkim_signing.conf
+   - Key permissions must be 644 (Rspamd runs as _rspamd user in container)
+   - Previous root cause: worker-normal.inc was not generated (mount created dir instead of file)
 
 2. Test sites created on server:
    - test-gui-apache.local (site 1)

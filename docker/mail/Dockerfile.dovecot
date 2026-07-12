@@ -1,4 +1,4 @@
-FROM debian:trixie
+FROM debian:bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends \
     dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd \
     && rm -rf /var/lib/apt/lists/*
