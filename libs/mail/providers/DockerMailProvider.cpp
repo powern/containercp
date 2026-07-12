@@ -140,11 +140,11 @@ core::OperationResult DockerMailProvider::write_postfix_config(
        << "smtpd_tls_loglevel = 1\n"
        << "smtp_tls_security_level = may\n";
 
-    // DKIM signing via OpenDKIM milter
+    // DKIM signing via OpenDKIM milter (separate container, Docker DNS)
     pf << "milter_protocol = 6\n"
        << "milter_default_action = accept\n"
-       << "smtpd_milters = inet:localhost:8891\n"
-       << "non_smtpd_milters = inet:localhost:8891\n";
+       << "smtpd_milters = inet:containercp-mail-opendkim:8891\n"
+       << "non_smtpd_milters = inet:containercp-mail-opendkim:8891\n";
 
     // Transport maps for split delivery
     pf << "transport_maps = texthash:/etc/postfix/transport_maps\n";
@@ -423,6 +423,13 @@ core::OperationResult DockerMailProvider::write_configs(
     if (!tm.success) return tm;
     auto dkim = write_opendkim_config(domains);
     if (!dkim.success) return dkim;
+
+    // Ensure DKIM keys are readable by the opendkim user inside the container
+    executor_.run({
+        "find", config_dir() + "/state/dkim",
+        "-name", "*.private", "-exec", "chmod", "644", "{}", "+"
+    });
+
     logger_.info("MAIL", "Configuration files written");
     return {true, "Configuration written"};
 }

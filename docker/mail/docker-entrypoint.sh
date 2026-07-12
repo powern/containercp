@@ -1,11 +1,19 @@
 #!/bin/bash
 
-# Fix DNS resolution — Docker's embedded DNS (127.0.0.11) doesn't
-# properly forward MX queries.  Override with Google DNS directly.
+# Fix DNS resolution — keep Docker DNS (127.0.0.11) for service discovery,
+# add Google DNS as fallback for external MX lookups.
 # Docker Engine won't overwrite this after container has started.
-echo "nameserver 8.8.8.8
+if grep -q "127.0.0.11" /etc/resolv.conf 2>/dev/null; then
+    # Docker DNS is present — add Google DNS after it
+    echo "nameserver 8.8.8.8
+nameserver 8.8.4.4
+options ndots:0" >> /etc/resolv.conf
+else
+    # No Docker DNS — use Google DNS directly (service discovery won't work)
+    echo "nameserver 8.8.8.8
 nameserver 8.8.4.4
 options ndots:0" > /etc/resolv.conf
+fi
 
 # Create Postfix log directory
 mkdir -p /var/log/postfix
@@ -13,6 +21,8 @@ mkdir -p /var/log/postfix
 # Copy resolv.conf into Postfix chroot jail (master.cf has chroot=y)
 mkdir -p /var/spool/postfix/etc
 cp /etc/resolv.conf /var/spool/postfix/etc/resolv.conf
+
+# Fix DKIM private key permissions — OpenDKIM container runs as opendkim user
 
 # Clean Postfix state from previous runs
 rm -f /var/spool/postfix/pid/master.pid 2>/dev/null || true

@@ -3,5 +3,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     opendkim opendkim-tools \
     && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /var/run/opendkim && chown opendkim:opendkim /var/run/opendkim
+COPY docker-entrypoint-opendkim.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint-opendkim.sh
 EXPOSE 8891
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint-opendkim.sh"]
 CMD ["opendkim", "-f", "-x", "/etc/opendkim/opendkim.conf"]
