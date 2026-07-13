@@ -319,7 +319,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
             else if (arg == "--execute") execute = true;
             else if (arg == "--import-files") import_files = true;
             else if (arg == "--import-sql") import_sql = true;
-            else if (arg == "--upgrade") execute = true; // reuse execute mode for upgrade
+            else if (arg == "--upgrade") is_upgrade = true;
             else if (arg == "--skip-db") skip_db = true;
             else if (arg == "--keep-staging") keep_staging = true;
             else has_error = true;
