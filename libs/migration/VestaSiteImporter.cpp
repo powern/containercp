@@ -1712,14 +1712,19 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
     result.safety_backup_created = true;
     logger_.info("MIGRATION", "Safety backup created at " + safety_file);
 
-    // Parse safety table count from backup for rollback verification
+    // Parse safety table count from backup for rollback verification (no shell)
     uint64_t expected_table_count = 0;
     {
-        auto count_check = executor_.run({"sh", "-c", "grep -c 'CREATE TABLE\\|CREATE VIEW\\|CREATE PROCEDURE' " + safety_file + " 2>/dev/null || echo 0"});
-        if (count_check.exit_code == 0) {
-            std::string c = count_check.out;
-            while (!c.empty() && (c.back() == '\n' || c.back() == '\r')) c.pop_back();
-            try { expected_table_count = std::stoull(c); } catch (...) {}
+        std::ifstream sf_count(safety_file);
+        if (sf_count.is_open()) {
+            std::string line;
+            while (std::getline(sf_count, line)) {
+                if (line.find("CREATE TABLE") != std::string::npos ||
+                    line.find("CREATE VIEW") != std::string::npos ||
+                    line.find("CREATE PROCEDURE") != std::string::npos) {
+                    expected_table_count++;
+                }
+            }
         }
     }
 
