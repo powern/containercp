@@ -1805,26 +1805,29 @@ async function importMigrationSql() {
     const poll = setInterval(async () => {
       try {
         const statusRes = await api('/api/jobs?id=' + jobId);
-        const jobs = statusRes.data || [];
-        if (jobs.length === 0) {
-          clearInterval(poll);
-          resultDiv.innerHTML = '<div class="alert alert-error">Job not found</div>';
+        // API returns { success, data: { id, type, status, progress, message } }
+        // or { success, data: [...] } for list view
+        const jobData = statusRes && statusRes.data;
+        if (!jobData || !jobData.status) {
+          // Don't clear polling yet — maybe job is still being created
           return;
         }
-        const job = jobs[0];
         const progressDiv = document.getElementById('migrate-sql-progress');
         if (progressDiv) {
-          progressDiv.innerHTML = '<div style="margin-bottom:8px;"><strong>Status:</strong> ' + esc(job.status) + '</div>'
-            + '<div style="margin-bottom:8px;"><strong>Progress:</strong> ' + job.progress + '%</div>'
-            + '<div><strong>Message:</strong> ' + esc(job.message || '') + '</div>';
+          const statusDisplay = esc(jobData.status || 'unknown');
+          const progressDisplay = typeof jobData.progress === 'number' ? jobData.progress : 0;
+          const msgDisplay = esc(jobData.message || '');
+          progressDiv.innerHTML = '<div style="margin-bottom:8px;"><strong>Status:</strong> ' + statusDisplay + '</div>'
+            + '<div style="margin-bottom:8px;"><strong>Progress:</strong> ' + progressDisplay + '%</div>'
+            + (msgDisplay ? '<div><strong>Message:</strong> ' + msgDisplay + '</div>' : '');
         }
 
-        if (job.status === 'completed') {
+        if (jobData.status === 'completed') {
           clearInterval(poll);
           resultDiv.innerHTML = '<div class="card" style="margin-top:12px;border-color:var(--green);"><div class="card-header"><h3 style="color:var(--green);">Stage 3 Completed</h3></div><div style="padding:12px;font-size:13px;"><p>SQL import completed successfully.</p></div></div>';
-        } else if (job.status === 'failed') {
+        } else if (jobData.status === 'failed') {
           clearInterval(poll);
-          resultDiv.innerHTML = '<div class="alert alert-error">SQL import failed: ' + esc(job.message || 'Unknown error') + '</div>';
+          resultDiv.innerHTML = '<div class="alert alert-error">SQL import failed: ' + esc(jobData.message || 'Unknown error') + '</div>';
         }
       } catch(e) {
         clearInterval(poll);

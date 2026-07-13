@@ -360,29 +360,98 @@ bool VestaSiteImporter::find_db_in_archive(
     bool& size_known,
     std::string& out_type) {
 
-    std::string target_prefix_dot = "./db/" + db_name + "/";
-    std::string target_prefix = "db/" + db_name + "/";
+    // Helper: check if an entry matches db/<name>/<name>.<type>.sql.gz
+    auto parse_entry = [&](const std::string& entry, const std::string& expected_db,
+                           bool& matched, std::string& type) -> bool {
+        // Normalize ./db/ → db/
+        std::string path = entry;
+        if (path.substr(0, 5) == "./db/") path = "db/" + path.substr(5);
+        if (path.substr(0, 3) != "db/") return false;
 
+        auto first_slash = path.find('/', 3); // after "db/"
+        if (first_slash == std::string::npos) return false;
+        std::string dir_db = path.substr(3, first_slash - 3);
+
+        if (dir_db != expected_db) return false;
+
+        // Find filename after second slash
+        auto last_slash = path.rfind('/');
+        if (last_slash == std::string::npos) return false;
+        std::string filename = path.substr(last_slash + 1);
+
+        // Check .sql.gz extension
+        if (filename.size() < 7) return false;
+        if (filename.substr(filename.size() - 7) != ".sql.gz") return false;
+
+        // Expected format: <dirname>.<type>.sql.gz
+        auto dot1 = filename.rfind(".sql.gz");
+        if (dot1 == std::string::npos) return false;
+        auto prev = filename.rfind('.', dot1 - 1);
+        if (prev == std::string::npos) return false;
+
+        // Verify the database dir name matches filename prefix
+        std::string file_db = filename.substr(0, prev);
+        if (file_db != dir_db) return false;
+
+        type = filename.substr(prev + 1, dot1 - prev - 1);
+        matched = true;
+        return true;
+    };
+
+    // Step 1: try exact match first
     for (const auto& e : entries) {
-        bool match = false;
-        if (e.substr(0, target_prefix_dot.size()) == target_prefix_dot) match = true;
-        if (!match && e.substr(0, target_prefix.size()) == target_prefix) match = true;
-        if (match && e.size() > target_prefix.size()) {
-            if (e.find(".sql.gz") != std::string::npos) {
+        bool matched = false;
+        std::string type;
+        if (parse_entry(e, db_name, matched, type)) {
+            out_dump_path = e;
+            out_type = type;
+            return true;
+        }
+    }
+
+    // Step 2: if not found, generate fallback variants (without owner prefix)
+    std::vector<std::string> fallbacks;
+    // Add the original name (in case it has special chars that were escaped during search)
+    fallbacks.push_back(db_name);
+
+    // Generate normalized variants (remove VestaCP user prefix)
+    auto underscore = db_name.find('_');
+    if (underscore != std::string::npos && underscore < 20) {
+        std::string prefix = db_name.substr(0, underscore);
+        bool looks_like_prefix = true;
+        for (char c : prefix) {
+            if (!std::isalnum(static_cast<unsigned char>(c))) { looks_like_prefix = false; break; }
+        }
+        if (looks_like_prefix && prefix.size() <= 15) {
+            fallbacks.push_back(db_name.substr(underscore + 1));
+            // Also add underscore variant
+            std::string no_dots = db_name.substr(underscore + 1);
+            for (auto& c : no_dots) if (c == '.') c = '_';
+            if (no_dots != fallbacks.back()) fallbacks.push_back(no_dots);
+        }
+    }
+    // Also try underscore version of original
+    std::string uscore_ver = db_name;
+    for (auto& c : uscore_ver) if (c == '.') c = '_';
+    if (uscore_ver != db_name) fallbacks.push_back(uscore_ver);
+
+    // Also try without dots
+    std::string no_dots = db_name;
+    for (auto& c : no_dots) if (c == '.') c = '_';
+    if (no_dots != db_name) fallbacks.push_back(no_dots);
+
+    for (const auto& fb : fallbacks) {
+        for (const auto& e : entries) {
+            bool matched = false;
+            std::string type;
+            if (parse_entry(e, fb, matched, type)) {
                 out_dump_path = e;
-                out_size = 0;
-                size_known = false;
-                auto dot1 = e.rfind(".sql.gz");
-                if (dot1 != std::string::npos) {
-                    auto prev = e.rfind('.', dot1 - 1);
-                    if (prev != std::string::npos) {
-                        out_type = e.substr(prev + 1, dot1 - prev - 1);
-                    }
-                }
+                out_type = type;
                 return true;
             }
         }
     }
+
     return false;
 }
 
@@ -1524,21 +1593,25 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
         result.errors.push_back("DB_NAME not determined — cannot find SQL dump");
         return result;
     }
-    std::string db_to_find = normalize_db_name(m.wp_db_name);
-    logger_.info("MIGRATION", "DB to find: '" + db_to_find + "' (normalized from '" + m.wp_db_name + "')");
+    // Use exact DB_NAME from wp-config.php as source (do NOT normalize before lookup)
+    std::string source_db_name = m.wp_db_name;
+    logger_.info("MIGRATION", "Source DB_NAME from wp-config: '" + source_db_name
+                 + "' — searching exact match first, fallback variants if not found");
     std::string dump_path, dump_type;
     size_t dump_size = 0;
     bool size_known = false;
-    logger_.info("MIGRATION", "Entering find_db_in_archive for '" + db_to_find + "'");
-    if (!find_db_in_archive(entries, db_to_find, dump_path, dump_size, size_known, dump_type)) {
-        logger_.error("MIGRATION", "find_db_in_archive FAILED for '" + db_to_find + "'");
+    logger_.info("MIGRATION", "Entering find_db_in_archive for '" + source_db_name + "'");
+    if (!find_db_in_archive(entries, source_db_name, dump_path, dump_size, size_known, dump_type)) {
+        logger_.error("MIGRATION", "find_db_in_archive FAILED for '" + source_db_name + "'");
         // Log all databases found in archive for debugging
         std::string dbs;
         for (const auto& e : entries) {
-            if (e.find("./db/") == 0 || e.find("db/") == 0) dbs += e + " ";
+            if (e.find("db/") != std::string::npos || e.find("./db/") != std::string::npos) {
+                if (e.find(".sql.gz") != std::string::npos) dbs += e + " ";
+            }
         }
-        logger_.info("MIGRATION", "Databases in archive: " + dbs);
-        result.errors.push_back("SQL dump not found for database '" + db_to_find + "'");
+        logger_.info("MIGRATION", "SQL dumps in archive: " + dbs);
+        result.errors.push_back("SQL dump not found for database '" + source_db_name + "'");
         return result;
     }
     logger_.info("MIGRATION", "find_db_in_archive OK: path=" + dump_path + " type=" + dump_type);
@@ -1585,7 +1658,7 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
         return executor_.run({"tar", "-xf", opts.backup_path, "-C", staging, prefix}).exit_code == 0;
     };
     if (!try_extract(dump_path) && !try_extract("./" + dump_path)) {
-        dump_path = "db/" + db_to_find + "/" + db_to_find + "." + dump_type + ".sql.gz";
+        dump_path = "db/" + source_db_name + "/" + source_db_name + "." + dump_type + ".sql.gz";
         if (!try_extract(dump_path) && !try_extract("./" + dump_path)) {
             result.errors.push_back("Cannot extract SQL dump from backup");
             cleanup_stg(); return result;
