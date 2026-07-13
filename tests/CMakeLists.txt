@@ -14,6 +14,10 @@ add_executable(containercp_tests
     test_runtime_sync.cpp
     test_health.cpp
     test_backup.cpp
+    test_migration.cpp
+    ${CMAKE_SOURCE_DIR}/libs/migration/VestaSiteImporter.cpp
+    ${CMAKE_SOURCE_DIR}/libs/config/Config.cpp
+    ${CMAKE_SOURCE_DIR}/libs/filesystem/Filesystem.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/Validator.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/StringUtils.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/PasswordGenerator.cpp

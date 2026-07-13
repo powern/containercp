@@ -1,8 +1,10 @@
 #include "DaemonApp.h"
 #include "daemon/CommandProtocol.h"
 #include "core/Application.h"
+#include "migration/VestaSiteImporter.h"
 #include "operations/SiteCreateOperation.h"
 #include "operations/SiteRemoveOperation.h"
+#include "runtime/CommandExecutor.h"
 #include "utils/StringUtils.h"
 #include "utils/Validator.h"
 
@@ -523,6 +525,45 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         out << "Name: " << p->profile_name << "\n"
             << "Web Server: " << p->web_server << "\n";
         return Command::success(out.str());
+    }
+
+    if (cmd.name == "migrate-vesta-site") {
+        migration::Options opts;
+        bool dry_run_flag = false;
+
+        for (size_t i = 0; i < cmd.args.size(); ++i) {
+            const auto& arg = cmd.args[i];
+            if (arg == "--backup" && i + 1 < cmd.args.size()) opts.backup_path = cmd.args[++i];
+            else if (arg == "--domain" && i + 1 < cmd.args.size()) opts.domain = cmd.args[++i];
+            else if (arg == "--owner" && i + 1 < cmd.args.size()) opts.owner = cmd.args[++i];
+            else if (arg == "--database" && i + 1 < cmd.args.size()) opts.database = cmd.args[++i];
+            else if (arg == "--dry-run") opts.dry_run = true;
+            else if (arg == "--keep-staging") opts.keep_staging = true;
+            else if (arg == "--skip-db") opts.skip_db = true;
+        }
+
+        if (opts.backup_path.empty() || opts.domain.empty() || opts.owner.empty()) {
+            return Command::error("Usage: migrate-vesta-site --backup <file> --domain <domain> --owner <owner> [--dry-run] [--skip-db] [--keep-staging] [--database <name>]");
+        }
+
+        runtime::CommandExecutor exec;
+        migration::VestaSiteImporter importer(exec, s.filesystem(), s.config());
+        auto manifest = importer.inspect(opts);
+        importer.print_dry_run(manifest, opts);
+
+        if (!manifest.errors.empty()) {
+            return Command::error("Inspection failed. See errors above.");
+        }
+
+        if (manifest.site_exists) {
+            return Command::error("Site already exists. Aborting.");
+        }
+
+        if (opts.dry_run) {
+            return Command::success("Dry run completed. No changes made.");
+        }
+
+        return Command::success("Inspection passed. Ready for import (next phase).");
     }
 
     if (cmd.name == "auth-debug") {
