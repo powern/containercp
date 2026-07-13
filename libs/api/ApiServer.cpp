@@ -13,11 +13,15 @@
 
 #include "ssl/CertificateStore.h"
 #include "ssl/CertificateProvider.h"
+#include "migration/VestaSiteImporter.h"
 #include "utils/Validator.h"
 
 #include <arpa/inet.h>
 #include <cctype>
 #include <chrono>
+#include <climits>
+#include <cstring>
+#include <sys/stat.h>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
@@ -2390,6 +2394,200 @@ bool ApiServer::start() {
         }
 
         r.body = "{\"success\":true,\"data\":{\"message\":\"Smarthost configured\"}}";
+        return r;
+    });
+
+    // ── Migration API (myVestaCP import, read-only) ────────────────────
+    router_.add("GET", "/api/migration/vesta/backups", [&s](const Request&) {
+        Response r;
+        std::vector<std::string> allowed_dirs = {"/backup", s.config().data_root() + "/backups"};
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":[";
+        bool first = true;
+
+        for (const auto& dir : allowed_dirs) {
+            std::string list_cmd = "ls -1 " + dir + "/*.tar 2>/dev/null";
+            std::array<char, 4096> buf;
+            std::string result;
+            auto pipe_cmd = "ls -1 \"" + dir + "\"/*.tar 2>/dev/null; ls -1 \"" + dir + "\"/*.tar.gz 2>/dev/null";
+            FILE* pipe_fp = ::popen(pipe_cmd.c_str(), "r");
+            if (pipe_fp) {
+                // Read pipe output
+                while (::fgets(buf.data(), buf.size(), pipe_fp) != nullptr) {
+                    result += buf.data();
+                }
+                ::pclose(pipe_fp);
+            }
+
+            std::istringstream stream(result);
+            std::string fname;
+            while (std::getline(stream, fname)) {
+                if (fname.empty()) continue;
+                // Resolve canonical path
+                char real[PATH_MAX];
+                if (!::realpath(fname.c_str(), real)) continue;
+                std::string canon(real);
+                // Verify it's in an allowed directory
+                bool allowed = false;
+                for (const auto& ad : allowed_dirs) {
+                    char ad_real[PATH_MAX];
+                    if (::realpath(ad.c_str(), ad_real) && canon.substr(0, strlen(ad_real)) == ad_real) {
+                        allowed = true;
+                        break;
+                    }
+                }
+                if (!allowed) continue;
+                // Get size and mtime
+                struct stat st;
+                if (::stat(real, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+
+                // Extract basename only
+                std::string basename = fname;
+                auto slash = basename.rfind('/');
+                if (slash != std::string::npos) basename = basename.substr(slash + 1);
+
+                if (!first) json << ",";
+                first = false;
+                json << "{\"name\":\"" << JsonFormatter::escape(basename)
+                     << "\",\"size\":" << st.st_size
+                     << ",\"mtime\":" << st.st_mtime
+                     << "}";
+            }
+        }
+
+        json << "]}";
+        r.body = json.str();
+        return r;
+    });
+
+    router_.add("POST", "/api/migration/vesta/inspect", [&s](const Request& req) {
+        Response r;
+
+        // Parse body
+        std::string backup, domain, owner, database;
+        bool skip_db = false, keep_staging = false;
+
+        auto extract = [&](const std::string& name) -> std::string {
+            auto pos = req.body.find("\"" + name + "\":\"");
+            if (pos == std::string::npos) {
+                pos = req.body.find("\"" + name + "\": \"");
+                if (pos == std::string::npos) return "";
+            }
+            auto start = req.body.find('"', pos + name.size() + 3);
+            if (start == std::string::npos) return "";
+            auto end = req.body.find('"', start + 1);
+            if (end == std::string::npos) return "";
+            return req.body.substr(start + 1, end - start - 1);
+        };
+        auto extract_bool = [&](const std::string& name) -> bool {
+            auto pos = req.body.find("\"" + name + "\":true");
+            if (pos != std::string::npos) return true;
+            pos = req.body.find("\"" + name + "\": true");
+            return pos != std::string::npos;
+        };
+
+        backup = extract("backup");
+        domain = extract("domain");
+        owner = extract("owner");
+        database = extract("database");
+        skip_db = extract_bool("skip_db");
+        keep_staging = extract_bool("keep_staging");
+
+        if (backup.empty() || domain.empty() || owner.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"backup, domain and owner are required\"}";
+            return r;
+        }
+
+        // Resolve backup path: check allowed directories only
+        std::string resolved_path;
+        std::vector<std::string> allowed_dirs = {"/backup", s.config().data_root() + "/backups"};
+        for (const auto& dir : allowed_dirs) {
+            std::string candidate = dir + "/" + backup;
+            char real[PATH_MAX];
+            if (::realpath(candidate.c_str(), real)) {
+                std::string canon(real);
+                char ad_real[PATH_MAX];
+                if (::realpath(dir.c_str(), ad_real)) {
+                    std::string ad(ad_real);
+                    struct stat path_stat;
+                    if (canon.substr(0, ad.size()) == ad && ::stat(real, &path_stat) == 0) {
+                        resolved_path = canon;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (resolved_path.empty()) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Backup file not found in allowed directories\"}";
+            return r;
+        }
+
+        // Run inspect
+        runtime::CommandExecutor exec;
+        migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(),
+                                              &s.sites(), &s.domains());
+        migration::Options opts;
+        opts.backup_path = resolved_path;
+        opts.domain = domain;
+        opts.owner = owner;
+        opts.database = database;
+        opts.skip_db = skip_db;
+        opts.keep_staging = keep_staging;
+        opts.dry_run = true;
+
+        auto manifest = importer.inspect(opts);
+
+        // Build JSON response
+        std::ostringstream json;
+        json << "{"
+             << "\"success\":true,"
+             << "\"data\":{"
+             << "\"domain_found\":" << (manifest.domain_found ? "true" : "false")
+             << ",\"web_archive_path\":\"" << JsonFormatter::escape(manifest.web_archive_path)
+             << "\",\"web_root_type\":\"" << JsonFormatter::escape(manifest.web_root_type)
+             << "\",\"web_size_known\":" << (manifest.web_size_known ? "true" : "false")
+             << ",\"web_size\":" << manifest.web_size
+             << ",\"wp_config_found\":" << (manifest.wp_config_found ? "true" : "false")
+             << ",\"wp_config_parsed\":" << (manifest.wp_config_parsed ? "true" : "false")
+             << ",\"wp_db_ambiguous\":" << (manifest.wp_db_ambiguous ? "true" : "false")
+             << ",\"wp_db_name\":\"" << JsonFormatter::escape(manifest.wp_db_name)
+             << "\",\"wp_db_user\":\"" << JsonFormatter::escape(manifest.wp_db_user)
+             << "\",\"wp_db_host\":\"" << JsonFormatter::escape(manifest.wp_db_host)
+             << "\",\"db_dump_found\":" << (manifest.db_dump_found ? "true" : "false")
+             << ",\"db_dump_path\":\"" << JsonFormatter::escape(manifest.db_dump_path)
+             << "\",\"db_type\":\"" << JsonFormatter::escape(manifest.db_type)
+             << "\",\"site_exists\":" << (manifest.site_exists ? "true" : "false")
+             << ",\"available_disk_mb\":" << manifest.available_disk_mb
+             << ",\"all_databases\":[";
+
+        bool first_db = true;
+        for (const auto& db : manifest.all_databases) {
+            if (!first_db) json << ",";
+            first_db = false;
+            json << "\"" << JsonFormatter::escape(db) << "\"";
+        }
+
+        json << "],\"errors\":[";
+        bool first_err = true;
+        for (const auto& e : manifest.errors) {
+            if (!first_err) json << ",";
+            first_err = false;
+            json << "\"" << JsonFormatter::escape(e) << "\"";
+        }
+
+        json << "],\"warnings\":[";
+        bool first_warn = true;
+        for (const auto& w : manifest.warnings) {
+            if (!first_warn) json << ",";
+            first_warn = false;
+            json << "\"" << JsonFormatter::escape(w) << "\"";
+        }
+
+        json << "]}}";
+        r.body = json.str();
         return r;
     });
 

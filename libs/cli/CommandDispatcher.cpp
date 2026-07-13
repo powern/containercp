@@ -303,6 +303,52 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         return print_response(send_command("auth-debug"));
     }
 
+    if (arg1 == "migrate-vesta-site") {
+        // Parse migrate-vesta-site arguments
+        std::string backup, domain, owner, database;
+        bool dry_run = false, skip_db = false, keep_staging = false;
+        bool has_error = false;
+
+        for (int i = 2; i < argc; ++i) {
+            std::string arg(argv[i]);
+            if (arg == "--backup" && i + 1 < argc) backup = argv[++i];
+            else if (arg == "--domain" && i + 1 < argc) domain = argv[++i];
+            else if (arg == "--owner" && i + 1 < argc) owner = argv[++i];
+            else if (arg == "--database" && i + 1 < argc) database = argv[++i];
+            else if (arg == "--dry-run") dry_run = true;
+            else if (arg == "--skip-db") skip_db = true;
+            else if (arg == "--keep-staging") keep_staging = true;
+            else has_error = true;
+        }
+
+        if (has_error || backup.empty() || domain.empty() || owner.empty()) {
+            std::cout << "Usage: containercp migrate-vesta-site\n"
+                      << "  --backup <file>     Path to myVestaCP backup archive\n"
+                      << "  --domain <domain>   Domain to restore\n"
+                      << "  --owner <owner>     ContainerCP owner\n"
+                      << "  --dry-run           Required: inspect without changes\n"
+                      << "  [--database <name>] Force specific database name\n"
+                      << "  [--skip-db]         Skip database import\n"
+                      << "  [--keep-staging]    Keep temporary files\n";
+            return 1;
+        }
+
+        if (!dry_run) {
+            std::cout << "Error: --dry-run is required. Import execution not implemented yet.\n";
+            return 1;
+        }
+
+        std::string cmd = "migrate-vesta-site|--backup|" + backup
+                        + "|--domain|" + domain
+                        + "|--owner|" + owner;
+        if (!database.empty()) cmd += "|--database|" + database;
+        if (dry_run) cmd += "|--dry-run";
+        if (skip_db) cmd += "|--skip-db";
+        if (keep_staging) cmd += "|--keep-staging";
+
+        return print_response(send_command(cmd));
+    }
+
     std::cout << "Error: unknown command\n\n";
     print_help();
     return 1;

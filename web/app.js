@@ -181,6 +181,7 @@ function initApp() {
         <a class="nav-link" data-page="proxy" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg> Proxy</a>
         <a class="nav-link" data-page="access" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Access</a>
         <a class="nav-link" data-page="backups" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/></svg> Backups</a>
+        <a class="nav-link" data-page="migration" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h14M5 4v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V4M5 4H3m16 0h2"/><path d="M9 10l3 3 3-3"/><path d="M12 7v6"/></svg> Migration</a>
         <a class="nav-link" data-page="profiles" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Profiles</a>
         <a class="nav-link" data-page="templates" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg> Templates</a>
         <a class="nav-link" data-page="nodes" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="8" height="8" rx="2"/><rect x="14" y="2" width="8" height="8" rx="2"/><rect x="2" y="14" width="8" height="8" rx="2"/><rect x="14" y="14" width="8" height="8" rx="2"/></svg> Nodes</a>
@@ -273,6 +274,7 @@ function navigate(page, params) {
   else if (page === 'proxy') loadProxy(p);
   else if (page === 'access') loadAccess(p);
   else if (page === 'backups') loadBackups(p);
+  else if (page === 'migration') loadMigration(p);
   else if (page === 'profiles') loadProfiles(p);
   else if (page === 'templates') loadTemplates(p);
   else if (page === 'nodes') loadNodes(p);
@@ -1485,6 +1487,141 @@ async function removeBackup(id) {
 }
 
 /* ===== PROFILES, TEMPLATES, NODES, LOGS, SETTINGS ===== */
+/* ===== MIGRATION (myVestaCP Import) ===== */
+async function loadMigration(p) {
+  try {
+    let html = `<div class="page-header"><h1>Migration</h1><div class="page-actions"></div></div>`;
+    html += `<div class="card"><div class="card-header"><h3>Import from myVestaCP</h3></div>
+      <div style="padding:16px;">
+      <p style="margin-bottom:16px;color:var(--text2);">Analyze a myVestaCP backup archive before importing into ContainerCP.</p>`;
+
+    // Load available backups
+    html += `<div class="form-group"><label>Backup file</label>
+      <select id="migrate-backup" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text);">
+      <option value="">Loading backups...</option></select></div>`;
+
+    html += `<div class="form-group"><label>Domain</label>
+      <input type="text" id="migrate-domain" placeholder="example.com" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text);"></div>`;
+
+    html += `<div class="form-group"><label>Owner</label>
+      <input type="text" id="migrate-owner" value="admin" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text);"></div>`;
+
+    html += `<details style="margin-bottom:12px;"><summary style="cursor:pointer;font-size:13px;color:var(--text2);">Advanced options</summary>
+      <div class="form-group" style="margin-top:8px;"><label>Database (override)</label>
+        <input type="text" id="migrate-database" placeholder="Auto-detect" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text);"></div>
+      <div style="display:flex;gap:16px;margin-top:8px;">
+        <label><input type="checkbox" id="migrate-skip-db"> Skip database import</label>
+        <label><input type="checkbox" id="migrate-keep-staging"> Keep staging files</label>
+      </div>
+    </details>`;
+
+    html += `<button class="btn btn-primary" id="migrate-analyze-btn" onclick="analyzeBackup()">Analyze backup</button>
+      <div id="migrate-result" style="margin-top:16px;"></div>
+      </div></div>`;
+
+    p.innerHTML = html;
+
+    // Load backup list
+    try {
+      const backups = await api('/api/migration/vesta/backups');
+      const sel = document.getElementById('migrate-backup');
+      if (backups.data && backups.data.length > 0) {
+        sel.innerHTML = '<option value="">Select a backup...</option>';
+        backups.data.forEach(b => {
+          sel.innerHTML += `<option value="${esc(b.name)}">${esc(b.name)} (${(b.size/1024/1024).toFixed(1)} MB)</option>`;
+        });
+      } else {
+        sel.innerHTML = '<option value="">No backups found</option>';
+      }
+    } catch(e) {
+      document.getElementById('migrate-backup').innerHTML = '<option value="">Failed to load backups</option>';
+    }
+  } catch(e) {
+    p.innerHTML = '<div class="empty-state">Failed to load migration page</div>';
+  }
+}
+
+async function analyzeBackup() {
+  const btn = document.getElementById('migrate-analyze-btn');
+  const resultDiv = document.getElementById('migrate-result');
+  btn.disabled = true;
+  btn.textContent = 'Analyzing...';
+  resultDiv.innerHTML = '';
+
+  try {
+    const backup = document.getElementById('migrate-backup').value;
+    const domain = document.getElementById('migrate-domain').value.trim();
+    const owner = document.getElementById('migrate-owner').value.trim();
+    const database = document.getElementById('migrate-database').value.trim();
+    const skipDb = document.getElementById('migrate-skip-db').checked;
+    const keepStaging = document.getElementById('migrate-keep-staging').checked;
+
+    if (!backup || !domain || !owner) {
+      resultDiv.innerHTML = '<div class="alert alert-error">Backup, domain and owner are required.</div>';
+      btn.disabled = false; btn.textContent = 'Analyze backup';
+      return;
+    }
+
+    const body = { backup, domain, owner };
+    if (database) body.database = database;
+    if (skipDb) body.skip_db = true;
+    if (keepStaging) body.keep_staging = true;
+
+    const res = await apiPost('/api/migration/vesta/inspect', body);
+    const d = res.data;
+
+    let html = '<div class="card" style="margin-top:12px;"><div class="card-header"><h3>Analysis Result</h3></div><div style="padding:12px;font-size:13px;">';
+
+    if (d.errors && d.errors.length > 0) {
+      html += '<div style="color:var(--red);margin-bottom:8px;"><strong>Errors:</strong><ul>';
+      d.errors.forEach(e => { html += '<li>' + esc(e) + '</li>'; });
+      html += '</ul></div>';
+    }
+
+    html += '<table style="width:100%;border-collapse:collapse;">';
+    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Domain found</td><td>' + (d.domain_found ? '<span class="badge badge-ok">Yes</span>' : '<span class="badge badge-info">No</span>') + '</td></tr>';
+
+    if (d.domain_found) {
+      html += '<tr><td style="padding:4px 8px;color:var(--text2);">Web archive</td><td>' + esc(d.web_archive_path) + '</td></tr>';
+      html += '<tr><td style="padding:4px 8px;color:var(--text2);">Web root</td><td>' + esc(d.web_root_type) + '</td></tr>';
+      html += '<tr><td style="padding:4px 8px;color:var(--text2);">WordPress config</td><td>' + (d.wp_config_found ? '<span class="badge badge-ok">Found</span>' : '<span class="badge badge-info">Not found</span>') + '</td></tr>';
+
+      if (d.wp_config_found) {
+        if (d.wp_db_ambiguous) {
+          html += '<tr><td style="padding:4px 8px;color:var(--text2);">DB_NAME</td><td><span class="badge badge-warning">Ambiguous</span> Use database override</td></tr>';
+        } else if (d.wp_config_parsed) {
+          html += '<tr><td style="padding:4px 8px;color:var(--text2);">DB_NAME</td><td>' + esc(d.wp_db_name) + '</td></tr>';
+          html += '<tr><td style="padding:4px 8px;color:var(--text2);">DB_USER</td><td>' + esc(d.wp_db_user) + '</td></tr>';
+        }
+      }
+
+      html += '<tr><td style="padding:4px 8px;color:var(--text2);">SQL dump</td><td>' + (d.db_dump_found ? '<span class="badge badge-ok">Found (' + esc(d.db_type) + ')</span>' : '<span class="badge badge-info">Not found</span>') + '</td></tr>';
+
+      if (d.all_databases && d.all_databases.length > 0) {
+        html += '<tr><td style="padding:4px 8px;color:var(--text2);">Available DBs</td><td>' + d.all_databases.map(esc).join(', ') + '</td></tr>';
+      }
+    }
+
+    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Site exists</td><td>' + (d.site_exists ? '<span class="badge badge-error">Yes</span>' : '<span class="badge badge-ok">No</span>') + '</td></tr>';
+    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Disk available</td><td>' + (d.available_disk_mb > 0 ? d.available_disk_mb + ' MB' : 'Unknown') + '</td></tr>';
+    html += '</table>';
+
+    if (d.warnings && d.warnings.length > 0) {
+      html += '<div style="margin-top:8px;"><strong>Warnings:</strong><ul>';
+      d.warnings.forEach(w => { html += '<li style="color:var(--orange);">' + esc(w) + '</li>'; });
+      html += '</ul></div>';
+    }
+
+    html += '</div></div>';
+    resultDiv.innerHTML = html;
+  } catch(e) {
+    resultDiv.innerHTML = '<div class="alert alert-error">Analysis failed: ' + esc(e.message || 'Unknown error') + '</div>';
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Analyze backup';
+}
+
 async function loadProfiles(p) {
   try {
     const data = await api('/api/profiles');
