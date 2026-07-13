@@ -65,6 +65,17 @@ public:
     Manifest inspect(const Options& opts);
     std::string format_dry_run(const Manifest& m, const Options& opts);
 
+    struct ImportFilesResult {
+        bool success = false;
+        std::string web_root_type;
+        size_t files_count = 0;
+        size_t bytes_copied = 0;
+        std::vector<std::string> warnings;
+        std::vector<std::string> errors;
+    };
+
+    ImportFilesResult import_files(const Options& opts);
+
 private:
     bool tar_safe_list(const std::string& archive,
                        std::vector<std::string>& entries,
@@ -96,6 +107,13 @@ private:
     std::string normalize_db_name(const std::string& raw) const;
     std::string make_staging_dir();
     void cleanup_staging(const std::string& dir);
+    bool extract_web_archive(const std::string& archive, const std::string& domain,
+                              const std::string& staging_dir,
+                              std::string& out_data_tarball);
+    bool copy_files_to_public(const std::string& staging_dir,
+                               const std::string& web_root_type,
+                               const std::string& site_dir,
+                               ImportFilesResult& result);
 
     runtime::CommandExecutor& executor_;
     filesystem::Filesystem& fs_;

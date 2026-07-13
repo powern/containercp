@@ -529,6 +529,7 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
 
     if (cmd.name == "migrate-vesta-site") {
         migration::Options opts;
+        bool is_import_files = false;
 
         for (size_t i = 0; i < cmd.args.size(); ++i) {
             const auto& arg = cmd.args[i];
@@ -539,15 +540,43 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
             else if (arg == "--dry-run") opts.dry_run = true;
             else if (arg == "--keep-staging") opts.keep_staging = true;
             else if (arg == "--skip-db") opts.skip_db = true;
+            else if (arg == "--import-files") is_import_files = true;
         }
 
         if (opts.backup_path.empty() || opts.domain.empty() || opts.owner.empty()) {
-            return Command::error("Usage: migrate-vesta-site --backup <file> --domain <domain> --owner <owner> [--dry-run] [--skip-db] [--keep-staging] [--database <name>]");
+            return Command::error("Usage: migrate-vesta-site --backup <file> --domain <domain> --owner <owner> [--dry-run] [--skip-db] [--keep-staging] [--database <name>] [--import-files]");
         }
 
         runtime::CommandExecutor exec;
         migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(),
                                               &s.sites(), &s.domains());
+
+        // ── Stage 2: import files ──
+        if (is_import_files) {
+            auto import_result = importer.import_files(opts);
+
+            if (!import_result.success) {
+                std::string err_msg;
+                for (const auto& e : import_result.errors) err_msg += e + "; ";
+                return Command::error("Import files failed: " + err_msg);
+            }
+
+            std::ostringstream out;
+            out << "Stage 2 completed — files imported\n"
+                << "Web root:      " << import_result.web_root_type << "\n"
+                << "Destination:   " << s.config().sites_dir() + opts.domain + "/public" << "\n"
+                << "Files copied:  " << import_result.files_count << "\n"
+                << "Size:          " << (import_result.bytes_copied / 1024) << " KB\n"
+                << "\n"
+                << "Status:\n"
+                << "  ✅ Files: imported\n"
+                << "  ⏳ SQL import: pending\n"
+                << "  ⏳ wp-config update: pending\n";
+            for (const auto& w : import_result.warnings) out << "\nWarning: " << w;
+            return Command::success(out.str());
+        }
+
+        // ── Stage 1: inspect + create site ──
         auto manifest = importer.inspect(opts);
         std::string report = importer.format_dry_run(manifest, opts);
 

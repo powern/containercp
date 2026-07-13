@@ -327,6 +327,8 @@ int CommandDispatcher::run(int argc, char* argv[]) {
                       << "  --domain <domain>   Domain to restore\n"
                       << "  --owner <owner>     ContainerCP owner\n"
                       << "  --dry-run           Inspect without changes\n"
+                      << "  --execute           Stage 1: create site\n"
+                      << "  --import-files      Stage 2: import web files\n"
                       << "  [--database <name>] Force specific database name\n"
                       << "  [--skip-db]         Skip database import\n"
                       << "  [--keep-staging]    Keep temporary files\n";
@@ -338,6 +340,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
                         + "|--owner|" + owner;
         if (!database.empty()) cmd += "|--database|" + database;
         if (dry_run) cmd += "|--dry-run";
+        else if (std::string(argv[2]) == "--import-files") cmd += "|--import-files";
         else cmd += "|--execute";
         if (skip_db) cmd += "|--skip-db";
         if (keep_staging) cmd += "|--keep-staging";

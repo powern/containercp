@@ -1672,7 +1672,8 @@ async function importMigrationSite() {
     }
     html += '</ul></div>';
 
-    html += '<p style="margin-top:12px;color:var(--text2);font-size:12px;">Next steps: file import and SQL import will be implemented in upcoming stages.</p>';
+    html += '<button class="btn btn-primary" style="margin-top:12px;" onclick="importMigrationFiles()">Import files</button>';
+    html += '<div id="migrate-files-result" style="margin-top:12px;"></div>';
     html += '</div></div>';
     resultDiv.innerHTML = html;
   } catch(e) {
@@ -1681,6 +1682,54 @@ async function importMigrationSite() {
 
   btn.disabled = false;
   btn.textContent = 'Import site';
+}
+
+async function importMigrationFiles() {
+  const resultDiv = document.getElementById('migrate-files-result');
+  if (!resultDiv) return;
+  resultDiv.innerHTML = 'Importing files...';
+
+  try {
+    const backup = document.getElementById('migrate-backup').value;
+    const domain = document.getElementById('migrate-domain').value.trim();
+    const owner = document.getElementById('migrate-owner').value.trim();
+    const keepStaging = document.getElementById('migrate-keep-staging').checked;
+
+    const body = { backup, domain, owner };
+    if (keepStaging) body.keep_staging = true;
+
+    const res = await apiPost('/api/migration/vesta/import-files', body);
+    const d = res.data;
+
+    let html = '<div class="card" style="margin-top:12px;border-color:var(--green);"><div class="card-header"><h3 style="color:var(--green);">Stage 2 Completed</h3></div><div style="padding:12px;font-size:13px;">';
+    html += '<p style="margin-bottom:12px;">' + esc(d.message) + '</p>';
+    html += '<table style="width:100%;border-collapse:collapse;">';
+    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Web root</td><td>' + esc(d.web_root) + '</td></tr>';
+    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Destination</td><td>' + esc(d.destination) + '</td></tr>';
+    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Files</td><td>' + (d.files_count || 'unknown') + '</td></tr>';
+    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Size</td><td>' + (d.bytes_copied ? Math.round(d.bytes_copied/1024) + ' KB' : 'unknown') + '</td></tr>';
+    html += '</table>';
+
+    html += '<div style="margin-top:12px;"><strong>Status:</strong><ul style="margin-top:4px;">';
+    if (d.status) {
+      for (const [key, val] of Object.entries(d.status)) {
+        const icon = val === 'imported' ? '✅' : '⏳';
+        html += '<li>' + icon + ' ' + esc(key) + ': ' + esc(val) + '</li>';
+      }
+    }
+    html += '</ul></div>';
+
+    if (d.warnings && d.warnings.length > 0) {
+      html += '<div style="margin-top:8px;"><strong>Warnings:</strong><ul>';
+      d.warnings.forEach(w => { html += '<li style="color:var(--orange);">' + esc(w) + '</li>'; });
+      html += '</ul></div>';
+    }
+
+    html += '</div></div>';
+    resultDiv.innerHTML = html;
+  } catch(e) {
+    resultDiv.innerHTML = '<div class="alert alert-error">File import failed: ' + esc(e.message || 'Unknown error') + '</div>';
+  }
 }
 
 async function loadProfiles(p) {
