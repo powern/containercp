@@ -487,7 +487,9 @@ Manifest VestaSiteImporter::inspect(const Options& opts) {
 
     // Check site existence via SiteManager, DomainManager, and filesystem
     m.site_exists = false;
-    if (sites_ && sites_->find(opts.domain) != nullptr) {
+    site::Site* found_site = nullptr;
+    if (sites_) found_site = sites_->find(opts.domain);
+    if (found_site != nullptr) {
         m.site_exists = true;
     }
     if (!m.site_exists && domains_ && domains_->find(opts.domain) != nullptr) {
@@ -496,6 +498,86 @@ Manifest VestaSiteImporter::inspect(const Options& opts) {
     if (!m.site_exists) {
         std::string site_dir = cfg_.sites_dir() + opts.domain + "/";
         m.site_exists = fs_.exists(site_dir);
+    }
+
+    // Migration marker validation
+    if (m.site_exists) {
+        std::string marker_path = cfg_.sites_dir() + opts.domain + "/.containercp-migration.json";
+        if (fs_.exists(marker_path)) {
+            std::string content = fs_.read_file(marker_path);
+            m.migration_marker_found = true;
+
+            // Validate marker fields
+            auto find_in_json = [&](const std::string& key, std::string& out_val) {
+                auto kpos = content.find("\"" + key + "\":\"");
+                if (kpos == std::string::npos) {
+                    kpos = content.find("\"" + key + "\": \"");
+                    if (kpos == std::string::npos) return false;
+                }
+                auto vstart = content.find('"', kpos + key.size() + 3);
+                if (vstart == std::string::npos) return false;
+                auto vend = content.find('"', vstart + 1);
+                if (vend == std::string::npos) return false;
+                out_val = content.substr(vstart + 1, vend - vstart - 1);
+                return true;
+            };
+            auto find_in_json_int = [&](const std::string& key, uint64_t& out_val) {
+                std::string s;
+                if (find_in_json(key, s)) {
+                    try { out_val = std::stoull(s); return true; }
+                    catch (...) { return false; }
+                }
+                // Try bare integer (no quotes): "stage":1
+                auto kpos = content.find("\"" + key + "\":");
+                if (kpos == std::string::npos) return false;
+                kpos = content.find(':', kpos) + 1;
+                while (kpos < content.size() && content[kpos] == ' ') ++kpos;
+                if (kpos >= content.size()) return false;
+                size_t end = kpos;
+                while (end < content.size() && std::isdigit(static_cast<unsigned char>(content[end]))) ++end;
+                if (end == kpos) return false;
+                try { out_val = std::stoull(content.substr(kpos, end - kpos)); return true; }
+                catch (...) { return false; }
+            };
+            auto find_in_json_bool = [&](const std::string& key, bool& out_val) -> bool {
+                // Match "key":true (no quotes around true) or "key":"true"
+                auto kpos = content.find("\"" + key + "\":true");
+                if (kpos != std::string::npos) { out_val = true; return true; }
+                kpos = content.find("\"" + key + "\": true");
+                if (kpos != std::string::npos) { out_val = true; return true; }
+                kpos = content.find("\"" + key + "\":\"true\"");
+                if (kpos != std::string::npos) { out_val = true; return true; }
+                kpos = content.find("\"" + key + "\": \"true\"");
+                if (kpos != std::string::npos) { out_val = true; return true; }
+                return false;
+            };
+
+            std::string m_domain, m_owner;
+            uint64_t m_stage = 0;
+            find_in_json("domain", m_domain);
+            find_in_json("owner", m_owner);
+            find_in_json_int("site_id", m.migration_site_id);
+            find_in_json_int("stage", m_stage);
+            find_in_json_bool("files_pending", m.files_pending);
+            find_in_json_bool("files_imported", m.files_imported);
+            find_in_json_bool("sql_pending", m.sql_pending);
+            m.migration_stage = m_stage;
+
+            // Validate against SiteManager records
+            if (m_domain != opts.domain) {
+                m.marker_error = "Marker domain mismatch";
+            } else if (m_owner != opts.owner) {
+                m.marker_error = "Marker owner mismatch";
+            } else if (found_site && m.migration_site_id != found_site->id) {
+                m.marker_error = "Marker site_id mismatch";
+            } else if (m.migration_stage != 1) {
+                m.marker_error = "Marker stage is " + std::to_string(m.migration_stage) + ", expected 1";
+            } else if (m.files_imported) {
+                m.marker_error = "Files already imported (stage 2)";
+            } else if (m.files_pending) {
+                m.migration_ready_for_files = true;
+            }
+        }
     }
 
     // Find database

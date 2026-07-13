@@ -40,6 +40,15 @@ struct Manifest {
     std::string db_type;
     std::vector<std::string> all_databases;
     bool site_exists = false;
+    bool migration_marker_found = false;
+    uint64_t migration_stage = 0;
+    bool files_pending = false;
+    bool files_imported = false;
+    bool sql_pending = false;
+    bool migration_ready_for_files = false;
+    uint64_t migration_site_id = 0;
+    std::string migration_owner;
+    std::string marker_error;
     uint64_t available_disk_mb = 0;
     std::vector<std::string> errors;
     std::vector<std::string> warnings;

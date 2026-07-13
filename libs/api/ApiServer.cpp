@@ -2589,7 +2589,16 @@ bool ApiServer::start() {
              << ",\"db_dump_path\":\"" << JsonFormatter::escape(manifest.db_dump_path)
              << "\",\"db_type\":\"" << JsonFormatter::escape(manifest.db_type)
              << "\",\"site_exists\":" << (manifest.site_exists ? "true" : "false")
-             << ",\"available_disk_mb\":" << manifest.available_disk_mb
+             << ",\"migration_marker_found\":" << (manifest.migration_marker_found ? "true" : "false")
+             << ",\"migration_stage\":" << manifest.migration_stage
+             << ",\"files_pending\":" << (manifest.files_pending ? "true" : "false")
+             << ",\"files_imported\":" << (manifest.files_imported ? "true" : "false")
+             << ",\"sql_pending\":" << (manifest.sql_pending ? "true" : "false")
+             << ",\"migration_ready_for_files\":" << (manifest.migration_ready_for_files ? "true" : "false")
+             << ",\"migration_site_id\":" << manifest.migration_site_id
+             << ",\"migration_owner\":\"" << JsonFormatter::escape(manifest.migration_owner)
+             << "\",\"marker_error\":\"" << JsonFormatter::escape(manifest.marker_error)
+             << "\",\"available_disk_mb\":" << manifest.available_disk_mb
              << ",\"all_databases\":[";
 
         bool first_db = true;

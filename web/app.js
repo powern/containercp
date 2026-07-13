@@ -1614,10 +1614,34 @@ async function analyzeBackup() {
 
     html += '</div></div>';
 
-    // Show Import button only if no errors and site doesn't exist
-    if (d.errors && d.errors.length === 0 && !d.site_exists) {
-      html += `<button class="btn btn-primary" style="margin-top:12px;" onclick="importMigrationSite()" id="migrate-import-btn">Import site</button>
-      <div id="migrate-import-result" style="margin-top:12px;"></div>`;
+    // Decide which buttons to show
+    const hasErrors = d.errors && d.errors.length > 0;
+
+    if (!hasErrors) {
+      if (!d.site_exists) {
+        // Site doesn't exist — show Import site button
+        html += `<button class="btn btn-primary" style="margin-top:12px;" onclick="importMigrationSite()" id="migrate-import-btn">Import site</button>
+        <div id="migrate-import-result" style="margin-top:12px;"></div>`;
+      } else if (d.migration_ready_for_files) {
+        // Site exists with valid migration marker — show migration state + Import files
+        html += `<div class="card" style="margin-top:12px;border-color:var(--blue);">
+          <div class="card-header"><h3 style="color:var(--blue);">Migration State: Stage ${esc(d.migration_stage)} Completed</h3></div>
+          <div style="padding:12px;font-size:13px;">
+            <table style="width:100%;border-collapse:collapse;">
+              <tr><td style="padding:4px 8px;color:var(--text2);">Site ID</td><td>${d.migration_site_id || '?'}</td></tr>
+              <tr><td style="padding:4px 8px;color:var(--text2);">Files</td><td>${d.files_pending ? '<span class="badge badge-info">Pending</span>' : '<span class="badge badge-ok">Imported</span>'}</td></tr>
+              <tr><td style="padding:4px 8px;color:var(--text2);">SQL</td><td>${d.sql_pending ? '<span class="badge badge-info">Pending</span>' : '<span class="badge badge-ok">Imported</span>'}</td></tr>
+            </table>
+            <button class="btn btn-primary" style="margin-top:12px;" onclick="importMigrationFiles()">Import files</button>
+            <div id="migrate-files-result" style="margin-top:12px;"></div>
+          </div></div>`;
+      } else if (d.site_exists && d.migration_marker_found && d.marker_error) {
+        // Marker exists but invalid
+        html += `<div class="alert alert-warning" style="margin-top:12px;">Marker error: ${esc(d.marker_error)}</div>`;
+      } else if (d.site_exists) {
+        // Existing site, no marker
+        html += `<div class="alert alert-info" style="margin-top:12px;">Existing site is not an active myVesta migration.</div>`;
+      }
     }
 
     resultDiv.innerHTML = html;
