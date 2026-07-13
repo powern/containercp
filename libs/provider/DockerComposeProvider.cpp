@@ -38,7 +38,7 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site, core:
     }
 
     auto* php_version = php_.get_default();
-    std::string php_image = php_version ? php_version->image : "ghcr.io/containercp/php:8.4";
+    std::string php_image = php_version ? php_version->image : "ghcr.io/powern/containercp-php:8.4";
 
     std::string site_id = std::to_string(site.id);
 

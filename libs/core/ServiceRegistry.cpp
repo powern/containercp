@@ -126,13 +126,26 @@ ServiceRegistry::ServiceRegistry()
         users_.set_users(loaded_users);
     }
 
+    const std::string CONTAINERCP_PHP_IMAGE = "ghcr.io/powern/containercp-php:8.4";
+
     auto loaded_php = storage_.load_php_versions();
     if (loaded_php.empty()) {
-        php_versions_.create("8.2", "ghcr.io/containercp/php:8.2", false);
-        php_versions_.create("8.3", "ghcr.io/containercp/php:8.3", false);
-        php_versions_.create("8.4", "ghcr.io/containercp/php:8.4", true);
+        php_versions_.create("8.4", CONTAINERCP_PHP_IMAGE, true);
         storage_.save_php_versions(php_versions_.list());
     } else {
+        // Idempotent migration: replace legacy official PHP images with ContainerCP images
+        bool migrated = false;
+        for (auto& pv : loaded_php) {
+            if (pv.image == "php:8.4-fpm" || pv.image == "php:8.3-fpm" || pv.image == "php:8.2-fpm") {
+                std::string old_img = pv.image;
+                pv.image = CONTAINERCP_PHP_IMAGE;
+                logger_.info("PHP", "Migrated PHP image " + old_img + " -> " + CONTAINERCP_PHP_IMAGE);
+                migrated = true;
+            }
+        }
+        if (migrated) {
+            storage_.save_php_versions(loaded_php);
+        }
         php_versions_.set_versions(loaded_php);
     }
 

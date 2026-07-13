@@ -42,7 +42,22 @@ cmake -S "$INSTALL_DIR" -B "$INSTALL_DIR/build-release" -DCMAKE_BUILD_TYPE=Relea
 echo "[SYSTEM] Building..."
 cmake --build "$INSTALL_DIR/build-release"
 
-# --- 4. Stop service before installing ---
+# --- 4. Build ContainerCP PHP image if available ---
+PHP_IMAGE="ghcr.io/powern/containercp-php:8.4"
+if [ -f "$INSTALL_DIR/docker/php/Dockerfile" ]; then
+    echo "[SYSTEM] Building ContainerCP PHP image..."
+    if docker image inspect "$PHP_IMAGE" >/dev/null 2>&1; then
+        echo "[SYSTEM] PHP image $PHP_IMAGE already exists, rebuilding..."
+    fi
+    docker build \
+        -t "$PHP_IMAGE" \
+        --build-arg PHP_VERSION=8.4 \
+        -f "$INSTALL_DIR/docker/php/Dockerfile" \
+        "$INSTALL_DIR/docker/php/" 2>&1 | tail -5
+    echo "[SYSTEM] PHP image built: $PHP_IMAGE"
+fi
+
+# --- 5. Stop service before installing ---
 echo "[SYSTEM] Stopping containercpd..."
 systemctl stop "$SERVICE" 2>/dev/null || true
 
