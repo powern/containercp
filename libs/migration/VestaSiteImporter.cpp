@@ -2043,37 +2043,57 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
         if (code >= 200 && code <= 404 && code != 500) {
             // Acceptable codes
         } else if (code == 500) {
-            logger_.error("MIGRATION", "HTTP 500 — collecting diagnostics before rollback");
+            logger_.error("MIGRATION", "HTTP 500 — running WordPress diagnostics");
 
-            // A. DB constants (without password)
+            // A. Run WordPress directly via PHP CLI to capture real error
+            logger_.info("MIGRATION", "DIAG: Running WordPress via PHP CLI");
+            auto index_path = container_wp_config.empty()
+                ? "/usr/local/apache2/htdocs/index.php"
+                : container_wp_config.substr(0, container_wp_config.rfind('/') + 1) + "index.php";
+            auto wp_cli = executor_.run({
+                "docker", "exec", "site-" + std::to_string(m.migration_site_id) + "-php",
+                "php", "-d", "display_errors=1", index_path
+            });
+            std::string wp_error = wp_cli.err.empty() ? wp_cli.out : wp_cli.err;
+            logger_.info("MIGRATION", "DIAG: WordPress CLI output=" + wp_error.substr(0, 1000));
+
+            // B. DB constants (without password)
             logger_.info("MIGRATION", "DIAG: DB_NAME=" + db_name + " DB_USER=" + db_user + " DB_HOST=" + db_host);
 
-            // B. DNS check from PHP container
+            // C. PHP modules check
+            auto php_m = executor_.run({"docker", "exec", "site-" + std::to_string(m.migration_site_id) + "-php",
+                                         "php", "-m"});
+            bool has_mysqli = php_m.out.find("mysqli") != std::string::npos;
+            bool has_pdo_mysql = php_m.out.find("pdo_mysql") != std::string::npos;
+            logger_.info("MIGRATION", "DIAG: mysqli=" + std::string(has_mysqli ? "yes" : "NO")
+                         + " pdo_mysql=" + std::string(has_pdo_mysql ? "yes" : "NO"));
+
+            // D. DNS check from PHP container
             auto dns = executor_.run({"docker", "exec", "site-" + std::to_string(m.migration_site_id) + "-php",
                                        "getent", "hosts", db_host});
             logger_.info("MIGRATION", "DIAG: DNS " + db_host + " exit=" + std::to_string(dns.exit_code) + " " + dns.out);
 
-            // C. TCP connection (without shell)
+            // E. TCP connection
             auto tcp = executor_.run({"docker", "exec", "site-" + std::to_string(m.migration_site_id) + "-php",
                                       "timeout", "3", "nc", "-zv", db_host, "3306"});
             std::string tcp_result = (tcp.exit_code == 0) ? "connected" : "failed exit=" + std::to_string(tcp.exit_code);
             logger_.info("MIGRATION", "DIAG: TCP " + db_host + ":3306 " + tcp_result);
 
-            // D. PHP error log
+            // F. PHP error log
             auto php_err = executor_.run({"docker", "logs", "--tail", "50", "site-" + std::to_string(m.migration_site_id) + "-php"});
             logger_.info("MIGRATION", "DIAG: PHP logs tail=50 err=" + php_err.err);
 
-            // E. Web error log
+            // G. Web error log
             auto web_err = executor_.run({"docker", "logs", "--tail", "50", "site-" + std::to_string(m.migration_site_id) + "-web"});
             logger_.info("MIGRATION", "DIAG: Web logs tail=50 err=" + web_err.err);
 
-            // F. HTTP response body (first 4KB, truncated in C++ no shell pipe)
+            // H. HTTP response body (first 4KB)
             auto http_body = executor_.run({"curl", "-s", "--max-time", "5", "--resolve", opts.domain + ":80:127.0.0.1",
                                             "http://" + opts.domain + "/"});
             std::string body_preview = http_body.out.substr(0, 4096);
             logger_.info("MIGRATION", "DIAG: HTTP body (4KB)=" + body_preview.substr(0, 200));
 
-            result.errors.push_back("HTTP 500 after SQL import");
+            result.errors.push_back("HTTP 500: " + wp_error.substr(0, 500));
             do_rollback();
             if (result.wp_config_updated && !wp_config_bak.empty()) {
                 executor_.run({"cp", wp_config_bak, wp_config_path});
