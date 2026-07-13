@@ -1814,14 +1814,14 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
     logger_.info("MIGRATION", "SQL import completed");
 
     // Verify database has tables
-    auto table_count = executor_.run({
+    auto table_verify = executor_.run({
         "docker", "exec", db_container,
         "env", "MYSQL_PWD=" + db_password,
         "mariadb", "-N", "-u" + db_user, db_name,
         "-e", "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '" + db_name + "'"
     });
-    if (table_count.exit_code == 0) {
-        std::string cnt = table_count.out;
+    if (table_verify.exit_code == 0) {
+        std::string cnt = table_verify.out;
         while (!cnt.empty() && (cnt.back() == '\n' || cnt.back() == '\r')) cnt.pop_back();
         logger_.info("MIGRATION", "Tables in database: " + cnt);
         if (cnt == "0") {
