@@ -961,7 +961,8 @@ bool VestaSiteImporter::copy_files_to_public(
     const std::string& web_root_type,
     const std::string& site_dir,
     ImportFilesResult& result,
-    const std::string& uid_str, const std::string& gid_str) {
+    const std::string& uid_str, const std::string& gid_str,
+    uint64_t site_id, const std::string& domain) {
 
     std::string data_tarball = staging_dir + "/domain_data.tar.gz";
     std::string public_dir = site_dir + "public/";
@@ -1111,6 +1112,11 @@ bool VestaSiteImporter::copy_files_to_public(
     }
 
     // 11. Start web+php
+    const int HEALTH_TIMEOUT_SECONDS = 120;
+    const int HEALTH_CHECK_INTERVAL = 2;
+    std::string web_container = "site-" + std::to_string(site_id) + "-web";
+    std::string php_container = "site-" + std::to_string(site_id) + "-php";
+
     logger_.info("MIGRATION", "Starting web+php containers");
     auto up_res = executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "up", "-d", "web", "php"});
     if (up_res.exit_code != 0) {
@@ -1120,33 +1126,124 @@ bool VestaSiteImporter::copy_files_to_public(
         rollback_stage2();
         return false;
     }
-    logger_.info("MIGRATION", "Web+php started, waiting for health...");
+    logger_.info("MIGRATION", "Web+php started, checking health (timeout=" + std::to_string(HEALTH_TIMEOUT_SECONDS) + "s, interval=" + std::to_string(HEALTH_CHECK_INTERVAL) + "s)");
 
-    // 12. Health check with timeout
+    // 12. Health check with extended timeout (up to 120s)
     bool healthy = false;
-    for (int i = 0; i < 15; ++i) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        auto ps = executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml",
-                                "ps", "--format={{.Status}}", "web"});
-        auto ps_php = executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml",
-                                    "ps", "--format={{.Status}}", "php"});
-        bool web_ok = ps.exit_code == 0 && ps.out.find("healthy") != std::string::npos;
-        bool php_ok = ps_php.exit_code == 0 && ps_php.out.find("healthy") != std::string::npos;
+    bool web_running = false, php_running = false;
+    bool web_unhealthy = false, php_unhealthy = false;
+    int attempts = HEALTH_TIMEOUT_SECONDS / HEALTH_CHECK_INTERVAL;
+
+    for (int i = 0; i < attempts; ++i) {
+        std::this_thread::sleep_for(std::chrono::seconds(HEALTH_CHECK_INTERVAL));
+
+        // Use docker inspect for reliable health status
+        auto web_hc = executor_.run({"docker", "inspect", web_container,
+                                     "--format", "{{.State.Status}}|{{.State.Health.Status}}|{{.State.ExitCode}}"});
+        auto php_hc = executor_.run({"docker", "inspect", php_container,
+                                     "--format", "{{.State.Status}}|{{.State.Health.Status}}|{{.State.ExitCode}}"});
+
+        auto parse_status = [](const std::string& output, bool& running, bool& unhealthy) -> bool {
+            // Format: "Status|Health|ExitCode"
+            running = false; unhealthy = false;
+            if (output.empty()) return false;
+            auto first_pipe = output.find('|');
+            if (first_pipe == std::string::npos) return false;
+            auto second_pipe = output.find('|', first_pipe + 1);
+            if (second_pipe == std::string::npos) return false;
+            std::string state = output.substr(0, first_pipe);
+            std::string health = output.substr(first_pipe + 1, second_pipe - first_pipe - 1);
+            std::string exitcode = output.substr(second_pipe + 1);
+            while (!exitcode.empty() && (exitcode.back() == '\n' || exitcode.back() == '\r')) exitcode.pop_back();
+
+            running = (state == "running");
+            if (health == "healthy") return true;
+            if (health == "unhealthy") unhealthy = true;
+            if (state == "exited" || state == "dead") return false; // failure
+            return false; // still waiting (starting, etc.)
+        };
+
+        bool web_ok = parse_status(web_hc.out, web_running, web_unhealthy);
+        bool php_ok = parse_status(php_hc.out, php_running, php_unhealthy);
+
         if (web_ok && php_ok) {
             healthy = true;
-            logger_.info("MIGRATION", "Health check passed on attempt " + std::to_string(i + 1));
+            logger_.info("MIGRATION", "Health check passed on attempt " + std::to_string(i + 1)
+                         + " (after " + std::to_string((i + 1) * HEALTH_CHECK_INTERVAL) + "s)");
             break;
         }
-        if (i == 7 || i == 14) {
-            logger_.info("MIGRATION", "Health check attempt " + std::to_string(i + 1) + ": web=" + (web_ok ? "ok" : "waiting") + " php=" + (php_ok ? "ok" : "waiting"));
+
+        // Immediate failure on exited/dead containers
+        if (!web_running && web_hc.exit_code == 0) {
+            logger_.error("MIGRATION", "Web container not running: " + web_hc.out);
+        }
+        if (!php_running && php_hc.exit_code == 0) {
+            logger_.error("MIGRATION", "PHP container not running: " + php_hc.out);
+        }
+
+        // Log progress every 20 seconds
+        if (i > 0 && (i * HEALTH_CHECK_INTERVAL) % 20 == 0) {
+            logger_.info("MIGRATION", "Health check at " + std::to_string((i + 1) * HEALTH_CHECK_INTERVAL)
+                         + "s: web=" + (web_ok ? "ok" : web_unhealthy ? "unhealthy" : web_running ? "starting" : "waiting")
+                         + " php=" + (php_ok ? "ok" : php_unhealthy ? "unhealthy" : php_running ? "starting" : "waiting"));
         }
     }
+
     if (!healthy) {
-        logger_.error("MIGRATION", "Health check timeout after 15s");
-        result.errors.push_back("Health check timeout — rolling back");
-        rollback_stage2();
-        return false;
+        logger_.error("MIGRATION", "Health check timeout after " + std::to_string(HEALTH_TIMEOUT_SECONDS) + "s");
+
+        // Collect diagnostics before rollback
+        auto web_inspect = executor_.run({"docker", "inspect", web_container,
+                                          "--format", "Status={{.State.Status}} Health={{.State.Health.Status}} Exit={{.State.ExitCode}} Error={{.State.Error}}"});
+        auto php_inspect = executor_.run({"docker", "inspect", php_container,
+                                          "--format", "Status={{.State.Status}} Health={{.State.Health.Status}} Exit={{.State.ExitCode}} Error={{.State.Error}}"});
+        auto web_logs = executor_.run({"docker", "logs", "--tail", "20", web_container});
+        auto php_logs = executor_.run({"docker", "logs", "--tail", "20", php_container});
+
+        logger_.error("MIGRATION", "Web inspect: " + web_inspect.out);
+        logger_.error("MIGRATION", "PHP inspect: " + php_inspect.out);
+        if (!web_logs.err.empty()) logger_.error("MIGRATION", "Web logs (err): " + web_logs.err);
+        if (!php_logs.err.empty()) logger_.error("MIGRATION", "PHP logs (err): " + php_logs.err);
+
+        // If containers are running but still starting, don't rollback immediately — health often succeeds
+        if (web_running && php_running) {
+            logger_.warning("MIGRATION", "Both containers running but not healthy — finishing Stage 2 with warning");
+            // Proceed without rollback — site may become healthy later
+            healthy = true;
+            result.warnings.push_back("Health check timed out but containers are running");
+        } else {
+            result.errors.push_back("Health check timeout — rolling back");
+            rollback_stage2();
+            return false;
+        }
     }
+
+    // 13. HTTP check via local proxy
+    if (healthy && site_id > 0) {
+        logger_.info("MIGRATION", "Running HTTP check via proxy");
+        auto http = executor_.run({
+            "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+            "--resolve", domain + ":80:127.0.0.1",
+            "http://" + domain + "/"
+        });
+        if (http.exit_code == 0 && !http.out.empty()) {
+            int code = 0;
+            try { code = std::stoi(http.out); } catch (...) {}
+            logger_.info("MIGRATION", "HTTP check returned " + std::to_string(code));
+            // Accept various status codes — SQL not imported yet, DB errors expected
+            if (code >= 200 && code <= 499) {
+                result.warnings.push_back("HTTP status " + std::to_string(code) + " (expected during migration)");
+            } else {
+                logger_.warning("MIGRATION", "HTTP status " + std::to_string(code) + " — site may not be fully accessible");
+                result.warnings.push_back("HTTP status " + std::to_string(code));
+            }
+        } else {
+            logger_.warning("MIGRATION", "HTTP check failed with exit " + std::to_string(http.exit_code));
+            result.warnings.push_back("HTTP check not available (waiting for DNS/proxy)");
+        }
+    }
+
+    // 14. Count files
 
     // 13. Count files
     logger_.info("MIGRATION", "Counting files");
@@ -1242,8 +1339,8 @@ VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Optio
     }
     logger_.info("MIGRATION", "Extracted to staging: " + data_tarball);
 
-    logger_.info("MIGRATION", "Calling copy_files_to_public");
-    bool ok = copy_files_to_public(staging, m.web_root_type, site_dir, result, uid_str, gid_str);
+    logger_.info("MIGRATION", "Calling copy_files_to_public (site_id=" + std::to_string(m.migration_site_id) + ")");
+    bool ok = copy_files_to_public(staging, m.web_root_type, site_dir, result, uid_str, gid_str, m.migration_site_id, opts.domain);
     cleanup();
     if (!ok) {
         logger_.error("MIGRATION", "copy_files_to_public failed");

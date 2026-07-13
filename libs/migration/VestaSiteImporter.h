@@ -127,8 +127,10 @@ private:
                                const std::string& web_root_type,
                                const std::string& site_dir,
                                ImportFilesResult& result,
-                               const std::string& uid_str = "1000",
-                               const std::string& gid_str = "1000");
+                               const std::string& uid_str,
+                               const std::string& gid_str,
+                               uint64_t site_id,
+                               const std::string& domain = "");
 
     runtime::CommandExecutor& executor_;
     filesystem::Filesystem& fs_;
