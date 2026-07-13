@@ -2597,6 +2597,8 @@ bool ApiServer::start() {
              << ",\"migration_ready_for_files\":" << (manifest.migration_ready_for_files ? "true" : "false")
              << ",\"migration_site_id\":" << manifest.migration_site_id
              << ",\"migration_owner\":\"" << JsonFormatter::escape(manifest.migration_owner)
+             << "\",\"files_status\":\"" << JsonFormatter::escape(manifest.files_status)
+             << "\",\"sql_status\":\"" << JsonFormatter::escape(manifest.sql_status)
              << "\",\"marker_error\":\"" << JsonFormatter::escape(manifest.marker_error)
              << "\",\"available_disk_mb\":" << manifest.available_disk_mb
              << ",\"all_databases\":[";

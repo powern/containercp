@@ -1629,8 +1629,8 @@ async function analyzeBackup() {
           <div style="padding:12px;font-size:13px;">
             <table style="width:100%;border-collapse:collapse;">
               <tr><td style="padding:4px 8px;color:var(--text2);">Site ID</td><td>${d.migration_site_id || '?'}</td></tr>
-              <tr><td style="padding:4px 8px;color:var(--text2);">Files</td><td>${d.files_pending ? '<span class="badge badge-info">Pending</span>' : '<span class="badge badge-ok">Imported</span>'}</td></tr>
-              <tr><td style="padding:4px 8px;color:var(--text2);">SQL</td><td>${d.sql_pending ? '<span class="badge badge-info">Pending</span>' : '<span class="badge badge-ok">Imported</span>'}</td></tr>
+              <tr><td style="padding:4px 8px;color:var(--text2);">Files</td><td>${d.files_status === 'imported' ? '<span class="badge badge-ok">Imported</span>' : '<span class="badge badge-info">' + esc(d.files_status || 'Pending') + '</span>'}</td></tr>
+              <tr><td style="padding:4px 8px;color:var(--text2);">SQL</td><td>${d.sql_status === 'imported' ? '<span class="badge badge-ok">Imported</span>' : '<span class="badge badge-info">' + esc(d.sql_status || 'Pending') + '</span>'}</td></tr>
             </table>
             <button class="btn btn-primary" style="margin-top:12px;" onclick="importMigrationFiles()">Import files</button>
             <div id="migrate-files-result" style="margin-top:12px;"></div>

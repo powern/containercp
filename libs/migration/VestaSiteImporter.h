@@ -48,6 +48,8 @@ struct Manifest {
     bool migration_ready_for_files = false;
     uint64_t migration_site_id = 0;
     std::string migration_owner;
+    std::string files_status;
+    std::string sql_status;
     std::string marker_error;
     uint64_t available_disk_mb = 0;
     std::vector<std::string> errors;

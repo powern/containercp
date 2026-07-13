@@ -410,6 +410,64 @@ void VestaSiteImporter::cleanup_staging(const std::string& dir) {
     executor_.run({"rm", "-rf", dir});
 }
 
+// ── MigrationMarker: centralized JSON parser for .containercp-migration.json ──
+struct MigrationMarker {
+    uint64_t version = 0;
+    std::string domain;
+    std::string owner;
+    uint64_t site_id = 0;
+    uint64_t stage = 0;
+    bool files_pending = false;
+    bool files_imported = false;
+    bool sql_pending = false;
+
+    static MigrationMarker parse(const std::string& content) {
+        MigrationMarker m;
+        auto gs = [&](const std::string& key) -> std::string {
+            std::string pats[] = {"\"" + key + "\":\"", "\"" + key + "\": \"", "\"" + key + "\" :\"", "\"" + key + "\" : \""};
+            for (auto& p : pats) {
+                auto pos = content.find(p); if (pos == std::string::npos) continue;
+                auto s = pos + p.size(), e = content.find('"', s); if (e == std::string::npos) continue;
+                return content.substr(s, e - s);
+            }
+            return "";
+        };
+        auto gi = [&](const std::string& key) -> uint64_t {
+            std::string pats[] = {"\"" + key + "\":", "\"" + key + "\": ", "\"" + key + "\" :", "\"" + key + "\" : "};
+            for (auto& p : pats) {
+                auto pos = content.find(p); if (pos == std::string::npos) continue;
+                auto s = pos + p.size(); while (s < content.size() && content[s] == ' ') ++s;
+                if (s >= content.size() || !std::isdigit((unsigned char)content[s])) continue;
+                size_t e = s; while (e < content.size() && std::isdigit((unsigned char)content[e])) ++e;
+                try { return std::stoull(content.substr(s, e - s)); } catch (...) { return 0; }
+            }
+            return 0;
+        };
+        auto gb = [&](const std::string& key) -> bool {
+            std::string pats[] = {"\"" + key + "\":true", "\"" + key + "\": true", "\"" + key + "\" :true", "\"" + key + "\" : true", "\"" + key + "\":\"true\"", "\"" + key + "\": \"true\""};
+            for (auto& p : pats) { if (content.find(p) != std::string::npos) return true; }
+            return false;
+        };
+        m.domain = gs("domain"); m.owner = gs("owner"); m.site_id = gi("site_id");
+        m.stage = gi("stage"); m.version = gi("version");
+        m.files_pending = gb("files_pending"); m.files_imported = gb("files_imported"); m.sql_pending = gb("sql_pending");
+        if (m.stage == 1) {
+            if (!gb("files_pending") && content.find("\"files_pending\"") == std::string::npos) m.files_pending = true;
+            if (content.find("\"sql_pending\"") == std::string::npos) m.sql_pending = true;
+        }
+        return m;
+    }
+    std::string to_json() const {
+        return "{\"version\":" + std::to_string(version > 0 ? version : 1)
+            + ",\"domain\":\"" + domain + "\",\"owner\":\"" + owner
+            + "\",\"site_id\":" + std::to_string(site_id)
+            + ",\"stage\":" + std::to_string(stage)
+            + ",\"files_pending\":" + (files_pending ? "true" : "false")
+            + ",\"files_imported\":" + (files_imported ? "true" : "false")
+            + ",\"sql_pending\":" + (sql_pending ? "true" : "false") + "}";
+    }
+};
+
 Manifest VestaSiteImporter::inspect(const Options& opts) {
     Manifest m;
     m.domain = opts.domain;
@@ -507,64 +565,19 @@ Manifest VestaSiteImporter::inspect(const Options& opts) {
             std::string content = fs_.read_file(marker_path);
             m.migration_marker_found = true;
 
-            // Validate marker fields
-            auto find_in_json = [&](const std::string& key, std::string& out_val) {
-                auto kpos = content.find("\"" + key + "\":\"");
-                if (kpos == std::string::npos) {
-                    kpos = content.find("\"" + key + "\": \"");
-                    if (kpos == std::string::npos) return false;
-                }
-                auto vstart = content.find('"', kpos + key.size() + 3);
-                if (vstart == std::string::npos) return false;
-                auto vend = content.find('"', vstart + 1);
-                if (vend == std::string::npos) return false;
-                out_val = content.substr(vstart + 1, vend - vstart - 1);
-                return true;
-            };
-            auto find_in_json_int = [&](const std::string& key, uint64_t& out_val) {
-                std::string s;
-                if (find_in_json(key, s)) {
-                    try { out_val = std::stoull(s); return true; }
-                    catch (...) { return false; }
-                }
-                // Try bare integer (no quotes): "stage":1
-                auto kpos = content.find("\"" + key + "\":");
-                if (kpos == std::string::npos) return false;
-                kpos = content.find(':', kpos) + 1;
-                while (kpos < content.size() && content[kpos] == ' ') ++kpos;
-                if (kpos >= content.size()) return false;
-                size_t end = kpos;
-                while (end < content.size() && std::isdigit(static_cast<unsigned char>(content[end]))) ++end;
-                if (end == kpos) return false;
-                try { out_val = std::stoull(content.substr(kpos, end - kpos)); return true; }
-                catch (...) { return false; }
-            };
-            auto find_in_json_bool = [&](const std::string& key, bool& out_val) -> bool {
-                // Match "key":true (no quotes around true) or "key":"true"
-                auto kpos = content.find("\"" + key + "\":true");
-                if (kpos != std::string::npos) { out_val = true; return true; }
-                kpos = content.find("\"" + key + "\": true");
-                if (kpos != std::string::npos) { out_val = true; return true; }
-                kpos = content.find("\"" + key + "\":\"true\"");
-                if (kpos != std::string::npos) { out_val = true; return true; }
-                kpos = content.find("\"" + key + "\": \"true\"");
-                if (kpos != std::string::npos) { out_val = true; return true; }
-                return false;
-            };
-
-            std::string m_domain, m_owner;
-            uint64_t m_stage = 0;
-            uint64_t m_site_id = 0;
-            find_in_json("domain", m_domain);
-            find_in_json("owner", m_owner);
-            find_in_json_int("site_id", m_site_id);
-            find_in_json_int("stage", m_stage);
-            find_in_json_bool("files_pending", m.files_pending);
-            find_in_json_bool("files_imported", m.files_imported);
-            find_in_json_bool("sql_pending", m.sql_pending);
-            m.migration_stage = m_stage;
+            // Use centralized MigrationMarker parser
+            MigrationMarker marker = MigrationMarker::parse(content);
+            std::string m_domain = marker.domain;
+            std::string m_owner = marker.owner;
+            uint64_t m_site_id = marker.site_id;
+            m.migration_stage = marker.stage;
             m.migration_site_id = m_site_id;
             m.migration_owner = m_owner;
+            m.files_pending = marker.files_pending;
+            m.files_imported = marker.files_imported;
+            m.sql_pending = marker.sql_pending;
+            m.files_status = m.files_imported ? "imported" : (m.files_pending ? "pending" : "unknown");
+            m.sql_status = m.sql_pending ? "pending" : "imported";
 
             // Validate against SiteManager records — require real SiteRecord
             if (!found_site) {
@@ -1088,17 +1101,15 @@ VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Optio
     if (!m.errors.empty()) { result.errors = m.errors; return result; }
 
     std::string site_dir = cfg_.sites_dir() + opts.domain + "/";
-
-    // Validate migration marker (prevent Stage 2 on arbitrary sites)
     std::string marker_path = site_dir + ".containercp-migration.json";
-    if (!fs_.exists(marker_path)) {
-        result.errors.push_back("Site is not a migration site (no marker). Stage 1 required first.");
-        return result;
-    }
-    // Read and validate marker
-    auto marker_content = fs_.read_file(marker_path);
-    if (marker_content.find("\"stage\":1") == std::string::npos) {
-        result.errors.push_back("Migration marker has wrong stage. Expected stage=1.");
+
+    // Use inspect()'s already-validated fields — no manual marker re-parsing
+    if (!m.migration_ready_for_files) {
+        if (!m.marker_error.empty()) {
+            result.errors.push_back(m.marker_error);
+        } else {
+            result.errors.push_back("Migration not ready for file import. Run Stage 1 first.");
+        }
         return result;
     }
 
@@ -1151,11 +1162,28 @@ VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Optio
     cleanup();
     if (!ok) return result;
 
-    // Update migration marker: stage 2 completed
-    std::string updated_marker =
-        "{\"domain\":\"" + opts.domain + "\",\"owner\":\"" + opts.owner
-        + "\",\"stage\":2,\"files_imported\":true,\"sql_pending\":true}";
-    fs_.create_file(marker_path, updated_marker);
+    // Update migration marker: stage 2 completed — preserve all identity fields
+    {
+        MigrationMarker updated;
+        updated.version = 1;
+        updated.domain = opts.domain;
+        updated.owner = opts.owner;
+        updated.site_id = m.migration_site_id;
+        updated.stage = 2;
+        updated.files_pending = false;
+        updated.files_imported = true;
+        updated.sql_pending = true;
+
+        std::string marker_content = updated.to_json();
+        // Atomic write: write to temp file, then rename
+        std::string tmp_path = marker_path + ".tmp";
+        if (fs_.create_file(tmp_path, marker_content)) {
+            std::rename(tmp_path.c_str(), marker_path.c_str());
+        } else {
+            result.errors.push_back("CRITICAL: Files imported but failed to update migration marker");
+            return result;
+        }
+    }
 
     result.success = true;
     return result;

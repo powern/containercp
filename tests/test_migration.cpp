@@ -687,9 +687,79 @@ TEST_CASE("VestaSiteImporter marker - stage 2 marker") {
     auto m = importer.inspect({tar_path, "stage2-marker.local", "admin", "", true});
     CHECK(m.migration_marker_found);
     CHECK_FALSE(m.migration_ready_for_files);
-    CHECK(m.migration_marker_found);
-    CHECK_FALSE(m.migration_ready_for_files);
 
     std::remove(tar_path.c_str());
     std::system(("rm -rf " + site_dir).c_str());
+}
+
+// ─── Migration marker: JSON formats and legacy ───
+
+TEST_CASE("VestaSiteImporter marker - compact JSON") {
+    config::Config& cfg = config::Config::instance();
+    filesystem::Filesystem fs; runtime::CommandExecutor exec;
+    site::SiteManager sites; domain::DomainManager domains;
+    uint64_t sid = sites.create("compact.local", "admin", 1);
+    domains.create("compact.local", 0, sid);
+    migration::VestaSiteImporter imp(exec, fs, cfg, &sites, &domains);
+
+    std::string sd = cfg.sites_dir() + "compact.local/";
+    ::mkdir(sd.c_str(), 0755); ::mkdir((sd + "public").c_str(), 0755);
+    std::ofstream(sd + ".containercp-migration.json") << "{\"version\":1,\"domain\":\"compact.local\",\"owner\":\"admin\",\"site_id\":" + std::to_string(sid) + ",\"stage\":1,\"files_pending\":true}";
+    std::string tp = "/tmp/test_cj.tar"; create_test_tar(tp, "compact.local");
+    auto m = imp.inspect({tp, "compact.local", "admin", "", true});
+    CHECK(m.migration_ready_for_files);
+    std::remove(tp.c_str()); std::system(("rm -rf " + sd).c_str());
+}
+
+TEST_CASE("VestaSiteImporter marker - pretty JSON with spaces") {
+    config::Config& cfg = config::Config::instance();
+    filesystem::Filesystem fs; runtime::CommandExecutor exec;
+    site::SiteManager sites; domain::DomainManager domains;
+    uint64_t sid = sites.create("pretty.local", "admin", 1);
+    domains.create("pretty.local", 0, sid);
+    migration::VestaSiteImporter imp(exec, fs, cfg, &sites, &domains);
+
+    std::string sd = cfg.sites_dir() + "pretty.local/";
+    ::mkdir(sd.c_str(), 0755); ::mkdir((sd + "public").c_str(), 0755);
+    std::ofstream(sd + ".containercp-migration.json") << "{\n  \"version\": 1,\n  \"stage\": 1,\n  \"domain\": \"pretty.local\",\n  \"owner\": \"admin\",\n  \"site_id\": " + std::to_string(sid) + ",\n  \"files_pending\": true\n}";
+    std::string tp = "/tmp/test_pj.tar"; create_test_tar(tp, "pretty.local");
+    auto m = imp.inspect({tp, "pretty.local", "admin", "", true});
+    CHECK(m.migration_ready_for_files);
+    std::remove(tp.c_str()); std::system(("rm -rf " + sd).c_str());
+}
+
+TEST_CASE("VestaSiteImporter marker - reordered fields") {
+    config::Config& cfg = config::Config::instance();
+    filesystem::Filesystem fs; runtime::CommandExecutor exec;
+    site::SiteManager sites; domain::DomainManager domains;
+    uint64_t sid = sites.create("reord.local", "admin", 1);
+    domains.create("reord.local", 0, sid);
+    migration::VestaSiteImporter imp(exec, fs, cfg, &sites, &domains);
+
+    std::string sd = cfg.sites_dir() + "reord.local/";
+    ::mkdir(sd.c_str(), 0755); ::mkdir((sd + "public").c_str(), 0755);
+    std::ofstream(sd + ".containercp-migration.json") << "{\"owner\":\"admin\",\"files_pending\":true,\"domain\":\"reord.local\",\"stage\":1,\"site_id\":" + std::to_string(sid) + "}";
+    std::string tp = "/tmp/test_rf.tar"; create_test_tar(tp, "reord.local");
+    auto m = imp.inspect({tp, "reord.local", "admin", "", true});
+    CHECK(m.migration_ready_for_files);
+    std::remove(tp.c_str()); std::system(("rm -rf " + sd).c_str());
+}
+
+TEST_CASE("VestaSiteImporter marker - legacy missing files_imported/sql_pending") {
+    config::Config& cfg = config::Config::instance();
+    filesystem::Filesystem fs; runtime::CommandExecutor exec;
+    site::SiteManager sites; domain::DomainManager domains;
+    uint64_t sid = sites.create("legacy.local", "admin", 1);
+    domains.create("legacy.local", 0, sid);
+    migration::VestaSiteImporter imp(exec, fs, cfg, &sites, &domains);
+
+    std::string sd = cfg.sites_dir() + "legacy.local/";
+    ::mkdir(sd.c_str(), 0755); ::mkdir((sd + "public").c_str(), 0755);
+    std::ofstream(sd + ".containercp-migration.json") << "{\"domain\":\"legacy.local\",\"owner\":\"admin\",\"site_id\":" + std::to_string(sid) + ",\"stage\":1,\"files_pending\":true}";
+    std::string tp = "/tmp/test_lg.tar"; create_test_tar(tp, "legacy.local");
+    auto m = imp.inspect({tp, "legacy.local", "admin", "", true});
+    CHECK(m.migration_ready_for_files);
+    CHECK(m.files_status == "pending");
+    CHECK(m.sql_status == "pending");
+    std::remove(tp.c_str()); std::system(("rm -rf " + sd).c_str());
 }
