@@ -107,6 +107,16 @@ See `docs/changelog/early-development.md` for detailed entries.
 
 ---
 
+## 2026-07-12 | VestaSiteImporter — Stage 2: web file import
+
+- `import_files()` — extract, safety-copy, rsync, ownership fix, container restart
+- Safety-copy rollback: restores original public/ on failure
+- Path traversal protection via `realpath` prefix check
+- Hidden files preserved (`.htaccess`, `.user.ini`, `.well-known`)
+- Web UI: Import files button after Stage 1
+- API: `POST /api/migration/vesta/import-files`
+- CLI: `--import-files` flag
+
 ## 2026-07-12 | VestaSiteImporter — MyVestaCP migration tool (Phase 1-2)
 
 - New CLI: `migrate-vesta-site --backup --domain --owner [--dry-run]`
