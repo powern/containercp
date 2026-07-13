@@ -4,7 +4,6 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
-#include <iostream>
 #include <regex>
 #include <sstream>
 #include <sys/stat.h>
@@ -13,10 +12,14 @@ namespace containercp::migration {
 
 VestaSiteImporter::VestaSiteImporter(runtime::CommandExecutor& executor,
                                      filesystem::Filesystem& fs,
-                                     config::Config& cfg)
+                                     config::Config& cfg,
+                                     site::SiteManager* sites,
+                                     domain::DomainManager* domains)
     : executor_(executor)
     , fs_(fs)
     , cfg_(cfg)
+    , sites_(sites)
+    , domains_(domains)
 {
 }
 
@@ -35,15 +38,42 @@ bool VestaSiteImporter::tar_safe_list(const std::string& archive,
     std::string line;
     while (std::getline(stream, line)) {
         if (line.empty()) continue;
-        // Security: reject absolute paths and parent directory traversal
+
+        // Reject absolute paths
         if (line[0] == '/') {
             error = "Archive contains absolute path: " + line;
             return false;
         }
-        if (line.find("..") != std::string::npos) {
-            error = "Archive contains parent directory reference: " + line;
+
+        // Split path into components to check for ".." as a component
+        std::istringstream path_stream(line);
+        std::string component;
+        while (std::getline(path_stream, component, '/')) {
+            if (component == "..") {
+                error = "Archive contains parent directory reference: " + line;
+                return false;
+            }
+        }
+
+        // Reject paths that normalize to outside
+        std::string normalized;
+        std::istringstream norm_stream(line);
+        std::vector<std::string> parts;
+        while (std::getline(norm_stream, component, '/')) {
+            if (component == "..") { // already rejected, but keep as safety
+                error = "Archive contains parent directory reference: " + line;
+                return false;
+            }
+            if (!component.empty() && component != ".") {
+                parts.push_back(component);
+            }
+        }
+        // Rebuild and check for leading /
+        if (!parts.empty() && parts[0][0] == '/') {
+            error = "Archive contains absolute path: " + line;
             return false;
         }
+
         entries.push_back(line);
     }
     return true;
@@ -53,17 +83,17 @@ bool VestaSiteImporter::find_domain_in_archive(
     const std::vector<std::string>& entries,
     const std::string& domain,
     std::string& web_archive_path,
-    size_t& web_size) {
+    size_t& web_size,
+    bool& size_known) {
 
-    // Normalize: entries may be "web/..." or "./web/..."
-    // Always normalize output to "web/<domain>/domain_data.tar.gz" (no ./ prefix)
     std::string target_dot = "./web/" + domain + "/domain_data.tar.gz";
     std::string target_no_dot = "web/" + domain + "/domain_data.tar.gz";
 
     for (const auto& e : entries) {
         if (e == target_dot || e == target_no_dot) {
-            web_archive_path = target_no_dot;
+            web_archive_path = "web/" + domain + "/domain_data.tar.gz";
             web_size = 0;
+            size_known = false;
             return true;
         }
     }
@@ -75,63 +105,54 @@ std::string VestaSiteImporter::detect_web_root(
     const std::string& archive,
     const std::string& domain) {
 
-    // Extract domain_data.tar.gz directly to staging directory (binary-safe)
     std::string data_tarball = staging_dir + "/domain_data.tar.gz";
 
-    auto result = executor_.run({
-        "tar", "-xf", archive,
-        "-C", staging_dir,
-        "web/" + domain + "/domain_data.tar.gz"
-    });
-    if (result.exit_code != 0) {
-        result = executor_.run({
-            "tar", "-xf", archive,
-            "-C", staging_dir,
-            "./web/" + domain + "/domain_data.tar.gz"
+    auto try_extract = [&](const std::string& prefix) -> bool {
+        auto r = executor_.run({
+            "tar", "-xf", archive, "-C", staging_dir, prefix
         });
-        if (result.exit_code != 0) {
-            return "";
-        }
+        return r.exit_code == 0;
+    };
+
+    if (!try_extract("web/" + domain + "/domain_data.tar.gz") &&
+        !try_extract("./web/" + domain + "/domain_data.tar.gz")) {
+        return "";
     }
 
-    // The extracted file is at staging_dir/web/<domain>/domain_data.tar.gz
-    // Move it to staging_dir/ for easier access
     executor_.run({
-        "mv",
-        staging_dir + "/web/" + domain + "/domain_data.tar.gz",
-        data_tarball
+        "mv", staging_dir + "/web/" + domain + "/domain_data.tar.gz", data_tarball
     });
     executor_.run({"rm", "-rf", staging_dir + "/web"});
 
-    // List contents of domain_data.tar.gz to find web root
-    auto list_result = executor_.run({
-        "tar", "-tzf", data_tarball
-    });
+    auto list_result = executor_.run({"tar", "-tzf", data_tarball});
     if (list_result.exit_code != 0) {
         std::remove(data_tarball.c_str());
         return "";
     }
 
     static const char* candidates[] = {
+        "./public_html", "./public", "./htdocs", "./www", "./root",
         "public_html", "public", "htdocs", "www", "root"
     };
 
     std::istringstream stream(list_result.out);
     std::string line;
     while (std::getline(stream, line)) {
-        // Check first component of path
+        if (line.empty()) continue;
         for (const auto* cand : candidates) {
-            std::string prefix = std::string(cand) + "/";
-            if (line == std::string(cand) ||
-                line.substr(0, prefix.size()) == prefix) {
+            std::string s(cand);
+            if (line == s || line.substr(0, s.size() + 1) == s + "/") {
                 std::remove(data_tarball.c_str());
-                return cand;
+                // Normalize: remove leading ./
+                if (s.size() >= 2 && s[0] == '.' && s[1] == '/')
+                    s = s.substr(2);
+                return s;
             }
         }
     }
 
     std::remove(data_tarball.c_str());
-    return "."; // root of tarball
+    return ".";
 }
 
 bool VestaSiteImporter::extract_wp_config(
@@ -143,23 +164,23 @@ bool VestaSiteImporter::extract_wp_config(
     std::string& out_db_user,
     std::string& out_db_password,
     std::string& out_db_host,
+    bool& out_parsed,
     bool& out_ambiguous) {
 
+    out_parsed = false;
     out_ambiguous = false;
 
-    // Extract domain_data.tar.gz to staging (binary-safe: write to disk, not stdout)
-    auto result = executor_.run({
-        "tar", "-xf", archive,
-        "-C", staging_dir,
-        "web/" + domain + "/domain_data.tar.gz"
-    });
-    if (result.exit_code != 0) {
-        result = executor_.run({
-            "tar", "-xf", archive,
-            "-C", staging_dir,
-            "./web/" + domain + "/domain_data.tar.gz"
+    // Extract domain_data.tar.gz to staging
+    auto try_extract = [&](const std::string& prefix) -> bool {
+        auto r = executor_.run({
+            "tar", "-xf", archive, "-C", staging_dir, prefix
         });
-        if (result.exit_code != 0) return false;
+        return r.exit_code == 0;
+    };
+
+    if (!try_extract("web/" + domain + "/domain_data.tar.gz") &&
+        !try_extract("./web/" + domain + "/domain_data.tar.gz")) {
+        return false;
     }
 
     std::string data_tarball = staging_dir + "/domain_data.tar.gz";
@@ -168,12 +189,61 @@ bool VestaSiteImporter::extract_wp_config(
     });
     executor_.run({"rm", "-rf", staging_dir + "/web"});
 
-    // Extract wp-config.php from domain_data.tar.gz (text output is safe via stdout)
+    // List inner tar to find wp-config.php candidates
+    auto list_inner = executor_.run({"tar", "-tzf", data_tarball});
+    if (list_inner.exit_code != 0) {
+        std::remove(data_tarball.c_str());
+        return false;
+    }
+
+    // Build candidate search paths
+    std::vector<std::string> search_paths;
+    if (!web_root_type.empty() && web_root_type != ".") {
+        search_paths.push_back(web_root_type + "/wp-config.php");
+        search_paths.push_back("./" + web_root_type + "/wp-config.php");
+    }
+    search_paths.push_back("wp-config.php");
+    search_paths.push_back("./wp-config.php");
+
+    // Collect all wp-config.php candidates from inner tar
+    std::vector<std::string> candidates;
+    std::istringstream inner_stream(list_inner.out);
+    std::string inner_line;
+    while (std::getline(inner_stream, inner_line)) {
+        if (inner_line.find("wp-config.php") != std::string::npos) {
+            candidates.push_back(inner_line);
+        }
+    }
+
+    if (candidates.empty()) {
+        std::remove(data_tarball.c_str());
+        return false;
+    }
+
+    // Prefer known web root paths; fall back to shortest path
+    std::string chosen;
+    for (const auto& sp : search_paths) {
+        for (const auto& c : candidates) {
+            if (c == sp) {
+                chosen = c;
+                break;
+            }
+        }
+        if (!chosen.empty()) break;
+    }
+    if (chosen.empty()) {
+        // Fallback: pick the shortest (most likely root)
+        chosen = candidates.front();
+        for (const auto& c : candidates) {
+            if (c.size() < chosen.size()) chosen = c;
+        }
+    }
+
+    // Extract the chosen wp-config.php to staging (may include subdirectory)
+    std::string wp_extract_dir = staging_dir + "/wp_extract";
+    ::mkdir(wp_extract_dir.c_str(), 0755);
     auto wp_result = executor_.run({
-        "tar", "-xzf", data_tarball,
-        "--to-stdout",
-        "--wildcards",
-        "*/wp-config.php"
+        "tar", "-xzf", data_tarball, "-C", wp_extract_dir, chosen
     });
     std::remove(data_tarball.c_str());
 
@@ -181,20 +251,43 @@ bool VestaSiteImporter::extract_wp_config(
         return false;
     }
 
-    std::string content = wp_result.out;
+    // Find the extracted wp-config.php (it may be in a subdirectory)
+    auto find_result = executor_.run({
+        "find", wp_extract_dir, "-name", "wp-config.php", "-type", "f"
+    });
+    if (find_result.exit_code != 0 || find_result.out.empty()) {
+        executor_.run({"rm", "-rf", wp_extract_dir});
+        return false;
+    }
 
-    // Regex patterns supporting single and double quotes
-    std::regex db_name_re(R"(define\s*\(\s*['\"]DB_NAME['\"]\s*,\s*['\"](.+?)['\"]\s*\))");
-    std::regex db_user_re(R"(define\s*\(\s*['\"]DB_USER['\"]\s*,\s*['\"](.+?)['\"]\s*\))");
-    std::regex db_pass_re(R"(define\s*\(\s*['\"]DB_PASSWORD['\"]\s*,\s*['\"](.+?)['\"]\s*\))");
-    std::regex db_host_re(R"(define\s*\(\s*['\"]DB_HOST['\"]\s*,\s*['\"](.+?)['\"]\s*\))");
+    // Read the first found wp-config.php
+    std::string wp_file_path;
+    std::istringstream find_stream(find_result.out);
+    std::getline(find_stream, wp_file_path);
+
+    std::ifstream wp_file(wp_file_path);
+    if (!wp_file.is_open()) {
+        executor_.run({"rm", "-rf", wp_extract_dir});
+        return false;
+    }
+    std::stringstream wp_buf;
+    wp_buf << wp_file.rdbuf();
+    std::string content = wp_buf.str();
+    executor_.run({"rm", "-rf", wp_extract_dir});
+
+    bool found_any = false;
+    // Match the last quoted string before closing paren
+    // Handles: define('DB_NAME', 'simple') and define('DB_NAME', expr ?: 'fallback')
+    std::regex db_name_re(R"(define\s*\(\s*['\"]DB_NAME['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
+    std::regex db_user_re(R"(define\s*\(\s*['\"]DB_USER['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
+    std::regex db_pass_re(R"(define\s*\(\s*['\"]DB_PASSWORD['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
+    std::regex db_host_re(R"(define\s*\(\s*['\"]DB_HOST['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
 
     std::smatch match;
 
     if (std::regex_search(content, match, db_name_re)) {
         out_db_name = match[1];
-    } else {
-        out_ambiguous = true;
+        found_any = true;
     }
 
     if (std::regex_search(content, match, db_user_re)) {
@@ -209,15 +302,19 @@ bool VestaSiteImporter::extract_wp_config(
         out_db_host = match[1];
     }
 
-    // Check if DB_NAME is a variable reference or empty
+    // Check for ambiguous DB_NAME (variable/env reference in the raw content)
     if (out_db_name.empty() ||
-        out_db_name.find("$") != std::string::npos ||
-        out_db_name.find("getenv") != std::string::npos ||
-        out_db_name.find("_SERVER") != std::string::npos) {
+        content.find("$") != std::string::npos ||
+        content.find("getenv") != std::string::npos ||
+        content.find("_SERVER") != std::string::npos) {
         out_ambiguous = true;
     }
 
-    return !out_db_name.empty() && !out_ambiguous;
+    if (!out_db_name.empty()) {
+        out_parsed = true;
+    }
+
+    return found_any; // wp_config_found
 }
 
 bool VestaSiteImporter::find_db_in_archive(
@@ -225,9 +322,9 @@ bool VestaSiteImporter::find_db_in_archive(
     const std::string& db_name,
     std::string& out_dump_path,
     size_t& out_size,
+    bool& size_known,
     std::string& out_type) {
 
-    // Try both "./db/..." and "db/..." forms
     std::string target_prefix_dot = "./db/" + db_name + "/";
     std::string target_prefix = "db/" + db_name + "/";
 
@@ -239,6 +336,7 @@ bool VestaSiteImporter::find_db_in_archive(
             if (e.find(".sql.gz") != std::string::npos) {
                 out_dump_path = e;
                 out_size = 0;
+                size_known = false;
                 auto dot1 = e.rfind(".sql.gz");
                 if (dot1 != std::string::npos) {
                     auto prev = e.rfind('.', dot1 - 1);
@@ -254,11 +352,9 @@ bool VestaSiteImporter::find_db_in_archive(
 }
 
 std::string VestaSiteImporter::normalize_db_name(const std::string& raw) const {
-    // Remove common VestaCP user prefix (e.g., "admin_" or "user_")
     std::string result = raw;
     auto underscore = result.find('_');
     if (underscore != std::string::npos && underscore < 20) {
-        // Only strip if it looks like a username prefix (short, alphanumeric)
         std::string prefix = result.substr(0, underscore);
         bool looks_like_prefix = true;
         for (char c : prefix) {
@@ -291,19 +387,16 @@ Manifest VestaSiteImporter::inspect(const Options& opts) {
     m.domain = opts.domain;
     m.backup_path = opts.backup_path;
 
-    // 1. Check backup file exists
     if (!fs_.exists(opts.backup_path)) {
         m.errors.push_back("Backup file not found: " + opts.backup_path);
         return m;
     }
 
-    // 2. Get archive size
     struct stat st;
     if (::stat(opts.backup_path.c_str(), &st) == 0) {
         m.archive_size = st.st_size;
     }
 
-    // 3. Safe tar listing
     std::vector<std::string> entries;
     std::string error;
     if (!tar_safe_list(opts.backup_path, entries, error)) {
@@ -311,14 +404,11 @@ Manifest VestaSiteImporter::inspect(const Options& opts) {
         return m;
     }
 
-    // 4. Check disk space on backup dir
-    auto df_result = executor_.run({
-        "df", "--output=avail", cfg_.data_root()
-    });
+    auto df_result = executor_.run({"df", "--output=avail", cfg_.data_root()});
     if (df_result.exit_code == 0) {
         std::istringstream ss(df_result.out);
         std::string line;
-        std::getline(ss, line); // header
+        std::getline(ss, line);
         std::getline(ss, line);
         if (!line.empty()) {
             try { m.available_disk_mb = std::stoull(line) / 1024; }
@@ -326,21 +416,17 @@ Manifest VestaSiteImporter::inspect(const Options& opts) {
         }
     }
 
-    // 5. Find domain_data.tar.gz
+    bool size_known = false;
     std::string web_archive_path;
-    if (!find_domain_in_archive(entries, opts.domain, web_archive_path, m.web_size)) {
-        // Also try without ./ prefix
-        std::string alt_domain = opts.domain;
-        if (alt_domain.find(".") != std::string::npos) {
-            // Some backups use underscored domain for path
-        }
+    if (!find_domain_in_archive(entries, opts.domain, web_archive_path,
+                                 m.web_size, size_known)) {
         m.errors.push_back("Domain '" + opts.domain + "' not found in backup archive");
         return m;
     }
     m.domain_found = true;
     m.web_archive_path = web_archive_path;
+    m.web_size_known = size_known;
 
-    // 6. Detect web root type
     std::string staging = make_staging_dir();
     if (staging.empty()) {
         m.errors.push_back("Failed to create staging directory");
@@ -354,38 +440,43 @@ Manifest VestaSiteImporter::inspect(const Options& opts) {
         return m;
     }
 
-    // 7. Find wp-config.php
     staging = make_staging_dir();
     if (staging.empty()) {
         m.errors.push_back("Failed to create staging directory");
         return m;
     }
 
-    std::string wp_db_pass; // never logged
-    bool ambiguous = false;
+    std::string wp_db_pass;
+    bool parsed = false, ambiguous = false;
     if (extract_wp_config(opts.backup_path, opts.domain, m.web_root_type,
                           staging, m.wp_db_name, m.wp_db_user,
-                          wp_db_pass, m.wp_db_host, ambiguous)) {
-        m.has_wp_config = true;
+                          wp_db_pass, m.wp_db_host, parsed, ambiguous)) {
+        m.wp_config_found = true;
     }
+    m.wp_config_parsed = parsed;
+    m.wp_db_ambiguous = ambiguous;
     cleanup_staging(staging);
 
-    // 8. Check site existence
+    // Check site existence via SiteManager, DomainManager, and filesystem
     m.site_exists = false;
-    {
-        // Check via filesystem — site directory exists
+    if (sites_ && sites_->find(opts.domain) != nullptr) {
+        m.site_exists = true;
+    }
+    if (!m.site_exists) {
         std::string site_dir = cfg_.sites_dir() + opts.domain + "/";
         m.site_exists = fs_.exists(site_dir);
     }
 
-    // 9. Find database
-    if (m.has_wp_config && !opts.skip_db) {
+    // Find database
+    if ((m.wp_config_found || !opts.database.empty()) && !opts.skip_db) {
         std::string db_to_find = opts.database;
-        if (db_to_find.empty()) {
+        if (db_to_find.empty() && m.wp_config_parsed && !m.wp_db_ambiguous) {
             db_to_find = normalize_db_name(m.wp_db_name);
         }
+        if (db_to_find.empty() && !opts.database.empty()) {
+            db_to_find = opts.database;
+        }
 
-        // List all databases in archive (handle both ./db/ and db/ prefixes)
         for (const auto& e : entries) {
             std::string db_check;
             if (e.substr(0, 5) == "./db/") db_check = e.substr(5);
@@ -403,126 +494,140 @@ Manifest VestaSiteImporter::inspect(const Options& opts) {
         }
 
         if (!db_to_find.empty()) {
+            bool dump_size_known = false;
             find_db_in_archive(entries, db_to_find,
-                               m.db_dump_path, m.db_dump_size, m.db_type);
-        }
-
-        if (m.db_dump_path.empty() && !db_to_find.empty()) {
-            // Try with original (non-normalized) name
-            find_db_in_archive(entries, m.wp_db_name,
-                               m.db_dump_path, m.db_dump_size, m.db_type);
+                               m.db_dump_path, m.db_dump_size,
+                               dump_size_known, m.db_type);
+            m.db_dump_size_known = dump_size_known;
         }
 
         if (!m.db_dump_path.empty()) {
             m.db_dump_found = true;
-        } else {
-            m.warnings.push_back("SQL dump not found for database '" + db_to_find + "'");
-            if (!opts.database.empty()) {
-                m.warnings.push_back("Try without --database or check available DBs in archive");
+        } else if (!db_to_find.empty()) {
+            // Try original name
+            if (m.wp_config_parsed && !m.wp_db_name.empty()) {
+                bool dump_size_known = false;
+                find_db_in_archive(entries, m.wp_db_name,
+                                   m.db_dump_path, m.db_dump_size,
+                                   dump_size_known, m.db_type);
+                m.db_dump_size_known = dump_size_known;
             }
+        }
+
+        if (m.db_dump_path.empty()) {
+            m.warnings.push_back("SQL dump not found for database '" + db_to_find + "'");
+        } else {
+            m.db_dump_found = true;
         }
     }
 
-    // 10. Calculate required disk space
-    m.required_disk_mb = (m.web_size / (1024 * 1024)) + (m.db_dump_size / (1024 * 1024)) + 100;
-
-    // 11. Check if wp config is ambiguous
-    if (m.has_wp_config && ambiguous) {
-        m.warnings.push_back("DB_NAME in wp-config.php is ambiguous (uses variable). "
+    if (m.wp_config_found && ambiguous) {
+        m.warnings.push_back("DB_NAME in wp-config.php uses a variable. "
                             "Use --database to specify manually.");
+    }
+
+    if (m.wp_config_found && !m.wp_config_parsed && m.warnings.empty()) {
+        m.warnings.push_back("wp-config.php found but DB_NAME could not be parsed");
     }
 
     return m;
 }
 
-void VestaSiteImporter::print_dry_run(const Manifest& m, const Options& opts) {
-    std::cout << "\nMyVestaCP → ContainerCP Site Import (DRY RUN)"
-              << "\n============================================="
-              << "\nBackup file:      " << m.backup_path
-              << "\nArchive size:     " << (m.archive_size / (1024*1024)) << " MB"
-              << "\nDomain:           " << m.domain
-              << "\nOwner:            " << opts.owner
-              << "\n";
+std::string VestaSiteImporter::format_dry_run(const Manifest& m, const Options& opts) {
+    std::ostringstream out;
+
+    out << "MyVestaCP → ContainerCP Site Import (DRY RUN)\n"
+        << "=============================================\n"
+        << "Backup file:      " << m.backup_path << "\n";
+
+    if (m.archive_size > 0)
+        out << "Archive size:     " << (m.archive_size / (1024*1024)) << " MB\n";
+    else
+        out << "Archive size:     unknown\n";
+
+    out << "Domain:           " << m.domain << "\n"
+        << "Owner:            " << opts.owner << "\n";
 
     if (!m.errors.empty()) {
-        std::cout << "\nERRORS:\n";
-        for (const auto& e : m.errors) {
-            std::cout << "  ❌ " << e << "\n";
-        }
-        return;
+        out << "\nERRORS:\n";
+        for (const auto& e : m.errors)
+            out << "  " << e << "\n";
+        return out.str();
     }
 
-    std::cout << "\nDomain found:           "
-              << (m.domain_found ? "✅" : "❌");
+    out << "\nDomain found:           " << (m.domain_found ? "yes" : "no");
     if (m.domain_found) {
-        std::cout << "\n  Web archive:          " << m.web_archive_path
-                  << "\n  Web root type:        " << m.web_root_type;
+        out << "\n  Web archive:          " << m.web_archive_path
+            << "\n  Web root type:        " << m.web_root_type;
+        if (m.web_size_known)
+            out << "\n  Web files:            " << (m.web_size / 1024) << " KB";
+        else
+            out << "\n  Web files:            " << "unknown (available after extraction)";
     }
 
-    std::cout << "\nSite already exists:    "
-              << (m.site_exists ? "❌ (will abort)" : "✅ (ok)");
+    out << "\nSite already exists:    " << (m.site_exists ? "YES (will abort)" : "no");
 
-    std::cout << "\nWordPress detected:     "
-              << (m.has_wp_config ? "✅" : "⚠️  (skipping DB import)");
+    out << "\nWordPress config:       "
+        << (m.wp_config_found ? "found" : "not found");
 
-    if (m.has_wp_config) {
-        std::cout << "\n  DB_NAME:             " << m.wp_db_name
-                  << "\n  DB_USER:             " << m.wp_db_user
-                  << "\n  DB_HOST:             " << m.wp_db_host;
-
-        std::cout << "\n  Normalized DB name:  "
-                  << normalize_db_name(m.wp_db_name);
+    if (m.wp_config_found) {
+        if (m.wp_config_parsed && !m.wp_db_ambiguous) {
+            out << "\n  DB_NAME:             " << m.wp_db_name
+                << "\n  DB_USER:             " << m.wp_db_user
+                << "\n  DB_HOST:             " << m.wp_db_host
+                << "\n  Normalized DB name:  " << normalize_db_name(m.wp_db_name);
+        } else if (m.wp_db_ambiguous) {
+            out << "\n  DB_NAME:             " << "(uses variable, ambiguous)";
+        } else {
+            out << "\n  DB_NAME:             " << "(could not parse)";
+        }
 
         if (m.db_dump_found) {
-            std::cout << "\n  SQL dump:            " << m.db_dump_path
-                      << "\n  DB type:             " << m.db_type;
-        } else {
-            std::cout << "\n  SQL dump:            ❌ not found";
+            out << "\n  SQL dump:            " << m.db_dump_path;
+            if (!m.db_type.empty())
+                out << "\n  DB type:             " << m.db_type;
+        } else if (m.wp_config_parsed && !m.wp_db_ambiguous) {
+            out << "\n  SQL dump:            not found in archive";
         }
     }
 
     if (!m.all_databases.empty()) {
-        std::cout << "\n\nDatabases in archive:";
-        for (const auto& db : m.all_databases) {
-            std::cout << "\n  - " << db;
-        }
+        out << "\n\nDatabases in archive:";
+        for (const auto& db : m.all_databases)
+            out << "\n  - " << db;
     }
 
-    std::cout << "\n\nDisk space:";
-    std::cout << "\n  Required:           ~" << m.required_disk_mb << " MB"
-              << "\n  Available:          " << m.available_disk_mb << " MB";
-
-    if (m.required_disk_mb > m.available_disk_mb) {
-        std::cout << "\n  ❌ NOT ENOUGH DISK SPACE";
-    } else {
-        std::cout << "\n  ✅ Sufficient";
-    }
+    out << "\n\nDisk space:";
+    if (m.available_disk_mb > 0)
+        out << "\n  Available:          " << m.available_disk_mb << " MB";
+    else
+        out << "\n  Available:          unknown";
 
     if (m.site_exists) {
-        std::cout << "\n\n⚠️  Site already exists. Will abort — overwrite not supported in v1.";
+        out << "\n\nSite already exists. Will abort — overwrite not supported in v1.";
     }
 
     if (!m.warnings.empty()) {
-        std::cout << "\n\nWarnings:\n";
-        for (const auto& w : m.warnings) {
-            std::cout << "  ⚠️  " << w << "\n";
-        }
+        out << "\n\nWarnings:\n";
+        for (const auto& w : m.warnings)
+            out << "  " << w << "\n";
     }
 
     if (m.errors.empty() && !m.site_exists) {
-        std::cout << "\n\nWill do:";
-        std::cout << "\n  1. Create site record (SiteCreateOperation)";
-        std::cout << "\n  2. Create Docker stack (web, php, mariadb, redis)";
-        std::cout << "\n  3. Import web files (" << (m.web_size / 1024) << " KB)";
-        if (m.has_wp_config && m.db_dump_found) {
-            std::cout << "\n  4. Import SQL dump into existing database";
-            std::cout << "\n  5. Update wp-config.php with new credentials";
-            std::cout << "\n  6. Restart web+php";
+        out << "\n\nWill do:";
+        out << "\n  1. Create site record (SiteCreateOperation)";
+        out << "\n  2. Create Docker stack (web, php, mariadb, redis)";
+        out << "\n  3. Import web files";
+        if (m.wp_config_found && m.wp_config_parsed && m.db_dump_found) {
+            out << "\n  4. Import SQL dump into existing database";
+            out << "\n  5. Update wp-config.php with new credentials";
+            out << "\n  6. Restart web+php";
         }
-        std::cout << "\n  7. Health check";
+        out << "\n  7. Health check";
     }
 
-    std::cout << "\n" << std::endl;
+    out << "\n";
+    return out.str();
 }
 
 } // namespace containercp::migration

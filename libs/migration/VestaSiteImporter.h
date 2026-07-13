@@ -24,20 +24,22 @@ struct Manifest {
     size_t archive_size = 0;
     bool domain_found = false;
     std::string web_archive_path;
+    bool web_size_known = false;
     size_t web_size = 0;
     std::string web_root_type;
-    bool has_wp_config = false;
+    bool wp_config_found = false;
+    bool wp_config_parsed = false;
     std::string wp_db_name;
     std::string wp_db_user;
     std::string wp_db_host;
     bool wp_db_ambiguous = false;
     bool db_dump_found = false;
     std::string db_dump_path;
+    bool db_dump_size_known = false;
     size_t db_dump_size = 0;
     std::string db_type;
     std::vector<std::string> all_databases;
     bool site_exists = false;
-    uint64_t required_disk_mb = 0;
     uint64_t available_disk_mb = 0;
     std::vector<std::string> errors;
     std::vector<std::string> warnings;
@@ -56,10 +58,12 @@ struct Options {
 class VestaSiteImporter {
 public:
     VestaSiteImporter(runtime::CommandExecutor& executor,
-                      filesystem::Filesystem& fs, config::Config& cfg);
+                      filesystem::Filesystem& fs, config::Config& cfg,
+                      site::SiteManager* sites = nullptr,
+                      domain::DomainManager* domains = nullptr);
 
     Manifest inspect(const Options& opts);
-    void print_dry_run(const Manifest& m, const Options& opts);
+    std::string format_dry_run(const Manifest& m, const Options& opts);
 
 private:
     bool tar_safe_list(const std::string& archive,
@@ -68,7 +72,8 @@ private:
     bool find_domain_in_archive(const std::vector<std::string>& entries,
                                 const std::string& domain,
                                 std::string& web_archive_path,
-                                size_t& web_size);
+                                size_t& web_size,
+                                bool& size_known);
     std::string detect_web_root(const std::string& staging_dir,
                                 const std::string& archive,
                                 const std::string& domain);
@@ -80,11 +85,13 @@ private:
                            std::string& out_db_user,
                            std::string& out_db_password,
                            std::string& out_db_host,
+                           bool& out_parsed,
                            bool& out_ambiguous);
     bool find_db_in_archive(const std::vector<std::string>& entries,
                             const std::string& db_name,
                             std::string& out_dump_path,
                             size_t& out_size,
+                            bool& size_known,
                             std::string& out_type);
     std::string normalize_db_name(const std::string& raw) const;
     std::string make_staging_dir();
@@ -93,8 +100,10 @@ private:
     runtime::CommandExecutor& executor_;
     filesystem::Filesystem& fs_;
     config::Config& cfg_;
+    site::SiteManager* sites_ = nullptr;
+    domain::DomainManager* domains_ = nullptr;
 };
 
 } // namespace containercp::migration
 
-#endif // CONTAINERCP_MIGRATION_VESTA_SITE_IMPORTER_H
+#endif

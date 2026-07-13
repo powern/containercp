@@ -529,7 +529,6 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
 
     if (cmd.name == "migrate-vesta-site") {
         migration::Options opts;
-        bool dry_run_flag = false;
 
         for (size_t i = 0; i < cmd.args.size(); ++i) {
             const auto& arg = cmd.args[i];
@@ -546,24 +545,21 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
             return Command::error("Usage: migrate-vesta-site --backup <file> --domain <domain> --owner <owner> [--dry-run] [--skip-db] [--keep-staging] [--database <name>]");
         }
 
+        if (!opts.dry_run) {
+            return Command::error("Import execution is not implemented yet. Use --dry-run.");
+        }
+
         runtime::CommandExecutor exec;
-        migration::VestaSiteImporter importer(exec, s.filesystem(), s.config());
+        migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(),
+                                              &s.sites(), &s.domains());
         auto manifest = importer.inspect(opts);
-        importer.print_dry_run(manifest, opts);
+        std::string report = importer.format_dry_run(manifest, opts);
 
         if (!manifest.errors.empty()) {
-            return Command::error("Inspection failed. See errors above.");
+            return Command::success(report);
         }
 
-        if (manifest.site_exists) {
-            return Command::error("Site already exists. Aborting.");
-        }
-
-        if (opts.dry_run) {
-            return Command::success("Dry run completed. No changes made.");
-        }
-
-        return Command::success("Inspection passed. Ready for import (next phase).");
+        return Command::success(report);
     }
 
     if (cmd.name == "auth-debug") {
