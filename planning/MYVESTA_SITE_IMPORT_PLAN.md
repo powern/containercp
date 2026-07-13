@@ -141,13 +141,13 @@ public:
     struct Options {
         std::string backup_path;       // Шлях до архіву
         std::string domain;            // Домен для імпорту
-        std::string target_domain;     // Новий домен (опціонально)
+        // target_domain — deferred to v2
         std::string owner;             // Власник сайту
         std::string node;              // Нода
         bool dry_run = false;          // Тільки показати що буде зроблено
         bool keep_staging = false;     // Не видаляти staging після імпорту
         bool skip_db = false;          // Пропустити імпорт БД
-        bool overwrite = false;        // Перезаписати існуючий сайт
+        // overwrite — deferred to v2
         std::string database;          // Примусово вказати БД (опціонально)
     };
 
@@ -307,8 +307,8 @@ libs/migration/
    # Якщо нічого не знайдено  → web_root = . (корінь архіву)
    tar xzf domain_data.tar.gz -C $staging_dir/web-root/ $web_root/
    # Результат: $staging_dir/web-root/ містить вміст web_root
-   # Копіювати ВМІСТ web_root, а не саму директорію:
-   #   cp -r $staging_dir/web-root/* /srv/containercp/sites/$domain/public/
+   # Копіювати ВМІСТ web_root (включно з hidden files):
+   #   rsync -a --safe-links $staging_dir/web-root/ /srv/containercp/sites/$domain/public/
    # Не допустити: public/public_html/
 5. Знайти wp-config.php (п.4.2)
 6. Якщо WordPress:
@@ -382,12 +382,10 @@ containercp migrate-vesta-site \
   --backup /backup/admin.2026-07-01.tar \
   --domain example.com \
   --owner admin \
-  [--target-domain new-example.com] \
   [--database wp_db_name] \
   [--dry-run] \
   [--keep-staging] \
-  [--skip-db] \
-  [--overwrite]
+  [--skip-db]
 ```
 
 ### Аргументи
@@ -432,14 +430,13 @@ ContainerCP target:
   Backend:        apache (default)
 
 Will do:
-  1. Create site record
+  1. Create site record (SiteCreateOperation створює DatabaseRecord + credentials)
   2. Create Docker stack (web, php, mariadb, redis)
   3. Import web files (12 MB)
-  4. Create database + user
-  5. Import SQL dump (3.5 MB)
-  6. Update wp-config.php with new credentials
-  7. Start Docker stack
-  8. Health check
+  4. Import SQL dump into existing database (3.5 MB)
+  5. Update wp-config.php with new credentials
+  6. Restart web+php
+  7. Health check
 
 Conflicts:
   Domain "example.com" already exists: NO — буде помилка, вихід
