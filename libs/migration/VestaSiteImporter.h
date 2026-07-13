@@ -151,7 +151,8 @@ private:
                                           const std::string& old_db_user,
                                           const std::string& new_db_name,
                                           const std::string& new_db_user,
-                                          const std::string& new_db_password) const;
+                                          const std::string& new_db_password,
+                                          const std::string& new_db_host = "mariadb") const;
 
     runtime::CommandExecutor& executor_;
     filesystem::Filesystem& fs_;

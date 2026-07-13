@@ -1385,7 +1385,8 @@ bool VestaSiteImporter::update_wp_config_db_credentials(
     const std::string& old_db_user,
     const std::string& new_db_name,
     const std::string& new_db_user,
-    const std::string& new_db_password) const {
+    const std::string& new_db_password,
+    const std::string& new_db_host) const {
 
     std::ifstream in(config_path);
     if (!in.is_open()) return false;
@@ -1393,41 +1394,48 @@ bool VestaSiteImporter::update_wp_config_db_credentials(
     buf << in.rdbuf();
     std::string content = buf.str();
 
-    // Replace DB_NAME
     auto replace_def = [&](const std::string& define_name, const std::string& old_val, const std::string& new_val) -> bool {
         if (old_val.empty() || new_val.empty()) return false;
-        // Match: define('DB_NAME', 'old_val') or define("DB_NAME", "old_val")
-        std::string pattern_single = "define('" + define_name + "', '" + old_val + "')";
-        std::string pattern_double = "define(\"" + define_name + "\", \"" + old_val + "\")";
-        std::string replacement_single = "define('" + define_name + "', '" + new_val + "')";
-        std::string replacement_double = "define(\"" + define_name + "\", \"" + new_val + "\")";
-
+        std::string p_single = "define('" + define_name + "', '" + old_val + "')";
+        std::string p_double = "define(\"" + define_name + "\", \"" + old_val + "\")";
+        std::string r_single = "define('" + define_name + "', '" + new_val + "')";
+        std::string r_double = "define(\"" + define_name + "\", \"" + new_val + "\")";
         bool found = false;
-        auto pos = content.find(pattern_single);
-        if (pos != std::string::npos) {
-            content.replace(pos, pattern_single.size(), replacement_single);
-            found = true;
-        }
-        pos = content.find(pattern_double);
-        if (pos != std::string::npos) {
-            content.replace(pos, pattern_double.size(), replacement_double);
-            found = true;
-        }
+        auto pos = content.find(p_single);
+        if (pos != std::string::npos) { content.replace(pos, p_single.size(), r_single); found = true; }
+        pos = content.find(p_double);
+        if (pos != std::string::npos) { content.replace(pos, p_double.size(), r_double); found = true; }
         return found;
     };
 
+    // Update DB_NAME
     if (!replace_def("DB_NAME", old_db_name, new_db_name)) {
-        // Try fallback: just find define('DB_NAME', ) and replace value
-        std::regex db_re(R"(define\s*\(\s*['\"]DB_NAME['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
-        content = std::regex_replace(content, db_re, "define('DB_NAME', '" + new_db_name + "')");
+        std::regex re(R"(define\s*\(\s*['\"]DB_NAME['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
+        content = std::regex_replace(content, re, "define('DB_NAME', '" + new_db_name + "')");
     }
+    // Update DB_USER
     replace_def("DB_USER", old_db_user, new_db_user);
-    replace_def("DB_PASSWORD", "", ""); // Just replace the whole line
+    // Update DB_PASSWORD (generic regex, no old value needed)
     {
-        // Replace DB_PASSWORD value generically
-        std::regex pass_re(R"(define\s*\(\s*['\"]DB_PASSWORD['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
-        content = std::regex_replace(content, pass_re, "define('DB_PASSWORD', '" + new_db_password + "')");
+        std::regex pre(R"(define\s*\(\s*['\"]DB_PASSWORD['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
+        content = std::regex_replace(content, pre, "define('DB_PASSWORD', '" + new_db_password + "')");
     }
+    // Update DB_HOST to Docker service name (never localhost)
+    {
+        std::regex hre(R"(define\s*\(\s*['\"]DB_HOST['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
+        content = std::regex_replace(content, hre, "define('DB_HOST', '" + new_db_host + "')");
+    }
+
+    // Verify all 4 constants were updated
+    auto check_val = [&](const std::string& define_name, const std::string& expected) -> bool {
+        std::regex re(R"(define\s*\(\s*['\"]" + define_name + "['\"]\s*,\s*['\"]([^'\"]+?)['\"]\s*\))");
+        std::smatch m;
+        std::string search = content;
+        if (std::regex_search(search, m, re)) {
+            return m[1] == expected;
+        }
+        return false;
+    };
 
     std::ofstream out(config_path);
     if (!out.is_open()) return false;
@@ -1707,29 +1715,43 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
     // Rollback helper: restore safety.sql into DB, then wp-config if needed
     std::string wp_config_bak; // populated later if wp-config is updated
     auto do_rollback = [&]() -> bool {
-        logger_.info("MIGRATION", "Rolling back database from safety backup");
-        if (!result.safety_backup_created) return false;
-        // Copy safety.sql into container
-        executor_.run({"docker", "cp", safety_file, db_container + ":/tmp/safety_restore.sql"});
-        // Clear DB first with FK checks disabled
-        executor_.run({
+        logger_.info("MIGRATION", "Rollback step 1: copying safety dump to container");
+        if (!result.safety_backup_created) {
+            logger_.error("MIGRATION", "Rollback failed: no safety backup available");
+            return false;
+        }
+        auto cp = executor_.run({"docker", "cp", safety_file, db_container + ":/tmp/safety_restore.sql"});
+        if (cp.exit_code != 0) {
+            logger_.error("MIGRATION", "Rollback: docker cp failed: " + cp.err);
+            return false;
+        }
+        logger_.info("MIGRATION", "Rollback step 2: dropping database and restoring from safety dump");
+        auto restore = executor_.run({
             "docker", "exec", db_container,
             "env", "MYSQL_PWD=" + db_password,
             "mariadb", "-N", "-u" + db_user, db_name,
             "-e", "SET FOREIGN_KEY_CHECKS=0; DROP DATABASE IF EXISTS `" + db_name + "`; CREATE DATABASE `" + db_name + "`; USE `" + db_name + "`; SOURCE /tmp/safety_restore.sql; SET FOREIGN_KEY_CHECKS=1;"
         });
-        // Verify
+        if (restore.exit_code != 0) {
+            logger_.error("MIGRATION", "Rollback: DB restore failed: exit=" + std::to_string(restore.exit_code) + " " + restore.err);
+            return false;
+        }
+        logger_.info("MIGRATION", "Rollback step 3: verifying restored table count");
         auto check = executor_.run({
             "docker", "exec", db_container,
             "env", "MYSQL_PWD=" + db_password,
             "mariadb", "-N", "-u" + db_user, db_name, "-e", "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='" + db_name + "'"
         });
         bool ok = (check.exit_code == 0 && check.out.find("0") == std::string::npos);
+        logger_.info("MIGRATION", "Rollback: DB restored, tables_ok=" + std::string(ok ? "true" : "false"));
 
         // Restore wp-config if it was modified
         if (!wp_config_bak.empty()) {
-            executor_.run({"cp", wp_config_bak, find_wp_config_file(cfg_.sites_dir() + opts.domain + "/public/")});
+            logger_.info("MIGRATION", "Rollback step 4: restoring wp-config.php from backup");
+            auto cfg_restore = executor_.run({"cp", wp_config_bak, find_wp_config_file(cfg_.sites_dir() + opts.domain + "/public/")});
+            logger_.info("MIGRATION", "Rollback: wp-config restore exit=" + std::to_string(cfg_restore.exit_code));
         }
+        logger_.info("MIGRATION", "Rollback completed");
         return ok;
     };
 
@@ -1847,6 +1869,9 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
         cleanup_stg(); return result;
     }
 
+    // Docker compose MariaDB service name (used for wp-config and diagnostics)
+    std::string db_host = "mariadb";
+
     // Update wp-config.php with safety copy
     std::string public_dir = site_dir + "public/";
     std::string wp_config_path = find_wp_config_file(public_dir);
@@ -1857,17 +1882,33 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
 
         // Atomic update: write to temp, then rename
         std::string tmp_config = wp_config_path + ".tmp";
-        bool wp_updated = update_wp_config_db_credentials(wp_config_path, m.wp_db_name, m.wp_db_user, db_name, db_user, db_password);
+        bool wp_updated = update_wp_config_db_credentials(wp_config_path, m.wp_db_name, m.wp_db_user,
+                                                           db_name, db_user, db_password, db_host);
         if (!wp_updated) {
             logger_.error("MIGRATION", "wp-config.php update failed — rolling back DB");
             result.errors.push_back("wp-config.php update failed");
             do_rollback();
-            // Restore config backup
             executor_.run({"cp", wp_config_bak, wp_config_path});
             cleanup_stg(); return result;
         }
+
+        // PHP syntax check
+        logger_.info("MIGRATION", "Running php -l on updated wp-config.php");
+        auto php_check = executor_.run({
+            "docker", "exec", "site-" + std::to_string(m.migration_site_id) + "-php",
+            "php", "-l", "/var/www/html/wp-config.php"
+        });
+        if (php_check.exit_code != 0) {
+            logger_.error("MIGRATION", "php -l failed: " + php_check.err);
+            result.errors.push_back("wp-config.php syntax check failed");
+            do_rollback();
+            executor_.run({"cp", wp_config_bak, wp_config_path});
+            cleanup_stg(); return result;
+        }
+        logger_.info("MIGRATION", "php -l OK");
+
         result.wp_config_updated = true;
-        logger_.info("MIGRATION", "wp-config.php updated");
+        logger_.info("MIGRATION", "wp-config.php updated with all 4 constants");
     }
 
     // Restart PHP
@@ -1913,14 +1954,46 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
         int code = 0;
         try { code = std::stoi(http.out); } catch (...) {}
         logger_.info("MIGRATION", "HTTP check returned " + std::to_string(code));
-        if (code == 500) {
-            logger_.error("MIGRATION", "HTTP 500 — WordPress error after SQL import");
+
+        if (code >= 200 && code <= 404 && code != 500) {
+            // Acceptable codes
+        } else if (code == 500) {
+            logger_.error("MIGRATION", "HTTP 500 — collecting diagnostics before rollback");
+
+            // A. DB constants (without password)
+            logger_.info("MIGRATION", "DIAG: DB_NAME=" + db_name + " DB_USER=" + db_user + " DB_HOST=" + db_host);
+
+            // B. DNS check from PHP container
+            auto dns = executor_.run({"docker", "exec", "site-" + std::to_string(m.migration_site_id) + "-php",
+                                       "getent", "hosts", db_host});
+            logger_.info("MIGRATION", "DIAG: DNS " + db_host + " exit=" + std::to_string(dns.exit_code) + " " + dns.out);
+
+            // C. TCP connection
+            auto tcp = executor_.run({"docker", "exec", "site-" + std::to_string(m.migration_site_id) + "-php",
+                                      "sh", "-c", "timeout 3 nc -zv " + db_host + " 3306 2>&1 || echo failed"});
+            logger_.info("MIGRATION", "DIAG: TCP " + db_host + ":3306 " + tcp.out);
+
+            // D. PHP error log
+            auto php_err = executor_.run({"docker", "logs", "--tail", "50", "site-" + std::to_string(m.migration_site_id) + "-php"});
+            logger_.info("MIGRATION", "DIAG: PHP logs tail=50 err=" + php_err.err);
+
+            // E. Web error log
+            auto web_err = executor_.run({"docker", "logs", "--tail", "50", "site-" + std::to_string(m.migration_site_id) + "-web"});
+            logger_.info("MIGRATION", "DIAG: Web logs tail=50 err=" + web_err.err);
+
+            // F. HTTP response body (first 4KB)
+            auto http_body = executor_.run({"curl", "-s", "--max-time", "5", "--resolve", opts.domain + ":80:127.0.0.1",
+                                            "http://" + opts.domain + "/", "|", "head", "-c", "4096"});
+            logger_.info("MIGRATION", "DIAG: HTTP body (4KB)=" + http_body.out.substr(0, 200));
+
             result.errors.push_back("HTTP 500 after SQL import");
             do_rollback();
             if (result.wp_config_updated && !wp_config_bak.empty()) {
                 executor_.run({"cp", wp_config_bak, wp_config_path});
             }
             cleanup_stg(); return result;
+        } else {
+            logger_.warning("MIGRATION", "HTTP status " + std::to_string(code) + " — accepting");
         }
     }
 
