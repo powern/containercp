@@ -22,7 +22,9 @@
 #include <climits>
 #include <cstring>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -2398,7 +2400,61 @@ bool ApiServer::start() {
     });
 
     // ── Migration API (myVestaCP import, read-only) ────────────────────
-    router_.add("GET", "/api/migration/vesta/backups", [&s](const Request&) {
+    // Shared helper: validate backup path is allowed
+    auto resolve_allowed_backup = [&](const std::string& basename,
+                                      const std::vector<std::string>& allowed,
+                                      std::string& out_error) -> std::string {
+        // basename must not contain path separators
+        if (basename.empty() || basename.find('/') != std::string::npos) {
+            out_error = "Invalid backup filename";
+            return "";
+        }
+        // extension must be .tar or .tar.gz
+        if (basename.size() < 4) { out_error = "Invalid extension"; return ""; }
+        auto ext = basename.substr(basename.size() - 4);
+        bool ok_ext = (ext == ".tar");
+        if (!ok_ext && basename.size() > 7) {
+            ok_ext = (basename.substr(basename.size() - 7) == ".tar.gz");
+        }
+        if (!ok_ext) { out_error = "Only .tar and .tar.gz files are allowed"; return ""; }
+
+        for (const auto& dir : allowed) {
+            std::string candidate = dir + "/" + basename;
+
+            // Step 1: lstat to detect symlinks BEFORE realpath
+            struct stat lst;
+            if (::lstat(candidate.c_str(), &lst) != 0) continue;
+            if (S_ISLNK(lst.st_mode)) {
+                out_error = "Symlink not allowed: " + basename;
+                return "";
+            }
+            if (!S_ISREG(lst.st_mode)) continue;
+
+            // Step 2: resolve canonical path
+            char real[PATH_MAX];
+            if (!::realpath(candidate.c_str(), real)) continue;
+            std::string canon(real);
+
+            // Step 3: verify inside allowed directory
+            char ad_real[PATH_MAX];
+            if (!::realpath(dir.c_str(), ad_real)) continue;
+            std::string ad(ad_real);
+
+            // Proper prefix: canon == ad OR canon starts with ad + "/"
+            bool inside = (canon == ad);
+            if (!inside && canon.size() > ad.size() + 1) {
+                inside = (canon.substr(0, ad.size() + 1) == ad + "/");
+            }
+            if (!inside) continue;
+
+            // Step 4: verify regular file via lstat (already done above)
+            return canon;
+        }
+        out_error = "Backup file not found in allowed directories";
+        return "";
+    };
+
+    router_.add("GET", "/api/migration/vesta/backups", [&s, &resolve_allowed_backup](const Request&) {
         Response r;
         std::vector<std::string> allowed_dirs = {"/backup", s.config().data_root() + "/backups"};
         std::ostringstream json;
@@ -2406,51 +2462,39 @@ bool ApiServer::start() {
         bool first = true;
 
         for (const auto& dir : allowed_dirs) {
-            std::string list_cmd = "ls -1 " + dir + "/*.tar 2>/dev/null";
-            std::array<char, 4096> buf;
-            std::string result;
-            auto pipe_cmd = "ls -1 \"" + dir + "\"/*.tar 2>/dev/null; ls -1 \"" + dir + "\"/*.tar.gz 2>/dev/null";
-            FILE* pipe_fp = ::popen(pipe_cmd.c_str(), "r");
-            if (pipe_fp) {
-                // Read pipe output
-                while (::fgets(buf.data(), buf.size(), pipe_fp) != nullptr) {
-                    result += buf.data();
-                }
-                ::pclose(pipe_fp);
-            }
+            // Resolve allowed dir canonical path
+            char ad_real[PATH_MAX];
+            if (!::realpath(dir.c_str(), ad_real)) continue;
+            std::string ad(ad_real);
 
-            std::istringstream stream(result);
-            std::string fname;
-            while (std::getline(stream, fname)) {
-                if (fname.empty()) continue;
-                // Resolve canonical path
-                char real[PATH_MAX];
-                if (!::realpath(fname.c_str(), real)) continue;
-                std::string canon(real);
-                // Verify it's in an allowed directory
-                bool allowed = false;
-                for (const auto& ad : allowed_dirs) {
-                    char ad_real[PATH_MAX];
-                    if (::realpath(ad.c_str(), ad_real) && canon.substr(0, strlen(ad_real)) == ad_real) {
-                        allowed = true;
-                        break;
+            // Use std::filesystem::directory_iterator (C++17)
+            std::error_code ec;
+            for (const auto& entry : std::filesystem::directory_iterator(ad, ec)) {
+                if (ec) break;
+                auto path = entry.path();
+
+                // lstat to detect symlinks
+                struct stat lst;
+                if (::lstat(path.c_str(), &lst) != 0) continue;
+                if (S_ISLNK(lst.st_mode)) continue;
+                if (!S_ISREG(lst.st_mode)) continue;
+
+                std::string fname = path.filename().string();
+                std::string ext;
+                if (fname.size() > 4) ext = fname.substr(fname.size() - 4);
+                if (ext != ".tar") {
+                    if (fname.size() > 7 && fname.substr(fname.size() - 7) == ".tar.gz") {
+                        // ok
+                    } else {
+                        continue;
                     }
                 }
-                if (!allowed) continue;
-                // Get size and mtime
-                struct stat st;
-                if (::stat(real, &st) != 0 || !S_ISREG(st.st_mode)) continue;
-
-                // Extract basename only
-                std::string basename = fname;
-                auto slash = basename.rfind('/');
-                if (slash != std::string::npos) basename = basename.substr(slash + 1);
 
                 if (!first) json << ",";
                 first = false;
-                json << "{\"name\":\"" << JsonFormatter::escape(basename)
-                     << "\",\"size\":" << st.st_size
-                     << ",\"mtime\":" << st.st_mtime
+                json << "{\"name\":\"" << JsonFormatter::escape(fname)
+                     << "\",\"size\":" << lst.st_size
+                     << ",\"mtime\":" << lst.st_mtime
                      << "}";
             }
         }
@@ -2460,7 +2504,7 @@ bool ApiServer::start() {
         return r;
     });
 
-    router_.add("POST", "/api/migration/vesta/inspect", [&s](const Request& req) {
+    router_.add("POST", "/api/migration/vesta/inspect", [&s, &resolve_allowed_backup](const Request& req) {
         Response r;
 
         // Parse body
@@ -2499,29 +2543,14 @@ bool ApiServer::start() {
             return r;
         }
 
-        // Resolve backup path: check allowed directories only
-        std::string resolved_path;
+        // Resolve backup path using shared helper
         std::vector<std::string> allowed_dirs = {"/backup", s.config().data_root() + "/backups"};
-        for (const auto& dir : allowed_dirs) {
-            std::string candidate = dir + "/" + backup;
-            char real[PATH_MAX];
-            if (::realpath(candidate.c_str(), real)) {
-                std::string canon(real);
-                char ad_real[PATH_MAX];
-                if (::realpath(dir.c_str(), ad_real)) {
-                    std::string ad(ad_real);
-                    struct stat path_stat;
-                    if (canon.substr(0, ad.size()) == ad && ::stat(real, &path_stat) == 0) {
-                        resolved_path = canon;
-                        break;
-                    }
-                }
-            }
-        }
+        std::string resolve_error;
+        std::string resolved_path = resolve_allowed_backup(backup, allowed_dirs, resolve_error);
 
         if (resolved_path.empty()) {
             r.status_code = 404;
-            r.body = "{\"success\":false,\"error\":\"Backup file not found in allowed directories\"}";
+            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(resolve_error) + "\"}";
             return r;
         }
 
