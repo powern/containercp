@@ -8,6 +8,7 @@
 #include "filesystem/Filesystem.h"
 #include "logger/Logger.h"
 #include "runtime/CommandExecutor.h"
+#include "ssl/CertificateStore.h"
 #include "ssl/SslCertificateManager.h"
 
 #include <mutex>
@@ -35,6 +36,8 @@ public:
     core::OperationResult ensure_central_proxy();
     core::OperationResult remove_central_proxy();
     bool central_proxy_running() const;
+    core::OperationResult sync_all_proxies(const std::vector<ReverseProxy>& all_proxies,
+                                            ssl::CertificateStore& cert_store);
     core::OperationResult test_config();
     core::OperationResult last_test_result() const;
 

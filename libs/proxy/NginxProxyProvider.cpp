@@ -1,5 +1,6 @@
 #include "NginxProxyProvider.h"
 
+#include <set>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -422,6 +423,97 @@ core::OperationResult NginxProxyProvider::ensure_central_proxy() {
     }
     logger_.warning("PROXY", "Container created but not yet running. Will retry on reload.");
     return {true, "Central proxy created (waiting for container)"};
+}
+
+core::OperationResult NginxProxyProvider::sync_all_proxies(
+    const std::vector<ReverseProxy>& all_proxies,
+    ssl::CertificateStore& cert_store) {
+
+    logger_.info("PROXY", "Starting declarative proxy sync (" + std::to_string(all_proxies.size()) + " entries)");
+
+    // Phase 1: collect expected config files
+    std::set<std::string> expected_configs;
+    for (const auto& p : all_proxies) {
+        expected_configs.insert(config_path(p.domain));
+    }
+
+    // Phase 2: remove orphan config files
+    std::string sites_dir = cfg_.data_root() + "/proxy/sites/";
+    if (fs_.exists(sites_dir)) {
+        for (const auto& entry : std::filesystem::directory_iterator(sites_dir)) {
+            std::string path = entry.path().string();
+            if (path.find(".conf") == std::string::npos) continue;
+            if (expected_configs.find(path) == expected_configs.end()) {
+                // Orphan config — remove it
+                std::filesystem::remove(path);
+                logger_.info("PROXY", "Removed orphan proxy config: " + path);
+            }
+        }
+    }
+
+    // Phase 3: generate/regenerate each proxy config with correct HTTPS if cert exists
+    int generated = 0, errors = 0;
+    for (const auto& p : all_proxies) {
+        ProxyConfigBuilder::Params params;
+        params.domain = p.domain;
+        params.upstream = p.upstream;
+        params.webmail_upstream = webmail_upstream_;
+
+        // Check if SSL certificate exists for this site
+        if (p.site_id > 0) {
+            auto load_result = cert_store.load_metadata(p.site_id);
+            if (load_result.success && load_result.metadata.status == "active" && load_result.metadata.https_enabled) {
+                params.https = true;
+                params.redirect = load_result.metadata.redirect_enabled;
+                params.cert_path = cert_store.fullchain_path(p.site_id);
+                params.key_path = cert_store.privkey_path(p.site_id);
+
+                // Verify certificate files exist
+                if (!fs_.exists(params.cert_path) || !fs_.exists(params.key_path)) {
+                    logger_.warning("PROXY", p.domain + ": cert files missing, falling back to HTTP");
+                    params.https = false;
+                }
+            }
+        }
+
+        std::string config = config_builder_.build(params);
+        std::string path = config_path(p.domain);
+        fs_.create_directory(sites_dir);
+        fs_.create_file(path, config);
+        generated++;
+    }
+
+    // Phase 4: validate all configs
+    bool config_valid = true;
+    for (const auto& p : all_proxies) {
+        if (!validate_nginx_config(config_path(p.domain))) {
+            logger_.error("PROXY", "Config validation failed for " + p.domain);
+            config_valid = false;
+            errors++;
+        }
+        // Verify upstream container exists (best-effort)
+        if (p.upstream.find("site-") == 0) {
+            std::string container_name = p.upstream.substr(0, p.upstream.find(':'));
+            auto check = executor_.run({"docker", "inspect", container_name, "--format", "{{.State.Running}}"});
+            if (check.exit_code != 0) {
+                logger_.warning("PROXY", p.domain + ": upstream container " + container_name + " not found");
+            }
+        }
+    }
+
+    if (!config_valid) {
+        logger_.error("PROXY", "Declarative sync completed with " + std::to_string(errors) + " config errors");
+        return {false, std::to_string(errors) + " proxy config(s) have validation errors"};
+    }
+
+    // Phase 5: reload nginx
+    auto reload_result = reload();
+    if (!reload_result.success) {
+        return {false, "Proxy reload failed after sync: " + reload_result.message};
+    }
+
+    logger_.info("PROXY", "Declarative sync completed: " + std::to_string(generated) + " configs generated, 0 orphans");
+    return {true, "Proxy sync completed"};
 }
 
 void NginxProxyProvider::set_webmail_upstream(const std::string& upstream) {

@@ -407,40 +407,32 @@ core::OperationResult ServiceRegistry::ensure_admin_proxy() {
 }
 
 void ServiceRegistry::sync_all_https_configs() {
-    for (auto site_id : cert_store_.enumerate()) {
-        auto load_result = cert_store_.load_metadata(site_id);
-        if (!load_result.success) continue;
-        auto& meta = load_result.metadata;
-        if (meta.status != "active" || !meta.https_enabled) continue;
-
-        std::string domain = meta.domains.empty() ? "" : meta.domains[0];
-        if (domain.empty()) continue;
-
-        bool looks_like_staging = meta.issuer.find("STAGING") != std::string::npos
-                               || meta.issuer.find("Fake") != std::string::npos;
-        if (meta.environment != "staging" && looks_like_staging) {
-            logger_.warning("SYSTEM", domain + ": ACME=production but issuer is STAGING ("
-                           + meta.issuer + "). Reissue certificate.");
-        }
-        logger_.info("SYSTEM", domain + ": env=" + meta.environment
-                     + " issuer=\"" + meta.issuer + "\""
-                     + " decision=" + (looks_like_staging ? "staging cert, reissue for production" : "ok"));
-
-        auto* rp = reverse_proxies_.find_by_domain(domain);
-        logger_.info("SYSTEM", "Pre-sync upstream for " + domain
-                     + ": " + (rp ? (rp->upstream.empty() ? "EMPTY" : rp->upstream) : "NOT_FOUND"));
-
-        std::string cert_path = cert_store_.fullchain_path(site_id);
-        std::string key_path = cert_store_.privkey_path(site_id);
-
-        logger_.info("SYSTEM", "Syncing HTTPS proxy config for " + domain
-                     + ": cert=" + cert_path);
-        auto result = proxy_provider_.attach_certificate(domain, cert_path, key_path);
+    // Delegate to declarative sync: synchronize all proxy configs with the database
+    auto* nginx_proxy = dynamic_cast<proxy::NginxProxyProvider*>(&proxy_provider_);
+    if (nginx_proxy) {
+        auto result = nginx_proxy->sync_all_proxies(reverse_proxies_.list(), cert_store_);
         if (result.success) {
-            logger_.info("SYSTEM", "Proxy config synced for " + domain);
+            logger_.info("SYSTEM", "Declarative proxy sync completed");
         } else {
-            logger_.warning("SYSTEM", "Proxy config sync failed for "
-                           + domain + ": " + result.message);
+            logger_.warning("SYSTEM", "Declarative proxy sync had issues: " + result.message);
+        }
+    } else {
+        // Fallback: old per-cert sync for non-nginx providers (should not happen)
+        for (auto site_id : cert_store_.enumerate()) {
+            auto load_result = cert_store_.load_metadata(site_id);
+            if (!load_result.success) continue;
+            auto& meta = load_result.metadata;
+            if (meta.status != "active" || !meta.https_enabled) continue;
+            std::string domain = meta.domains.empty() ? "" : meta.domains[0];
+            if (domain.empty()) continue;
+            auto* rp = reverse_proxies_.find_by_domain(domain);
+            if (!rp) {
+                logger_.warning("SYSTEM", domain + ": proxy entry not found, skipping HTTPS sync");
+                continue;
+            }
+            std::string cert_path = cert_store_.fullchain_path(site_id);
+            std::string key_path = cert_store_.privkey_path(site_id);
+            proxy_provider_.attach_certificate(domain, cert_path, key_path);
         }
     }
 }
