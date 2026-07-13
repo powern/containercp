@@ -1712,7 +1712,18 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
     result.safety_backup_created = true;
     logger_.info("MIGRATION", "Safety backup created at " + safety_file);
 
-    // Rollback helper: restore safety.sql into DB, then wp-config if needed
+    // Parse safety table count from backup for rollback verification
+    uint64_t expected_table_count = 0;
+    {
+        auto count_check = executor_.run({"sh", "-c", "grep -c 'CREATE TABLE\\|CREATE VIEW\\|CREATE PROCEDURE' " + safety_file + " 2>/dev/null || echo 0"});
+        if (count_check.exit_code == 0) {
+            std::string c = count_check.out;
+            while (!c.empty() && (c.back() == '\n' || c.back() == '\r')) c.pop_back();
+            try { expected_table_count = std::stoull(c); } catch (...) {}
+        }
+    }
+
+    // Rollback helper: restore safety.sql into DB via app user (no DROP DATABASE)
     std::string wp_config_bak; // populated later if wp-config is updated
     auto do_rollback = [&]() -> bool {
         logger_.info("MIGRATION", "Rollback step 1: copying safety dump to container");
@@ -1725,12 +1736,31 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
             logger_.error("MIGRATION", "Rollback: docker cp failed: " + cp.err);
             return false;
         }
-        logger_.info("MIGRATION", "Rollback step 2: dropping database and restoring from safety dump");
+        logger_.info("MIGRATION", "Rollback step 2: clearing DB objects and restoring safety dump");
+
+        // First clean all existing objects with FK disabled
+        auto cleanup = executor_.run({
+            "docker", "exec", db_container,
+            "env", "MYSQL_PWD=" + db_password,
+            "mariadb", "-N", "-u" + db_user, db_name,
+            "-e", "SET FOREIGN_KEY_CHECKS=0; "
+                  "SELECT GROUP_CONCAT(CONCAT('DROP TABLE IF EXISTS `', TABLE_NAME, '`') SEPARATOR '; ') "
+                  "FROM information_schema.TABLES WHERE TABLE_SCHEMA='" + db_name + "';"
+        });
+        if (cleanup.exit_code == 0 && !cleanup.out.empty() && cleanup.out.find("DROP") != std::string::npos) {
+            executor_.run({
+                "docker", "exec", db_container,
+                "env", "MYSQL_PWD=" + db_password,
+                "mariadb", "-N", "-u" + db_user, db_name,
+                "-e", "SET FOREIGN_KEY_CHECKS=0; " + cleanup.out + "; SET FOREIGN_KEY_CHECKS=1;"
+            });
+        }
+        // Always use SOURCE for safety restore (even if no tables existed)
         auto restore = executor_.run({
             "docker", "exec", db_container,
             "env", "MYSQL_PWD=" + db_password,
             "mariadb", "-N", "-u" + db_user, db_name,
-            "-e", "SET FOREIGN_KEY_CHECKS=0; DROP DATABASE IF EXISTS `" + db_name + "`; CREATE DATABASE `" + db_name + "`; USE `" + db_name + "`; SOURCE /tmp/safety_restore.sql; SET FOREIGN_KEY_CHECKS=1;"
+            "-e", "SET FOREIGN_KEY_CHECKS=0; SOURCE /tmp/safety_restore.sql; SET FOREIGN_KEY_CHECKS=1;"
         });
         if (restore.exit_code != 0) {
             logger_.error("MIGRATION", "Rollback: DB restore failed: exit=" + std::to_string(restore.exit_code) + " " + restore.err);
@@ -1742,8 +1772,15 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
             "env", "MYSQL_PWD=" + db_password,
             "mariadb", "-N", "-u" + db_user, db_name, "-e", "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='" + db_name + "'"
         });
-        bool ok = (check.exit_code == 0 && check.out.find("0") == std::string::npos);
-        logger_.info("MIGRATION", "Rollback: DB restored, tables_ok=" + std::string(ok ? "true" : "false"));
+        uint64_t actual_count = 0;
+        if (check.exit_code == 0) {
+            std::string c = check.out;
+            while (!c.empty() && (c.back() == '\n' || c.back() == '\r')) c.pop_back();
+            try { actual_count = std::stoull(c); } catch (...) {}
+        }
+        bool ok = (check.exit_code == 0 && actual_count == expected_table_count);
+        logger_.info("MIGRATION", "Rollback: expected=" + std::to_string(expected_table_count) + " actual=" + std::to_string(actual_count)
+                     + " ok=" + std::string(ok ? "true" : "false"));
 
         // Restore wp-config if it was modified
         if (!wp_config_bak.empty()) {
@@ -1968,10 +2005,11 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
                                        "getent", "hosts", db_host});
             logger_.info("MIGRATION", "DIAG: DNS " + db_host + " exit=" + std::to_string(dns.exit_code) + " " + dns.out);
 
-            // C. TCP connection
+            // C. TCP connection (without shell)
             auto tcp = executor_.run({"docker", "exec", "site-" + std::to_string(m.migration_site_id) + "-php",
-                                      "sh", "-c", "timeout 3 nc -zv " + db_host + " 3306 2>&1 || echo failed"});
-            logger_.info("MIGRATION", "DIAG: TCP " + db_host + ":3306 " + tcp.out);
+                                      "timeout", "3", "nc", "-zv", db_host, "3306"});
+            std::string tcp_result = (tcp.exit_code == 0) ? "connected" : "failed exit=" + std::to_string(tcp.exit_code);
+            logger_.info("MIGRATION", "DIAG: TCP " + db_host + ":3306 " + tcp_result);
 
             // D. PHP error log
             auto php_err = executor_.run({"docker", "logs", "--tail", "50", "site-" + std::to_string(m.migration_site_id) + "-php"});
@@ -1981,10 +2019,11 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
             auto web_err = executor_.run({"docker", "logs", "--tail", "50", "site-" + std::to_string(m.migration_site_id) + "-web"});
             logger_.info("MIGRATION", "DIAG: Web logs tail=50 err=" + web_err.err);
 
-            // F. HTTP response body (first 4KB)
+            // F. HTTP response body (first 4KB, truncated in C++ no shell pipe)
             auto http_body = executor_.run({"curl", "-s", "--max-time", "5", "--resolve", opts.domain + ":80:127.0.0.1",
-                                            "http://" + opts.domain + "/", "|", "head", "-c", "4096"});
-            logger_.info("MIGRATION", "DIAG: HTTP body (4KB)=" + http_body.out.substr(0, 200));
+                                            "http://" + opts.domain + "/"});
+            std::string body_preview = http_body.out.substr(0, 4096);
+            logger_.info("MIGRATION", "DIAG: HTTP body (4KB)=" + body_preview.substr(0, 200));
 
             result.errors.push_back("HTTP 500 after SQL import");
             do_rollback();
