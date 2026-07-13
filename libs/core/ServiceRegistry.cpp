@@ -128,9 +128,9 @@ ServiceRegistry::ServiceRegistry()
 
     auto loaded_php = storage_.load_php_versions();
     if (loaded_php.empty()) {
-        php_versions_.create("8.2", "php:8.2-fpm", false);
-        php_versions_.create("8.3", "php:8.3-fpm", false);
-        php_versions_.create("8.4", "php:8.4-fpm", true);
+        php_versions_.create("8.2", "ghcr.io/containercp/php:8.2", false);
+        php_versions_.create("8.3", "ghcr.io/containercp/php:8.3", false);
+        php_versions_.create("8.4", "ghcr.io/containercp/php:8.4", true);
         storage_.save_php_versions(php_versions_.list());
     } else {
         php_versions_.set_versions(loaded_php);

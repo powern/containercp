@@ -1695,6 +1695,29 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
         cleanup_stg(); return result;
     }
 
+    // Preflight: verify PHP container has required MySQL extensions
+    std::string php_container_name = "site-" + std::to_string(m.migration_site_id) + "-php";
+    logger_.info("MIGRATION", "Preflight: checking PHP MySQL extensions in " + php_container_name);
+    bool has_mysqli = false, has_pdo_mysql = false;
+    {
+        auto m_check = executor_.run({"docker", "exec", php_container_name, "php", "-r",
+                                       "exit(extension_loaded('mysqli') ? 0 : 1);"});
+        has_mysqli = (m_check.exit_code == 0);
+        auto p_check = executor_.run({"docker", "exec", php_container_name, "php", "-r",
+                                       "exit(extension_loaded('pdo_mysql') ? 0 : 1);"});
+        has_pdo_mysql = (p_check.exit_code == 0);
+    }
+    logger_.info("MIGRATION", "Preflight: mysqli=" + std::string(has_mysqli ? "yes" : "NO")
+                 + " pdo_mysql=" + std::string(has_pdo_mysql ? "yes" : "NO"));
+
+    if (!has_mysqli || !has_pdo_mysql) {
+        logger_.error("MIGRATION", "PHP container missing required MySQL extensions");
+        result.errors.push_back("Target PHP runtime missing required MySQL extensions: "
+                                + std::string(!has_mysqli ? "mysqli " : "")
+                                + std::string(!has_pdo_mysql ? "pdo_mysql" : ""));
+        cleanup_stg(); return result;
+    }
+
     // Create safety backup via streaming mariadb-dump directly to file (no RAM)
     logger_.info("MIGRATION", "Creating database safety backup (streaming)");
     std::string safety_file = staging + "/safety.sql";
