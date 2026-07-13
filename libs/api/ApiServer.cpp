@@ -2594,7 +2594,9 @@ bool ApiServer::start() {
              << ",\"files_pending\":" << (manifest.files_pending ? "true" : "false")
              << ",\"files_imported\":" << (manifest.files_imported ? "true" : "false")
              << ",\"sql_pending\":" << (manifest.sql_pending ? "true" : "false")
-             << ",\"migration_ready_for_files\":" << (manifest.migration_ready_for_files ? "true" : "false")
+             << ",\"can_import_files\":" << (manifest.can_import_files ? "true" : "false")
+             << ",\"can_import_sql\":" << (manifest.can_import_sql ? "true" : "false")
+             << ",\"migration_completed\":" << (manifest.migration_completed ? "true" : "false")
              << ",\"migration_site_id\":" << manifest.migration_site_id
              << ",\"migration_owner\":\"" << JsonFormatter::escape(manifest.migration_owner)
              << "\",\"files_status\":\"" << JsonFormatter::escape(manifest.files_status)

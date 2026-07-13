@@ -46,7 +46,9 @@ struct Manifest {
     bool files_pending = false;
     bool files_imported = false;
     bool sql_pending = false;
-    bool migration_ready_for_files = false;
+    bool can_import_files = false;
+    bool can_import_sql = false;
+    bool migration_completed = false;
     uint64_t migration_site_id = 0;
     std::string migration_owner;
     std::string files_status;

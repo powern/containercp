@@ -1614,32 +1614,58 @@ async function analyzeBackup() {
 
     html += '</div></div>';
 
-    // Decide which buttons to show
+    // Decide which buttons to show based on state machine
     const hasErrors = d.errors && d.errors.length > 0;
 
     if (!hasErrors) {
       if (!d.site_exists) {
-        // Site doesn't exist — show Import site button
-        html += `<button class="btn btn-primary" style="margin-top:12px;" onclick="importMigrationSite()" id="migrate-import-btn">Import site</button>
-        <div id="migrate-import-result" style="margin-top:12px;"></div>`;
-      } else if (d.migration_ready_for_files) {
-        // Site exists with valid migration marker — show migration state + Import files
+        // Stage 0: Create site
         html += `<div class="card" style="margin-top:12px;border-color:var(--blue);">
-          <div class="card-header"><h3 style="color:var(--blue);">Migration State: Stage ${esc(d.migration_stage)} Completed</h3></div>
+          <div class="card-header"><h3>Migration Stage 0 — Backup Analyzed</h3></div>
+          <div style="padding:12px;font-size:13px;">
+            <p style="margin-bottom:12px;">Backup analyzed. Site not yet created.</p>
+            <button class="btn btn-primary" onclick="importMigrationSite()" id="migrate-import-btn">Create site</button>
+            <div id="migrate-import-result" style="margin-top:12px;"></div>
+          </div></div>`;
+
+      } else if (d.migration_completed) {
+        // Stage 3: Completed
+        html += `<div class="card" style="margin-top:12px;border-color:var(--green);">
+          <div class="card-header"><h3 style="color:var(--green);">Migration Completed</h3></div>
+          <div style="padding:12px;font-size:13px;">
+            <p>All migration stages completed.</p>
+          </div></div>`;
+
+      } else if (d.site_exists && d.migration_marker_found) {
+        // Migration in progress — show current stage
+        const stageLabels = {1: 'Site created', 2: 'Files imported'};
+        const stageDesc = stageLabels[d.migration_stage] || ('Stage ' + d.migration_stage);
+        html += `<div class="card" style="margin-top:12px;border-color:var(--blue);">
+          <div class="card-header"><h3 style="color:var(--blue);">Migration: ${esc(stageDesc)}</h3></div>
           <div style="padding:12px;font-size:13px;">
             <table style="width:100%;border-collapse:collapse;">
               <tr><td style="padding:4px 8px;color:var(--text2);">Site ID</td><td>${d.migration_site_id || '?'}</td></tr>
               <tr><td style="padding:4px 8px;color:var(--text2);">Files</td><td>${d.files_status === 'imported' ? '<span class="badge badge-ok">Imported</span>' : '<span class="badge badge-info">' + esc(d.files_status || 'Pending') + '</span>'}</td></tr>
               <tr><td style="padding:4px 8px;color:var(--text2);">SQL</td><td>${d.sql_status === 'imported' ? '<span class="badge badge-ok">Imported</span>' : '<span class="badge badge-info">' + esc(d.sql_status || 'Pending') + '</span>'}</td></tr>
-            </table>
-            <button class="btn btn-primary" style="margin-top:12px;" onclick="importMigrationFiles()">Import files</button>
-            <div id="migrate-files-result" style="margin-top:12px;"></div>
-          </div></div>`;
+            </table>`;
+
+        // Import files button (stage 1 → 2)
+        if (d.can_import_files) {
+          html += `<button class="btn btn-primary" style="margin-top:12px;" onclick="importMigrationFiles()">Import files</button>
+            <div id="migrate-files-result" style="margin-top:12px;"></div>`;
+        }
+
+        // Import SQL button (stage 2 → 3)
+        if (d.can_import_sql) {
+          html += `<button class="btn btn-primary" style="margin-top:12px;" onclick="importMigrationSql()">Import SQL</button>
+            <div id="migrate-sql-result" style="margin-top:12px;"></div>`;
+        }
+
+        html += `</div></div>`;
+
       } else if (d.site_exists && d.migration_marker_found && d.marker_error) {
-        // Marker exists but invalid
         html += `<div class="alert alert-warning" style="margin-top:12px;">Marker error: ${esc(d.marker_error)}</div>`;
       } else if (d.site_exists) {
-        // Existing site, no marker
         html += `<div class="alert alert-info" style="margin-top:12px;">Existing site is not an active myVesta migration.</div>`;
       }
     }
@@ -1696,8 +1722,7 @@ async function importMigrationSite() {
     }
     html += '</ul></div>';
 
-    html += '<button class="btn btn-primary" style="margin-top:12px;" onclick="importMigrationFiles()">Import files</button>';
-    html += '<div id="migrate-files-result" style="margin-top:12px;"></div>';
+    html += '<p style="margin-top:12px;font-size:12px;color:var(--text2);">Run Analyze backup again to continue with Stage 2.</p>';
     html += '</div></div>';
     resultDiv.innerHTML = html;
   } catch(e) {
@@ -1754,6 +1779,12 @@ async function importMigrationFiles() {
   } catch(e) {
     resultDiv.innerHTML = '<div class="alert alert-error">File import failed: ' + esc(e.message || 'Unknown error') + '</div>';
   }
+}
+
+async function importMigrationSql() {
+  const resultDiv = document.getElementById('migrate-sql-result');
+  if (!resultDiv) return;
+  resultDiv.innerHTML = '<div class="alert alert-info">SQL import not yet implemented.</div>';
 }
 
 async function loadProfiles(p) {

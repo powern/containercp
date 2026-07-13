@@ -582,38 +582,54 @@ Manifest VestaSiteImporter::inspect(const Options& opts) {
             m.files_status = m.files_imported ? "imported" : (m.files_pending ? "pending" : "unknown");
             m.sql_status = m.sql_pending ? "pending" : "imported";
 
-            // Validate against SiteManager records — require real SiteRecord
+            // Validate marker integrity (identity checks only — no stage rejection)
+            bool marker_valid = true;
             if (!found_site) {
                 m.marker_error = "SiteRecord not found for domain";
-            } else if (!sites_) {
+                marker_valid = false;
+            } else if (sites_ == nullptr) {
                 m.marker_error = "SiteManager not available";
+                marker_valid = false;
             } else if (m_site_id == 0) {
-                m.marker_error = "Marker has no site_id (re-run Stage 1)";
+                m.marker_error = "Marker has no site_id";
+                marker_valid = false;
             } else if (m_site_id != found_site->id) {
                 m.marker_error = "Marker site_id " + std::to_string(m_site_id)
                     + " != SiteRecord id " + std::to_string(found_site->id);
+                marker_valid = false;
             } else if (m_domain != opts.domain) {
                 m.marker_error = "Marker domain mismatch";
+                marker_valid = false;
             } else if (m_owner != opts.owner) {
                 m.marker_error = "Marker owner mismatch";
-            } else if (m.migration_stage != 1) {
-                m.marker_error = "Marker stage is " + std::to_string(m.migration_stage) + ", expected 1";
-            } else if (m.files_imported) {
-                m.marker_error = "Files already imported (stage 2)";
-            } else if (!m.files_pending) {
-                m.marker_error = "Marker files_pending is false";
-            } else {
-                // Also verify DomainRecord belongs to same site_id
-                bool domain_ok = true;
-                if (domains_) {
-                    auto* dom_rec = domains_->find(opts.domain);
-                    if (dom_rec && dom_rec->site_id != found_site->id) {
-                        domain_ok = false;
-                        m.marker_error = "DomainRecord site_id mismatch";
-                    }
+                marker_valid = false;
+            } else if (domains_) {
+                auto* dom_rec = domains_->find(opts.domain);
+                if (dom_rec && dom_rec->site_id != found_site->id) {
+                    m.marker_error = "DomainRecord site_id mismatch";
+                    marker_valid = false;
                 }
-                if (domain_ok) {
-                    m.migration_ready_for_files = true;
+            }
+
+            // State machine: determine available actions based on current stage
+            if (marker_valid) {
+                switch (m.migration_stage) {
+                    case 1:
+                        if (m.files_pending && !m.files_imported) {
+                            m.can_import_files = true;
+                        }
+                        break;
+                    case 2:
+                        if (m.sql_pending && m.files_imported && !m.files_pending) {
+                            m.can_import_sql = true;
+                        }
+                        break;
+                    case 3:
+                        m.migration_completed = true;
+                        break;
+                    default:
+                        m.marker_error = "Unknown migration stage: " + std::to_string(m.migration_stage);
+                        break;
                 }
             }
         }
@@ -1280,9 +1296,9 @@ VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Optio
     std::string marker_path = site_dir + ".containercp-migration.json";
 
     logger_.info("MIGRATION", "Reading marker");
-    if (!m.migration_ready_for_files) {
-        std::string reason = !m.marker_error.empty() ? m.marker_error : "Migration not ready for file import. Run Stage 1 first.";
-        logger_.error("MIGRATION", "Marker rejected: " + reason);
+    if (!m.can_import_files) {
+        std::string reason = !m.marker_error.empty() ? m.marker_error : "File import not available at current stage (" + std::to_string(m.migration_stage) + "). Stage 1 required.";
+        logger_.error("MIGRATION", "Cannot import files: " + reason);
         result.errors.push_back(reason);
         return result;
     }
