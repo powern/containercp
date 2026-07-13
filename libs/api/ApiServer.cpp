@@ -2556,7 +2556,7 @@ bool ApiServer::start() {
 
         // Run inspect
         runtime::CommandExecutor exec;
-        migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(),
+        migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(), s.logger(),
                                               &s.sites(), &s.domains());
         migration::Options opts;
         opts.backup_path = resolved_path;
@@ -2683,7 +2683,7 @@ bool ApiServer::start() {
 
         // Step 2: re-run inspect to validate
         runtime::CommandExecutor exec;
-        migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(),
+        migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(), s.logger(),
                                               &s.sites(), &s.domains());
         migration::Options opts;
         opts.backup_path = resolved_path;
@@ -2824,7 +2824,7 @@ bool ApiServer::start() {
 
         // Run import
         runtime::CommandExecutor exec;
-        migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(),
+        migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(), s.logger(),
                                               &s.sites(), &s.domains());
         migration::Options opts;
         opts.backup_path = resolved_path;

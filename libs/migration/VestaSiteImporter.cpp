@@ -1,6 +1,7 @@
 #include "VestaSiteImporter.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <climits>
@@ -16,11 +17,13 @@ namespace containercp::migration {
 VestaSiteImporter::VestaSiteImporter(runtime::CommandExecutor& executor,
                                      filesystem::Filesystem& fs,
                                      config::Config& cfg,
+                                     logger::Logger& logger,
                                      site::SiteManager* sites,
                                      domain::DomainManager* domains)
     : executor_(executor)
     , fs_(fs)
     , cfg_(cfg)
+    , logger_(logger)
     , sites_(sites)
     , domains_(domains)
 {
@@ -963,55 +966,88 @@ bool VestaSiteImporter::copy_files_to_public(
     std::string data_tarball = staging_dir + "/domain_data.tar.gz";
     std::string public_dir = site_dir + "public/";
 
-    // 1. Validate inner tar members with full type metadata
-    if (!validate_inner_tar_verbose(data_tarball, result.errors)) return false;
+    logger_.info("MIGRATION", "Validating inner tar members");
+    if (!validate_inner_tar_verbose(data_tarball, result.errors)) {
+        logger_.error("MIGRATION", "Inner tar validation failed");
+        for (const auto& e : result.errors) logger_.error("MIGRATION", "  " + e);
+        return false;
+    }
+    logger_.info("MIGRATION", "Inner tar validation passed");
 
     // 2. Safety-copy current public — mandatory, hard error if fails
     std::string safety_dir = staging_dir + "/safety_public";
+    logger_.info("MIGRATION", "Creating safety backup");
+    logger_.info("MIGRATION", "  source=" + public_dir + " -> destination=" + safety_dir);
     ::mkdir(safety_dir.c_str(), 0755);
     auto safety = executor_.run({"rsync", "-a", "--safe-links", public_dir, safety_dir + "/"});
     if (safety.exit_code != 0) {
-        result.errors.push_back("Safety copy failed — aborting");
+        std::string err = "rsync exit code " + std::to_string(safety.exit_code) + " stderr=" + safety.err;
+        logger_.error("MIGRATION", "Safety copy failed: " + err);
+        result.errors.push_back("Safety copy failed: " + err);
         return false;
     }
+    logger_.info("MIGRATION", "Safety backup created");
 
-    // Rollback helper
+    // Rollback helper with logging
     auto rollback_stage2 = [&]() -> bool {
+        logger_.warning("MIGRATION", "Rollback: restoring safety copy");
         bool ok = true;
         executor_.run({"rm", "-rf", public_dir});
         ::mkdir(public_dir.c_str(), 0755);
-        if (executor_.run({"rsync", "-a", "--safe-links", safety_dir + "/", public_dir}).exit_code != 0) ok = false;
-        executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "up", "-d", "web", "php"});
+        auto rst = executor_.run({"rsync", "-a", "--safe-links", safety_dir + "/", public_dir});
+        if (rst.exit_code != 0) {
+            logger_.error("MIGRATION", "Rollback rsync failed: exit=" + std::to_string(rst.exit_code));
+            ok = false;
+        }
+        auto up = executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "up", "-d", "web", "php"});
+        if (up.exit_code != 0) logger_.error("MIGRATION", "Rollback docker compose up failed: " + up.err);
+        logger_.info("MIGRATION", "Rollback completed");
         return ok;
     };
 
     // 3. Stop web+php only
-    if (executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "stop", "web", "php"}).exit_code != 0) {
-        result.errors.push_back("Failed to stop web/php");
+    logger_.info("MIGRATION", "Stopping web+php containers");
+    auto stop_res = executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "stop", "web", "php"});
+    if (stop_res.exit_code != 0) {
+        std::string err = "exit=" + std::to_string(stop_res.exit_code) + " " + stop_res.err;
+        logger_.error("MIGRATION", "Failed to stop web/php: " + err);
+        result.errors.push_back("Failed to stop web/php: " + err);
         return false;
     }
+    logger_.info("MIGRATION", "Web+php stopped");
 
     // 4. Extract inner archive
     std::string extract_dir = staging_dir + "/extracted";
+    logger_.info("MIGRATION", "Extracting archive to " + extract_dir);
     ::mkdir(extract_dir.c_str(), 0755);
-    if (executor_.run({"tar", "-xzf", data_tarball, "-C", extract_dir}).exit_code != 0) {
-        result.errors.push_back("Extraction failed");
+    auto ext_res = executor_.run({"tar", "-xzf", data_tarball, "-C", extract_dir});
+    if (ext_res.exit_code != 0) {
+        std::string err = "tar exit=" + std::to_string(ext_res.exit_code) + " " + ext_res.err;
+        logger_.error("MIGRATION", "Extraction failed: " + err);
+        result.errors.push_back("Extraction failed: " + err);
         rollback_stage2();
         return false;
     }
+    logger_.info("MIGRATION", "Archive extracted");
 
     // 5. Post-extraction symlink check
+    logger_.info("MIGRATION", "Checking symlinks after extraction");
     if (!check_symlinks_after_extraction(extract_dir, result.errors)) {
+        for (const auto& e : result.errors) logger_.error("MIGRATION", "Symlink error: " + e);
         rollback_stage2();
         return false;
     }
+    logger_.info("MIGRATION", "Symlink check passed");
 
     // 6. Determine source path
     std::string source_path = extract_dir;
     if (!web_root_type.empty() && web_root_type != ".") source_path = extract_dir + "/" + web_root_type;
+    logger_.info("MIGRATION", "Source path: " + source_path + " (web_root_type=" + web_root_type + ")");
 
     struct stat st;
     if (::stat(source_path.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+        std::string err = "Web root not found: " + source_path + " errno=" + std::to_string(errno) + " " + std::strerror(errno);
+        logger_.error("MIGRATION", err);
         result.errors.push_back("Web root not found: " + source_path);
         rollback_stage2();
         return false;
@@ -1020,6 +1056,8 @@ bool VestaSiteImporter::copy_files_to_public(
     // 7. Canonical prefix check (sibling-safe)
     char src_r[PATH_MAX], ext_r[PATH_MAX];
     if (!::realpath(source_path.c_str(), src_r) || !::realpath(extract_dir.c_str(), ext_r)) {
+        std::string err = "realpath failed: " + std::string(std::strerror(errno));
+        logger_.error("MIGRATION", err);
         result.errors.push_back("Path resolution failed");
         rollback_stage2();
         return false;
@@ -1027,39 +1065,62 @@ bool VestaSiteImporter::copy_files_to_public(
     std::string src_str(src_r), ext_str(ext_r);
     if (src_str != ext_str && (src_str.size() <= ext_str.size() ||
         src_str.substr(0, ext_str.size() + 1) != ext_str + "/")) {
+        logger_.error("MIGRATION", "Sibling path rejected: " + src_str + " outside " + ext_str);
         result.errors.push_back("Web root outside extract dir (sibling rejected)");
         rollback_stage2();
         return false;
     }
+    logger_.info("MIGRATION", "Canonical path OK: " + src_str);
 
     // 8. Clear public contents
-    if (executor_.run({"find", public_dir, "-mindepth", "1", "-maxdepth", "1", "-exec", "rm", "-rf", "{}", "+"}).exit_code != 0) {
-        result.errors.push_back("Failed to clean public");
+    logger_.info("MIGRATION", "Cleaning public directory: " + public_dir);
+    auto clean_res = executor_.run({"find", public_dir, "-mindepth", "1", "-maxdepth", "1", "-exec", "rm", "-rf", "{}", "+"});
+    if (clean_res.exit_code != 0) {
+        std::string err = "find/rm exit=" + std::to_string(clean_res.exit_code) + " " + clean_res.err;
+        logger_.error("MIGRATION", "Failed to clean public: " + err);
+        result.errors.push_back("Failed to clean public: " + err);
         rollback_stage2();
         return false;
     }
+    logger_.info("MIGRATION", "Public directory cleaned");
 
     // 9. rsync files
-    if (executor_.run({"rsync", "-a", "--safe-links", source_path + "/", public_dir}).exit_code != 0) {
-        result.errors.push_back("rsync failed");
+    logger_.info("MIGRATION", "Copying files via rsync");
+    logger_.info("MIGRATION", "  source=" + source_path + "/");
+    logger_.info("MIGRATION", "  dest=" + public_dir);
+    auto rsync_res = executor_.run({"rsync", "-a", "--safe-links", source_path + "/", public_dir});
+    if (rsync_res.exit_code != 0) {
+        std::string err = "rsync exit=" + std::to_string(rsync_res.exit_code) + " " + rsync_res.err;
+        logger_.error("MIGRATION", "rsync failed: " + err);
+        result.errors.push_back("rsync failed: " + err);
         rollback_stage2();
         return false;
     }
+    logger_.info("MIGRATION", "Files copied successfully");
 
     // 10. Fix ownership
-    if (executor_.run({"docker", "run", "--rm", "-v", public_dir + ":/t:rw", "alpine",
-                       "chown", "-R", uid_str + ":" + gid_str, "/t"}).exit_code != 0) {
-        result.errors.push_back("Ownership fix failed");
+    logger_.info("MIGRATION", "Fixing ownership: " + uid_str + ":" + gid_str);
+    auto chown_res = executor_.run({"docker", "run", "--rm", "-v", public_dir + ":/t:rw", "alpine",
+                                     "chown", "-R", uid_str + ":" + gid_str, "/t"});
+    if (chown_res.exit_code != 0) {
+        std::string err = "chown exit=" + std::to_string(chown_res.exit_code) + " " + chown_res.err;
+        logger_.error("MIGRATION", "Ownership fix failed: " + err);
+        result.errors.push_back("Ownership fix failed: " + err);
         rollback_stage2();
         return false;
     }
 
     // 11. Start web+php
-    if (executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "up", "-d", "web", "php"}).exit_code != 0) {
-        result.errors.push_back("Failed to start web/php");
+    logger_.info("MIGRATION", "Starting web+php containers");
+    auto up_res = executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "up", "-d", "web", "php"});
+    if (up_res.exit_code != 0) {
+        std::string err = "docker compose exit=" + std::to_string(up_res.exit_code) + " " + up_res.err;
+        logger_.error("MIGRATION", "Failed to start web/php: " + err);
+        result.errors.push_back("Failed to start web/php: " + err);
         rollback_stage2();
         return false;
     }
+    logger_.info("MIGRATION", "Web+php started, waiting for health...");
 
     // 12. Health check with timeout
     bool healthy = false;
@@ -1069,66 +1130,79 @@ bool VestaSiteImporter::copy_files_to_public(
                                 "ps", "--format={{.Status}}", "web"});
         auto ps_php = executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml",
                                     "ps", "--format={{.Status}}", "php"});
-        if (ps.exit_code == 0 && ps_php.exit_code == 0 &&
-            ps.out.find("healthy") != std::string::npos &&
-            ps_php.out.find("healthy") != std::string::npos) {
+        bool web_ok = ps.exit_code == 0 && ps.out.find("healthy") != std::string::npos;
+        bool php_ok = ps_php.exit_code == 0 && ps_php.out.find("healthy") != std::string::npos;
+        if (web_ok && php_ok) {
             healthy = true;
+            logger_.info("MIGRATION", "Health check passed on attempt " + std::to_string(i + 1));
             break;
+        }
+        if (i == 7 || i == 14) {
+            logger_.info("MIGRATION", "Health check attempt " + std::to_string(i + 1) + ": web=" + (web_ok ? "ok" : "waiting") + " php=" + (php_ok ? "ok" : "waiting"));
         }
     }
     if (!healthy) {
+        logger_.error("MIGRATION", "Health check timeout after 15s");
         result.errors.push_back("Health check timeout — rolling back");
         rollback_stage2();
         return false;
     }
 
     // 13. Count files
+    logger_.info("MIGRATION", "Counting files");
     try {
         for (const auto& e : std::filesystem::recursive_directory_iterator(public_dir)) {
             if (e.is_regular_file()) { result.files_count++; result.bytes_copied += e.file_size(); }
         }
-    } catch (...) {}
+    } catch (const std::filesystem::filesystem_error& ex) {
+        logger_.warning("MIGRATION", "File count error: " + std::string(ex.what()));
+    } catch (...) {
+        logger_.warning("MIGRATION", "File count unknown error");
+    }
+    logger_.info("MIGRATION", "Files: " + std::to_string(result.files_count) + " (" + std::to_string(result.bytes_copied / 1024) + " KB)");
 
     result.web_root_type = web_root_type;
     result.success = true;
+    logger_.info("MIGRATION", "copy_files_to_public completed successfully");
     return true;
 }
 
 VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Options& opts) {
     ImportFilesResult result;
 
+    logger_.info("MIGRATION", "Import files requested");
+    logger_.info("MIGRATION", "  domain=" + opts.domain + " owner=" + opts.owner + " backup=" + opts.backup_path);
+
     Manifest m = inspect(opts);
-    if (!m.errors.empty()) { result.errors = m.errors; return result; }
+    if (!m.errors.empty()) {
+        logger_.error("MIGRATION", "Inspect failed: " + m.errors[0]);
+        result.errors = m.errors; return result;
+    }
 
     std::string site_dir = cfg_.sites_dir() + opts.domain + "/";
     std::string marker_path = site_dir + ".containercp-migration.json";
 
-    // Use inspect()'s already-validated fields — no manual marker re-parsing
+    logger_.info("MIGRATION", "Reading marker");
     if (!m.migration_ready_for_files) {
-        if (!m.marker_error.empty()) {
-            result.errors.push_back(m.marker_error);
-        } else {
-            result.errors.push_back("Migration not ready for file import. Run Stage 1 first.");
-        }
+        std::string reason = !m.marker_error.empty() ? m.marker_error : "Migration not ready for file import. Run Stage 1 first.";
+        logger_.error("MIGRATION", "Marker rejected: " + reason);
+        result.errors.push_back(reason);
         return result;
     }
+    logger_.info("MIGRATION", "Marker OK — site_id=" + std::to_string(m.migration_site_id) + " stage=" + std::to_string(m.migration_stage));
+    logger_.info("MIGRATION", "  files_status=" + m.files_status + " sql_status=" + m.sql_status);
 
     // Determine UID/GID BEFORE stopping containers (while they're still running)
+    logger_.info("MIGRATION", "Determining container UID/GID");
     std::string uid_str, gid_str;
     {
-        // Read from database container stat
-        auto db_uid = executor_.run({
-            "docker", "exec",
-            "site-" + std::to_string(m.all_databases.size() > 0 ? 1 : 0) + "-db",
-            "stat", "-c", "%u:%g", "/var/lib/mysql"
-        });
-        // Actually, use the php container since it's running
-        // We need the site_id. Try a different approach: inspect the compose project
         auto uid_result = executor_.run({
             "docker", "compose", "-f", site_dir + "docker-compose.yml",
             "exec", "-T", "php", "stat", "-c", "%u:%g", "/var/www/html"
         });
         if (uid_result.exit_code != 0) {
+            std::string err = "Cannot determine container UID/GID: exit=" + std::to_string(uid_result.exit_code) + " err=" + uid_result.err;
+            logger_.error("MIGRATION", err);
             result.errors.push_back("Cannot determine container UID/GID. Is site running?");
             return result;
         }
@@ -1136,33 +1210,50 @@ VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Optio
         while (!uid_line.empty() && (uid_line.back() == '\n' || uid_line.back() == '\r')) uid_line.pop_back();
         auto colon = uid_line.find(':');
         if (colon == std::string::npos) {
+            logger_.error("MIGRATION", "Invalid UID:GID format: " + uid_line);
             result.errors.push_back("Invalid UID:GID format: " + uid_line);
             return result;
         }
         uid_str = uid_line.substr(0, colon);
         gid_str = uid_line.substr(colon + 1);
         if (uid_str.empty() || gid_str.empty()) {
+            logger_.error("MIGRATION", "Empty UID or GID after parsing");
             result.errors.push_back("Empty UID or GID");
             return result;
         }
+        logger_.info("MIGRATION", "UID=" + uid_str + " GID=" + gid_str);
     }
 
     std::string staging = make_staging_dir();
-    if (staging.empty()) { result.errors.push_back("Cannot create staging"); return result; }
+    if (staging.empty()) {
+        logger_.error("MIGRATION", "Cannot create staging directory");
+        result.errors.push_back("Cannot create staging"); return result;
+    }
+    logger_.info("MIGRATION", "Staging: " + staging);
 
     auto cleanup = [&]() { if (!opts.keep_staging) cleanup_staging(staging); };
 
+    logger_.info("MIGRATION", "Extracting web archive from backup");
     std::string data_tarball;
     if (!extract_web_archive(opts.backup_path, opts.domain, staging, data_tarball)) {
+        logger_.error("MIGRATION", "Failed to extract web archive from " + opts.backup_path);
         result.errors.push_back("Failed to extract web archive");
         cleanup(); return result;
     }
+    logger_.info("MIGRATION", "Extracted to staging: " + data_tarball);
 
+    logger_.info("MIGRATION", "Calling copy_files_to_public");
     bool ok = copy_files_to_public(staging, m.web_root_type, site_dir, result, uid_str, gid_str);
     cleanup();
-    if (!ok) return result;
+    if (!ok) {
+        logger_.error("MIGRATION", "copy_files_to_public failed");
+        for (const auto& e : result.errors) logger_.error("MIGRATION", "  error: " + e);
+        return result;
+    }
+    logger_.info("MIGRATION", "copy_files_to_public completed");
 
     // Update migration marker: stage 2 completed — preserve all identity fields
+    logger_.info("MIGRATION", "Updating marker to stage 2");
     {
         MigrationMarker updated;
         updated.version = 1;
@@ -1175,15 +1266,20 @@ VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Optio
         updated.sql_pending = true;
 
         std::string marker_content = updated.to_json();
-        // Atomic write: write to temp file, then rename
         std::string tmp_path = marker_path + ".tmp";
         if (fs_.create_file(tmp_path, marker_content)) {
-            std::rename(tmp_path.c_str(), marker_path.c_str());
+            if (std::rename(tmp_path.c_str(), marker_path.c_str()) != 0) {
+                logger_.error("MIGRATION", "Failed to rename marker: " + std::string(std::strerror(errno)));
+                result.errors.push_back("CRITICAL: Files imported but failed to rename migration marker");
+                return result;
+            }
         } else {
+            logger_.error("MIGRATION", "Failed to write marker file");
             result.errors.push_back("CRITICAL: Files imported but failed to update migration marker");
             return result;
         }
     }
+    logger_.info("MIGRATION", "Marker updated successfully");
 
     result.success = true;
     return result;

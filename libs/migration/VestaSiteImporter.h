@@ -6,6 +6,7 @@
 #include "database/DatabaseManager.h"
 #include "domain/DomainManager.h"
 #include "filesystem/Filesystem.h"
+#include "logger/Logger.h"
 #include "proxy/ProxyProvider.h"
 #include "proxy/ReverseProxyManager.h"
 #include "provider/HostingProvider.h"
@@ -70,6 +71,7 @@ class VestaSiteImporter {
 public:
     VestaSiteImporter(runtime::CommandExecutor& executor,
                       filesystem::Filesystem& fs, config::Config& cfg,
+                      logger::Logger& logger,
                       site::SiteManager* sites = nullptr,
                       domain::DomainManager* domains = nullptr);
 
@@ -131,6 +133,7 @@ private:
     runtime::CommandExecutor& executor_;
     filesystem::Filesystem& fs_;
     config::Config& cfg_;
+    logger::Logger& logger_;
     site::SiteManager* sites_ = nullptr;
     domain::DomainManager* domains_ = nullptr;
 };

@@ -60,7 +60,7 @@ TEST_CASE("VestaSiteImporter inspect - domain found with WordPress") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string tar_path = "/tmp/test_vsi_wp.tar";
     create_test_tar(tar_path, "example.com");
@@ -97,7 +97,7 @@ TEST_CASE("VestaSiteImporter inspect - domain not found") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string tar_path = "/tmp/test_vsi_notfound.tar";
     create_test_tar(tar_path, "example.com");
@@ -121,7 +121,7 @@ TEST_CASE("VestaSiteImporter inspect - backup file missing") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     migration::Options opts;
     opts.backup_path = "/tmp/nonexistent_backup.tar";
@@ -140,7 +140,7 @@ TEST_CASE("VestaSiteImporter detect web root - public_html") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string tar_path = "/tmp/test_vsi_root_ph.tar";
     create_test_tar(tar_path, "x.com", "public_html");
@@ -153,7 +153,7 @@ TEST_CASE("VestaSiteImporter detect web root - public") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string tar_path = "/tmp/test_vsi_root_pub.tar";
     create_test_tar(tar_path, "x.com", "public");
@@ -166,7 +166,7 @@ TEST_CASE("VestaSiteImporter detect web root - htdocs") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string tar_path = "/tmp/test_vsi_root_ht.tar";
     create_test_tar(tar_path, "x.com", "htdocs");
@@ -179,7 +179,7 @@ TEST_CASE("VestaSiteImporter detect web root - www") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string tar_path = "/tmp/test_vsi_root_www.tar";
     create_test_tar(tar_path, "x.com", "www");
@@ -192,7 +192,7 @@ TEST_CASE("VestaSiteImporter detect web root - root fallback") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string tar_path = "/tmp/test_vsi_root_dot.tar";
     std::string dir = tar_path + "_dir";
@@ -217,7 +217,7 @@ TEST_CASE("VestaSiteImporter normalize DB name") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string tar_path = "/tmp/test_vsi_norm.tar";
     create_test_tar(tar_path, "x.com");
@@ -237,7 +237,7 @@ TEST_CASE("VestaSiteImporter tar safety - absolute path") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     auto m = importer.inspect({bad_tar, "x", "admin", "", true});
     CHECK_FALSE(m.errors.empty());
@@ -251,7 +251,7 @@ TEST_CASE("VestaSiteImporter tar safety - parent dir ..") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     auto m = importer.inspect({bad_tar, "x", "admin", "", true});
     CHECK_FALSE(m.errors.empty());
@@ -273,7 +273,7 @@ TEST_CASE("VestaSiteImporter tar safety - allowed .. in filename") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     // Should not fail on this tar (no .. component)
     // Domain not found is expected but not a safety error
@@ -293,7 +293,7 @@ TEST_CASE("VestaSiteImporter dry-run does not modify system") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string tar_path = "/tmp/test_vsi_dryrun.tar";
     create_test_tar(tar_path, "example.com");
@@ -315,7 +315,7 @@ TEST_CASE("VestaSiteImporter format_dry_run returns string") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string tar_path = "/tmp/test_vsi_fmt.tar";
     create_test_tar(tar_path, "x.com");
@@ -337,7 +337,7 @@ TEST_CASE("VestaSiteImporter wp-config at web root") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string tar_path = "/tmp/test_vsi_wproot.tar";
     // Create tar with wp-config.php directly at root (no subdirectory)
@@ -377,7 +377,7 @@ TEST_CASE("VestaSiteImporter wp-config ambiguous DB_NAME") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string tar_path = "/tmp/test_vsi_ambig.tar";
     std::string dir = tar_path + "_dir";
@@ -410,7 +410,7 @@ TEST_CASE("VestaSiteImporter realistic wp-config not ambiguous") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string tar_path = "/tmp/test_vsi_real.tar";
     std::string dir = tar_path + "_dir";
@@ -457,7 +457,7 @@ TEST_CASE("VestaSiteImporter rejects wp-config.php.bak") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string tar_path = "/tmp/test_vsi_bak.tar";
     std::string dir = tar_path + "_dir";
@@ -489,7 +489,7 @@ TEST_CASE("VestaSiteImporter marker - no marker on new site") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string tar_path = "/tmp/test_vsi_marker_new.tar";
     create_test_tar(tar_path, "x.com");
@@ -511,7 +511,7 @@ TEST_CASE("VestaSiteImporter marker - valid stage 1 marker with real site_id") {
     REQUIRE(site_id > 0);
     domains.create("markertest.local", 0, site_id);
 
-    migration::VestaSiteImporter importer(exec, fs, cfg, &sites, &domains);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance(), &sites, &domains);
 
     // Create site directory with marker containing real site_id
     std::string site_dir = cfg.sites_dir() + "markertest.local/";
@@ -544,7 +544,7 @@ TEST_CASE("VestaSiteImporter marker - missing site_id in marker") {
     uint64_t site_id = sites.create("nomarkerid.local", "admin", 1);
     domains.create("nomarkerid.local", 0, site_id);
 
-    migration::VestaSiteImporter importer(exec, fs, cfg, &sites, &domains);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance(), &sites, &domains);
 
     std::string site_dir = cfg.sites_dir() + "nomarkerid.local/";
     ::mkdir(site_dir.c_str(), 0755);
@@ -575,7 +575,7 @@ TEST_CASE("VestaSiteImporter marker - domain record site_id mismatch") {
     // DomainRecord belongs to a DIFFERENT site_id
     domains.create("domsitemismatch.local", 0, 999);
 
-    migration::VestaSiteImporter importer(exec, fs, cfg, &sites, &domains);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance(), &sites, &domains);
 
     std::string site_dir = cfg.sites_dir() + "domsitemismatch.local/";
     ::mkdir(site_dir.c_str(), 0755);
@@ -605,7 +605,7 @@ TEST_CASE("VestaSiteImporter marker - owner mismatch") {
     uint64_t site_id = sites.create("owner-mismatch.local", "admin", 1);
     domains.create("owner-mismatch.local", 0, site_id);
 
-    migration::VestaSiteImporter importer(exec, fs, cfg, &sites, &domains);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance(), &sites, &domains);
 
     std::string site_dir = cfg.sites_dir() + "owner-mismatch.local/";
     ::mkdir(site_dir.c_str(), 0755);
@@ -631,7 +631,7 @@ TEST_CASE("VestaSiteImporter marker - only directory no SiteRecord") {
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
     // No SiteManager passed — sites_ == nullptr
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string site_dir = cfg.sites_dir() + "nodir-record.local/";
     ::mkdir(site_dir.c_str(), 0755);
@@ -653,7 +653,7 @@ TEST_CASE("VestaSiteImporter marker - no marker on existing site") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string site_dir = cfg.sites_dir() + "existing-nomarker.local/";
     ::mkdir(site_dir.c_str(), 0755);
@@ -674,7 +674,7 @@ TEST_CASE("VestaSiteImporter marker - stage 2 marker") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
 
     std::string site_dir = cfg.sites_dir() + "stage2-marker.local/";
     ::mkdir(site_dir.c_str(), 0755);
@@ -700,7 +700,7 @@ TEST_CASE("VestaSiteImporter marker - compact JSON") {
     site::SiteManager sites; domain::DomainManager domains;
     uint64_t sid = sites.create("compact.local", "admin", 1);
     domains.create("compact.local", 0, sid);
-    migration::VestaSiteImporter imp(exec, fs, cfg, &sites, &domains);
+    migration::VestaSiteImporter imp(exec, fs, cfg, logger::Logger::instance(), &sites, &domains);
 
     std::string sd = cfg.sites_dir() + "compact.local/";
     ::mkdir(sd.c_str(), 0755); ::mkdir((sd + "public").c_str(), 0755);
@@ -717,7 +717,7 @@ TEST_CASE("VestaSiteImporter marker - pretty JSON with spaces") {
     site::SiteManager sites; domain::DomainManager domains;
     uint64_t sid = sites.create("pretty.local", "admin", 1);
     domains.create("pretty.local", 0, sid);
-    migration::VestaSiteImporter imp(exec, fs, cfg, &sites, &domains);
+    migration::VestaSiteImporter imp(exec, fs, cfg, logger::Logger::instance(), &sites, &domains);
 
     std::string sd = cfg.sites_dir() + "pretty.local/";
     ::mkdir(sd.c_str(), 0755); ::mkdir((sd + "public").c_str(), 0755);
@@ -734,7 +734,7 @@ TEST_CASE("VestaSiteImporter marker - reordered fields") {
     site::SiteManager sites; domain::DomainManager domains;
     uint64_t sid = sites.create("reord.local", "admin", 1);
     domains.create("reord.local", 0, sid);
-    migration::VestaSiteImporter imp(exec, fs, cfg, &sites, &domains);
+    migration::VestaSiteImporter imp(exec, fs, cfg, logger::Logger::instance(), &sites, &domains);
 
     std::string sd = cfg.sites_dir() + "reord.local/";
     ::mkdir(sd.c_str(), 0755); ::mkdir((sd + "public").c_str(), 0755);
@@ -751,7 +751,7 @@ TEST_CASE("VestaSiteImporter marker - legacy missing files_imported/sql_pending"
     site::SiteManager sites; domain::DomainManager domains;
     uint64_t sid = sites.create("legacy.local", "admin", 1);
     domains.create("legacy.local", 0, sid);
-    migration::VestaSiteImporter imp(exec, fs, cfg, &sites, &domains);
+    migration::VestaSiteImporter imp(exec, fs, cfg, logger::Logger::instance(), &sites, &domains);
 
     std::string sd = cfg.sites_dir() + "legacy.local/";
     ::mkdir(sd.c_str(), 0755); ::mkdir((sd + "public").c_str(), 0755);

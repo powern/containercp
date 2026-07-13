@@ -548,7 +548,7 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         }
 
         runtime::CommandExecutor exec;
-        migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(),
+        migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(), s.logger(),
                                               &s.sites(), &s.domains());
 
         // ── Stage 2: import files ──
