@@ -1734,29 +1734,68 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
     };
 
     // Drop existing tables with FOREIGN_KEY_CHECKS=0 (HARD FAILURE)
-    logger_.info("MIGRATION", "Dropping existing database content");
-    auto drop_res = executor_.run({
+    logger_.info("MIGRATION", "Dropping all database content from " + db_name);
+    logger_.info("MIGRATION", "Target database: " + db_name);
+    logger_.info("MIGRATION", "Target user: " + db_user);
+    logger_.info("MIGRATION", "DB container: " + db_container);
+
+    // Step 1: list tables
+    logger_.info("MIGRATION", "mysql: SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='" + db_name + "'");
+    auto table_list = executor_.run({
         "docker", "exec", db_container,
         "env", "MYSQL_PWD=" + db_password,
         "mariadb", "-N", "-u" + db_user, db_name,
-        "-e", "SET FOREIGN_KEY_CHECKS=0; "
-              "DROP PROCEDURE IF EXISTS drop_all_objects; "
-              "DELIMITER ;; "
-              "CREATE PROCEDURE drop_all_objects() BEGIN "
-              "DECLARE _done INT DEFAULT FALSE; "
-              "DECLARE _tab VARCHAR(255); "
-              "DECLARE _cur CURSOR FOR SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='" + db_name + "'; "
-              "DECLARE CONTINUE HANDLER FOR NOT FOUND SET _done = TRUE; "
-              "OPEN _cur; read_loop: LOOP FETCH _cur INTO _tab; IF _done THEN LEAVE read_loop; END IF; "
-              "SET @s = CONCAT('DROP TABLE IF EXISTS `', _tab, '`'); PREPARE stmt FROM @s; EXECUTE stmt; DROP PREPARE stmt; END LOOP; CLOSE _cur; END;; "
-              "DELIMITER ; CALL drop_all_objects(); DROP PROCEDURE IF EXISTS drop_all_objects; SET FOREIGN_KEY_CHECKS=1;"
+        "-e", "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='" + db_name + "'"
     });
-    if (drop_res.exit_code != 0) {
-        logger_.error("MIGRATION", "Failed to drop database objects: exit=" + std::to_string(drop_res.exit_code));
-        result.errors.push_back("Cannot clean database");
+    logger_.info("MIGRATION", "table_list exit_code=" + std::to_string(table_list.exit_code)
+                 + " stdout_size=" + std::to_string(table_list.out.size())
+                 + " stderr=" + table_list.err);
+
+    if (table_list.exit_code != 0) {
+        logger_.error("MIGRATION", "Failed to list tables: exit=" + std::to_string(table_list.exit_code));
+        logger_.error("MIGRATION", "table_list stderr: " + table_list.err);
+        result.errors.push_back("Cannot list database tables: " + table_list.err);
         cleanup_stg(); return result;
     }
-    logger_.info("MIGRATION", "Database cleaned");
+
+    // Drop each table with FOREIGN_KEY_CHECKS=0
+    logger_.info("MIGRATION", "Dropping tables one by one with FOREIGN_KEY_CHECKS=0");
+    std::string drop_sql = "SET FOREIGN_KEY_CHECKS=0;";
+    std::istringstream tbl_stream(table_list.out);
+    std::string tbl_name;
+    int table_count = 0;
+    while (std::getline(tbl_stream, tbl_name)) {
+        if (tbl_name.empty()) continue;
+        // Trim whitespace
+        while (!tbl_name.empty() && (tbl_name.back() == '\n' || tbl_name.back() == '\r' || tbl_name.back() == ' ')) tbl_name.pop_back();
+        if (tbl_name.empty()) continue;
+        drop_sql += " DROP TABLE IF EXISTS `" + tbl_name + "`;";
+        table_count++;
+    }
+    drop_sql += " SET FOREIGN_KEY_CHECKS=1;";
+
+    logger_.info("MIGRATION", "Dropping " + std::to_string(table_count) + " tables");
+    logger_.info("MIGRATION", "mysql: SET FOREIGN_KEY_CHECKS=0; DROP TABLE ...; SET FOREIGN_KEY_CHECKS=1;");
+
+    if (table_count > 0) {
+        auto drop_res = executor_.run({
+            "docker", "exec", db_container,
+            "env", "MYSQL_PWD=" + db_password,
+            "mariadb", "-N", "-u" + db_user, db_name,
+            "-e", drop_sql
+        });
+        logger_.info("MIGRATION", "drop_tables exit_code=" + std::to_string(drop_res.exit_code)
+                     + " stderr=" + drop_res.err);
+        if (drop_res.exit_code != 0) {
+            logger_.error("MIGRATION", "Failed to drop tables: exit=" + std::to_string(drop_res.exit_code));
+            logger_.error("MIGRATION", "drop_tables stderr: " + drop_res.err);
+            result.errors.push_back("Cannot clean database: " + drop_res.err);
+            cleanup_stg(); return result;
+        }
+    } else {
+        logger_.info("MIGRATION", "No tables to drop (empty database)");
+    }
+    logger_.info("MIGRATION", "Database cleaned — " + std::to_string(table_count) + " tables removed");
 
     // Import SQL via stdin from file (streaming, no RAM)
     logger_.info("MIGRATION", "Importing SQL from staging/import.sql via container stdin");
