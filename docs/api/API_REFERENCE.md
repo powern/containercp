@@ -574,6 +574,126 @@ API handlers must never:
 
 ---
 
+### 2.19 Migration — myVestaCP import
+
+| Method | Path | Purpose | Owner |
+|--------|------|---------|-------|
+| GET | `/api/migration/vesta/backups` | List available backup files from allowed directories | `VestaSiteImporter` |
+| POST | `/api/migration/vesta/inspect` | Read-only analysis of a backup for a specific domain | `VestaSiteImporter` |
+| POST | `/api/migration/vesta/create-site` | Stage 1: create site + Docker stack from backup metadata | `SiteCreateOperation` |
+| POST | `/api/migration/vesta/import-files` | Stage 2: import web files from backup into site document root | `VestaSiteImporter` |
+
+**Security:**
+- Backup files are only accepted from `/backup` and `<data_root>/backups/`
+- Canonical path validation via `realpath()`, symlinks rejected via `lstat()`
+- Only `.tar` and `.tar.gz` extensions allowed
+- Basename must not contain `/`
+- POST endpoints re-run `inspect()` before any operation (don't trust browser data)
+
+**GET /api/migration/vesta/backups** — returns list of `.tar`/`.tar.gz` files:
+
+```json
+{
+  "success": true,
+  "data": [
+    { "name": "admin.2026-07-01.tar", "size": 245000000, "mtime": 1783866000 }
+  ]
+}
+```
+
+**POST /api/migration/vesta/inspect** — analyze backup structure:
+
+Request:
+```json
+{
+  "backup": "admin.2026-07-01.tar",
+  "domain": "example.com",
+  "owner": "admin",
+  "database": "",
+  "skip_db": false,
+  "keep_staging": false
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "domain_found": true,
+    "web_archive_path": "web/example.com/domain_data.tar.gz",
+    "web_root_type": "public_html",
+    "wp_config_found": true,
+    "wp_config_parsed": true,
+    "wp_db_ambiguous": false,
+    "wp_db_name": "example_db",
+    "wp_db_user": "example_user",
+    "wp_db_host": "localhost",
+    "db_dump_found": true,
+    "db_dump_path": "db/example_db/example_db.mysql.sql.gz",
+    "db_type": "mysql",
+    "site_exists": false,
+    "available_disk_mb": 10240,
+    "all_databases": ["example_db"],
+    "errors": [],
+    "warnings": []
+  }
+}
+```
+
+**POST /api/migration/vesta/create-site** — Stage 1: create empty site:
+
+Request: same as inspect.
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Stage 1 completed — site created",
+    "site_id": 42,
+    "domain": "example.com",
+    "database_name": "example_com_db",
+    "database_user": "example_com_user",
+    "document_root": "/srv/containercp/sites/example.com/public",
+    "status": {
+      "site": "created",
+      "database": "created",
+      "docker_stack": "created",
+      "files_import": "pending",
+      "sql_import": "pending"
+    }
+  }
+}
+```
+
+**POST /api/migration/vesta/import-files** — Stage 2: import web files:
+
+Request: simplified version of inspect — `backup`, `domain`, `owner`, `keep_staging`.
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Stage 2 completed — files imported",
+    "web_root": "public_html",
+    "destination": "/srv/containercp/sites/example.com/public",
+    "files_count": 1240,
+    "bytes_copied": 45000000,
+    "warnings": [],
+    "errors": [],
+    "status": {
+      "files": "imported",
+      "sql_import": "pending",
+      "wp_config_update": "pending"
+    }
+  }
+}
+```
+
+---
+
 ## 7. Related documents
 
 - `docs/development/single-source-of-truth.md` — SSOT ownership rules
