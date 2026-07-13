@@ -778,6 +778,17 @@ Response:
 
 Rollback: if SQL import fails, the safety backup is restored. Marker stays at stage=2.
 
+**CLI: `--upgrade`** — Upgrade existing site runtime (no backup required):
+
+```bash
+containercp migrate-vesta-site --domain <domain> --owner <owner> --upgrade
+```
+
+Checks and fixes:
+1. Apache mod_rewrite (adds rewrite_module to 00-load-modules.conf)
+2. Trusted proxy block in wp-config.php (BEGIN CONTAINERCP TRUSTED PROXY)
+3. PHP syntax check with backup/restore on failure
+
 ### Migration state machine
 
 | Marker stage | Possible actions |

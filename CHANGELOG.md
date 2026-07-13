@@ -107,6 +107,26 @@ See `docs/changelog/early-development.md` for detailed entries.
 
 ---
 
+## 2026-07-13 | Existing site upgrade path — trusted proxy + mod_rewrite
+
+- `VestaSiteImporter::upgrade_site()` — upgrades existing WordPress sites:
+  - Checks/fixes Apache mod_rewrite in 00-load-modules.conf
+  - Adds trusted proxy block to wp-config.php (BEGIN CONTAINERCP TRUSTED PROXY)
+  - PHP syntax check with backup/restore on failure
+- CLI: `--upgrade` flag — runs without --backup
+- DaemonApp: handles --upgrade mode
+- All existing sites upgraded on production (test-gui-*, testssl, unity)
+
+## 2026-07-13 | Trusted proxy HTTPS detection + Apache mod_rewrite
+
+- Trusted proxy block added to wp-config.php during SQL import:
+  - Reads `X-Forwarded-Proto` header, sets `$_SERVER['HTTPS'] = 'on'`
+  - Only applies to requests through central nginx proxy
+  - Idempotent: `// BEGIN CONTAINERCP TRUSTED PROXY` / `// END CONTAINERCP TRUSTED PROXY`
+- Apache mod_rewrite: `LoadModule rewrite_module` in generated 00-load-modules.conf
+- Nginx HTTPS vhost sends: `X-Forwarded-Proto https`, `X-Forwarded-Port 443`, `X-Forwarded-Ssl on`
+- Fixes: ERR_TOO_MANY_REDIRECTS, 404 on pretty permalinks
+
 ## 2026-07-13 | Declarative proxy sync — orphan cleanup, HTTPS generation, validation
 
 - `NginxProxyProvider::sync_all_proxies()` — full declarative sync:
