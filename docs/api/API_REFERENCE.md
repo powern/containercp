@@ -633,6 +633,15 @@ Response:
     "db_dump_path": "db/example_db/example_db.mysql.sql.gz",
     "db_type": "mysql",
     "site_exists": false,
+    "migration_marker_found": false,
+    "migration_stage": 0,
+    "files_pending": false,
+    "files_imported": false,
+    "sql_pending": false,
+    "migration_ready_for_files": false,
+    "migration_site_id": 0,
+    "migration_owner": "",
+    "marker_error": "",
     "available_disk_mb": 10240,
     "all_databases": ["example_db"],
     "errors": [],
@@ -640,6 +649,40 @@ Response:
   }
 }
 ```
+
+If site already exists with a valid migration marker (Stage 1 completed), the response shows:
+
+```json
+{
+  "success": true,
+  "data": {
+    "domain_found": true,
+    "web_root_type": "public_html",
+    "wp_config_found": true,
+    "site_exists": true,
+    "migration_marker_found": true,
+    "migration_stage": 1,
+    "files_pending": true,
+    "files_imported": false,
+    "sql_pending": true,
+    "migration_ready_for_files": true,
+    "migration_site_id": 42,
+    "migration_owner": "admin",
+    "marker_error": ""
+  }
+}
+```
+
+Migration marker is stored at `<site_dir>/.containercp-migration.json` with format:
+```json
+{"domain":"example.com","owner":"admin","site_id":42,"stage":1,"files_pending":true,"files_imported":false,"sql_pending":true}
+```
+
+Stage 2 (`import-files`) validates:
+- Marker exists and contains `site_id` matching `SiteRecord.id`
+- `stage` is 1 and `files_pending` is true
+- `DomainRecord.site_id` matches `SiteRecord.id`
+- If any check fails, `migration_ready_for_files` is `false` and `marker_error` explains why
 
 **POST /api/migration/vesta/create-site** — Stage 1: create empty site:
 
