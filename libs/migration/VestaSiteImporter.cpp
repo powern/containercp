@@ -1728,8 +1728,11 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
         }
     }
 
+    // Pre-declare for rollback lambda capture
+    std::string wp_config_path_for_rollback;
+    std::string wp_config_bak;
+
     // Rollback helper: restore safety.sql into DB via app user (no DROP DATABASE)
-    std::string wp_config_bak; // populated later if wp-config is updated
     auto do_rollback = [&]() -> bool {
         logger_.info("MIGRATION", "Rollback step 1: copying safety dump to container");
         if (!result.safety_backup_created) {
@@ -1788,9 +1791,9 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
                      + " ok=" + std::string(ok ? "true" : "false"));
 
         // Restore wp-config if it was modified
-        if (!wp_config_bak.empty()) {
-            logger_.info("MIGRATION", "Rollback step 4: restoring wp-config.php from backup");
-            auto cfg_restore = executor_.run({"cp", wp_config_bak, find_wp_config_file(cfg_.sites_dir() + opts.domain + "/public/")});
+        if (!wp_config_bak.empty() && !wp_config_path_for_rollback.empty()) {
+            logger_.info("MIGRATION", "Rollback step 4: restoring wp-config.php from host copy");
+            auto cfg_restore = executor_.run({"cp", wp_config_bak, wp_config_path_for_rollback});
             logger_.info("MIGRATION", "Rollback: wp-config restore exit=" + std::to_string(cfg_restore.exit_code));
         }
         logger_.info("MIGRATION", "Rollback completed");
@@ -1914,9 +1917,42 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
     // Docker compose MariaDB service name (used for wp-config and diagnostics)
     std::string db_host = "mariadb";
 
+    // Determine container wp-config path from docker inspect mount mapping
+    logger_.info("MIGRATION", "Determining container wp-config path from mount mapping");
+    std::string container_wp_config;
+    std::string php_cont = "site-" + std::to_string(m.migration_site_id) + "-php";
+    {
+        // Get all mounts from PHP container as JSON
+        auto inspect = executor_.run({"docker", "inspect", php_cont,
+            "--format", "{{range .Mounts}}{{.Source}}|{{.Destination}}\n{{end}}"});
+        logger_.info("MIGRATION", "Host public dir: " + cfg_.sites_dir() + opts.domain + "/public");
+        if (inspect.exit_code == 0) {
+            std::istringstream mount_stream(inspect.out);
+            std::string mount_line;
+            while (std::getline(mount_stream, mount_line)) {
+                if (mount_line.empty()) continue;
+                auto pipe = mount_line.find('|');
+                if (pipe == std::string::npos) continue;
+                std::string host_path = mount_line.substr(0, pipe);
+                std::string cont_path = mount_line.substr(pipe + 1);
+                // Canonical match: resolve host path
+                char host_real[PATH_MAX], pub_real[PATH_MAX];
+                if (::realpath(host_path.c_str(), host_real) &&
+                    ::realpath((cfg_.sites_dir() + opts.domain + "/public").c_str(), pub_real) &&
+                    std::string(host_real) == std::string(pub_real)) {
+                    container_wp_config = cont_path + "/wp-config.php";
+                    logger_.info("MIGRATION", "PHP public mount destination: " + cont_path);
+                    logger_.info("MIGRATION", "Container wp-config path: " + container_wp_config);
+                    break;
+                }
+            }
+        }
+    }
+
     // Update wp-config.php with safety copy
     std::string public_dir = site_dir + "public/";
     std::string wp_config_path = find_wp_config_file(public_dir);
+    wp_config_path_for_rollback = wp_config_path; // for rollback to restore
     if (!wp_config_path.empty()) {
         logger_.info("MIGRATION", "Backing up wp-config.php before update");
         wp_config_bak = wp_config_path + ".containercp-before-sql";
@@ -1934,11 +1970,18 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
             cleanup_stg(); return result;
         }
 
-        // PHP syntax check
+        // PHP syntax check (use container mount path)
         logger_.info("MIGRATION", "Running php -l on updated wp-config.php");
+        std::string php_check_path = container_wp_config.empty() ? "/var/www/html/wp-config.php" : container_wp_config;
+        logger_.info("MIGRATION", "PHP check path: " + php_check_path);
+
+        // Verify file exists in container
+        auto exist_check = executor_.run({"docker", "exec", php_cont, "test", "-f", php_check_path});
+        logger_.info("MIGRATION", "wp-config exists in PHP container: " + std::string(exist_check.exit_code == 0 ? "true" : "false"));
+
         auto php_check = executor_.run({
-            "docker", "exec", "site-" + std::to_string(m.migration_site_id) + "-php",
-            "php", "-l", "/var/www/html/wp-config.php"
+            "docker", "exec", php_cont,
+            "php", "-l", php_check_path
         });
         if (php_check.exit_code != 0) {
             logger_.error("MIGRATION", "php -l failed: " + php_check.err);
