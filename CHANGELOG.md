@@ -107,6 +107,17 @@ See `docs/changelog/early-development.md` for detailed entries.
 
 ---
 
+## 2026-07-13 | Declarative proxy sync — orphan cleanup, HTTPS generation, validation
+
+- `NginxProxyProvider::sync_all_proxies()` — full declarative sync:
+  - Removes orphan .conf files (no proxy entry → file deleted)
+  - Generates correct HTTP/HTTPS config based on CertificateStore
+  - Validates each config with nginx -t
+  - Checks upstream container existence
+- `sync_all_https_configs()` now delegates to `sync_all_proxies()`
+- Fix: unity.softico.ua now has HTTPS (301) after sync
+- Fix: orphan proxy configs auto-removed on startup
+
 ## 2026-07-13 | ContainerCP PHP runtime with MySQL extensions
 
 - New Docker image: `ghcr.io/powern/containercp-php:8.4` (php:8.4-fpm + mysqli + pdo_mysql)
