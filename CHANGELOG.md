@@ -107,6 +107,17 @@ See `docs/changelog/early-development.md` for detailed entries.
 
 ---
 
+## 2026-07-13 | ContainerCP PHP runtime with MySQL extensions
+
+- New Docker image: `ghcr.io/powern/containercp-php:8.4` (php:8.4-fpm + mysqli + pdo_mysql)
+- Parameterized Dockerfile: `docker/php/Dockerfile` with `ARG PHP_VERSION`
+- ServiceRegistry: legacy PHP images auto-migrated to ContainerCP image on restart
+- PHP container preflight: `import_sql()` checks mysqli/pdo_mysql before destructive ops
+- Error if missing: "Target PHP runtime missing required MySQL extensions"
+- Example site (site-11) upgraded: `docker compose stop → rm → compose up -d php`
+- `scripts/update.sh` now builds PHP image during update
+- update.sh builds `ghcr.io/powern/containercp-php:8.4` if Dockerfile present
+
 ## 2026-07-12 | VestaSiteImporter — Stage 2: web file import
 
 - `import_files()` — extract, safety-copy, rsync, ownership fix, container restart
