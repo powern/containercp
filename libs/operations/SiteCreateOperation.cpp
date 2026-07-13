@@ -97,12 +97,18 @@ static void do_rollback(CreateState& st,
             }
         }
         // Fallback: remove by name pattern
-        auto net_by_name = exec.run({
-            "sh", "-c",
-            "docker network ls --filter name=containercp-site-" + std::to_string(st.site_id)
-            + " -q | xargs -r docker network rm 2>/dev/null"
+        auto nets_by_name = exec.run({
+            "docker", "network", "ls", "--filter",
+            "name=containercp-site-" + std::to_string(st.site_id),
+            "--format", "{{.ID}}"
         });
-        (void)net_by_name;
+        if (nets_by_name.exit_code == 0 && !nets_by_name.out.empty()) {
+            std::istringstream ns(nets_by_name.out);
+            std::string nid;
+            while (std::getline(ns, nid)) {
+                if (!nid.empty()) exec.run({"docker", "network", "rm", nid});
+            }
+        }
     }
 
     // 5. Remove Docker volumes by compose project name

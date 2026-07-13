@@ -304,9 +304,9 @@ int CommandDispatcher::run(int argc, char* argv[]) {
     }
 
     if (arg1 == "migrate-vesta-site") {
-        // Parse migrate-vesta-site arguments
         std::string backup, domain, owner, database;
-        bool dry_run = false, skip_db = false, keep_staging = false;
+        bool dry_run = false, execute = false, import_files = false;
+        bool skip_db = false, keep_staging = false;
         bool has_error = false;
 
         for (int i = 2; i < argc; ++i) {
@@ -316,9 +316,18 @@ int CommandDispatcher::run(int argc, char* argv[]) {
             else if (arg == "--owner" && i + 1 < argc) owner = argv[++i];
             else if (arg == "--database" && i + 1 < argc) database = argv[++i];
             else if (arg == "--dry-run") dry_run = true;
+            else if (arg == "--execute") execute = true;
+            else if (arg == "--import-files") import_files = true;
             else if (arg == "--skip-db") skip_db = true;
             else if (arg == "--keep-staging") keep_staging = true;
             else has_error = true;
+        }
+
+        // Detect conflicting modes
+        int modes = (dry_run ? 1 : 0) + (execute ? 1 : 0) + (import_files ? 1 : 0);
+        if (modes > 1) {
+            std::cout << "Error: conflicting modes. Choose one of: --dry-run, --execute, --import-files\n";
+            return 1;
         }
 
         if (has_error || backup.empty() || domain.empty() || owner.empty()) {
@@ -340,8 +349,9 @@ int CommandDispatcher::run(int argc, char* argv[]) {
                         + "|--owner|" + owner;
         if (!database.empty()) cmd += "|--database|" + database;
         if (dry_run) cmd += "|--dry-run";
-        else if (std::string(argv[2]) == "--import-files") cmd += "|--import-files";
-        else cmd += "|--execute";
+        else if (execute) cmd += "|--execute";
+        else if (import_files) cmd += "|--import-files";
+        else cmd += "|--dry-run"; // default safe mode
         if (skip_db) cmd += "|--skip-db";
         if (keep_staging) cmd += "|--keep-staging";
 

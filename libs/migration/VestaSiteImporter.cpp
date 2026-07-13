@@ -4,10 +4,12 @@
 #include <cstdio>
 #include <cstring>
 #include <climits>
+#include <filesystem>
 #include <fstream>
 #include <regex>
 #include <sstream>
 #include <sys/stat.h>
+#include <thread>
 
 namespace containercp::migration {
 
@@ -660,6 +662,30 @@ std::string VestaSiteImporter::format_dry_run(const Manifest& m, const Options& 
     return out.str();
 }
 
+// ── Safe tar member validation ──
+static bool validate_inner_tar(const std::string& tarball,
+                                std::vector<std::string>& errors) {
+    runtime::CommandExecutor exec;
+    auto list = exec.run({"tar", "-tzf", tarball});
+    if (list.exit_code != 0) {
+        errors.push_back("Cannot list inner archive");
+        return false;
+    }
+
+    std::istringstream stream(list.out);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (line.empty()) continue;
+        if (line[0] == '/') { errors.push_back("Absolute path: " + line); return false; }
+        std::istringstream cs(line);
+        std::string part;
+        while (std::getline(cs, part, '/')) {
+            if (part == "..") { errors.push_back("Parent ref: " + line); return false; }
+        }
+    }
+    return true;
+}
+
 bool VestaSiteImporter::extract_web_archive(
     const std::string& archive, const std::string& domain,
     const std::string& staging_dir,
@@ -676,9 +702,7 @@ bool VestaSiteImporter::extract_web_archive(
     }
 
     out_data_tarball = staging_dir + "/domain_data.tar.gz";
-    executor_.run({
-        "mv", staging_dir + "/web/" + domain + "/domain_data.tar.gz", out_data_tarball
-    });
+    executor_.run({"mv", staging_dir + "/web/" + domain + "/domain_data.tar.gz", out_data_tarball});
     executor_.run({"rm", "-rf", staging_dir + "/web"});
     return true;
 }
@@ -690,108 +714,129 @@ bool VestaSiteImporter::copy_files_to_public(
     ImportFilesResult& result) {
 
     std::string data_tarball = staging_dir + "/domain_data.tar.gz";
-    std::string extract_dir = staging_dir + "/extracted";
-    ::mkdir(extract_dir.c_str(), 0755);
-
-    // Extract full archive
-    auto ext = executor_.run({"tar", "-xzf", data_tarball, "-C", extract_dir});
-    if (ext.exit_code != 0) {
-        result.errors.push_back("Failed to extract web archive");
-        return false;
-    }
-
-    // Determine source path
-    std::string source_path = extract_dir;
-    if (!web_root_type.empty() && web_root_type != ".") {
-        source_path = extract_dir + "/" + web_root_type;
-    }
-
-    // Verify source exists
-    struct stat src_stat;
-    if (::stat(source_path.c_str(), &src_stat) != 0 || !S_ISDIR(src_stat.st_mode)) {
-        result.errors.push_back("Web root not found: " + source_path);
-        return false;
-    }
-
-    // Safety: check for path traversal in source
-    char src_real[PATH_MAX];
-    if (!::realpath(source_path.c_str(), src_real)) {
-        result.errors.push_back("Cannot resolve source path");
-        return false;
-    }
-    char ext_real[PATH_MAX];
-    if (!::realpath(extract_dir.c_str(), ext_real)) {
-        result.errors.push_back("Cannot resolve extract dir");
-        return false;
-    }
-    std::string src_str(src_real);
-    std::string ext_str(ext_real);
-    if (src_str.substr(0, ext_str.size()) != ext_str) {
-        result.errors.push_back("Web root outside extraction directory");
-        return false;
-    }
-
     std::string public_dir = site_dir + "public/";
 
-    // Safety-copy current public content
+    // 1. Validate inner tar members BEFORE extraction
+    if (!validate_inner_tar(data_tarball, result.errors)) return false;
+
+    // 2. Safety-copy current public — mandatory, hard error if fails
     std::string safety_dir = staging_dir + "/safety_public";
-    auto safety = executor_.run({
-        "rsync", "-a", "--safe-links",
-        public_dir, safety_dir + "/"
-    });
+    ::mkdir(safety_dir.c_str(), 0755);
+    auto safety = executor_.run({"rsync", "-a", "--safe-links", public_dir, safety_dir + "/"});
     if (safety.exit_code != 0) {
-        result.warnings.push_back("Failed to create safety copy, continuing");
-    }
-
-    // Helper to restore safety copy on failure
-    auto restore_safety = [&]() {
-        executor_.run({"rm", "-rf", public_dir});
-        ::mkdir(public_dir.c_str(), 0755);
-        executor_.run({
-            "rsync", "-a", "--safe-links",
-            safety_dir + "/", public_dir
-        });
-        result.warnings.push_back("Restored safety copy");
-    };
-
-    // Clear public dir (but don't remove the dir itself)
-    auto clean = executor_.run({
-        "find", public_dir, "-mindepth", "1", "-maxdepth", "1",
-        "-exec", "rm", "-rf", "{}", "+"
-    });
-    if (clean.exit_code != 0) {
-        result.warnings.push_back("Failed to clean public directory");
-    }
-
-    // Rsync files: use trailing slash on both paths to copy CONTENTS
-    auto rsync = executor_.run({
-        "rsync", "-a", "--safe-links",
-        source_path + "/", public_dir
-    });
-    if (rsync.exit_code != 0) {
-        result.errors.push_back("rsync failed with exit code " + std::to_string(rsync.exit_code));
-        restore_safety();
+        result.errors.push_back("Safety copy failed — aborting");
         return false;
     }
 
-    // Count files and size
-    auto count = executor_.run({
-        "find", public_dir, "-type", "f", "|", "wc", "-l"
-    });
-    if (count.exit_code == 0) {
-        try { result.files_count = std::stoull(count.out); }
-        catch (...) {}
+    // Rollback helper (used from multiple points)
+    auto rollback_stage2 = [&]() -> bool {
+        bool ok = true;
+        executor_.run({"rm", "-rf", public_dir});
+        ::mkdir(public_dir.c_str(), 0755);
+        if (executor_.run({"rsync", "-a", "--safe-links", safety_dir + "/", public_dir}).exit_code != 0) ok = false;
+
+        // Always try to restart web+php
+        executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "up", "-d", "web", "php"});
+        return ok;
+    };
+
+    // 3. Stop web+php only (mariadb+redis stay running)
+    if (executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "stop", "web", "php"}).exit_code != 0) {
+        result.errors.push_back("Failed to stop web/php");
+        return false;
     }
-    auto size_cmd = executor_.run({
-        "du", "-sb", public_dir, "--exclude=logs"
-    });
-    if (size_cmd.exit_code == 0) {
-        auto space = size_cmd.out.find('\t');
-        if (space != std::string::npos) {
-            try { result.bytes_copied = std::stoull(size_cmd.out.substr(0, space)); }
-            catch (...) {}
+
+    // 4. Extract inner archive
+    std::string extract_dir = staging_dir + "/extracted";
+    ::mkdir(extract_dir.c_str(), 0755);
+    if (executor_.run({"tar", "-xzf", data_tarball, "-C", extract_dir}).exit_code != 0) {
+        result.errors.push_back("Extraction failed");
+        rollback_stage2();
+        return false;
+    }
+
+    // 5. Determine source path
+    std::string source_path = extract_dir;
+    if (!web_root_type.empty() && web_root_type != ".") source_path = extract_dir + "/" + web_root_type;
+
+    struct stat st;
+    if (::stat(source_path.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+        result.errors.push_back("Web root not found: " + source_path);
+        rollback_stage2();
+        return false;
+    }
+    char src_r[PATH_MAX], ext_r[PATH_MAX];
+    if (!::realpath(source_path.c_str(), src_r) || !::realpath(extract_dir.c_str(), ext_r)) {
+        result.errors.push_back("Path resolution failed");
+        rollback_stage2();
+        return false;
+    }
+    if (std::string(src_r).substr(0, strlen(ext_r)) != ext_r) {
+        result.errors.push_back("Web root outside extract dir");
+        rollback_stage2();
+        return false;
+    }
+
+    // 6. Clear public contents (not the dir itself)
+    if (executor_.run({"find", public_dir, "-mindepth", "1", "-maxdepth", "1", "-exec", "rm", "-rf", "{}", "+"}).exit_code != 0) {
+        result.errors.push_back("Failed to clean public");
+        rollback_stage2();
+        return false;
+    }
+
+    // 7. rsync files
+    if (executor_.run({"rsync", "-a", "--safe-links", source_path + "/", public_dir}).exit_code != 0) {
+        result.errors.push_back("rsync failed");
+        rollback_stage2();
+        return false;
+    }
+
+    // 8. Fix ownership — use UID from web container
+    auto uid_r = executor_.run({"sh", "-c", "docker compose -f " + site_dir + "docker-compose.yml exec -T web stat -c %u /var/www/html 2>/dev/null || echo 1000"});
+    std::string uid_str = "1000";
+    if (uid_r.exit_code == 0) {
+        std::string u = uid_r.out;
+        while (!u.empty() && (u.back() == '\n' || u.back() == '\r')) u.pop_back();
+        if (!u.empty() && u.find_first_not_of("0123456789") == std::string::npos) uid_str = u;
+    }
+    if (executor_.run({"docker", "run", "--rm", "-v", public_dir + ":/t:rw", "alpine", "chown", "-R", uid_str + ":" + uid_str, "/t"}).exit_code != 0) {
+        result.errors.push_back("Ownership fix failed");
+        rollback_stage2();
+        return false;
+    }
+
+    // 9. Start web+php
+    if (executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "up", "-d", "web", "php"}).exit_code != 0) {
+        result.errors.push_back("Failed to start web/php");
+        rollback_stage2();
+        return false;
+    }
+
+    // 10. Health check with timeout
+    bool healthy = false;
+    for (int i = 0; i < 15; ++i) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        auto ps = executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "ps", "--format={{.Status}}", "web"});
+        auto ps_php = executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "ps", "--format={{.Status}}", "php"});
+        if (ps.exit_code == 0 && ps_php.exit_code == 0 &&
+            ps.out.find("healthy") != std::string::npos &&
+            ps_php.out.find("healthy") != std::string::npos) {
+            healthy = true;
+            break;
         }
     }
+    if (!healthy) {
+        result.errors.push_back("Health check timeout — rolling back");
+        rollback_stage2();
+        return false;
+    }
+
+    // 11. Count files
+    try {
+        for (const auto& e : std::filesystem::recursive_directory_iterator(public_dir)) {
+            if (e.is_regular_file()) { result.files_count++; result.bytes_copied += e.file_size(); }
+        }
+    } catch (...) {}
 
     result.web_root_type = web_root_type;
     result.success = true;
@@ -801,84 +846,29 @@ bool VestaSiteImporter::copy_files_to_public(
 VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Options& opts) {
     ImportFilesResult result;
 
-    // 1. Inspect to validate
     Manifest m = inspect(opts);
-    if (!m.errors.empty()) {
-        result.errors = m.errors;
-        return result;
-    }
+    if (!m.errors.empty()) { result.errors = m.errors; return result; }
 
-    // 2. Check site exists
     std::string site_dir = cfg_.sites_dir() + opts.domain + "/";
-    if (!fs_.exists(site_dir + "public/")) {
-        result.errors.push_back("Site directory not found. Run Stage 1 first.");
+    if (!fs_.exists(site_dir + "docker-compose.yml")) {
+        result.errors.push_back("Site not found. Run Stage 1 first.");
         return result;
     }
 
-    // 3. Create staging
     std::string staging = make_staging_dir();
-    if (staging.empty()) {
-        result.errors.push_back("Failed to create staging directory");
-        return result;
-    }
+    if (staging.empty()) { result.errors.push_back("Cannot create staging"); return result; }
 
-    // 4. Extract domain_data.tar.gz
+    auto cleanup = [&]() { if (!opts.keep_staging) cleanup_staging(staging); };
+
     std::string data_tarball;
     if (!extract_web_archive(opts.backup_path, opts.domain, staging, data_tarball)) {
-        result.errors.push_back("Failed to extract web archive from backup");
-        cleanup_staging(staging);
-        return result;
+        result.errors.push_back("Failed to extract web archive");
+        cleanup(); return result;
     }
 
-    // 5. Copy files to public
-    bool copy_ok = copy_files_to_public(staging, m.web_root_type, site_dir, result);
-
-    if (!copy_ok) {
-        cleanup_staging(staging);
-        return result;
-    }
-
-    // 6. Stop web + php
-    auto stop = executor_.run({
-        "docker", "compose", "-f", site_dir + "docker-compose.yml",
-        "stop", "web", "php"
-    });
-    if (stop.exit_code != 0) {
-        result.warnings.push_back("Failed to stop web/php containers: " + stop.err);
-    }
-
-    // 7. Fix ownership (uid 1000 is used by php container)
-    executor_.run({
-        "docker", "run", "--rm",
-        "-v", site_dir + "public:/var/www/html",
-        "alpine", "sh", "-c",
-        "chown -R 1000:1000 /var/www/html 2>/dev/null || true"
-    });
-
-    // 8. Start web + php
-    auto up = executor_.run({
-        "docker", "compose", "-f", site_dir + "docker-compose.yml",
-        "up", "-d", "web", "php"
-    });
-    if (up.exit_code != 0) {
-        result.errors.push_back("Failed to start web/php containers: " + up.err);
-        // Try to restore safety copy
-        std::string safety_dir = staging + "/safety_public";
-        if (fs_.exists(safety_dir)) {
-            executor_.run({"rm", "-rf", site_dir + "public"});
-            ::mkdir((site_dir + "public").c_str(), 0755);
-            executor_.run({"rsync", "-a", "--safe-links", safety_dir + "/", site_dir + "public"});
-            executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml",
-                          "up", "-d", "web", "php"});
-        }
-        cleanup_staging(staging);
-        return result;
-    }
-
-    // 9. Cleanup
-    if (!opts.keep_staging) {
-        cleanup_staging(staging);
-    }
+    bool ok = copy_files_to_public(staging, m.web_root_type, site_dir, result);
+    cleanup();
+    if (!ok) return result;
 
     result.success = true;
     return result;
