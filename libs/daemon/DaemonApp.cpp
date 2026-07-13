@@ -548,7 +548,7 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         }
 
         if (opts.backup_path.empty() || opts.domain.empty() || opts.owner.empty()) {
-            return Command::error("Usage: migrate-vesta-site --backup <file> --domain <domain> --owner <owner> [--dry-run] [--skip-db] [--keep-staging] [--database <name>] [--import-files]");
+            return Command::error("Usage: migrate-vesta-site --backup <file> --domain <domain> --owner <owner> [--dry-run] [--execute] [--import-files] [--import-sql] [--upgrade] [--database <name>] [--skip-db] [--keep-staging]");
         }
 
         runtime::CommandExecutor exec;
