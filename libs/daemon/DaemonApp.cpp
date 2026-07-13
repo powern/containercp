@@ -556,7 +556,7 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         std::string report = importer.format_dry_run(manifest, opts);
 
         if (!manifest.errors.empty()) {
-            return Command::success(report);
+            return Command::error(report);
         }
 
         return Command::success(report);

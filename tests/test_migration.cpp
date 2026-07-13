@@ -398,10 +398,87 @@ TEST_CASE("VestaSiteImporter wp-config ambiguous DB_NAME") {
 
     auto m = importer.inspect({tar_path, "x.com", "admin", "", true});
     CHECK(m.wp_config_found);
-    // The regex captures the last quoted value: "DB_NAME" (the getenv arg)
-    // Since expression contains "getenv", wp_db_ambiguous is set to true
-    CHECK(m.wp_config_parsed);
+    // Contains getenv() → ambiguous, not parsed as simple literal
+    CHECK_FALSE(m.wp_config_parsed);
     CHECK(m.wp_db_ambiguous);
-    CHECK_FALSE(m.wp_db_name.empty());
+    std::remove(tar_path.c_str());
+}
+
+TEST_CASE("VestaSiteImporter realistic wp-config not ambiguous") {
+    // A standard wp-config.php with literal DB_NAME and $table_prefix
+    // should NOT be ambiguous
+    config::Config& cfg = config::Config::instance();
+    filesystem::Filesystem fs;
+    runtime::CommandExecutor exec;
+    migration::VestaSiteImporter importer(exec, fs, cfg);
+
+    std::string tar_path = "/tmp/test_vsi_real.tar";
+    std::string dir = tar_path + "_dir";
+    ::mkdir(dir.c_str(), 0755);
+    ::mkdir((dir + "/web").c_str(), 0755);
+    ::mkdir((dir + "/web/x.com").c_str(), 0755);
+    ::mkdir((dir + "/public_html").c_str(), 0755);
+    ::mkdir((dir + "/db").c_str(), 0755);
+    ::mkdir((dir + "/db/admin_site").c_str(), 0755);
+    {
+        std::ofstream f(dir + "/public_html/wp-config.php");
+        f << "<?php\n"
+          << "/** MySQL settings */\n"
+          << "define('DB_NAME', 'admin_site');\n"
+          << "define('DB_USER', 'admin_u');\n"
+          << "define('DB_PASSWORD', 'secret');\n"
+          << "define('DB_HOST', 'localhost');\n"
+          << "\n"
+          << "/**#@+ Authentication */\n"
+          << "define('AUTH_KEY', 'random');\n"
+          << "\n"
+          << "/**#@- */\n"
+          << "$table_prefix = 'wp_';\n"
+          << "define('ABSPATH', __DIR__ . '/');\n";
+    }
+    {
+        std::ofstream f(dir + "/db/admin_site/admin_site.mysql.sql.gz");
+        f << "dump";
+    }
+    std::system(("cd " + dir + " && tar czf web/x.com/domain_data.tar.gz public_html/ && tar cf " + tar_path + " web/ db/ 2>/dev/null").c_str());
+    std::system(("rm -rf " + dir).c_str());
+
+    auto m = importer.inspect({tar_path, "x.com", "admin", "", true});
+    CHECK(m.wp_config_found);
+    CHECK(m.wp_config_parsed);
+    CHECK_FALSE(m.wp_db_ambiguous);
+    CHECK(m.wp_db_name == "admin_site");
+    CHECK(m.db_dump_found);
+    std::remove(tar_path.c_str());
+}
+
+TEST_CASE("VestaSiteImporter rejects wp-config.php.bak") {
+    // Files like wp-config.php.bak should NOT be treated as wp-config
+    config::Config& cfg = config::Config::instance();
+    filesystem::Filesystem fs;
+    runtime::CommandExecutor exec;
+    migration::VestaSiteImporter importer(exec, fs, cfg);
+
+    std::string tar_path = "/tmp/test_vsi_bak.tar";
+    std::string dir = tar_path + "_dir";
+    ::mkdir(dir.c_str(), 0755);
+    ::mkdir((dir + "/web").c_str(), 0755);
+    ::mkdir((dir + "/web/x.com").c_str(), 0755);
+    ::mkdir((dir + "/public_html").c_str(), 0755);
+    {
+        // Only a .bak file, no real wp-config.php
+        std::ofstream f(dir + "/public_html/wp-config.php.bak");
+        f << "<?php define('DB_NAME', 'old_db');";
+    }
+    {
+        std::ofstream f(dir + "/public_html/index.php");
+        f << "<?php";
+    }
+    std::system(("cd " + dir + " && tar czf web/x.com/domain_data.tar.gz public_html/ && tar cf " + tar_path + " web/ 2>/dev/null").c_str());
+    std::system(("rm -rf " + dir).c_str());
+
+    auto m = importer.inspect({tar_path, "x.com", "admin", "", true});
+    CHECK_FALSE(m.wp_config_found);
+    CHECK_FALSE(m.wp_config_parsed);
     std::remove(tar_path.c_str());
 }

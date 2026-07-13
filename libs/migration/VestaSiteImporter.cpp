@@ -206,11 +206,18 @@ bool VestaSiteImporter::extract_wp_config(
     search_paths.push_back("./wp-config.php");
 
     // Collect all wp-config.php candidates from inner tar
+    // Only accept entries whose basename is exactly "wp-config.php"
     std::vector<std::string> candidates;
     std::istringstream inner_stream(list_inner.out);
     std::string inner_line;
     while (std::getline(inner_stream, inner_line)) {
-        if (inner_line.find("wp-config.php") != std::string::npos) {
+        if (inner_line.empty()) continue;
+        // Remove trailing slash (directory marker)
+        std::string check = inner_line;
+        if (!check.empty() && check.back() == '/') check.pop_back();
+        auto slash = check.rfind('/');
+        std::string basename = (slash != std::string::npos) ? check.substr(slash + 1) : check;
+        if (basename == "wp-config.php") {
             candidates.push_back(inner_line);
         }
     }
@@ -276,43 +283,61 @@ bool VestaSiteImporter::extract_wp_config(
     executor_.run({"rm", "-rf", wp_extract_dir});
 
     bool found_any = false;
-    // Match the last quoted string before closing paren
-    // Handles: define('DB_NAME', 'simple') and define('DB_NAME', expr ?: 'fallback')
-    std::regex db_name_re(R"(define\s*\(\s*['\"]DB_NAME['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
-    std::regex db_user_re(R"(define\s*\(\s*['\"]DB_USER['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
-    std::regex db_pass_re(R"(define\s*\(\s*['\"]DB_PASSWORD['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
-    std::regex db_host_re(R"(define\s*\(\s*['\"]DB_HOST['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
 
+    // Step 1: find the full define('DB_NAME', ...) expression
+    // Capture the WHOLE expression content between ( and )
+    // so we can check its second argument for ambiguity
+    std::regex define_name_re(R"(define\s*\(\s*['\"]DB_NAME['\"]\s*,\s*(.*?)\))");
     std::smatch match;
 
-    if (std::regex_search(content, match, db_name_re)) {
-        out_db_name = match[1];
+    if (std::regex_search(content, match, define_name_re)) {
         found_any = true;
+        std::string full_expr = match[0].str();
+        std::string second_arg = match[1].str();
+
+        // Extract the DB_NAME value using a quoted-string regex
+        std::regex quote_re(R"(['\"]?([^'\",]+)['\"]?\s*\))");
+        std::smatch qm;
+
+        // The second_arg may be: 'simple_literal' or getenv(...) or $var etc.
+        // Check for ambiguity: contains $, getenv, or _SERVER (not in a comment)
+        bool has_dollar = second_arg.find('$') != std::string::npos;
+        bool has_getenv = second_arg.find("getenv") != std::string::npos;
+        bool has_server = second_arg.find("_SERVER") != std::string::npos;
+
+        if (!has_dollar && !has_getenv && !has_server) {
+            // Simple literal — extract the value
+            std::regex simple_val_re(R"(['\"]([^'\"]+)['\"])");
+            std::smatch sv;
+            if (std::regex_search(second_arg, sv, simple_val_re)) {
+                out_db_name = sv[1];
+                out_parsed = true;
+            }
+        } else {
+            // Ambiguous — but still try to find the last literal value
+            std::regex last_val_re(R"(['\"]([^'\"]+?)['\"]\s*\))");
+            std::smatch lv;
+            if (std::regex_search(second_arg, lv, last_val_re)) {
+                out_db_name = lv[1];
+                // Even though we found a value, it might be a fallback/default
+                // Mark as ambiguous so user can override with --database
+            }
+            out_ambiguous = true;
+        }
     }
 
-    if (std::regex_search(content, match, db_user_re)) {
-        out_db_user = match[1];
-    }
+    // Parse DB_USER, DB_PASSWORD, DB_HOST similarly (simple pattern)
+    auto extract_simple = [&](const std::string& name, std::string& out) {
+        std::regex re(R"(define\s*\(\s*['\"])" + name + R"(['\"]\s*,\s*['\"]([^'\"]+)['\"])");
+        std::smatch m;
+        if (std::regex_search(content, m, re)) {
+            out = m[1];
+        }
+    };
 
-    if (std::regex_search(content, match, db_pass_re)) {
-        out_db_password = match[1];
-    }
-
-    if (std::regex_search(content, match, db_host_re)) {
-        out_db_host = match[1];
-    }
-
-    // Check for ambiguous DB_NAME (variable/env reference in the raw content)
-    if (out_db_name.empty() ||
-        content.find("$") != std::string::npos ||
-        content.find("getenv") != std::string::npos ||
-        content.find("_SERVER") != std::string::npos) {
-        out_ambiguous = true;
-    }
-
-    if (!out_db_name.empty()) {
-        out_parsed = true;
-    }
+    extract_simple("DB_USER", out_db_user);
+    extract_simple("DB_PASSWORD", out_db_password);
+    extract_simple("DB_HOST", out_db_host);
 
     return found_any; // wp_config_found
 }
@@ -462,13 +487,17 @@ Manifest VestaSiteImporter::inspect(const Options& opts) {
     if (sites_ && sites_->find(opts.domain) != nullptr) {
         m.site_exists = true;
     }
+    if (!m.site_exists && domains_ && domains_->find(opts.domain) != nullptr) {
+        m.site_exists = true;
+    }
     if (!m.site_exists) {
         std::string site_dir = cfg_.sites_dir() + opts.domain + "/";
         m.site_exists = fs_.exists(site_dir);
     }
 
     // Find database
-    if ((m.wp_config_found || !opts.database.empty()) && !opts.skip_db) {
+    bool should_search_db = (m.wp_config_found || m.wp_config_parsed || !opts.database.empty()) && !opts.skip_db;
+    if (should_search_db) {
         std::string db_to_find = opts.database;
         if (db_to_find.empty() && m.wp_config_parsed && !m.wp_db_ambiguous) {
             db_to_find = normalize_db_name(m.wp_db_name);
