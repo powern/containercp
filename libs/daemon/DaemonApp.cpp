@@ -531,6 +531,7 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         migration::Options opts;
         bool is_import_files = false;
         bool is_import_sql = false;
+        bool is_upgrade = false;
 
         for (size_t i = 0; i < cmd.args.size(); ++i) {
             const auto& arg = cmd.args[i];
@@ -543,6 +544,7 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
             else if (arg == "--skip-db") opts.skip_db = true;
             else if (arg == "--import-files") is_import_files = true;
             else if (arg == "--import-sql") is_import_sql = true;
+            else if (arg == "--upgrade") is_upgrade = true;
         }
 
         if (opts.backup_path.empty() || opts.domain.empty() || opts.owner.empty()) {
@@ -599,6 +601,23 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
                 << "  ✅ SQL: imported\n"
                 << "  🎉 Migration completed\n";
             for (const auto& w : import_result.warnings) out << "\nWarning: " << w;
+            return Command::success(out.str());
+        }
+
+        // ── Upgrade existing site ──
+        if (is_upgrade) {
+            auto upgrade_result = importer.upgrade_site(opts);
+            if (!upgrade_result.success) {
+                std::string err_msg;
+                for (const auto& e : upgrade_result.errors) err_msg += e + "; ";
+                return Command::error("Upgrade failed: " + err_msg);
+            }
+            std::ostringstream out;
+            out << "Upgrade completed for " << opts.domain << "\n"
+                << "  mod_rewrite:  " << (upgrade_result.mod_rewrite_checked ? "✅ checked" : "⚠️ skipped") << "\n"
+                << "  proxy block:  " << (upgrade_result.trusted_proxy_added ? "✅ added/present" : "⚠️ skipped") << "\n"
+                << "  config backup:" << (upgrade_result.wp_config_backed_up ? "✅ done" : "⚠️ none") << "\n";
+            for (const auto& w : upgrade_result.warnings) out << "\nWarning: " << w;
             return Command::success(out.str());
         }
 

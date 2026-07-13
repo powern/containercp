@@ -103,6 +103,17 @@ public:
 
     ImportSqlResult import_sql(const Options& opts);
 
+    struct UpgradeResult {
+        bool success = false;
+        bool mod_rewrite_checked = false;
+        bool trusted_proxy_added = false;
+        bool wp_config_backed_up = false;
+        std::vector<std::string> warnings;
+        std::vector<std::string> errors;
+    };
+
+    UpgradeResult upgrade_site(const Options& opts);
+
 private:
     bool tar_safe_list(const std::string& archive,
                        std::vector<std::string>& entries,

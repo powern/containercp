@@ -2185,4 +2185,105 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
     return result;
 }
 
+VestaSiteImporter::UpgradeResult VestaSiteImporter::upgrade_site(const Options& opts) {
+    UpgradeResult result;
+    logger_.info("MIGRATION", "Upgrade site requested — domain=" + opts.domain);
+
+    std::string site_dir = cfg_.sites_dir() + opts.domain + "/";
+    if (!fs_.exists(site_dir + "docker-compose.yml")) {
+        result.errors.push_back("Site not found: " + opts.domain);
+        return result;
+    }
+
+    // 1. Check Apache mod_rewrite
+    auto mod_check = executor_.run({"docker", "exec", "site-N-web", "httpd", "-M"});
+    // Use compose to get correct container name
+    auto container_list = executor_.run({
+        "docker", "compose", "-f", site_dir + "docker-compose.yml", "ps", "--format={{.Name}}", "web"
+    });
+    std::string web_container;
+    std::istringstream cl(container_list.out);
+    std::getline(cl, web_container);
+    while (!web_container.empty() && (web_container.back() == '\n' || web_container.back() == '\r')) web_container.pop_back();
+
+    if (!web_container.empty()) {
+        auto httpd_check = executor_.run({"docker", "exec", web_container, "httpd", "-M"});
+        result.mod_rewrite_checked = true;
+        if (httpd_check.exit_code == 0 && httpd_check.out.find("rewrite_module") != std::string::npos) {
+            logger_.info("MIGRATION", "mod_rewrite already enabled in " + web_container);
+        } else {
+            logger_.info("MIGRATION", "mod_rewrite NOT found in " + web_container + " — adding");
+            // Add rewrite module to Apache config
+            std::string modules_file = site_dir + "config/apache/00-load-modules.conf";
+            if (fs_.exists(modules_file)) {
+                std::string content = fs_.read_file(modules_file);
+                if (content.find("rewrite_module") == std::string::npos) {
+                    std::string addition = "LoadModule rewrite_module modules/mod_rewrite.so\n";
+                    content += addition;
+                    fs_.create_file(modules_file, content);
+                    executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "restart", "web"});
+                    logger_.info("MIGRATION", "mod_rewrite enabled for " + opts.domain);
+                }
+            }
+        }
+    }
+
+    // 2. Check and add trusted proxy block to wp-config.php
+    std::string public_dir = site_dir + "public/";
+    std::string wp_config = find_wp_config_file(public_dir);
+    if (!wp_config.empty()) {
+        std::string content = fs_.read_file(wp_config);
+        if (content.find("BEGIN CONTAINERCP TRUSTED PROXY") == std::string::npos) {
+            logger_.info("MIGRATION", "Adding trusted proxy block to wp-config.php");
+            // Backup
+            executor_.run({"cp", wp_config, wp_config + ".containercp-upgrade-bak"});
+            result.wp_config_backed_up = true;
+
+            std::string proxy_block =
+                "\n// BEGIN CONTAINERCP TRUSTED PROXY\n"
+                "if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower($_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https') {\n"
+                "    $_SERVER['HTTPS'] = 'on';\n"
+                "    $_SERVER['SERVER_PORT'] = 443;\n"
+                "}\n"
+                "// END CONTAINERCP TRUSTED PROXY\n";
+
+            auto close_php = content.find("?>");
+            if (close_php != std::string::npos) {
+                content.insert(close_php, proxy_block);
+            } else {
+                content += proxy_block;
+            }
+            fs_.create_file(wp_config, content);
+
+            // PHP syntax check
+            auto site_id_str = opts.domain;
+            auto php_check = executor_.run({"docker", "exec", web_container.empty() ? "php" : web_container.substr(0, web_container.find('-', 4)) + "-php",
+                                             "php", "-l", "/var/www/html/wp-config.php"});
+            if (php_check.exit_code != 0) {
+                logger_.error("MIGRATION", "php -l failed after upgrade — restoring backup");
+                executor_.run({"cp", wp_config + ".containercp-upgrade-bak", wp_config});
+                result.warnings.push_back("wp-config.php syntax check failed, backup restored");
+            } else {
+                result.trusted_proxy_added = true;
+                logger_.info("MIGRATION", "Trusted proxy block added to wp-config.php");
+            }
+
+            // Remove backup if all OK
+            if (result.trusted_proxy_added) {
+                std::remove((wp_config + ".containercp-upgrade-bak").c_str());
+            }
+        } else {
+            logger_.info("MIGRATION", "Trusted proxy block already present in wp-config.php");
+            result.trusted_proxy_added = true;
+        }
+    }
+
+    // 3. Restart PHP to pick up changes
+    executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "restart", "php"});
+
+    result.success = true;
+    logger_.info("MIGRATION", "Upgrade completed for " + opts.domain);
+    return result;
+}
+
 } // namespace containercp::migration
