@@ -211,7 +211,19 @@ private:
 };
 ```
 
-### 3.2 Новий файл
+### 3.2 MVP Scope (перша версія)
+
+| Функція | v1 | Примітка |
+|---------|----|----------|
+| WordPress only | ✅ | Інші CMS не підтримуються |
+| Новий сайт | ✅ | Сайт не повинен існувати |
+| Той самий домен | ✅ | `--target-domain` відкладено |
+| Одна БД | ✅ | Перша знайдена |
+| SSL import | ❌ | Випускається після DNS |
+| Overwrite | ❌ | Відкладено |
+| search-replace | ❌ | Відкладено |
+
+### 3.3 Новий файл
 
 ```
 libs/migration/
@@ -249,11 +261,14 @@ libs/migration/
    tar -tf $staging_dir/web/$domain/domain_data.tar.gz | grep "wp-config.php"
 3. Якщо знайдено:
    - Витягти wp-config.php в тимчасову директорію
-   - Прочитати регулярками:
-     define( 'DB_NAME', '(.+?)' )
-     define( 'DB_USER', '(.+?)' )
-     define( 'DB_PASSWORD', '(.+?)' )
-     define( 'DB_HOST', '(.+?)' )
+   - Прочитати регуляркою (підтримуючи одинарні та подвійні лапки, пробіли):
+     define\s*\(\s*['"]DB_NAME['"]\s*,\s*['"](.+?)['"]\s*\)
+     define\s*\(\s*['"]DB_USER['"]\s*,\s*['"](.+?)['"]\s*\)
+     define\s*\(\s*['"]DB_PASSWORD['"]\s*,\s*['"](.+?)['"]\s*\)
+     define\s*\(\s*['"]DB_HOST['"]\s*,\s*['"](.+?)['"]\s*\)
+   - НЕ виконувати PHP-файл (не використовувати php -r або eval)
+   - НЕ логувати DB_PASSWORD (маскувати як ***)
+   - Якщо DB_NAME визначається через змінну/getenv або не знайдено → вимагати --database
    - Нормалізувати DB_NAME: прибрати префікс старого користувача Vesta
    - Якщо DB_HOST != 'localhost' → попередити
 4. Якщо не WordPress (немає wp-config.php):
@@ -268,7 +283,7 @@ libs/migration/
 2. Список всіх баз: cut -f 3 -d / | sort -u
 3. Для кожної БД:
    - Якщо назва БД містить wp_db_name або її нормалізовану версію → знайдено
-   - Якщо знайдено → tar -tf $backup | grep "^./db/$found/db/" → .sql.gz
+   - Якщо знайдено → tar -tf $backup | grep "^./db/$found/" | grep "\.sql\.gz$"
 4. Якщо не знайдено:
    - Показати список доступних БД
    - Користувач вказує --database вручну
@@ -278,45 +293,61 @@ libs/migration/
 
 ```python
 1. dry_run() → показати Manifest
-2. Якщо sites_.find(domain) → перевірити overwrite
+2. Якщо sites_.find(domain) → error "Site already exists. Use --overwrite not supported in v1."
 3. Створити staging: make_staging_dir()
-4. Витягти web files:
+4. Витягти та проаналізувати web files:
    tar xf $backup -C $staging_dir ./web/$domain/domain_data.tar.gz
    cd $staging_dir/web/$domain/
-   tar xzf domain_data.tar.gz -C $staging_dir/files/
+   # Визначити web root всередині domain_data.tar.gz:
+   #   tar -tf domain_data.tar.gz | grep -E "^\.\/?(public_html|public|htdocs|www|root)\/"
+   # Якщо знайдено public_html → web_root = public_html
+   # Якщо знайдено public     → web_root = public
+   # Якщо знайдено htdocs     → web_root = htdocs
+   # Якщо знайдено www        → web_root = www
+   # Якщо нічого не знайдено  → web_root = . (корінь архіву)
+   tar xzf domain_data.tar.gz -C $staging_dir/web-root/ $web_root/
+   # Результат: $staging_dir/web-root/ містить вміст web_root
+   # Копіювати ВМІСТ web_root, а не саму директорію:
+   #   cp -r $staging_dir/web-root/* /srv/containercp/sites/$domain/public/
+   # Не допустити: public/public_html/
 5. Знайти wp-config.php (п.4.2)
 6. Якщо WordPress:
    - Знайти БД (п.4.3)
    - Витягти SQL dump:
      tar xf $backup -C $staging_dir ./db/$found_db/
-     gzip -d $staging_dir/db/$found_db/$found_db.*.sql.gz
+     # .sql.gz знаходиться безпосередньо в db/<db>/ — без вкладеного db/
    - Запам'ятати старий DB_NAME, DB_USER, DB_PASSWORD
 7. Створити сайт через SiteCreateOperation (dry_run=false):
-   - Використовувати новий db_name, db_user, db_password (згенеровані)
-   - site->id (отримати після створення)
-8. Зупинити Docker stack:
-   docker compose -f /srv/containercp/sites/$domain/docker-compose.yml down
+   - SiteCreateOperation сам створює DatabaseRecord, генерує db_name, db_user, db_password
+   - Після виконання знайти DatabaseRecord по site.id:
+     for (const auto& d : databases_.list())
+         if (d.site_id == site.id) { db_rec = &d; break; }
+   - Використовувати db_rec->db_name, db_rec->db_user, db_rec->db_password
+   - НЕ виконувати CREATE DATABASE / CREATE USER / GRANT — це зробив provider
+8. Зупинити web + php (MariaDB і Redis залишити запущеними):
+   docker compose -f /srv/containercp/sites/$domain/docker-compose.yml stop web php
 9. Очистити public/:
    rm -rf /srv/containercp/sites/$domain/public/*
 10. Скопіювати файли:
-    rsync -a $staging_dir/files/ /srv/containercp/sites/$domain/public/
+    rsync -a $staging_dir/web-root/ /srv/containercp/sites/$domain/public/
     # Перевірити: немає ../, немає symlink escape
 11. Якщо WordPress:
-    - Запустити MariaDB контейнер (якщо не запущений)
-    - Створити БД + користувача:
-      docker exec site-{$site.id}-db mariadb -e "
-         CREATE DATABASE IF NOT EXISTS `$new_db_name`;
-         GRANT ALL ON `$new_db_name`.* TO '$new_db_user'@'%' IDENTIFIED BY '$new_db_password';
-         FLUSH PRIVILEGES;"
+    - Дочекатись готовності MariaDB:
+      for i in 1..30; do
+        docker exec site-{$site.id}-db mariadb -e "SELECT 1" && break
+        sleep 1
+      done
+    - Перевірити SQL dump (gzip -t, наявність, тип mysql/mariadb):
+      gzip -t $dump_path || error "Corrupt SQL dump"
     - Імпортувати дамп:
-      gunzip -c $dump_path | docker exec -i site-{$site.id}-db mariadb $new_db_name
+      gunzip -c $dump_path | docker exec -i site-{$site.id}-db mariadb $db_rec->db_name
+      # Логувати stderr без паролів
     - Оновити wp-config.php: замінити старі DB_NAME, DB_USER, DB_PASSWORD на нові
-    - Якщо target_domain != domain:
-      - Оновити siteurl + home в БД
-      - Виконати wp-cli search-replace (через php container)
-12. Запустити Docker stack:
+12. Запустити stack повністю:
     docker compose -f /srv/containercp/sites/$domain/docker-compose.yml up -d
-13. Health-check: curl -f http://$domain/
+13. Health-check (без зовнішнього DNS, через containercp-proxy):
+    curl -s -o /dev/null -w "%{http_code}" --resolve $domain:80:127.0.0.1 http://$domain/ 2>/dev/null
+    # Враховувати 301/302 як success
 14. Якщо keep_staging=false → rm -rf $staging_dir
 15. Вивести результат
 ```
@@ -366,12 +397,10 @@ containercp migrate-vesta-site \
 | `--backup` | ✅ | Шлях до VestaCP backup `.tar` файлу |
 | `--domain` | ✅ | Домен сайту в архіві для відновлення |
 | `--owner` | ✅ | Власник сайту в ContainerCP |
-| `--target-domain` | ❌ | Новий домен (якщо змінюється) |
 | `--database` | ❌ | Примусово вказати ім'я БД (якщо авто не знайдено) |
 | `--dry-run` | ❌ | Тільки показати що буде зроблено |
 | `--keep-staging` | ❌ | Залишити staging директорію |
 | `--skip-db` | ❌ | Пропустити імпорт БД |
-| `--overwrite` | ❌ | Перезаписати існуючий сайт (видаляє старий) |
 
 ---
 
@@ -413,8 +442,8 @@ Will do:
   8. Health check
 
 Conflicts:
-  Domain "example.com" already exists: NO
-  Database "example_com_db" already exists: NO
+  Domain "example.com" already exists: NO — буде помилка, вихід
+  Database "example_com_db" already exists: NO — буде помилка, вихід
   Disk space required: ~50 MB (available: 10 GB)
 
 Would proceed? [y/N]
@@ -429,39 +458,79 @@ Would proceed? [y/N]
 | **inspect** | Архів не знайдено | — |
 | **inspect** | Домен не знайдено в архіві | — |
 | **inspect** | Пошкоджений tar | — |
-| **create site** | SiteCreateOperation failed | Вбудований rollback |
-| **extract files** | tar error | Stop stack, rm site, rm staging |
-| **import DB** | DB create failed | Stop stack, rm site, rm staging |
-| **import DB** | SQL import error | Stop stack, rm site, rm staging |
+| **inspect** | Сайт вже існує | Завершити без змін |
+| **create site** | SiteCreateOperation failed | Вбудований rollback (видаляє все) |
+| **extract files** | tar error | Rollback importer resources |
+| **SQL dump** | gzip -t failed | Rollback importer resources |
+| **SQL import** | MariaDB timeout | Rollback importer resources |
+| **SQL import** | SQL error | Rollback importer resources |
 | **wp-config** | Update failed | Import done, попередити |
-| **start stack** | docker compose up failed | Stop stack, rm site, rm staging |
+| **start stack** | docker compose up failed | Rollback importer resources |
 | **health check** | curl timeout/fail | Попередити, але сайт створено |
 | **disk space** | < 2x необхідного | Не починати import |
 
-### Алгоритм cleanup:
+### Алгоритм rollback (тільки ресурси створені importer-ом):
 ```cpp
 void VestaSiteImporter::rollback(uint64_t site_id, const std::string& domain) {
-    // 1. Docker compose down
-    std::string cmd = "cd " + cfg_.sites_dir() + domain
-        + " && docker compose down --volumes --remove-orphans 2>/dev/null || true";
-    std::system(cmd.c_str());
-    // 2. Видалити мережу
-    std::string net = "docker network ls --filter name=containercp-site-"
-        + std::to_string(site_id) + " -q | xargs -r docker network rm 2>/dev/null || true";
-    std::system(net.c_str());
-    // 3. Видалити директорію сайту
-    fs_.remove_directory(cfg_.sites_dir() + domain);
-    // 4. Видалити proxy конфіг
-    proxy_provider_.remove_proxy(domain);
-    // 5. Видалити records
-    for (const auto& d : databases_.list())
-        if (d.site_id == site_id) databases_.remove(d.id);
-    for (const auto& d : domains_.list())
-        if (d.site_id == site_id) domains_.remove(d.id);
-    sites_.remove(site_id);
+    // 1. Docker compose down — тільки якщо stack був створений importer-ом
+    if (stack_created_by_importer_) {
+        std::string cmd = "cd " + cfg_.sites_dir() + domain
+            + " && docker compose down --volumes --remove-orphans 2>/dev/null || true";
+        std::system(cmd.c_str());
+        // 2. Видалити мережу
+        std::string net = "docker network ls --filter name=containercp-site-"
+            + std::to_string(site_id) + " -q | xargs -r docker network rm 2>/dev/null || true";
+        std::system(net.c_str());
+    }
+    // 3. Видалити директорію сайту (тільки якщо створено importer-ом)
+    if (site_created_by_importer_) {
+        fs_.remove_directory(cfg_.sites_dir() + domain);
+    }
+    // 4. Видалити proxy конфіг (тільки якщо створено importer-ом)
+    if (proxy_created_by_importer_) {
+        proxy_provider_.remove_proxy(domain);
+    }
+    // 5. Видалити records (тільки importer-ом створені)
+    if (database_created_by_importer_) {
+        for (const auto& d : databases_.list())
+            if (d.site_id == site_id) databases_.remove(d.id);
+    }
+    if (domain_created_by_importer_) {
+        for (const auto& d : domains_.list())
+            if (d.site_id == site_id) domains_.remove(d.id);
+    }
+    if (site_created_by_importer_) {
+        sites_.remove(site_id);
+    }
     // 6. Видалити staging
     if (!keep_staging_) cleanup(staging_dir_);
 }
+```
+
+### SQL dump перевірка:
+```python
+1. gzip -t $dump_path || error "Corrupt or invalid gzip: $dump_path"
+2. Перевірити що всередині є SQL (перші байти після gunzip):
+   gunzip -c $dump_path | head -1 | grep -qi "mysql\|mariadb\|CREATE\|INSERT" || warning
+3. Визначити тип:
+   case $TYPE in
+       mysql|mariadb) import_via_mariadb ;;
+       pgsql) warning "PostgreSQL not supported in v1, skip DB" ;;
+       *) warning "Unknown DB type $TYPE, skip DB" ;;
+   esac
+4. Логувати stderr БЕЗ паролів (маскувати DB_PASSWORD перед записом)
+5. Перевірити exit code pipeline:
+   gunzip -c $dump_path | docker exec -i site-{$id}-db mariadb $db_name
+   if [ ${PIPESTATUS[0]} -ne 0 ] || [ ${PIPESTATUS[1]} -ne 0 ]; then error; fi
+```
+
+### MariaDB readiness:
+```python
+for i in 1 2 3 ... 30; do
+    docker exec site-{$id}-db mariadb -e "SELECT 1" >/dev/null 2>&1 && break
+    sleep 1
+done
+if [ $i -eq 30 ]; then error "MariaDB not ready after 30s"; fi
 ```
 
 ---
@@ -534,7 +603,7 @@ void VestaSiteImporter::rollback(uint64_t site_id, const std::string& domain) {
 ## 12. Приклад реального запуску
 
 ```bash
-# 1. Перевірити що можна зробити
+# 1. Dry-run — перевірити що можна зробити
 containercp migrate-vesta-site \
   --backup /backup/admin.2026-06-15_03-00-01.tar \
   --domain myblog.com \
@@ -543,11 +612,13 @@ containercp migrate-vesta-site \
 
 # Output:
 # Domain "myblog.com" found in backup ✅
-# Web files: 45 MB
+# Web files: 45 MB, web root: public_html
 # WordPress detected ✅
-# DB: admin_myblog (dump: 8 MB)
+# DB: admin_myblog (dump: 8 MB, type: mysql)
 # Site doesn't exist yet ✅
 # Will create site + Docker stack + import files + import DB
+# 
+# Would proceed? [y/N]
 
 # 2. Виконати імпорт
 containercp migrate-vesta-site \
@@ -556,31 +627,32 @@ containercp migrate-vesta-site \
   --owner admin
 
 # Output:
-# Step 1/8: Creating site... ✅ (site id: 42)
-# Step 2/8: Creating database... ✅ (db: myblog_com_db)
-# Step 3/8: Creating Docker stack... ✅
-# Step 4/8: Importing web files... ✅ (45 MB)
-# Step 5/8: Importing database... ✅ (8 MB)
-# Step 6/8: Updating wp-config.php... ✅
-# Step 7/8: Starting stack... ✅
-# Step 8/8: Health check... ✅ (HTTP 200)
+# [1/8] Inspecting backup... ✅ (domain found, WordPress detected)
+# [2/8] Creating site...        ✅ (site id: 42)
+# [3/8] Creating Docker stack... ✅
+# [4/8] Importing web files...   ✅ (45 MB, root: public_html → public/)
+# [5/8] Waiting for MariaDB...   ✅
+# [6/8] Importing database...    ✅ (8 MB)
+# [7/8] Updating wp-config.php... ✅ (credentials updated)
+# [8/8] Health check...          ✅ (HTTP 200 via --resolve)
 # 
 # Import completed successfully!
 # Site: myblog.com
-# URL:  http://myblog.com
+# URL:  http://myblog.com (чекає DNS)
 # DB:   myblog_com_db / myblog_com_user
+# Docker: site-42-{web,php,mariadb,redis}
 #
 # Next steps:
-#   1. Point DNS to this server
-#   2. Issue SSL certificate via ContainerCP Web UI
-#   3. Verify email delivery
+#   1. sudo docker compose -f /srv/containercp/sites/myblog.com/docker-compose.yml logs
+#   2. Point DNS A record → this server
+#   3. Issue SSL via ContainerCP Web UI → POST /api/ssl/issue
+#   4. Verify site via browser
 
-# 3. Перевірити сайт
-curl -s http://myblog.com/ | head -5
-# <!DOCTYPE html>
-# <html>
-# <head>
-#   <title>My Blog</title>
+# 3. Health-check без DNS
+curl -s -o /dev/null -w "%{http_code}" \
+  --resolve myblog.com:80:127.0.0.1 \
+  http://myblog.com/
+# 200 (або 301/302)
 ```
 
 ---
@@ -593,9 +665,9 @@ VestaCP створює БД з префіксом користувача: `admin
 2. Додати префікс ContainerCP: `wp_db` → `myblog_com_db` (через `StringUtils::sanitize`)
 
 ### 13.2 serialized data в WordPress
-При зміні домену (`--target-domain`) в serialized data WordPress
-потрібно використовувати `wp search-replace` через WP-CLI,
-а не простий `sed`, щоб не пошкодити serialized strings.
+В MVP (той самий домен) serialized data не потребує змін.
+При додаванні `--target-domain` у майбутньому — використовувати
+`wp search-replace` через WP-CLI в PHP контейнері, не `sed`.
 
 ### 13.3 SSL
 - При створенні сайту SSL не випускається
