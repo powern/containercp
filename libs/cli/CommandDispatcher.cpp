@@ -326,15 +326,10 @@ int CommandDispatcher::run(int argc, char* argv[]) {
                       << "  --backup <file>     Path to myVestaCP backup archive\n"
                       << "  --domain <domain>   Domain to restore\n"
                       << "  --owner <owner>     ContainerCP owner\n"
-                      << "  --dry-run           Required: inspect without changes\n"
+                      << "  --dry-run           Inspect without changes\n"
                       << "  [--database <name>] Force specific database name\n"
                       << "  [--skip-db]         Skip database import\n"
                       << "  [--keep-staging]    Keep temporary files\n";
-            return 1;
-        }
-
-        if (!dry_run) {
-            std::cout << "Error: --dry-run is required. Import execution not implemented yet.\n";
             return 1;
         }
 
@@ -343,6 +338,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
                         + "|--owner|" + owner;
         if (!database.empty()) cmd += "|--database|" + database;
         if (dry_run) cmd += "|--dry-run";
+        else cmd += "|--execute";
         if (skip_db) cmd += "|--skip-db";
         if (keep_staging) cmd += "|--keep-staging";
 

@@ -2620,6 +2620,142 @@ bool ApiServer::start() {
         return r;
     });
 
+    router_.add("POST", "/api/migration/vesta/create-site", [&s, &resolve_allowed_backup](const Request& req) {
+        Response r;
+
+        // Parse body
+        std::string backup, domain, owner, database;
+        bool skip_db = false, keep_staging = false;
+
+        auto extract = [&](const std::string& name) -> std::string {
+            auto pos = req.body.find("\"" + name + "\":\"");
+            if (pos == std::string::npos) {
+                pos = req.body.find("\"" + name + "\": \"");
+                if (pos == std::string::npos) return "";
+            }
+            auto start = req.body.find('"', pos + name.size() + 3);
+            if (start == std::string::npos) return "";
+            auto end = req.body.find('"', start + 1);
+            if (end == std::string::npos) return "";
+            return req.body.substr(start + 1, end - start - 1);
+        };
+        auto extract_bool = [&](const std::string& name) -> bool {
+            auto pos = req.body.find("\"" + name + "\":true");
+            if (pos != std::string::npos) return true;
+            pos = req.body.find("\"" + name + "\": true");
+            return pos != std::string::npos;
+        };
+
+        backup = extract("backup");
+        domain = extract("domain");
+        owner = extract("owner");
+        database = extract("database");
+        skip_db = extract_bool("skip_db");
+        keep_staging = extract_bool("keep_staging");
+
+        if (backup.empty() || domain.empty() || owner.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"backup, domain and owner are required\"}";
+            return r;
+        }
+
+        // Step 1: validate backup file (re-inspect, don't trust browser data)
+        std::vector<std::string> allowed_dirs = {"/backup", s.config().data_root() + "/backups"};
+        std::string resolve_error;
+        std::string resolved_path = resolve_allowed_backup(backup, allowed_dirs, resolve_error);
+
+        if (resolved_path.empty()) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(resolve_error) + "\"}";
+            return r;
+        }
+
+        // Step 2: re-run inspect to validate
+        runtime::CommandExecutor exec;
+        migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(),
+                                              &s.sites(), &s.domains());
+        migration::Options opts;
+        opts.backup_path = resolved_path;
+        opts.domain = domain;
+        opts.owner = owner;
+        opts.database = database;
+        opts.skip_db = skip_db;
+        opts.keep_staging = keep_staging;
+        opts.dry_run = true;
+
+        auto manifest = importer.inspect(opts);
+
+        if (!manifest.errors.empty()) {
+            std::ostringstream err;
+            err << "Validation failed: ";
+            for (const auto& e : manifest.errors) err << e << "; ";
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(err.str()) + "\"}";
+            return r;
+        }
+
+        if (manifest.site_exists) {
+            r.status_code = 409;
+            r.body = "{\"success\":false,\"error\":\"Site already exists. Import not possible.\"}";
+            return r;
+        }
+
+        // Step 3: find default node
+        auto* node = s.nodes().find("local");
+        if (!node) {
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"No node available\"}";
+            return r;
+        }
+
+        // Step 4: create site via SiteCreateOperation (same code as POST /api/sites/create)
+        operations::SiteCreateOperation site_op(s.sites(), s.domains(),
+            s.databases(), s.reverse_proxies(),
+            s.proxy_provider(),
+            s.filesystem(), s.config(), s.hosting_provider());
+
+        auto result = site_op.execute(owner, domain, *node, false, "", nullptr, 0);
+
+        if (!result.success) {
+            s.save();
+            r.status_code = 500;
+            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
+            return r;
+        }
+
+        s.save();
+
+        // Find created site and database for response
+        auto* created_site = s.sites().find(domain);
+        std::string site_id_str = created_site ? std::to_string(created_site->id) : "unknown";
+        std::string db_name, db_user;
+        for (const auto& d : s.databases().list()) {
+            if (created_site && d.site_id == created_site->id) {
+                db_name = d.db_name;
+                db_user = d.db_user;
+                break;
+            }
+        }
+
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":{"
+             << "\"message\":\"Stage 1 completed — site created\""
+             << ",\"site_id\":" << site_id_str
+             << ",\"domain\":\"" << JsonFormatter::escape(domain)
+             << "\",\"database_name\":\"" << JsonFormatter::escape(db_name)
+             << "\",\"database_user\":\"" << JsonFormatter::escape(db_user)
+             << "\",\"document_root\":\"" << JsonFormatter::escape(s.config().sites_dir() + domain + "/public")
+             << "\",\"status\":{"
+             << "\"site\":\"created\""
+             << ",\"database\":\"created\""
+             << ",\"docker_stack\":\"created\""
+             << ",\"files_import\":\"pending\""
+             << ",\"sql_import\":\"pending\""
+             << "}}}";
+        r.body = json.str();
+        return r;
+    });
+
     // Accept loop
     while (running_) {
         struct sockaddr_in client_addr{};

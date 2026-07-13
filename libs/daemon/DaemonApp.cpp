@@ -545,10 +545,6 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
             return Command::error("Usage: migrate-vesta-site --backup <file> --domain <domain> --owner <owner> [--dry-run] [--skip-db] [--keep-staging] [--database <name>]");
         }
 
-        if (!opts.dry_run) {
-            return Command::error("Import execution is not implemented yet. Use --dry-run.");
-        }
-
         runtime::CommandExecutor exec;
         migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(),
                                               &s.sites(), &s.domains());
@@ -559,7 +555,60 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
             return Command::error(report);
         }
 
-        return Command::success(report);
+        if (opts.dry_run) {
+            return Command::success(report);
+        }
+
+        // --execute mode: create the site
+        if (manifest.site_exists) {
+            return Command::error("Site already exists. Import not possible.");
+        }
+
+        auto* node = s.nodes().find("local");
+        if (!node) {
+            return Command::error("No node available");
+        }
+
+        operations::SiteCreateOperation site_op(s.sites(), s.domains(),
+            s.databases(), s.reverse_proxies(),
+            s.proxy_provider(),
+            s.filesystem(), s.config(), s.hosting_provider());
+
+        auto result = site_op.execute(opts.owner, opts.domain, *node, false, "", nullptr, 0);
+
+        if (!result.success) {
+            s.save();
+            return Command::error("Create site failed: " + result.message);
+        }
+
+        s.save();
+
+        // Find created site details
+        auto* created_site = s.sites().find(opts.domain);
+        std::string sid = created_site ? std::to_string(created_site->id) : "?";
+        std::string db_name, db_user;
+        for (const auto& d : s.databases().list()) {
+            if (created_site && d.site_id == created_site->id) {
+                db_name = d.db_name;
+                db_user = d.db_user;
+                break;
+            }
+        }
+
+        std::ostringstream out;
+        out << "Stage 1 completed — site created\n"
+            << "Site ID:      " << sid << "\n"
+            << "Domain:       " << opts.domain << "\n"
+            << "Database:     " << db_name << " / " << db_user << "\n"
+            << "Document root: " << s.config().sites_dir() + opts.domain + "/public" << "\n"
+            << "\n"
+            << "Status:\n"
+            << "  ✅ Site: created\n"
+            << "  ✅ Database: created\n"
+            << "  ✅ Docker stack: created\n"
+            << "  ⏳ Files import: pending\n"
+            << "  ⏳ SQL import: pending\n";
+        return Command::success(out.str());
     }
 
     if (cmd.name == "auth-debug") {

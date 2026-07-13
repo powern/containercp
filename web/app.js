@@ -1613,6 +1613,13 @@ async function analyzeBackup() {
     }
 
     html += '</div></div>';
+
+    // Show Import button only if no errors and site doesn't exist
+    if (d.errors && d.errors.length === 0 && !d.site_exists) {
+      html += `<button class="btn btn-primary" style="margin-top:12px;" onclick="importMigrationSite()" id="migrate-import-btn">Import site</button>
+      <div id="migrate-import-result" style="margin-top:12px;"></div>`;
+    }
+
     resultDiv.innerHTML = html;
   } catch(e) {
     resultDiv.innerHTML = '<div class="alert alert-error">Analysis failed: ' + esc(e.message || 'Unknown error') + '</div>';
@@ -1620,6 +1627,60 @@ async function analyzeBackup() {
 
   btn.disabled = false;
   btn.textContent = 'Analyze backup';
+}
+
+async function importMigrationSite() {
+  const btn = document.getElementById('migrate-import-btn');
+  const resultDiv = document.getElementById('migrate-import-result');
+  if (!btn || !resultDiv) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Importing...';
+  resultDiv.innerHTML = '';
+
+  try {
+    const backup = document.getElementById('migrate-backup').value;
+    const domain = document.getElementById('migrate-domain').value.trim();
+    const owner = document.getElementById('migrate-owner').value.trim();
+    const database = document.getElementById('migrate-database').value.trim();
+    const skipDb = document.getElementById('migrate-skip-db').checked;
+    const keepStaging = document.getElementById('migrate-keep-staging').checked;
+
+    const body = { backup, domain, owner };
+    if (database) body.database = database;
+    if (skipDb) body.skip_db = true;
+    if (keepStaging) body.keep_staging = true;
+
+    const res = await apiPost('/api/migration/vesta/create-site', body);
+    const d = res.data;
+
+    let html = '<div class="card" style="margin-top:12px;border-color:var(--green);"><div class="card-header"><h3 style="color:var(--green);">Stage 1 Completed</h3></div><div style="padding:12px;font-size:13px;">';
+    html += '<p style="margin-bottom:12px;">' + esc(d.message) + '</p>';
+    html += '<table style="width:100%;border-collapse:collapse;">';
+    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Site ID</td><td><strong>' + d.site_id + '</strong></td></tr>';
+    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Domain</td><td>' + esc(d.domain) + '</td></tr>';
+    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Database</td><td>' + esc(d.database_name) + ' / ' + esc(d.database_user) + '</td></tr>';
+    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Document root</td><td>' + esc(d.document_root) + '</td></tr>';
+    html += '</table>';
+
+    html += '<div style="margin-top:12px;"><strong>Status:</strong><ul style="margin-top:4px;">';
+    if (d.status) {
+      for (const [key, val] of Object.entries(d.status)) {
+        const icon = val === 'created' ? '✅' : '⏳';
+        html += '<li>' + icon + ' ' + esc(key) + ': ' + esc(val) + '</li>';
+      }
+    }
+    html += '</ul></div>';
+
+    html += '<p style="margin-top:12px;color:var(--text2);font-size:12px;">Next steps: file import and SQL import will be implemented in upcoming stages.</p>';
+    html += '</div></div>';
+    resultDiv.innerHTML = html;
+  } catch(e) {
+    resultDiv.innerHTML = '<div class="alert alert-error">Import failed: ' + esc(e.message || 'Unknown error') + '</div>';
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Import site';
 }
 
 async function loadProfiles(p) {
