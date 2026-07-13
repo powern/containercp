@@ -305,7 +305,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
 
     if (arg1 == "migrate-vesta-site") {
         std::string backup, domain, owner, database;
-        bool dry_run = false, execute = false, import_files = false, import_sql = false;
+        bool dry_run = false, execute = false, import_files = false, import_sql = false, is_upgrade = false;
         bool skip_db = false, keep_staging = false;
         bool has_error = false;
 
@@ -327,16 +327,9 @@ int CommandDispatcher::run(int argc, char* argv[]) {
 
         // Detect conflicting modes
         int modes = (dry_run ? 1 : 0) + (execute ? 1 : 0) + (import_files ? 1 : 0) + (import_sql ? 1 : 0);
-        bool is_upgrade = false;
-        for (int i = 2; i < argc; ++i) if (std::string(argv[i]) == "--upgrade") is_upgrade = true;
         if (modes > 1 || (is_upgrade && modes > 0)) {
             std::cout << "Error: conflicting modes. Choose one of: --dry-run, --execute, --import-files, --import-sql, --upgrade\n";
             return 1;
-        }
-
-        bool is_upgrade = false;
-        for (int i = 2; i < argc; ++i) {
-            if (std::string(argv[i]) == "--upgrade") is_upgrade = true;
         }
 
         if (has_error || domain.empty() || owner.empty() || (backup.empty() && !is_upgrade)) {
