@@ -460,19 +460,17 @@ core::OperationResult NginxProxyProvider::sync_all_proxies(
         params.webmail_upstream = webmail_upstream_;
 
         // Check if SSL certificate exists for this site
-        if (p.site_id > 0) {
-            auto load_result = cert_store.load_metadata(p.site_id);
-            if (load_result.success && load_result.metadata.status == "active" && load_result.metadata.https_enabled) {
-                params.https = true;
-                params.redirect = load_result.metadata.redirect_enabled;
-                params.cert_path = cert_store.fullchain_path(p.site_id);
-                params.key_path = cert_store.privkey_path(p.site_id);
+        auto load_result = cert_store.load_metadata(p.site_id);
+        if (load_result.success && load_result.metadata.status == "active" && load_result.metadata.https_enabled) {
+            params.https = true;
+            params.redirect = load_result.metadata.redirect_enabled;
+            params.cert_path = cert_store.fullchain_path(p.site_id);
+            params.key_path = cert_store.privkey_path(p.site_id);
 
-                // Verify certificate files exist
-                if (!fs_.exists(params.cert_path) || !fs_.exists(params.key_path)) {
-                    logger_.warning("PROXY", p.domain + ": cert files missing, falling back to HTTP");
-                    params.https = false;
-                }
+            // Verify certificate files exist
+            if (!fs_.exists(params.cert_path) || !fs_.exists(params.key_path)) {
+                logger_.warning("PROXY", p.domain + ": cert files missing, falling back to HTTP");
+                params.https = false;
             }
         }
 

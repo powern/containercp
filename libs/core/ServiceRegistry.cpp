@@ -259,6 +259,9 @@ ServiceRegistry::ServiceRegistry()
     if (!loaded_proxies.empty()) {
         // Normalize upstreams from legacy database entries
         for (auto& p : loaded_proxies) {
+            // Skip site_id=0 (admin/system entries) — these use host gateway, not Docker containers
+            if (p.site_id == 0) continue;
+
             std::string normalized = proxy::ProxyConfigBuilder::normalize_upstream(p.upstream);
             std::string canonical = "site-" + std::to_string(p.site_id) + "-web:80";
             if (normalized != canonical) {
