@@ -144,9 +144,10 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site, core:
         std::string modules_path = site_dir + "config/apache/00-load-modules.conf";
         if (!fs_.exists(modules_path)) {
             std::string modules =
-                "# Enable proxy modules for PHP-FPM support\n"
+                "# Enable proxy and rewrite modules for PHP-FPM support + WordPress permalinks\n"
                 "LoadModule proxy_module modules/mod_proxy.so\n"
-                "LoadModule proxy_fcgi_module modules/mod_proxy_fcgi.so\n";
+                "LoadModule proxy_fcgi_module modules/mod_proxy_fcgi.so\n"
+                "LoadModule rewrite_module modules/mod_rewrite.so\n";
             fs_.create_file(modules_path, modules);
         }
     }
