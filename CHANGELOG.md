@@ -107,6 +107,16 @@ See `docs/changelog/early-development.md` for detailed entries.
 
 ---
 
+## 2026-07-12 | VestaSiteImporter — MyVestaCP migration tool (Phase 1-2)
+
+- New CLI: `migrate-vesta-site --backup --domain --owner [--dry-run]`
+- `VestaSiteImporter` — read-only inspection of MyVestaCP backup archives
+- Secure tar listing, domain extraction, web root detection (public_html/public/htdocs)
+- WordPress detection via wp-config.php parsing (regex, single+double quotes)
+- SQL dump discovery in archive
+- Dry-run mode: shows manifest without system changes
+- 7 unit tests for inspect/parsing/path validation
+
 ## 2026-07-12 | SnappyMail webmail integration
 
 - New container: `containercp-mail-snappymail` (alpine + nginx + php84)
