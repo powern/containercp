@@ -582,6 +582,7 @@ API handlers must never:
 | POST | `/api/migration/vesta/inspect` | Read-only analysis of a backup for a specific domain | `VestaSiteImporter` |
 | POST | `/api/migration/vesta/create-site` | Stage 1: create site + Docker stack from backup metadata | `SiteCreateOperation` |
 | POST | `/api/migration/vesta/import-files` | Stage 2: import web files from backup into site document root | `VestaSiteImporter` |
+| POST | `/api/migration/vesta/import-sql` | Stage 3: import SQL dump, update wp-config.php, complete migration | `VestaSiteImporter` |
 
 **Security:**
 - Backup files are only accepted from `/backup` and `<data_root>/backups/`
@@ -738,6 +739,55 @@ Response:
   }
 }
 ```
+
+
+**POST /api/migration/vesta/import-sql** — Stage 3: import SQL dump and complete migration:
+
+Request: same as inspect (`backup`, `domain`, `owner`, `keep_staging`).
+
+Flow:
+1. Validates marker stage=2 and `can_import_sql=true`
+2. Finds SQL dump in backup archive via `find_db_in_archive()`
+3. Reads DB credentials from site `.env` (DB_NAME, DB_USER, DB_PASSWORD)
+4. Creates safety backup via `mariadb-dump --single-transaction`
+5. Drops existing tables (not the database itself)
+6. Imports dump via `gunzip -c | docker exec mariadb`
+7. Updates `wp-config.php` — replaces DB_NAME, DB_USER, DB_PASSWORD
+8. Restarts PHP container, health check, HTTP check
+9. Updates marker to stage=3 (`sql_imported=true`, `migration_completed=true`)
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Stage 3 completed — SQL imported",
+    "database": "example_com_db",
+    "safety_backup_created": true,
+    "wp_config_updated": true,
+    "warnings": [],
+    "errors": [],
+    "status": {
+      "files": "imported",
+      "sql": "imported",
+      "wp_config": "updated"
+    }
+  }
+}
+```
+
+Rollback: if SQL import fails, the safety backup is restored. Marker stays at stage=2.
+
+### Migration state machine
+
+| Marker stage | Possible actions |
+|---|---|
+| No marker / stage 0 | Create site |
+| Stage 1 | Import files |
+| Stage 2 | Import SQL |
+| Stage 3 | Migration completed |
+
+Inspect response includes `can_import_files`, `can_import_sql`, and `migration_completed` to guide the UI.
 
 ---
 
