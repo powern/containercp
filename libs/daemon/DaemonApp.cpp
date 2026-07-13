@@ -530,6 +530,7 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
     if (cmd.name == "migrate-vesta-site") {
         migration::Options opts;
         bool is_import_files = false;
+        bool is_import_sql = false;
 
         for (size_t i = 0; i < cmd.args.size(); ++i) {
             const auto& arg = cmd.args[i];
@@ -541,6 +542,7 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
             else if (arg == "--keep-staging") opts.keep_staging = true;
             else if (arg == "--skip-db") opts.skip_db = true;
             else if (arg == "--import-files") is_import_files = true;
+            else if (arg == "--import-sql") is_import_sql = true;
         }
 
         if (opts.backup_path.empty() || opts.domain.empty() || opts.owner.empty()) {
@@ -572,6 +574,30 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
                 << "  ✅ Files: imported\n"
                 << "  ⏳ SQL import: pending\n"
                 << "  ⏳ wp-config update: pending\n";
+            for (const auto& w : import_result.warnings) out << "\nWarning: " << w;
+            return Command::success(out.str());
+        }
+
+        // ── Stage 3: import SQL ──
+        if (is_import_sql) {
+            auto import_result = importer.import_sql(opts);
+
+            if (!import_result.success) {
+                std::string err_msg;
+                for (const auto& e : import_result.errors) err_msg += e + "; ";
+                return Command::error("Import SQL failed: " + err_msg);
+            }
+
+            std::ostringstream out;
+            out << "Stage 3 completed — migration finished\n"
+                << "Database:     " << import_result.db_name << "\n"
+                << "Safety backup:" << (import_result.safety_backup_created ? " ✅ created" : " ⚠️ not created") << "\n"
+                << "wp-config:    " << (import_result.wp_config_updated ? " ✅ updated" : " ⚠️ not updated") << "\n"
+                << "\n"
+                << "Status:\n"
+                << "  ✅ Files: imported\n"
+                << "  ✅ SQL: imported\n"
+                << "  🎉 Migration completed\n";
             for (const auto& w : import_result.warnings) out << "\nWarning: " << w;
             return Command::success(out.str());
         }

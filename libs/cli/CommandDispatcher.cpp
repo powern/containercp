@@ -305,7 +305,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
 
     if (arg1 == "migrate-vesta-site") {
         std::string backup, domain, owner, database;
-        bool dry_run = false, execute = false, import_files = false;
+        bool dry_run = false, execute = false, import_files = false, import_sql = false;
         bool skip_db = false, keep_staging = false;
         bool has_error = false;
 
@@ -318,15 +318,16 @@ int CommandDispatcher::run(int argc, char* argv[]) {
             else if (arg == "--dry-run") dry_run = true;
             else if (arg == "--execute") execute = true;
             else if (arg == "--import-files") import_files = true;
+            else if (arg == "--import-sql") import_sql = true;
             else if (arg == "--skip-db") skip_db = true;
             else if (arg == "--keep-staging") keep_staging = true;
             else has_error = true;
         }
 
         // Detect conflicting modes
-        int modes = (dry_run ? 1 : 0) + (execute ? 1 : 0) + (import_files ? 1 : 0);
+        int modes = (dry_run ? 1 : 0) + (execute ? 1 : 0) + (import_files ? 1 : 0) + (import_sql ? 1 : 0);
         if (modes > 1) {
-            std::cout << "Error: conflicting modes. Choose one of: --dry-run, --execute, --import-files\n";
+            std::cout << "Error: conflicting modes. Choose one of: --dry-run, --execute, --import-files, --import-sql\n";
             return 1;
         }
 
@@ -338,6 +339,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
                       << "  --dry-run           Inspect without changes\n"
                       << "  --execute           Stage 1: create site\n"
                       << "  --import-files      Stage 2: import web files\n"
+                      << "  --import-sql        Stage 3: import database\n"
                       << "  [--database <name>] Force specific database name\n"
                       << "  [--skip-db]         Skip database import\n"
                       << "  [--keep-staging]    Keep temporary files\n";
@@ -351,6 +353,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         if (dry_run) cmd += "|--dry-run";
         else if (execute) cmd += "|--execute";
         else if (import_files) cmd += "|--import-files";
+        else if (import_sql) cmd += "|--import-sql";
         else cmd += "|--dry-run"; // default safe mode
         if (skip_db) cmd += "|--skip-db";
         if (keep_staging) cmd += "|--keep-staging";

@@ -2880,6 +2880,98 @@ bool ApiServer::start() {
         return r;
     });
 
+    router_.add("POST", "/api/migration/vesta/import-sql", [&s, &resolve_allowed_backup](const Request& req) {
+        Response r;
+
+        auto extract = [&](const std::string& name) -> std::string {
+            auto pos = req.body.find("\"" + name + "\":\"");
+            if (pos == std::string::npos) {
+                pos = req.body.find("\"" + name + "\": \"");
+                if (pos == std::string::npos) return "";
+            }
+            auto start = req.body.find('"', pos + name.size() + 3);
+            if (start == std::string::npos) return "";
+            auto end = req.body.find('"', start + 1);
+            if (end == std::string::npos) return "";
+            return req.body.substr(start + 1, end - start - 1);
+        };
+        auto extract_bool = [&](const std::string& name) -> bool {
+            auto pos = req.body.find("\"" + name + "\":true");
+            if (pos != std::string::npos) return true;
+            pos = req.body.find("\"" + name + "\": true");
+            return pos != std::string::npos;
+        };
+
+        std::string backup = extract("backup");
+        std::string domain = extract("domain");
+        std::string owner = extract("owner");
+        bool keep_staging = extract_bool("keep_staging");
+
+        if (backup.empty() || domain.empty() || owner.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"backup, domain and owner are required\"}";
+            return r;
+        }
+
+        std::vector<std::string> allowed_dirs = {"/backup", s.config().data_root() + "/backups"};
+        std::string resolve_error;
+        std::string resolved_path = resolve_allowed_backup(backup, allowed_dirs, resolve_error);
+        if (resolved_path.empty()) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(resolve_error) + "\"}";
+            return r;
+        }
+
+        runtime::CommandExecutor exec;
+        migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(), s.logger(),
+                                              &s.sites(), &s.domains());
+        migration::Options opts;
+        opts.backup_path = resolved_path;
+        opts.domain = domain;
+        opts.owner = owner;
+        opts.keep_staging = keep_staging;
+
+        auto import_result = importer.import_sql(opts);
+
+        if (!import_result.success) {
+            r.status_code = 500;
+            std::ostringstream err;
+            err << "{\"success\":false,\"error\":\"";
+            for (const auto& e : import_result.errors) err << JsonFormatter::escape(e) << "; ";
+            err << "\"}";
+            r.body = err.str();
+            return r;
+        }
+
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":{"
+             << "\"message\":\"Stage 3 completed — SQL imported\""
+             << ",\"database\":\"" << JsonFormatter::escape(import_result.db_name)
+             << "\",\"safety_backup_created\":" << (import_result.safety_backup_created ? "true" : "false")
+             << ",\"wp_config_updated\":" << (import_result.wp_config_updated ? "true" : "false")
+             << ",\"warnings\":[";
+        bool first_w = true;
+        for (const auto& w : import_result.warnings) {
+            if (!first_w) json << ",";
+            first_w = false;
+            json << "\"" << JsonFormatter::escape(w) << "\"";
+        }
+        json << "],\"errors\":[";
+        bool first_e = true;
+        for (const auto& e : import_result.errors) {
+            if (!first_e) json << ",";
+            first_e = false;
+            json << "\"" << JsonFormatter::escape(e) << "\"";
+        }
+        json << "],\"status\":{"
+             << "\"files\":\"imported\""
+             << ",\"sql\":\"imported\""
+             << ",\"wp_config\":" << (import_result.wp_config_updated ? "\"updated\"" : "\"skipped\"")
+             << "}}}";
+        r.body = json.str();
+        return r;
+    });
+
     // Accept loop
     while (running_) {
         struct sockaddr_in client_addr{};

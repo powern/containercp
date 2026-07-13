@@ -1280,6 +1280,88 @@ bool VestaSiteImporter::copy_files_to_public(
     return true;
 }
 
+std::string VestaSiteImporter::find_wp_config_file(const std::string& public_dir) const {
+    // Search for wp-config.php in common locations
+    static const char* paths[] = {"wp-config.php", "public/wp-config.php", "public_html/wp-config.php", "htdocs/wp-config.php", "www/wp-config.php", "root/wp-config.php"};
+    for (auto* p : paths) {
+        std::string full = public_dir + "/" + p;
+        // Handle various public_dir structures
+        if (public_dir.back() == '/') {
+            full = public_dir + p;
+        }
+        struct stat st;
+        if (::stat(full.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
+            return full;
+        }
+    }
+    // Recursive search as fallback (only in public dir)
+    try {
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(public_dir,
+            std::filesystem::directory_options::skip_permission_denied)) {
+            if (entry.is_regular_file() && entry.path().filename() == "wp-config.php") {
+                return entry.path().string();
+            }
+        }
+    } catch (...) {}
+    return "";
+}
+
+bool VestaSiteImporter::update_wp_config_db_credentials(
+    const std::string& config_path,
+    const std::string& old_db_name,
+    const std::string& old_db_user,
+    const std::string& new_db_name,
+    const std::string& new_db_user,
+    const std::string& new_db_password) const {
+
+    std::ifstream in(config_path);
+    if (!in.is_open()) return false;
+    std::stringstream buf;
+    buf << in.rdbuf();
+    std::string content = buf.str();
+
+    // Replace DB_NAME
+    auto replace_def = [&](const std::string& define_name, const std::string& old_val, const std::string& new_val) -> bool {
+        if (old_val.empty() || new_val.empty()) return false;
+        // Match: define('DB_NAME', 'old_val') or define("DB_NAME", "old_val")
+        std::string pattern_single = "define('" + define_name + "', '" + old_val + "')";
+        std::string pattern_double = "define(\"" + define_name + "\", \"" + old_val + "\")";
+        std::string replacement_single = "define('" + define_name + "', '" + new_val + "')";
+        std::string replacement_double = "define(\"" + define_name + "\", \"" + new_val + "\")";
+
+        bool found = false;
+        auto pos = content.find(pattern_single);
+        if (pos != std::string::npos) {
+            content.replace(pos, pattern_single.size(), replacement_single);
+            found = true;
+        }
+        pos = content.find(pattern_double);
+        if (pos != std::string::npos) {
+            content.replace(pos, pattern_double.size(), replacement_double);
+            found = true;
+        }
+        return found;
+    };
+
+    if (!replace_def("DB_NAME", old_db_name, new_db_name)) {
+        // Try fallback: just find define('DB_NAME', ) and replace value
+        std::regex db_re(R"(define\s*\(\s*['\"]DB_NAME['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
+        content = std::regex_replace(content, db_re, "define('DB_NAME', '" + new_db_name + "')");
+    }
+    replace_def("DB_USER", old_db_user, new_db_user);
+    replace_def("DB_PASSWORD", "", ""); // Just replace the whole line
+    {
+        // Replace DB_PASSWORD value generically
+        std::regex pass_re(R"(define\s*\(\s*['\"]DB_PASSWORD['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
+        content = std::regex_replace(content, pass_re, "define('DB_PASSWORD', '" + new_db_password + "')");
+    }
+
+    std::ofstream out(config_path);
+    if (!out.is_open()) return false;
+    out << content;
+    return true;
+}
+
 VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Options& opts) {
     ImportFilesResult result;
 
@@ -1395,6 +1477,260 @@ VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Optio
     logger_.info("MIGRATION", "Marker updated successfully");
 
     result.success = true;
+    return result;
+}
+
+VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& opts) {
+    ImportSqlResult result;
+
+    logger_.info("MIGRATION", "Import SQL requested — domain=" + opts.domain + " backup=" + opts.backup_path);
+
+    Manifest m = inspect(opts);
+    if (!m.errors.empty()) {
+        logger_.error("MIGRATION", "Inspect failed: " + m.errors[0]);
+        result.errors = m.errors; return result;
+    }
+
+    std::string site_dir = cfg_.sites_dir() + opts.domain + "/";
+    std::string marker_path = site_dir + ".containercp-migration.json";
+
+    logger_.info("MIGRATION", "Reading marker");
+    if (!m.can_import_sql) {
+        std::string reason = !m.marker_error.empty() ? m.marker_error
+            : "SQL import not available at current stage (" + std::to_string(m.migration_stage) + ")";
+        logger_.error("MIGRATION", "Cannot import SQL: " + reason);
+        result.errors.push_back(reason);
+        return result;
+    }
+    logger_.info("MIGRATION", "Marker OK — stage=" + std::to_string(m.migration_stage) + " site_id=" + std::to_string(m.migration_site_id));
+
+    // Find DB dump in backup
+    logger_.info("MIGRATION", "Finding SQL dump in backup");
+    std::vector<std::string> entries;
+    std::string error;
+    if (!tar_safe_list(opts.backup_path, entries, error)) {
+        result.errors.push_back("Cannot read backup: " + error);
+        return result;
+    }
+    if (m.wp_db_name.empty()) {
+        result.errors.push_back("DB_NAME not determined — cannot find SQL dump");
+        return result;
+    }
+    std::string db_to_find = normalize_db_name(m.wp_db_name);
+    std::string dump_path, dump_type;
+    size_t dump_size = 0;
+    bool size_known = false;
+    if (!find_db_in_archive(entries, db_to_find, dump_path, dump_size, size_known, dump_type)) {
+        result.errors.push_back("SQL dump not found for database '" + db_to_find + "'");
+        return result;
+    }
+    logger_.info("MIGRATION", "SQL dump found: " + dump_path + " type=" + dump_type);
+
+    // Read credentials from site .env
+    std::string db_name, db_user, db_password;
+    {
+        std::string env_path = site_dir + ".env";
+        if (!fs_.exists(env_path)) {
+            result.errors.push_back("Site .env not found — cannot determine DB credentials");
+            return result;
+        }
+        std::string env_content = fs_.read_file(env_path);
+        auto find_in_env = [&](const std::string& key) -> std::string {
+            auto pos = env_content.find(key + "=");
+            if (pos == std::string::npos) return "";
+            auto start = pos + key.size() + 1;
+            auto end = env_content.find('\n', start);
+            if (end == std::string::npos) end = env_content.size();
+            auto val = env_content.substr(start, end - start);
+            // Trim \r
+            while (!val.empty() && (val.back() == '\r' || val.back() == '\n')) val.pop_back();
+            return val;
+        };
+        db_name = find_in_env("DB_NAME");
+        db_user = find_in_env("DB_USER");
+        db_password = find_in_env("DB_PASSWORD");
+    }
+
+    if (db_name.empty() || db_user.empty() || db_password.empty()) {
+        result.errors.push_back("Cannot determine database credentials from .env");
+        return result;
+    }
+    result.db_name = db_name;
+    logger_.info("MIGRATION", "Target DB: " + db_name + " user=" + db_user);
+
+    std::string staging = make_staging_dir();
+    if (staging.empty()) { result.errors.push_back("Cannot create staging"); return result; }
+    auto cleanup = [&]() { if (!opts.keep_staging) cleanup_staging(staging); };
+
+    // Extract SQL dump from backup
+    logger_.info("MIGRATION", "Extracting SQL dump from backup");
+    auto try_extract = [&](const std::string& prefix) -> bool {
+        auto r = executor_.run({"tar", "-xf", opts.backup_path, "-C", staging, prefix});
+        return r.exit_code == 0;
+    };
+    // Path: db/<dbname>/<dbname>.<type>.sql.gz
+    std::string dump_prefix = "db/" + dump_path;
+    if (!try_extract(dump_path) && !try_extract("./" + dump_path)) {
+        // Try with normalized path
+        dump_path = "db/" + db_to_find + "/" + db_to_find + "." + dump_type + ".sql.gz";
+        if (!try_extract(dump_path) && !try_extract("./" + dump_path)) {
+            result.errors.push_back("Cannot extract SQL dump from backup");
+            cleanup(); return result;
+        }
+    }
+    std::string dump_file = staging + "/" + dump_path;
+    logger_.info("MIGRATION", "Dump extracted: " + dump_file);
+
+    // Create safety backup via mysqldump
+    std::string safety_file = staging + "/safety.sql";
+    logger_.info("MIGRATION", "Creating database safety backup to " + safety_file);
+    std::string db_container = "site-" + std::to_string(m.migration_site_id) + "-db";
+    auto safety = executor_.run({
+        "docker", "exec", db_container,
+        "mariadb-dump", "--single-transaction", "--quick",
+        "-u" + db_user, "-p" + db_password, db_name
+    });
+    if (safety.exit_code != 0) {
+        logger_.error("MIGRATION", "Safety backup failed: exit=" + std::to_string(safety.exit_code) + " " + safety.err);
+        // Non-fatal — continue without safety backup
+        result.warnings.push_back("Database safety backup failed — proceeding without rollback capability");
+    } else {
+        // Write safety dump
+        std::ofstream sf(safety_file);
+        if (sf.is_open()) {
+            sf << safety.out;
+            result.safety_backup_created = true;
+            logger_.info("MIGRATION", "Safety backup created (" + std::to_string(safety.out.size()) + " bytes)");
+        }
+    }
+
+    // Drop existing tables
+    logger_.info("MIGRATION", "Dropping existing tables in " + db_name);
+    auto tables = executor_.run({
+        "docker", "exec", db_container,
+        "mariadb", "-N", "-u" + db_user, "-p" + db_password, db_name,
+        "-e", "SELECT CONCAT('DROP TABLE IF EXISTS `', TABLE_NAME, '`;') FROM information_schema.TABLES WHERE TABLE_SCHEMA = '" + db_name + "'"
+    });
+    if (tables.exit_code == 0 && !tables.out.empty()) {
+        auto drop = executor_.run({
+            "docker", "exec", "-i", db_container,
+            "mariadb", "-u" + db_user, "-p" + db_password, db_name,
+            "-e", tables.out
+        });
+        if (drop.exit_code != 0) {
+            logger_.warning("MIGRATION", "Drop tables exit=" + std::to_string(drop.exit_code) + " (continuing)");
+        }
+    }
+    logger_.info("MIGRATION", "Tables dropped");
+
+    // Import SQL dump
+    logger_.info("MIGRATION", "Importing SQL dump into " + db_name);
+    auto import_cmd = executor_.run({
+        "sh", "-c",
+        "gunzip -c " + dump_file + " | docker exec -i " + db_container
+        + " mariadb -u" + db_user + " -p" + db_password + " " + db_name
+    });
+    if (import_cmd.exit_code != 0) {
+        logger_.error("MIGRATION", "SQL import failed: exit=" + std::to_string(import_cmd.exit_code));
+        result.errors.push_back("SQL import failed");
+
+        // Rollback: restore from safety backup
+        if (result.safety_backup_created && fs_.exists(safety_file)) {
+            logger_.info("MIGRATION", "Rolling back database from safety backup");
+            executor_.run({
+                "docker", "exec", "-i", db_container,
+                "mariadb", "-u" + db_user, "-p" + db_password, db_name,
+                "-e", "source " + safety_file
+            });
+        }
+        cleanup(); return result;
+    }
+    logger_.info("MIGRATION", "SQL import completed");
+    result.dump_size = dump_size;
+
+    // Update wp-config.php
+    logger_.info("MIGRATION", "Updating wp-config.php with new credentials");
+    std::string public_dir = site_dir + "public/";
+    std::string wp_config_path = find_wp_config_file(public_dir);
+    if (!wp_config_path.empty()) {
+        bool updated = update_wp_config_db_credentials(wp_config_path, m.wp_db_name, m.wp_db_user, db_name, db_user, db_password);
+        if (updated) {
+            result.wp_config_updated = true;
+            logger_.info("MIGRATION", "wp-config.php updated with new credentials");
+        } else {
+            logger_.warning("MIGRATION", "wp-config.php found but could not be updated");
+            result.warnings.push_back("wp-config.php found but could not be updated");
+        }
+    } else {
+        logger_.info("MIGRATION", "wp-config.php not found (non-WordPress site)");
+    }
+
+    // Restart PHP container
+    logger_.info("MIGRATION", "Restarting PHP container");
+    executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "restart", "php"});
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    // Health check
+    logger_.info("MIGRATION", "Checking container health");
+    bool healthy = false;
+    for (int i = 0; i < 30; ++i) {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        auto web_hc = executor_.run({"docker", "inspect", "site-" + std::to_string(m.migration_site_id) + "-web",
+                                     "--format", "{{.State.Status}}|{{.State.Health.Status}}"});
+        auto php_hc = executor_.run({"docker", "inspect", "site-" + std::to_string(m.migration_site_id) + "-php",
+                                     "--format", "{{.State.Status}}|{{.State.Health.Status}}"});
+        if (web_hc.exit_code == 0 && php_hc.exit_code == 0 &&
+            web_hc.out.find("running|healthy") != std::string::npos &&
+            php_hc.out.find("running|healthy") != std::string::npos) {
+            healthy = true;
+            logger_.info("MIGRATION", "Health check passed at " + std::to_string((i + 1) * 2) + "s");
+            break;
+        }
+    }
+    if (!healthy) {
+        logger_.warning("MIGRATION", "Health check timeout — containers may still be starting");
+        result.warnings.push_back("Health check timeout after 60s");
+    }
+
+    // HTTP check
+    logger_.info("MIGRATION", "Running HTTP check");
+    auto http = executor_.run({
+        "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+        "--resolve", opts.domain + ":80:127.0.0.1",
+        "http://" + opts.domain + "/"
+    });
+    if (http.exit_code == 0) {
+        logger_.info("MIGRATION", "HTTP check returned " + http.out);
+    } else {
+        logger_.warning("MIGRATION", "HTTP check failed (expected without DNS)");
+    }
+
+    // Update marker to stage 3
+    logger_.info("MIGRATION", "Updating marker to stage 3");
+    MigrationMarker updated;
+    updated.version = 1;
+    updated.domain = opts.domain;
+    updated.owner = opts.owner;
+    updated.site_id = m.migration_site_id;
+    updated.stage = 3;
+    updated.files_pending = false;
+    updated.files_imported = true;
+    updated.sql_pending = false;
+
+    std::string marker_content = updated.to_json();
+    std::string tmp_path = marker_path + ".tmp";
+    if (fs_.create_file(tmp_path, marker_content)) {
+        std::rename(tmp_path.c_str(), marker_path.c_str());
+        logger_.info("MIGRATION", "Marker updated to stage 3 — migration completed");
+    } else {
+        logger_.error("MIGRATION", "Failed to write marker file");
+        result.errors.push_back("CRITICAL: SQL imported but failed to update migration marker");
+        cleanup(); return result;
+    }
+
+    cleanup();
+    result.success = true;
+    logger_.info("MIGRATION", "SQL import completed successfully");
     return result;
 }
 

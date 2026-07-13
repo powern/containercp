@@ -91,6 +91,18 @@ public:
 
     ImportFilesResult import_files(const Options& opts);
 
+    struct ImportSqlResult {
+        bool success = false;
+        std::string db_name;
+        bool safety_backup_created = false;
+        bool wp_config_updated = false;
+        size_t dump_size = 0;
+        std::vector<std::string> warnings;
+        std::vector<std::string> errors;
+    };
+
+    ImportSqlResult import_sql(const Options& opts);
+
 private:
     bool tar_safe_list(const std::string& archive,
                        std::vector<std::string>& entries,
@@ -133,6 +145,13 @@ private:
                                const std::string& gid_str,
                                uint64_t site_id,
                                const std::string& domain = "");
+    std::string find_wp_config_file(const std::string& public_dir) const;
+    bool update_wp_config_db_credentials(const std::string& config_path,
+                                          const std::string& old_db_name,
+                                          const std::string& old_db_user,
+                                          const std::string& new_db_name,
+                                          const std::string& new_db_user,
+                                          const std::string& new_db_password) const;
 
     runtime::CommandExecutor& executor_;
     filesystem::Filesystem& fs_;
