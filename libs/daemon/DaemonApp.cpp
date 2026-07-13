@@ -612,17 +612,20 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
 
         s.save();
 
-        // Create migration marker for Stage 2 validation
-        {
+        // Find created site BEFORE writing marker (need real site_id)
+        auto* created_site = s.sites().find(opts.domain);
+
+        // Create migration marker for Stage 2 validation with real site_id
+        if (created_site) {
             std::string marker_path = s.config().sites_dir() + opts.domain + "/.containercp-migration.json";
             std::string marker = "{\"domain\":\"" + opts.domain
                 + "\",\"owner\":\"" + opts.owner
-                + "\",\"stage\":1,\"files_pending\":true}";
+                + "\",\"site_id\":" + std::to_string(created_site->id)
+                + ",\"stage\":1,\"files_pending\":true,\"files_imported\":false,\"sql_pending\":true}";
             s.filesystem().create_file(marker_path, marker);
+        } else {
+            return Command::error("Site created but SiteRecord not found — migration marker not written");
         }
-
-        // Find created site details
-        auto* created_site = s.sites().find(opts.domain);
         std::string sid = created_site ? std::to_string(created_site->id) : "?";
         std::string db_name, db_user;
         for (const auto& d : s.databases().list()) {

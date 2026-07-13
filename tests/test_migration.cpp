@@ -499,17 +499,26 @@ TEST_CASE("VestaSiteImporter marker - no marker on new site") {
     std::remove(tar_path.c_str());
 }
 
-TEST_CASE("VestaSiteImporter marker - valid stage 1 marker") {
+TEST_CASE("VestaSiteImporter marker - valid stage 1 marker with real site_id") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    site::SiteManager sites;
+    domain::DomainManager domains;
 
-    // Create a fake site directory with marker
+    // Create a real site record
+    uint64_t site_id = sites.create("markertest.local", "admin", 1);
+    REQUIRE(site_id > 0);
+    domains.create("markertest.local", 0, site_id);
+
+    migration::VestaSiteImporter importer(exec, fs, cfg, &sites, &domains);
+
+    // Create site directory with marker containing real site_id
     std::string site_dir = cfg.sites_dir() + "markertest.local/";
     ::mkdir(site_dir.c_str(), 0755);
     ::mkdir((site_dir + "public").c_str(), 0755);
-    std::string marker = "{\"domain\":\"markertest.local\",\"owner\":\"admin\",\"site_id\":0,\"stage\":1,\"files_pending\":true}";
+    std::string marker = "{\"domain\":\"markertest.local\",\"owner\":\"admin\",\"site_id\":"
+        + std::to_string(site_id) + ",\"stage\":1,\"files_pending\":true,\"files_imported\":false,\"sql_pending\":true}";
     std::ofstream(site_dir + ".containercp-migration.json") << marker;
 
     std::string tar_path = "/tmp/test_vsi_marker_ok.tar";
@@ -519,6 +528,68 @@ TEST_CASE("VestaSiteImporter marker - valid stage 1 marker") {
     CHECK(m.files_pending);
     CHECK(m.migration_ready_for_files);
     CHECK(m.migration_stage == 1);
+    CHECK(m.migration_site_id == site_id);
+
+    std::remove(tar_path.c_str());
+    std::system(("rm -rf " + site_dir).c_str());
+}
+
+TEST_CASE("VestaSiteImporter marker - missing site_id in marker") {
+    config::Config& cfg = config::Config::instance();
+    filesystem::Filesystem fs;
+    runtime::CommandExecutor exec;
+    site::SiteManager sites;
+    domain::DomainManager domains;
+
+    uint64_t site_id = sites.create("nomarkerid.local", "admin", 1);
+    domains.create("nomarkerid.local", 0, site_id);
+
+    migration::VestaSiteImporter importer(exec, fs, cfg, &sites, &domains);
+
+    std::string site_dir = cfg.sites_dir() + "nomarkerid.local/";
+    ::mkdir(site_dir.c_str(), 0755);
+    ::mkdir((site_dir + "public").c_str(), 0755);
+    // Old marker without site_id
+    std::string marker = "{\"domain\":\"nomarkerid.local\",\"owner\":\"admin\",\"stage\":1,\"files_pending\":true}";
+    std::ofstream(site_dir + ".containercp-migration.json") << marker;
+
+    std::string tar_path = "/tmp/test_vsi_marker_noid.tar";
+    create_test_tar(tar_path, "nomarkerid.local");
+    auto m = importer.inspect({tar_path, "nomarkerid.local", "admin", "", true});
+    CHECK(m.migration_marker_found);
+    CHECK_FALSE(m.migration_ready_for_files);
+    CHECK(m.marker_error.find("site_id") != std::string::npos);
+
+    std::remove(tar_path.c_str());
+    std::system(("rm -rf " + site_dir).c_str());
+}
+
+TEST_CASE("VestaSiteImporter marker - domain record site_id mismatch") {
+    config::Config& cfg = config::Config::instance();
+    filesystem::Filesystem fs;
+    runtime::CommandExecutor exec;
+    site::SiteManager sites;
+    domain::DomainManager domains;
+
+    uint64_t site_id = sites.create("domsitemismatch.local", "admin", 1);
+    // DomainRecord belongs to a DIFFERENT site_id
+    domains.create("domsitemismatch.local", 0, 999);
+
+    migration::VestaSiteImporter importer(exec, fs, cfg, &sites, &domains);
+
+    std::string site_dir = cfg.sites_dir() + "domsitemismatch.local/";
+    ::mkdir(site_dir.c_str(), 0755);
+    ::mkdir((site_dir + "public").c_str(), 0755);
+    std::string marker = "{\"domain\":\"domsitemismatch.local\",\"owner\":\"admin\",\"site_id\":"
+        + std::to_string(site_id) + ",\"stage\":1,\"files_pending\":true}";
+    std::ofstream(site_dir + ".containercp-migration.json") << marker;
+
+    std::string tar_path = "/tmp/test_vsi_marker_dsm.tar";
+    create_test_tar(tar_path, "domsitemismatch.local");
+    auto m = importer.inspect({tar_path, "domsitemismatch.local", "admin", "", true});
+    CHECK(m.migration_marker_found);
+    CHECK_FALSE(m.migration_ready_for_files);
+    CHECK(m.marker_error.find("site_id") != std::string::npos);
 
     std::remove(tar_path.c_str());
     std::system(("rm -rf " + site_dir).c_str());
@@ -528,12 +599,20 @@ TEST_CASE("VestaSiteImporter marker - owner mismatch") {
     config::Config& cfg = config::Config::instance();
     filesystem::Filesystem fs;
     runtime::CommandExecutor exec;
-    migration::VestaSiteImporter importer(exec, fs, cfg);
+    site::SiteManager sites;
+    domain::DomainManager domains;
+
+    uint64_t site_id = sites.create("owner-mismatch.local", "admin", 1);
+    domains.create("owner-mismatch.local", 0, site_id);
+
+    migration::VestaSiteImporter importer(exec, fs, cfg, &sites, &domains);
 
     std::string site_dir = cfg.sites_dir() + "owner-mismatch.local/";
     ::mkdir(site_dir.c_str(), 0755);
     ::mkdir((site_dir + "public").c_str(), 0755);
-    std::string marker = "{\"domain\":\"owner-mismatch.local\",\"owner\":\"wronguser\",\"site_id\":0,\"stage\":1,\"files_pending\":true}";
+    // Valid site_id but wrong owner
+    std::string marker = "{\"domain\":\"owner-mismatch.local\",\"owner\":\"wronguser\",\"site_id\":"
+        + std::to_string(site_id) + ",\"stage\":1,\"files_pending\":true}";
     std::ofstream(site_dir + ".containercp-migration.json") << marker;
 
     std::string tar_path = "/tmp/test_vsi_marker_owner.tar";
@@ -542,6 +621,29 @@ TEST_CASE("VestaSiteImporter marker - owner mismatch") {
     CHECK(m.migration_marker_found);
     CHECK_FALSE(m.migration_ready_for_files);
     CHECK(m.marker_error.find("owner") != std::string::npos);
+
+    std::remove(tar_path.c_str());
+    std::system(("rm -rf " + site_dir).c_str());
+}
+
+TEST_CASE("VestaSiteImporter marker - only directory no SiteRecord") {
+    config::Config& cfg = config::Config::instance();
+    filesystem::Filesystem fs;
+    runtime::CommandExecutor exec;
+    // No SiteManager passed — sites_ == nullptr
+    migration::VestaSiteImporter importer(exec, fs, cfg);
+
+    std::string site_dir = cfg.sites_dir() + "nodir-record.local/";
+    ::mkdir(site_dir.c_str(), 0755);
+    ::mkdir((site_dir + "public").c_str(), 0755);
+    std::string marker = "{\"domain\":\"nodir-record.local\",\"owner\":\"admin\",\"site_id\":1,\"stage\":1,\"files_pending\":true}";
+    std::ofstream(site_dir + ".containercp-migration.json") << marker;
+
+    std::string tar_path = "/tmp/test_vsi_marker_norecord.tar";
+    create_test_tar(tar_path, "nodir-record.local");
+    auto m = importer.inspect({tar_path, "nodir-record.local", "admin", "", true});
+    CHECK(m.migration_marker_found);
+    CHECK_FALSE(m.migration_ready_for_files);
 
     std::remove(tar_path.c_str());
     std::system(("rm -rf " + site_dir).c_str());

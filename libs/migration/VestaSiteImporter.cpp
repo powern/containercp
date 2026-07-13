@@ -554,28 +554,51 @@ Manifest VestaSiteImporter::inspect(const Options& opts) {
 
             std::string m_domain, m_owner;
             uint64_t m_stage = 0;
+            uint64_t m_site_id = 0;
             find_in_json("domain", m_domain);
             find_in_json("owner", m_owner);
-            find_in_json_int("site_id", m.migration_site_id);
+            find_in_json_int("site_id", m_site_id);
             find_in_json_int("stage", m_stage);
             find_in_json_bool("files_pending", m.files_pending);
             find_in_json_bool("files_imported", m.files_imported);
             find_in_json_bool("sql_pending", m.sql_pending);
             m.migration_stage = m_stage;
+            m.migration_site_id = m_site_id;
+            m.migration_owner = m_owner;
 
-            // Validate against SiteManager records
-            if (m_domain != opts.domain) {
+            // Validate against SiteManager records — require real SiteRecord
+            if (!found_site) {
+                m.marker_error = "SiteRecord not found for domain";
+            } else if (!sites_) {
+                m.marker_error = "SiteManager not available";
+            } else if (m_site_id == 0) {
+                m.marker_error = "Marker has no site_id (re-run Stage 1)";
+            } else if (m_site_id != found_site->id) {
+                m.marker_error = "Marker site_id " + std::to_string(m_site_id)
+                    + " != SiteRecord id " + std::to_string(found_site->id);
+            } else if (m_domain != opts.domain) {
                 m.marker_error = "Marker domain mismatch";
             } else if (m_owner != opts.owner) {
                 m.marker_error = "Marker owner mismatch";
-            } else if (found_site && m.migration_site_id != found_site->id) {
-                m.marker_error = "Marker site_id mismatch";
             } else if (m.migration_stage != 1) {
                 m.marker_error = "Marker stage is " + std::to_string(m.migration_stage) + ", expected 1";
             } else if (m.files_imported) {
                 m.marker_error = "Files already imported (stage 2)";
-            } else if (m.files_pending) {
-                m.migration_ready_for_files = true;
+            } else if (!m.files_pending) {
+                m.marker_error = "Marker files_pending is false";
+            } else {
+                // Also verify DomainRecord belongs to same site_id
+                bool domain_ok = true;
+                if (domains_) {
+                    auto* dom_rec = domains_->find(opts.domain);
+                    if (dom_rec && dom_rec->site_id != found_site->id) {
+                        domain_ok = false;
+                        m.marker_error = "DomainRecord site_id mismatch";
+                    }
+                }
+                if (domain_ok) {
+                    m.migration_ready_for_files = true;
+                }
             }
         }
     }

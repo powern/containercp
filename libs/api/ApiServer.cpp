@@ -2734,17 +2734,20 @@ bool ApiServer::start() {
 
         s.save();
 
-        // Create migration marker for Stage 2 validation
-        {
+        // Find created site BEFORE writing marker (need real site_id)
+        auto* created_site = s.sites().find(domain);
+
+        // Create migration marker for Stage 2 validation with real site_id
+        if (created_site) {
             std::string marker_path = s.config().sites_dir() + domain + "/.containercp-migration.json";
             std::string marker = "{\"domain\":\"" + domain
                 + "\",\"owner\":\"" + owner
-                + "\",\"stage\":1,\"files_pending\":true}";
+                + "\",\"site_id\":" + std::to_string(created_site->id)
+                + ",\"stage\":1,\"files_pending\":true,\"files_imported\":false,\"sql_pending\":true}";
             s.filesystem().create_file(marker_path, marker);
+        } else {
+            s.logger().warning("MIGRATION", "SiteRecord not found after create — marker not written");
         }
-
-        // Find created site and database for response
-        auto* created_site = s.sites().find(domain);
         std::string site_id_str = created_site ? std::to_string(created_site->id) : "unknown";
         std::string db_name, db_user;
         for (const auto& d : s.databases().list()) {
