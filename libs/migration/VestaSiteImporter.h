@@ -113,7 +113,9 @@ private:
     bool copy_files_to_public(const std::string& staging_dir,
                                const std::string& web_root_type,
                                const std::string& site_dir,
-                               ImportFilesResult& result);
+                               ImportFilesResult& result,
+                               const std::string& uid_str = "1000",
+                               const std::string& gid_str = "1000");
 
     runtime::CommandExecutor& executor_;
     filesystem::Filesystem& fs_;

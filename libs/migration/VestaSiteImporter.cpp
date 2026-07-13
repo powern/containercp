@@ -662,13 +662,16 @@ std::string VestaSiteImporter::format_dry_run(const Manifest& m, const Options& 
     return out.str();
 }
 
-// ── Safe tar member validation ──
-static bool validate_inner_tar(const std::string& tarball,
-                                std::vector<std::string>& errors) {
+// ── Full tar entry validation with type metadata ──
+// Uses tar -tvzf to get type: regular file, dir, symlink →
+// validate targets and reject devices/FIFO/socket
+static bool validate_inner_tar_verbose(const std::string& tarball,
+                                        std::vector<std::string>& errors) {
     runtime::CommandExecutor exec;
-    auto list = exec.run({"tar", "-tzf", tarball});
+    // tar -tvzf outputs: permissions user group size date name -> target (for symlinks)
+    auto list = exec.run({"tar", "-tvzf", tarball});
     if (list.exit_code != 0) {
-        errors.push_back("Cannot list inner archive");
+        errors.push_back("Cannot list archive");
         return false;
     }
 
@@ -676,12 +679,137 @@ static bool validate_inner_tar(const std::string& tarball,
     std::string line;
     while (std::getline(stream, line)) {
         if (line.empty()) continue;
-        if (line[0] == '/') { errors.push_back("Absolute path: " + line); return false; }
-        std::istringstream cs(line);
+
+        // Parse first char of permissions: l=symlink, d=dir, b=block, c=char, p=FIFO, s=socket
+        char type = ' '; // space = regular file
+        if (line.size() > 1 && line[0] != ' ') {
+            // Find the permissions field (first column)
+            // Format: "drwxr-xr-x" or "lrwxrwxrwx" or "brw-r--r--" etc
+            std::string perm = line.substr(0, 10);
+            type = perm[0];
+        }
+
+        if (type == 'b' || type == 'c') {
+            errors.push_back("Archive contains device entry: " + line);
+            return false;
+        }
+        if (type == 'p') {
+            errors.push_back("Archive contains FIFO entry: " + line);
+            return false;
+        }
+        if (type == 's') {
+            errors.push_back("Archive contains socket entry: " + line);
+            return false;
+        }
+
+        // Find the path in the line (starts after permissions, size, date)
+        // Format: perms size date time path -> target (for symlinks)
+        // Simple heuristic: last space-separated token before "->" is the path
+        size_t arrow_pos = line.find(" -> ");
+        std::string entry_path, symlink_target;
+
+        std::string raw_path;
+        if (arrow_pos != std::string::npos) {
+            // Has symlink target
+            raw_path = line.substr(0, arrow_pos);
+            symlink_target = line.substr(arrow_pos + 4);
+            // Trim trailing spaces
+            while (!raw_path.empty() && raw_path.back() == ' ') raw_path.pop_back();
+        } else {
+            raw_path = line;
+        }
+
+        // Extract the path (last field after spaces)
+        auto last_space = raw_path.rfind(' ');
+        if (last_space != std::string::npos) {
+            entry_path = raw_path.substr(last_space + 1);
+        } else {
+            entry_path = raw_path;
+        }
+
+        // Remove trailing / for directories
+        if (!entry_path.empty() && entry_path.back() == '/') entry_path.pop_back();
+
+        if (entry_path.empty()) continue;
+
+        // Reject absolute paths
+        if (entry_path[0] == '/') {
+            errors.push_back("Archive contains absolute path: " + entry_path);
+            return false;
+        }
+
+        // Reject parent directory references
+        std::istringstream cs(entry_path);
         std::string part;
         while (std::getline(cs, part, '/')) {
-            if (part == "..") { errors.push_back("Parent ref: " + line); return false; }
+            if (part == "..") {
+                errors.push_back("Archive contains parent directory reference: " + entry_path);
+                return false;
+            }
         }
+
+        // For symlinks, validate target
+        if (type == 'l') {
+            if (symlink_target.empty()) {
+                errors.push_back("Archive contains symlink with empty target: " + entry_path);
+                return false;
+            }
+            if (symlink_target[0] == '/') {
+                errors.push_back("Archive contains symlink with absolute target: " + entry_path + " -> " + symlink_target);
+                return false;
+            }
+            // Check for .. in symlink target components
+            std::istringstream tgt_cs(symlink_target);
+            std::string tgt_part;
+            while (std::getline(tgt_cs, tgt_part, '/')) {
+                if (tgt_part == "..") {
+                    errors.push_back("Archive contains symlink with parent reference: " + entry_path + " -> " + symlink_target);
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+// Post-extraction symlink check: verify all symlink targets resolve inside webroot
+static bool check_symlinks_after_extraction(const std::string& web_root,
+                                            std::vector<std::string>& errors) {
+    try {
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(web_root,
+            std::filesystem::directory_options::skip_permission_denied)) {
+
+            auto st = std::filesystem::symlink_status(entry);
+            if (st.type() != std::filesystem::file_type::symlink) continue;
+
+            if (!std::filesystem::exists(entry)) {
+                errors.push_back("Broken symlink: " + entry.path().string());
+                return false;
+            }
+
+            char target_real[PATH_MAX];
+            if (!::realpath(entry.path().c_str(), target_real)) {
+                errors.push_back("Cannot resolve symlink: " + entry.path().string());
+                return false;
+            }
+
+            char web_root_real[PATH_MAX];
+            if (!::realpath(web_root.c_str(), web_root_real)) {
+                errors.push_back("Cannot resolve web root: " + web_root);
+                return false;
+            }
+
+            std::string tgt(target_real);
+            std::string wr(web_root_real);
+            // Check target is inside web root
+            if (tgt != wr && tgt.substr(0, wr.size() + 1) != wr + "/") {
+                errors.push_back("Symlink escapes web root: " + entry.path().string() + " -> " + tgt);
+                return false;
+            }
+        }
+    } catch (const std::exception& e) {
+        errors.push_back("Symlink check error: " + std::string(e.what()));
+        return false;
     }
     return true;
 }
@@ -711,13 +839,14 @@ bool VestaSiteImporter::copy_files_to_public(
     const std::string& staging_dir,
     const std::string& web_root_type,
     const std::string& site_dir,
-    ImportFilesResult& result) {
+    ImportFilesResult& result,
+    const std::string& uid_str, const std::string& gid_str) {
 
     std::string data_tarball = staging_dir + "/domain_data.tar.gz";
     std::string public_dir = site_dir + "public/";
 
-    // 1. Validate inner tar members BEFORE extraction
-    if (!validate_inner_tar(data_tarball, result.errors)) return false;
+    // 1. Validate inner tar members with full type metadata
+    if (!validate_inner_tar_verbose(data_tarball, result.errors)) return false;
 
     // 2. Safety-copy current public — mandatory, hard error if fails
     std::string safety_dir = staging_dir + "/safety_public";
@@ -728,19 +857,17 @@ bool VestaSiteImporter::copy_files_to_public(
         return false;
     }
 
-    // Rollback helper (used from multiple points)
+    // Rollback helper
     auto rollback_stage2 = [&]() -> bool {
         bool ok = true;
         executor_.run({"rm", "-rf", public_dir});
         ::mkdir(public_dir.c_str(), 0755);
         if (executor_.run({"rsync", "-a", "--safe-links", safety_dir + "/", public_dir}).exit_code != 0) ok = false;
-
-        // Always try to restart web+php
         executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "up", "-d", "web", "php"});
         return ok;
     };
 
-    // 3. Stop web+php only (mariadb+redis stay running)
+    // 3. Stop web+php only
     if (executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "stop", "web", "php"}).exit_code != 0) {
         result.errors.push_back("Failed to stop web/php");
         return false;
@@ -755,7 +882,13 @@ bool VestaSiteImporter::copy_files_to_public(
         return false;
     }
 
-    // 5. Determine source path
+    // 5. Post-extraction symlink check
+    if (!check_symlinks_after_extraction(extract_dir, result.errors)) {
+        rollback_stage2();
+        return false;
+    }
+
+    // 6. Determine source path
     std::string source_path = extract_dir;
     if (!web_root_type.empty() && web_root_type != ".") source_path = extract_dir + "/" + web_root_type;
 
@@ -765,59 +898,59 @@ bool VestaSiteImporter::copy_files_to_public(
         rollback_stage2();
         return false;
     }
+
+    // 7. Canonical prefix check (sibling-safe)
     char src_r[PATH_MAX], ext_r[PATH_MAX];
     if (!::realpath(source_path.c_str(), src_r) || !::realpath(extract_dir.c_str(), ext_r)) {
         result.errors.push_back("Path resolution failed");
         rollback_stage2();
         return false;
     }
-    if (std::string(src_r).substr(0, strlen(ext_r)) != ext_r) {
-        result.errors.push_back("Web root outside extract dir");
+    std::string src_str(src_r), ext_str(ext_r);
+    if (src_str != ext_str && (src_str.size() <= ext_str.size() ||
+        src_str.substr(0, ext_str.size() + 1) != ext_str + "/")) {
+        result.errors.push_back("Web root outside extract dir (sibling rejected)");
         rollback_stage2();
         return false;
     }
 
-    // 6. Clear public contents (not the dir itself)
+    // 8. Clear public contents
     if (executor_.run({"find", public_dir, "-mindepth", "1", "-maxdepth", "1", "-exec", "rm", "-rf", "{}", "+"}).exit_code != 0) {
         result.errors.push_back("Failed to clean public");
         rollback_stage2();
         return false;
     }
 
-    // 7. rsync files
+    // 9. rsync files
     if (executor_.run({"rsync", "-a", "--safe-links", source_path + "/", public_dir}).exit_code != 0) {
         result.errors.push_back("rsync failed");
         rollback_stage2();
         return false;
     }
 
-    // 8. Fix ownership — use UID from web container
-    auto uid_r = executor_.run({"sh", "-c", "docker compose -f " + site_dir + "docker-compose.yml exec -T web stat -c %u /var/www/html 2>/dev/null || echo 1000"});
-    std::string uid_str = "1000";
-    if (uid_r.exit_code == 0) {
-        std::string u = uid_r.out;
-        while (!u.empty() && (u.back() == '\n' || u.back() == '\r')) u.pop_back();
-        if (!u.empty() && u.find_first_not_of("0123456789") == std::string::npos) uid_str = u;
-    }
-    if (executor_.run({"docker", "run", "--rm", "-v", public_dir + ":/t:rw", "alpine", "chown", "-R", uid_str + ":" + uid_str, "/t"}).exit_code != 0) {
+    // 10. Fix ownership
+    if (executor_.run({"docker", "run", "--rm", "-v", public_dir + ":/t:rw", "alpine",
+                       "chown", "-R", uid_str + ":" + gid_str, "/t"}).exit_code != 0) {
         result.errors.push_back("Ownership fix failed");
         rollback_stage2();
         return false;
     }
 
-    // 9. Start web+php
+    // 11. Start web+php
     if (executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "up", "-d", "web", "php"}).exit_code != 0) {
         result.errors.push_back("Failed to start web/php");
         rollback_stage2();
         return false;
     }
 
-    // 10. Health check with timeout
+    // 12. Health check with timeout
     bool healthy = false;
     for (int i = 0; i < 15; ++i) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
-        auto ps = executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "ps", "--format={{.Status}}", "web"});
-        auto ps_php = executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "ps", "--format={{.Status}}", "php"});
+        auto ps = executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml",
+                                "ps", "--format={{.Status}}", "web"});
+        auto ps_php = executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml",
+                                    "ps", "--format={{.Status}}", "php"});
         if (ps.exit_code == 0 && ps_php.exit_code == 0 &&
             ps.out.find("healthy") != std::string::npos &&
             ps_php.out.find("healthy") != std::string::npos) {
@@ -831,7 +964,7 @@ bool VestaSiteImporter::copy_files_to_public(
         return false;
     }
 
-    // 11. Count files
+    // 13. Count files
     try {
         for (const auto& e : std::filesystem::recursive_directory_iterator(public_dir)) {
             if (e.is_regular_file()) { result.files_count++; result.bytes_copied += e.file_size(); }
@@ -850,9 +983,52 @@ VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Optio
     if (!m.errors.empty()) { result.errors = m.errors; return result; }
 
     std::string site_dir = cfg_.sites_dir() + opts.domain + "/";
-    if (!fs_.exists(site_dir + "docker-compose.yml")) {
-        result.errors.push_back("Site not found. Run Stage 1 first.");
+
+    // Validate migration marker (prevent Stage 2 on arbitrary sites)
+    std::string marker_path = site_dir + ".containercp-migration.json";
+    if (!fs_.exists(marker_path)) {
+        result.errors.push_back("Site is not a migration site (no marker). Stage 1 required first.");
         return result;
+    }
+    // Read and validate marker
+    auto marker_content = fs_.read_file(marker_path);
+    if (marker_content.find("\"stage\":1") == std::string::npos) {
+        result.errors.push_back("Migration marker has wrong stage. Expected stage=1.");
+        return result;
+    }
+
+    // Determine UID/GID BEFORE stopping containers (while they're still running)
+    std::string uid_str, gid_str;
+    {
+        // Read from database container stat
+        auto db_uid = executor_.run({
+            "docker", "exec",
+            "site-" + std::to_string(m.all_databases.size() > 0 ? 1 : 0) + "-db",
+            "stat", "-c", "%u:%g", "/var/lib/mysql"
+        });
+        // Actually, use the php container since it's running
+        // We need the site_id. Try a different approach: inspect the compose project
+        auto uid_result = executor_.run({
+            "docker", "compose", "-f", site_dir + "docker-compose.yml",
+            "exec", "-T", "php", "stat", "-c", "%u:%g", "/var/www/html"
+        });
+        if (uid_result.exit_code != 0) {
+            result.errors.push_back("Cannot determine container UID/GID. Is site running?");
+            return result;
+        }
+        std::string uid_line = uid_result.out;
+        while (!uid_line.empty() && (uid_line.back() == '\n' || uid_line.back() == '\r')) uid_line.pop_back();
+        auto colon = uid_line.find(':');
+        if (colon == std::string::npos) {
+            result.errors.push_back("Invalid UID:GID format: " + uid_line);
+            return result;
+        }
+        uid_str = uid_line.substr(0, colon);
+        gid_str = uid_line.substr(colon + 1);
+        if (uid_str.empty() || gid_str.empty()) {
+            result.errors.push_back("Empty UID or GID");
+            return result;
+        }
     }
 
     std::string staging = make_staging_dir();
@@ -866,9 +1042,15 @@ VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Optio
         cleanup(); return result;
     }
 
-    bool ok = copy_files_to_public(staging, m.web_root_type, site_dir, result);
+    bool ok = copy_files_to_public(staging, m.web_root_type, site_dir, result, uid_str, gid_str);
     cleanup();
     if (!ok) return result;
+
+    // Update migration marker: stage 2 completed
+    std::string updated_marker =
+        "{\"domain\":\"" + opts.domain + "\",\"owner\":\"" + opts.owner
+        + "\",\"stage\":2,\"files_imported\":true,\"sql_pending\":true}";
+    fs_.create_file(marker_path, updated_marker);
 
     result.success = true;
     return result;

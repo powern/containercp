@@ -612,6 +612,15 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
 
         s.save();
 
+        // Create migration marker for Stage 2 validation
+        {
+            std::string marker_path = s.config().sites_dir() + opts.domain + "/.containercp-migration.json";
+            std::string marker = "{\"domain\":\"" + opts.domain
+                + "\",\"owner\":\"" + opts.owner
+                + "\",\"stage\":1,\"files_pending\":true}";
+            s.filesystem().create_file(marker_path, marker);
+        }
+
         // Find created site details
         auto* created_site = s.sites().find(opts.domain);
         std::string sid = created_site ? std::to_string(created_site->id) : "?";

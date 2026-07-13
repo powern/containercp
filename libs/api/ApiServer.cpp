@@ -2725,6 +2725,15 @@ bool ApiServer::start() {
 
         s.save();
 
+        // Create migration marker for Stage 2 validation
+        {
+            std::string marker_path = s.config().sites_dir() + domain + "/.containercp-migration.json";
+            std::string marker = "{\"domain\":\"" + domain
+                + "\",\"owner\":\"" + owner
+                + "\",\"stage\":1,\"files_pending\":true}";
+            s.filesystem().create_file(marker_path, marker);
+        }
+
         // Find created site and database for response
         auto* created_site = s.sites().find(domain);
         std::string site_id_str = created_site ? std::to_string(created_site->id) : "unknown";
