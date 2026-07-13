@@ -2922,53 +2922,45 @@ bool ApiServer::start() {
             return r;
         }
 
-        runtime::CommandExecutor exec;
-        migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(), s.logger(),
-                                              &s.sites(), &s.domains());
-        migration::Options opts;
-        opts.backup_path = resolved_path;
-        opts.domain = domain;
-        opts.owner = owner;
-        opts.keep_staging = keep_staging;
+        // Create async job
+        auto& jobs = s.jobs();
+        uint64_t job_id = jobs.create("migration_import_sql", {
+            "Reading marker", "Finding SQL dump", "Extracting dump",
+            "Safety backup", "Dropping tables", "Importing SQL",
+            "Verifying database", "Updating wp-config", "Health check",
+            "Finalizing"
+        });
+        jobs.update(job_id, "queued", 0);
 
-        auto import_result = importer.import_sql(opts);
+        // Capture by copy for thread safety
+        auto opts_ptr = std::make_shared<migration::Options>();
+        opts_ptr->backup_path = resolved_path;
+        opts_ptr->domain = domain;
+        opts_ptr->owner = owner;
+        opts_ptr->keep_staging = keep_staging;
 
-        if (!import_result.success) {
-            r.status_code = 500;
-            std::ostringstream err;
-            err << "{\"success\":false,\"error\":\"";
-            for (const auto& e : import_result.errors) err << JsonFormatter::escape(e) << "; ";
-            err << "\"}";
-            r.body = err.str();
-            return r;
-        }
+        // Run in separate thread
+        std::thread([&s, opts_ptr, job_id]() {
+            s.jobs().update(job_id, "running", 5, "Starting SQL import");
 
-        std::ostringstream json;
-        json << "{\"success\":true,\"data\":{"
-             << "\"message\":\"Stage 3 completed — SQL imported\""
-             << ",\"database\":\"" << JsonFormatter::escape(import_result.db_name)
-             << "\",\"safety_backup_created\":" << (import_result.safety_backup_created ? "true" : "false")
-             << ",\"wp_config_updated\":" << (import_result.wp_config_updated ? "true" : "false")
-             << ",\"warnings\":[";
-        bool first_w = true;
-        for (const auto& w : import_result.warnings) {
-            if (!first_w) json << ",";
-            first_w = false;
-            json << "\"" << JsonFormatter::escape(w) << "\"";
-        }
-        json << "],\"errors\":[";
-        bool first_e = true;
-        for (const auto& e : import_result.errors) {
-            if (!first_e) json << ",";
-            first_e = false;
-            json << "\"" << JsonFormatter::escape(e) << "\"";
-        }
-        json << "],\"status\":{"
-             << "\"files\":\"imported\""
-             << ",\"sql\":\"imported\""
-             << ",\"wp_config\":" << (import_result.wp_config_updated ? "\"updated\"" : "\"skipped\"")
-             << "}}}";
-        r.body = json.str();
+            runtime::CommandExecutor exec;
+            migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(), s.logger(),
+                                                  &s.sites(), &s.domains());
+            auto import_result = importer.import_sql(*opts_ptr);
+
+            if (!import_result.success) {
+                std::string err_msg;
+                for (const auto& e : import_result.errors) err_msg += e + "; ";
+                s.jobs().update(job_id, "failed", 0, err_msg);
+                return;
+            }
+
+            s.jobs().update(job_id, "completed", 100, "SQL import completed");
+        }).detach();
+
+        r.status_code = 202;
+        r.body = "{\"success\":true,\"data\":{\"job_id\":" + std::to_string(job_id)
+            + ",\"state\":\"queued\",\"message\":\"SQL import started\"}}";
         return r;
     });
 

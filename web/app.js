@@ -1784,7 +1784,7 @@ async function importMigrationFiles() {
 async function importMigrationSql() {
   const resultDiv = document.getElementById('migrate-sql-result');
   if (!resultDiv) return;
-  resultDiv.innerHTML = 'Importing SQL...';
+  resultDiv.innerHTML = 'Starting SQL import...';
 
   try {
     const backup = document.getElementById('migrate-backup').value;
@@ -1797,32 +1797,40 @@ async function importMigrationSql() {
 
     const res = await apiPost('/api/migration/vesta/import-sql', body);
     const d = res.data;
+    const jobId = d.job_id;
 
-    let html = '<div class="card" style="margin-top:12px;border-color:var(--green);"><div class="card-header"><h3 style="color:var(--green);">Stage 3 Completed</h3></div><div style="padding:12px;font-size:13px;">';
-    html += '<p style="margin-bottom:12px;">' + esc(d.message) + '</p>';
-    html += '<table style="width:100%;border-collapse:collapse;">';
-    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Database</td><td>' + esc(d.database) + '</td></tr>';
-    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Safety backup</td><td>' + (d.safety_backup_created ? '✅ Created' : '⚠️ Not created') + '</td></tr>';
-    html += '<tr><td style="padding:4px 8px;color:var(--text2);">wp-config.php</td><td>' + (d.wp_config_updated ? '✅ Updated' : '⚠️ Not updated') + '</td></tr>';
-    html += '</table>';
+    // Poll job status
+    resultDiv.innerHTML = '<div class="card" style="margin-top:12px;"><div class="card-header"><h3>SQL Import Running</h3></div><div style="padding:12px;font-size:13px;"><p>Job #' + jobId + ' started. Waiting for completion...</p><div id="migrate-sql-progress"></div></div></div>';
 
-    html += '<div style="margin-top:12px;"><strong>Status:</strong><ul style="margin-top:4px;">';
-    if (d.status) {
-      for (const [key, val] of Object.entries(d.status)) {
-        const icon = val === 'imported' || val === 'updated' ? '✅' : '⏳';
-        html += '<li>' + icon + ' ' + esc(key) + ': ' + esc(val) + '</li>';
+    const poll = setInterval(async () => {
+      try {
+        const statusRes = await api('/api/jobs?id=' + jobId);
+        const jobs = statusRes.data || [];
+        if (jobs.length === 0) {
+          clearInterval(poll);
+          resultDiv.innerHTML = '<div class="alert alert-error">Job not found</div>';
+          return;
+        }
+        const job = jobs[0];
+        const progressDiv = document.getElementById('migrate-sql-progress');
+        if (progressDiv) {
+          progressDiv.innerHTML = '<div style="margin-bottom:8px;"><strong>Status:</strong> ' + esc(job.status) + '</div>'
+            + '<div style="margin-bottom:8px;"><strong>Progress:</strong> ' + job.progress + '%</div>'
+            + '<div><strong>Message:</strong> ' + esc(job.message || '') + '</div>';
+        }
+
+        if (job.status === 'completed') {
+          clearInterval(poll);
+          resultDiv.innerHTML = '<div class="card" style="margin-top:12px;border-color:var(--green);"><div class="card-header"><h3 style="color:var(--green);">Stage 3 Completed</h3></div><div style="padding:12px;font-size:13px;"><p>SQL import completed successfully.</p></div></div>';
+        } else if (job.status === 'failed') {
+          clearInterval(poll);
+          resultDiv.innerHTML = '<div class="alert alert-error">SQL import failed: ' + esc(job.message || 'Unknown error') + '</div>';
+        }
+      } catch(e) {
+        clearInterval(poll);
+        resultDiv.innerHTML = '<div class="alert alert-error">Failed to poll job status: ' + esc(e.message || 'Unknown') + '</div>';
       }
-    }
-    html += '</ul></div>';
-
-    if (d.warnings && d.warnings.length > 0) {
-      html += '<div style="margin-top:8px;"><strong>Warnings:</strong><ul>';
-      d.warnings.forEach(w => { html += '<li style="color:var(--orange);">' + esc(w) + '</li>'; });
-      html += '</ul></div>';
-    }
-
-    html += '</div></div>';
-    resultDiv.innerHTML = html;
+    }, 2000);
   } catch(e) {
     resultDiv.innerHTML = '<div class="alert alert-error">SQL import failed: ' + esc(e.message || 'Unknown error') + '</div>';
   }
