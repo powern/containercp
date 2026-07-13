@@ -32,9 +32,13 @@ VestaSiteImporter::VestaSiteImporter(runtime::CommandExecutor& executor,
 bool VestaSiteImporter::tar_safe_list(const std::string& archive,
                                        std::vector<std::string>& entries,
                                        std::string& error) {
+    logger_.info("MIGRATION", "tar_safe_list ENTER: " + archive);
+    logger_.info("MIGRATION", "tar_safe_list: running tar -tf (may take time for large archives)");
     auto result = executor_.run({
         "tar", "-tf", archive
     });
+    logger_.info("MIGRATION", "tar_safe_list: tar -tf completed, exit_code=" + std::to_string(result.exit_code)
+                 + " stdout_size=" + std::to_string(result.out.size()));
     if (result.exit_code != 0) {
         error = result.err.empty() ? "Failed to read archive" : result.err;
         return false;
@@ -1506,25 +1510,38 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
 
     // Find DB dump in backup
     logger_.info("MIGRATION", "Finding SQL dump in backup");
+    logger_.info("MIGRATION", "tar_safe_list: opening " + opts.backup_path);
     std::vector<std::string> entries;
     std::string error;
     if (!tar_safe_list(opts.backup_path, entries, error)) {
+        logger_.error("MIGRATION", "tar_safe_list FAILED: " + error);
         result.errors.push_back("Cannot read backup: " + error);
         return result;
     }
+    logger_.info("MIGRATION", "tar_safe_list OK: " + std::to_string(entries.size()) + " entries in archive");
     if (m.wp_db_name.empty()) {
+        logger_.error("MIGRATION", "wp_db_name is empty — cannot find SQL dump");
         result.errors.push_back("DB_NAME not determined — cannot find SQL dump");
         return result;
     }
     std::string db_to_find = normalize_db_name(m.wp_db_name);
+    logger_.info("MIGRATION", "DB to find: '" + db_to_find + "' (normalized from '" + m.wp_db_name + "')");
     std::string dump_path, dump_type;
     size_t dump_size = 0;
     bool size_known = false;
+    logger_.info("MIGRATION", "Entering find_db_in_archive for '" + db_to_find + "'");
     if (!find_db_in_archive(entries, db_to_find, dump_path, dump_size, size_known, dump_type)) {
+        logger_.error("MIGRATION", "find_db_in_archive FAILED for '" + db_to_find + "'");
+        // Log all databases found in archive for debugging
+        std::string dbs;
+        for (const auto& e : entries) {
+            if (e.find("./db/") == 0 || e.find("db/") == 0) dbs += e + " ";
+        }
+        logger_.info("MIGRATION", "Databases in archive: " + dbs);
         result.errors.push_back("SQL dump not found for database '" + db_to_find + "'");
         return result;
     }
-    logger_.info("MIGRATION", "SQL dump found: " + dump_path + " type=" + dump_type);
+    logger_.info("MIGRATION", "find_db_in_archive OK: path=" + dump_path + " type=" + dump_type);
 
     // Read credentials from site .env
     std::string db_name, db_user, db_password;
