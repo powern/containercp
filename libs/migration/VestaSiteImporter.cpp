@@ -2015,8 +2015,35 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
         }
         logger_.info("MIGRATION", "php -l OK");
 
-        result.wp_config_updated = true;
-        logger_.info("MIGRATION", "wp-config.php updated with all 4 constants");
+    // Add trusted proxy block for HTTPS detection behind central nginx proxy
+    {
+        std::string proxy_block =
+            "\n// BEGIN CONTAINERCP TRUSTED PROXY\n"
+            "if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower($_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https') {\n"
+            "    $_SERVER['HTTPS'] = 'on';\n"
+            "    $_SERVER['SERVER_PORT'] = 443;\n"
+            "}\n"
+            "// END CONTAINERCP TRUSTED PROXY\n";
+
+        std::ifstream in_check(wp_config_path);
+        std::string existing((std::istreambuf_iterator<char>(in_check)), std::istreambuf_iterator<char>());
+        if (existing.find("BEGIN CONTAINERCP TRUSTED PROXY") == std::string::npos) {
+            // Insert before the final "?" or at end of file
+            auto close_php = existing.find("?>");
+            if (close_php != std::string::npos) {
+                existing.insert(close_php, proxy_block);
+            } else {
+                existing += proxy_block;
+            }
+            std::ofstream out_proxy(wp_config_path);
+            if (out_proxy.is_open()) {
+                out_proxy << existing;
+            }
+        }
+    }
+
+    result.wp_config_updated = true;
+    logger_.info("MIGRATION", "wp-config.php updated with all 4 constants and trusted proxy block");
     }
 
     // Restart PHP

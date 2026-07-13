@@ -99,6 +99,8 @@ std::string ProxyConfigBuilder::build_https_block(const std::string& domain,
          << "        proxy_set_header X-Real-IP $remote_addr;\n"
          << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
          << "        proxy_set_header X-Forwarded-Proto https;\n"
+         << "        proxy_set_header X-Forwarded-Port 443;\n"
+         << "        proxy_set_header X-Forwarded-Ssl on;\n"
          << "    }\n"
          << webmail_loc
          << "}\n";
