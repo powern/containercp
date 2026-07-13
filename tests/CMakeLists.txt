@@ -16,6 +16,7 @@ add_executable(containercp_tests
     test_backup.cpp
     test_migration.cpp
     test_migration_api.cpp
+    test_rollback_integration.cpp
     ${CMAKE_SOURCE_DIR}/libs/migration/VestaSiteImporter.cpp
     ${CMAKE_SOURCE_DIR}/libs/config/Config.cpp
     ${CMAKE_SOURCE_DIR}/libs/filesystem/Filesystem.cpp
@@ -29,6 +30,8 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/domain/Domain.cpp
     ${CMAKE_SOURCE_DIR}/libs/domain/DomainManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/domain/DomainViewService.cpp
+    ${CMAKE_SOURCE_DIR}/libs/database/DatabaseManager.cpp
+    ${CMAKE_SOURCE_DIR}/libs/database/Database.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/AccessUser.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/AccessUserManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/AccessGrant.cpp
@@ -63,6 +66,15 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/runtime/HealthReport.cpp
     ${CMAKE_SOURCE_DIR}/libs/runtime/ServiceRole.cpp
     ${CMAKE_SOURCE_DIR}/libs/runtime/SiteRuntimeManager.cpp
+    ${CMAKE_SOURCE_DIR}/libs/runtime/DockerRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/libs/provider/DockerComposeProvider.cpp
+    ${CMAKE_SOURCE_DIR}/libs/php/PhpVersion.cpp
+    ${CMAKE_SOURCE_DIR}/libs/php/PhpVersionManager.cpp
+    ${CMAKE_SOURCE_DIR}/libs/docker/ComposeGenerator.cpp
+    ${CMAKE_SOURCE_DIR}/libs/docker/EnvGenerator.cpp
+    ${CMAKE_SOURCE_DIR}/libs/filesystem/SiteLayout.cpp
+    ${CMAKE_SOURCE_DIR}/libs/template/TemplateEngine.cpp
+    ${CMAKE_SOURCE_DIR}/libs/operations/SiteCreateOperation.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailAliasManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/DkimManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailDomain.cpp

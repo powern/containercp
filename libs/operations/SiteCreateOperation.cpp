@@ -2,8 +2,10 @@
 #include "utils/PasswordGenerator.h"
 #include "utils/StringUtils.h"
 #include "utils/Validator.h"
+#include "runtime/CommandExecutor.h"
 
 #include <iostream>
+#include <sstream>
 
 namespace containercp::operations {
 
@@ -28,6 +30,122 @@ static void update_job_and_progress(jobs::JobManager* jobs, uint64_t job_id,
                                      int percent, const std::string& step) {
     if (jobs != nullptr && job_id > 0) {
         jobs->update(job_id, "running", percent, step);
+    }
+}
+
+struct CreateState {
+    bool site_record_created = false;
+    bool domain_record_created = false;
+    bool database_record_created = false;
+    uint64_t site_id = 0;
+    std::string site_dir;
+    std::string domain;
+};
+
+static void do_rollback(CreateState& st,
+                        site::SiteManager& sites_,
+                        domain::DomainManager& domains_,
+                        database::DatabaseManager& databases_,
+                        proxy::ReverseProxyManager& proxies_,
+                        proxy::ProxyProvider& proxy_provider_,
+                        filesystem::Filesystem& fs_,
+                        config::Config& cfg_) {
+
+    // 1. Remove proxy config if it was created
+    proxy_provider_.remove_proxy(st.domain);
+    auto* rp = proxies_.find_by_domain(st.domain);
+    if (rp != nullptr) proxies_.remove(rp->id);
+
+    // 2. Stop Docker stack while docker-compose.yml still exists
+    if (!st.site_dir.empty()) {
+        runtime::CommandExecutor exec;
+        // docker compose down — ignore errors, best effort
+        exec.run({"docker", "compose", "-f", st.site_dir + "docker-compose.yml",
+                  "down", "--volumes", "--remove-orphans"});
+    }
+
+    // 3. Remove containers by label (belt and suspenders)
+    if (st.site_id > 0) {
+        runtime::CommandExecutor exec;
+        auto container_list = exec.run({
+            "docker", "ps", "-a", "--filter",
+            "label=containercp.site.id=" + std::to_string(st.site_id),
+            "--format", "{{.ID}}"
+        });
+        if (container_list.exit_code == 0 && !container_list.out.empty()) {
+            std::istringstream ss(container_list.out);
+            std::string cid;
+            while (std::getline(ss, cid)) {
+                if (!cid.empty()) exec.run({"docker", "rm", "-f", cid});
+            }
+        }
+    }
+
+    // 4. Remove Docker network by project label
+    if (st.site_id > 0) {
+        runtime::CommandExecutor exec;
+        auto net_list = exec.run({
+            "docker", "network", "ls", "--filter",
+            "label=com.docker.compose.project=containercp-site-" + std::to_string(st.site_id),
+            "--format", "{{.ID}}"
+        });
+        if (net_list.exit_code == 0 && !net_list.out.empty()) {
+            std::istringstream ss(net_list.out);
+            std::string nid;
+            while (std::getline(ss, nid)) {
+                if (!nid.empty()) exec.run({"docker", "network", "rm", nid});
+            }
+        }
+        // Fallback: remove by name pattern
+        auto net_by_name = exec.run({
+            "sh", "-c",
+            "docker network ls --filter name=containercp-site-" + std::to_string(st.site_id)
+            + " -q | xargs -r docker network rm 2>/dev/null"
+        });
+        (void)net_by_name;
+    }
+
+    // 5. Remove Docker volumes by compose project name
+    if (st.site_id > 0) {
+        runtime::CommandExecutor exec;
+        auto vol_list = exec.run({
+            "docker", "volume", "ls", "--filter",
+            "label=com.docker.compose.project=containercp-site-" + std::to_string(st.site_id),
+            "--format", "{{.Name}}"
+        });
+        if (vol_list.exit_code == 0 && !vol_list.out.empty()) {
+            std::istringstream ss(vol_list.out);
+            std::string vname;
+            while (std::getline(ss, vname)) {
+                if (!vname.empty()) exec.run({"docker", "volume", "rm", vname});
+            }
+        }
+    }
+
+    // 6. Remove site directory (only after Docker cleanup)
+    if (!st.site_dir.empty()) {
+        fs_.remove_directory(st.site_dir);
+    }
+
+    // 7. Remove in-memory records (reverse order)
+    if (st.database_record_created && st.site_id > 0) {
+        for (const auto& d : databases_.list()) {
+            if (d.site_id == st.site_id) {
+                databases_.remove(d.id);
+                break;
+            }
+        }
+    }
+    if (st.domain_record_created && st.site_id > 0) {
+        for (const auto& d : domains_.list()) {
+            if (d.site_id == st.site_id) {
+                domains_.remove(d.id);
+                break;
+            }
+        }
+    }
+    if (st.site_record_created && st.site_id > 0) {
+        sites_.remove(st.site_id);
     }
 }
 
@@ -77,6 +195,9 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner,
         return {true, ""};
     }
 
+    CreateState st;
+    st.domain = domain;
+
     update_job_and_progress(jobs, job_id, 10, "Creating site record...");
 
     site::Site site;
@@ -87,9 +208,12 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner,
     site.web_server = web_server;
 
     site.id = sites_.create(domain, owner, node.id, web_server);
+    st.site_id = site.id;
+    st.site_record_created = true;
 
     update_job_and_progress(jobs, job_id, 15, "Creating domain record...");
     domains_.create(domain, 0, site.id);
+    st.domain_record_created = true;
 
     update_job_and_progress(jobs, job_id, 20, "Creating database...");
     std::string safe = utils::StringUtils::sanitize(domain);
@@ -97,12 +221,14 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner,
     std::string db_user = safe + "_user";
     std::string db_password = utils::PasswordGenerator::generate();
     databases_.create(db_name, db_user, db_password, 0, site.id);
+    st.database_record_created = true;
 
     site.db_name = db_name;
     site.db_user = db_user;
     site.db_password = db_password;
 
-    // Create progress callback that wraps the job system
+    st.site_dir = cfg_.sites_dir() + domain + "/";
+
     auto progress = [jobs, job_id](int percent, const std::string& step) {
         update_job_and_progress(jobs, job_id, percent, step);
     };
@@ -110,34 +236,8 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner,
     auto result = provider_.create_site(site, progress);
 
     if (!result.success) {
-        // Rollback: remove filesystem
-        fs_.remove_directory(cfg_.sites_dir() + domain + "/");
-        // Rollback: remove proxy config if it exists
-        proxy_provider_.remove_proxy(domain);
-        auto* rp = proxies_.find_by_domain(domain);
-        if (rp != nullptr) proxies_.remove(rp->id);
-        // Rollback: remove Docker containers/networks if created
-        std::string cleanup_cmd = "cd " + cfg_.sites_dir() + domain
-            + " && docker compose down --volumes --remove-orphans 2>/dev/null || true";
-        std::system(cleanup_cmd.c_str());
-        // Remove the private Docker network by filter
-        std::string net_cleanup = "docker network ls --filter name=containercp-site-"
-            + std::to_string(site.id) + " -q | xargs -r docker network rm 2>/dev/null || true";
-        std::system(net_cleanup.c_str());
-        // Remove the site directory with all artifacts
-        fs_.remove_directory(cfg_.sites_dir() + domain + "/");
-        // Rollback: remove in-memory records
-        for (const auto& d : databases_.list()) {
-            if (d.site_id == site.id) {
-                databases_.remove(d.id);
-            }
-        }
-        for (const auto& d : domains_.list()) {
-            if (d.site_id == site.id) {
-                domains_.remove(d.id);
-            }
-        }
-        sites_.remove(site.id);
+        do_rollback(st, sites_, domains_, databases_, proxies_,
+                    proxy_provider_, fs_, cfg_);
         update_job_and_progress(jobs, job_id, 0, "Rolled back: " + result.message);
         return {false, result.message + " Created resources have been rolled back."};
     }
@@ -155,15 +255,19 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner,
 
     auto create_result = proxy_provider_.create_proxy(rp);
     if (!create_result.success) {
-        update_job_and_progress(jobs, job_id, 0, "Failed to create proxy: " + create_result.message);
-        return {false, create_result.message};
+        do_rollback(st, sites_, domains_, databases_, proxies_,
+                    proxy_provider_, fs_, cfg_);
+        update_job_and_progress(jobs, job_id, 0, "Rolled back: " + create_result.message);
+        return {false, create_result.message + " Created resources have been rolled back."};
     }
 
     update_job_and_progress(jobs, job_id, 95, "Reloading proxy...");
     auto reload_result = proxy_provider_.reload();
     if (!reload_result.success) {
-        update_job_and_progress(jobs, job_id, 0, "Proxy reload failed: " + reload_result.message);
-        return {false, reload_result.message};
+        do_rollback(st, sites_, domains_, databases_, proxies_,
+                    proxy_provider_, fs_, cfg_);
+        update_job_and_progress(jobs, job_id, 0, "Rolled back: " + reload_result.message);
+        return {false, reload_result.message + " Created resources have been rolled back."};
     }
 
     proxies_.create(domain, site.id, cfg_.data_root() + "/proxy/sites/" + domain + ".conf", upstream);
