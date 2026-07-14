@@ -453,6 +453,77 @@ Useful when a container becomes unresponsive or config is corrupted.
 **Note:** The `/api/logs` endpoint currently returns hardcoded
 placeholder data.  This is a known limitation.
 
+### 2.22 Site Mail — Enable, Disable, Status
+
+| Method | Path | Purpose | Owner |
+|--------|------|---------|-------|
+| POST | `/api/sites/<id>/enable-mail` | Enable mail for a site | `SiteMailOrchestrator` |
+| POST | `/api/sites/<id>/disable-mail` | Disable mail for a site | `SiteMailOrchestrator` |
+| GET | `/api/sites/<id>/mail-status` | Get mail status for a site | `SiteMailOrchestrator` |
+
+**POST /api/sites/<id>/enable-mail**
+
+Creates per-site mail configuration:
+- `MailDomain` record linked to the site's primary domain
+- Dovecot SASL credentials (`passwd-php` file)
+- `msmtprc` with fixed envelope sender (`wordpress@domain`, `allow_from_override off`)
+- Postfix `sender_login` exact-match entry (`site-{ID}@php.containercp.internal → wordpress@domain`)
+- PHP container connected to `containercp-mail` Docker network
+- Postfix + Dovecot reload to activate changes
+
+Idempotent — safe to call multiple times. No site files (WordPress, DB, proxy, SSL) are modified.
+
+**Response:**
+```json
+{ "success": true, "data": { "message": "Mail enabled for site example.com" } }
+```
+
+**POST /api/sites/<id>/disable-mail**
+
+Removes per-site mail configuration:
+- Removes SASL credentials from Dovecot
+- Removes Postfix sender_login entry
+- Deletes `msmtprc` file
+- Disconnects PHP container from `containercp-mail` network
+- Sets `MailDomain` mode to `Disabled` (preserves data for re-enable)
+
+**Response:**
+```json
+{ "success": true, "data": { "message": "Mail disabled for site example.com" } }
+```
+
+**GET /api/sites/<id>/mail-status**
+
+Returns current mail state for a site.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "site_id": 42,
+    "domain": "example.com",
+    "enabled": true,
+    "mail_domain": true,
+    "credential_exists": true,
+    "msmtprc": true,
+    "network": true
+  }
+}
+```
+
+Fields:
+- `enabled` — `MailDomain.mode != Disabled`
+- `mail_domain` — `MailDomain` record exists
+- `credential_exists` — Dovecot `passwd-php` has entry for this site
+- `msmtprc` — `config/php/msmtprc` file exists on disk
+- `network` — PHP container is connected to `containercp-mail` network
+
+**Error responses:**
+- 400 — Invalid site ID (non-numeric)
+- 404 — Site not found
+- 500 — Orchestration error (e.g., Docker network not available, mail module inactive)
+
 ---
 
 ## 3. Standard response format
