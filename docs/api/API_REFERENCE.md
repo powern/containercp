@@ -460,6 +460,7 @@ placeholder data.  This is a known limitation.
 | POST | `/api/sites/<id>/enable-mail` | Enable mail for a site | `SiteMailOrchestrator` |
 | POST | `/api/sites/<id>/disable-mail` | Disable mail for a site | `SiteMailOrchestrator` |
 | GET | `/api/sites/<id>/mail-status` | Get mail status for a site | `SiteMailOrchestrator` |
+| POST | `/api/sites/<id>/send-test-email` | Send a test email via msmtp in PHP container | `CommandExecutor` |
 
 **POST /api/sites/<id>/enable-mail**
 
@@ -507,6 +508,24 @@ Removes per-site mail configuration:
 - 400 — Invalid site ID (non-numeric)
 - 404 — Site not found
 - 500 — Compose file update failed
+
+**POST /api/sites/<id>/send-test-email**
+
+Sends a test email using the PHP container's msmtp to verify the full mail chain.
+
+Optional body: `{"to": "admin@example.com"}` (defaults to `admin@<site-domain>`).
+
+The email is sent directly via `msmtp` inside the PHP container, testing the exact same path
+that `PHP mail()` and `wp_mail()` use.
+
+**Response:**
+```json
+{ "success": true, "data": { "message": "Test email sent to admin@example.com" } }
+```
+
+**Error responses:**
+- 404 — Site not found
+- 500 — PHP container not found, msmtp not installed, or email send failed
 
 **GET /api/sites/<id>/mail-status**
 

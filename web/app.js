@@ -548,9 +548,10 @@ async function loadSiteDetail(p, siteId) {
         <div id="site-cols-left" style="display:grid;gap:12px;align-content:start;"></div>
         <div id="site-cols-right" style="display:grid;gap:12px;align-content:start;"></div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;" id="site-cols-bottom"></div>`;
-    const [domains, databases, ssl, proxy, backups] = await Promise.all([
-      api('/api/domains'), api('/api/databases'), api('/api/ssl'), api('/api/proxy'), api('/api/backups')
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;" id="site-cols-bottom"></div>
+      <div style="margin-top:12px;" id="site-php-mail"></div>`;
+    const [domains, databases, ssl, proxy, backups, mailStatus] = await Promise.all([
+      api('/api/domains'), api('/api/databases'), api('/api/ssl'), api('/api/proxy'), api('/api/backups'), api('/api/sites/' + site.id + '/mail-status')
     ]);
     // Existing cards: Domains + SSL in left column, Databases in right column
     const colLeft = $('site-cols-left');
@@ -567,9 +568,123 @@ async function loadSiteDetail(p, siteId) {
     colBottom.innerHTML =
       makeCard('Proxy', (proxy.data||[]).filter(p=>p.site_id==site.id).map(p=>p.status), '#06b6d4') +
       makeCard('Backups', (backups.data||[]).filter(b=>b.site_id==site.id).map(b=>b.filename), '#f97316');
+    // PHP Mail section
+    renderPhpMailCard(site.id, site.domain, mailStatus);
     // Load runtime card
     loadRuntimeCard(site.id, site.domain, site.web_server);
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load site</div>'; }
+}
+
+/* ===== PHP MAIL CARD ===== */
+function renderPhpMailCard(siteId, domain, mailStatus) {
+  const el = $('site-php-mail');
+  if (!el) return;
+  const s = (mailStatus && mailStatus.data) || {};
+  const enabled = s.enabled;
+  const credExists = s.credential_exists;
+  const msmtprc = s.msmtprc;
+  const network = s.network;
+  const allOk = enabled && credExists && msmtprc && network;
+
+  let statusText, statusColor;
+  if (!enabled) {
+    statusText = 'Disabled';
+    statusColor = 'var(--text3)';
+  } else if (allOk) {
+    statusText = 'Enabled';
+    statusColor = 'var(--green,#22c55e)';
+  } else {
+    statusText = 'Degraded';
+    statusColor = '#f59e0b';
+  }
+
+  let missing = '';
+  if (enabled) {
+    const parts = [];
+    if (!credExists) parts.push('credentials');
+    if (!msmtprc) parts.push('msmtprc');
+    if (!network) parts.push('network');
+    if (parts.length) missing = '<div style="font-size:11px;color:#ef4444;margin-top:4px;">Missing: ' + parts.join(', ') + '</div>';
+  }
+
+  el.innerHTML = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <h3 style="margin:0;">PHP Mail</h3>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <span style="font-size:12px;font-weight:600;color:${statusColor};">● ${statusText}</span>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px;margin-bottom:8px;">
+        <div><span style="color:var(--text3)">Credentials:</span> ${credExists ? '✅' : '❌'}</div>
+        <div><span style="color:var(--text3)">msmtprc:</span> ${msmtprc ? '✅' : '❌'}</div>
+        <div><span style="color:var(--text3)">Network:</span> ${network ? '✅' : '❌'}</div>
+      </div>
+      ${missing}
+      <div style="display:flex;gap:6px;margin-top:8px;">
+        ${enabled ? `
+          <button class="btn btn-sm btn-danger" onclick="disablePhpMail('${siteId}','${domain}')">Disable PHP Mail</button>
+        ` : `
+          <button class="btn btn-sm btn-primary" onclick="enablePhpMail('${siteId}','${domain}')">Enable PHP Mail</button>
+        `}
+        <button class="btn btn-sm btn-outline" onclick="sendTestEmail('${siteId}','${domain}')">Send Test Email</button>
+      </div>
+      <div id="php-mail-msg" style="font-size:12px;margin-top:8px;"></div>
+    </div>`;
+}
+
+async function enablePhpMail(siteId, domain) {
+  if (!confirm('Enable PHP mail for ' + domain + '?\n\nThis will create SMTP credentials and enable PHP mail()/wp_mail() support.')) return;
+  const el = $('php-mail-msg');
+  if (el) el.innerHTML = '<span style="color:var(--text3)">Enabling PHP mail...</span>';
+  try {
+    const r = await apiPost('/api/sites/' + siteId + '/enable-mail');
+    if (r.success) {
+      // Refresh mail status
+      const ms = await api('/api/sites/' + siteId + '/mail-status');
+      renderPhpMailCard(siteId, domain, ms);
+      if (el) el.innerHTML = '<span style="color:var(--green,#22c55e)">✅ PHP mail enabled</span>';
+    } else {
+      if (el) el.innerHTML = '<span style="color:#ef4444">❌ ' + (r.error||'Failed') + '</span>';
+    }
+  } catch(e) {
+    if (el) el.innerHTML = '<span style="color:#ef4444">❌ ' + e.message + '</span>';
+  }
+}
+
+async function disablePhpMail(siteId, domain) {
+  if (!confirm('Disable PHP mail for ' + domain + '?\n\nPHP mail() and wp_mail() will stop working.')) return;
+  const el = $('php-mail-msg');
+  if (el) el.innerHTML = '<span style="color:var(--text3)">Disabling PHP mail...</span>';
+  try {
+    const r = await apiPost('/api/sites/' + siteId + '/disable-mail');
+    if (r.success) {
+      const ms = await api('/api/sites/' + siteId + '/mail-status');
+      renderPhpMailCard(siteId, domain, ms);
+      if (el) el.innerHTML = '<span style="color:var(--green,#22c55e)">✅ PHP mail disabled</span>';
+    } else {
+      if (el) el.innerHTML = '<span style="color:#ef4444">❌ ' + (r.error||'Failed') + '</span>';
+    }
+  } catch(e) {
+    if (el) el.innerHTML = '<span style="color:#ef4444">❌ ' + e.message + '</span>';
+  }
+}
+
+async function sendTestEmail(siteId, domain) {
+  const to = prompt('Send test email to:', 'admin@' + domain);
+  if (!to) return;
+  const el = $('php-mail-msg');
+  if (el) el.innerHTML = '<span style="color:var(--text3)">Sending test email to ' + esc(to) + '...</span>';
+  try {
+    const r = await apiPost('/api/sites/' + siteId + '/send-test-email', {to: to});
+    if (r.success) {
+      if (el) el.innerHTML = '<span style="color:var(--green,#22c55e)">✅ Test email sent to ' + esc(to) + '</span>';
+    } else {
+      if (el) el.innerHTML = '<span style="color:#ef4444">❌ ' + (r.error||'Failed') + '</span>';
+    }
+  } catch(e) {
+    if (el) el.innerHTML = '<span style="color:#ef4444">❌ ' + e.message + '</span>';
+  }
 }
 
 /* ===== RUNTIME CARD ===== */

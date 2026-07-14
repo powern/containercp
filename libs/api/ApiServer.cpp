@@ -2001,6 +2001,35 @@ bool ApiServer::start() {
             return r;
         }
 
+        if (action == "send-test-email") {
+            // Send a test email via the PHP container's mail() function
+            runtime::CommandExecutor exec;
+            std::string container = "site-" + std::to_string(site_id) + "-php";
+
+            // Check if PHP container exists and has msmtp configured
+            auto check = exec.run({"docker", "exec", container, "which", "msmtp"});
+            if (check.exit_code != 0) {
+                r.status_code = 500;
+                r.body = "{\"success\":false,\"error\":\"PHP container not found or msmtp not installed\"}";
+                return r;
+            }
+
+            // Send a test email
+            std::string test_to = "admin@" + site->domain;
+            std::string body = json_extract(req.body, "to");
+            if (!body.empty()) test_to = body;
+
+            auto result = exec.run({"docker", "exec", container, "sh", "-c",
+                "echo \"Subject: ContainerCP Mail Test\n\nThis is a test email from ContainerCP PHP mail integration.\nSent from: " + site->domain + "\n\" | msmtp -t -- " + test_to});
+
+            if (result.exit_code != 0) {
+                r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.err) + "\"}";
+            } else {
+                r.body = "{\"success\":true,\"data\":{\"message\":\"Test email sent to " + test_to + "\"}}";
+            }
+            return r;
+        }
+
         if (action == "mail-status") {
             auto status = s.mail_orchestrator().get_status(site_id, site->domain);
             r.body = "{\"success\":true,\"data\":{"
