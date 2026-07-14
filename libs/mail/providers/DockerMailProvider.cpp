@@ -202,7 +202,7 @@ core::OperationResult DockerMailProvider::write_postfix_config(
        << "smtpd_client_recipient_rate_limit = 50\n";
 
     // DKIM signing via Rspamd milter
-    pf        << "milter_protocol = 2\n"
+    pf        << "milter_protocol = 6\n"
        << "milter_default_action = accept\n"
        << "smtpd_milters = inet:containercp-mail-rspamd:11332\n"
        << "non_smtpd_milters = inet:containercp-mail-rspamd:11332\n";
