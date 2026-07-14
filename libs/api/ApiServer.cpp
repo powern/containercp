@@ -2069,6 +2069,17 @@ bool ApiServer::start() {
             return {true, ""};
         };
 
+        // Rollback helper for enable-mail failures: fully cleans up to Disabled state
+        auto rollback_enable_mail = [&](uint64_t sid, const std::string& dm) {
+            s.mail().disable_for_site(sid);
+            s.mail_orchestrator().disable_mail(sid);
+            auto comp = regenerate_compose(false);
+            if (!comp.success) {
+                s.logger().warning("MAIL", "Rollback compose regeneration failed: " + comp.message);
+            }
+            s.save();
+        };
+
         if (action == "enable-mail") {
             // 1. Ensure MailDomain in correct state
             s.mail().enable_for_site(site_id, site->domain);
@@ -2076,6 +2087,7 @@ bool ApiServer::start() {
             // 2. Regenerate compose with mail_active=true (validates with compose config)
             auto comp = regenerate_compose(true);
             if (!comp.success) {
+                rollback_enable_mail(site_id, site->domain);
                 r.status_code = 500;
                 r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(comp.message) + "\"}";
                 return r;
@@ -2084,6 +2096,7 @@ bool ApiServer::start() {
             // 3. Create credentials, msmtprc, connect network, sync Postfix/Dovecot
             auto result = s.mail_orchestrator().enable_mail(site_id, site->domain);
             if (!result.success) {
+                rollback_enable_mail(site_id, site->domain);
                 r.status_code = 500;
                 r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
                 return r;
@@ -2104,8 +2117,7 @@ bool ApiServer::start() {
                     "up", "-d", "--force-recreate", "php"
                 });
                 if (recreate.exit_code != 0) {
-                    // Rollback: remove credentials, msmtprc, disconnect network
-                    s.mail_orchestrator().disable_mail(site_id);
+                    rollback_enable_mail(site_id, site->domain);
                     r.status_code = 500;
                     r.body = "{\"success\":false,\"error\":\"Failed to recreate PHP container: "
                         + JsonFormatter::escape(recreate.err) + "\"}";
