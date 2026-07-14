@@ -107,36 +107,50 @@ core::OperationResult DockerRuntime::status(const std::string& domain) {
 
 core::OperationResult DockerRuntime::connect_mail_network(
     uint64_t site_id, const std::string& domain) {
+    (void)domain;
     if (!check_docker()) {
         return {false, "Docker is not installed."};
     }
 
+    std::string container = "site-" + std::to_string(site_id) + "-php";
+
+    // Check if container exists
+    std::string check_container = "docker inspect " + container + " >/dev/null 2>&1";
+    if (std::system(check_container.c_str()) != 0) {
+        logger_.warning("MAIL", "Container " + container + " does not exist");
+        return {false, "Container " + container + " not found. Site may not be running."};
+    }
+
     // Check if already connected
-    std::string check_cmd = "docker inspect site-" + std::to_string(site_id) + "-php"
-        " --format '{{range $k,$v:=.NetworkSettings.Networks}}{{$k}} {{end}}'"
+    std::string check_net = "docker inspect " + container +
+        " --format '{{range $k,$v:=.NetworkSettings.Networks}}{{$k}} {{end}}'" +
         " 2>/dev/null | grep -q containercp-mail";
 
-    if (std::system(check_cmd.c_str()) == 0) {
-        // Already connected — idempotent
-        logger_.info("MAIL", "site-" + std::to_string(site_id) + " already on containercp-mail");
+    if (std::system(check_net.c_str()) == 0) {
+        logger_.info("MAIL", container + " already on containercp-mail network");
         return {true, ""};
     }
 
+    // Check if mail network exists
+    std::string check_mail_net = "docker network inspect containercp-mail >/dev/null 2>&1";
+    if (std::system(check_mail_net.c_str()) != 0) {
+        logger_.warning("MAIL", "containercp-mail network does not exist");
+        return {false, "containercp-mail network not found. Mail module must be active."};
+    }
+
     // Connect
-    std::string cmd = "docker network connect containercp-mail site-"
-        + std::to_string(site_id) + "-php 2>&1";
+    std::string cmd = "docker network connect containercp-mail " + container + " 2>&1";
     int rc = std::system(cmd.c_str());
     int exit_code = -1;
     if (WIFEXITED(rc)) exit_code = WEXITSTATUS(rc);
 
     if (rc != 0) {
-        logger_.warning("MAIL", "Failed to connect site-" + std::to_string(site_id)
+        logger_.warning("MAIL", "Failed to connect " + container
                      + " to containercp-mail [" + std::to_string(exit_code) + "]");
-        // Non-fatal — network may not exist yet
-        return {true, "Network may not exist yet. Mail module must be active."};
+        return {false, "Failed to connect container to mail network (exit " + std::to_string(exit_code) + ")"};
     }
 
-    logger_.info("MAIL", "Connected site-" + std::to_string(site_id) + " to containercp-mail");
+    logger_.info("MAIL", "Connected " + container + " to containercp-mail");
     return {true, ""};
 }
 
