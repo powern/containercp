@@ -61,7 +61,9 @@ postconf -P submission/inet/smtpd_sender_restrictions=reject_sender_login_mismat
 # Create empty sender_login map (populated per-site by SiteMailOrchestrator)
 touch /etc/postfix/sender_login
 postmap /etc/postfix/sender_login 2>/dev/null || true
-postconf smtpd_sender_login_maps=texthash:/etc/postfix/sender_login
+
+# Create empty PHP credentials file (populated by SiteMailCredentials)
+touch /etc/dovecot/passwd-php 2>/dev/null || true
 
 # Rate limiting (global, applies to all ports)
 postconf smtpd_client_connection_rate_limit=30

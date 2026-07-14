@@ -25,6 +25,8 @@
 #include "mail/MailDomainManager.h"
 #include "mail/MailAliasManager.h"
 #include "mail/MailboxManager.h"
+#include "mail/SiteMailCredentials.h"
+#include "mail/SiteMailOrchestrator.h"
 #include "mail/providers/DockerMailProvider.h"
 #include "php/PhpVersionManager.h"
 #include "runtime/PortManager.h"
@@ -84,6 +86,8 @@ public:
     mail::MailDomainManager& mail();
     mail::MailboxManager& mailboxes();
     mail::DkimManager& dkim();
+    mail::SiteMailCredentials& mail_credentials();
+    mail::SiteMailOrchestrator& mail_orchestrator();
     filesystem::Filesystem& filesystem();
     mail::MailAliasManager& mail_aliases();
     mail::MailProvider& mail_provider();
@@ -147,6 +151,7 @@ private:
     mail::MailAliasManager mail_aliases_;
     mail::MailboxManager mailboxes_;
     mail::DkimManager dkim_;
+    mail::SiteMailCredentials mail_credentials_;
     storage::Storage storage_;
     jobs::JobExecutor job_executor_;
     ssl::RenewalScheduler renewal_scheduler_;
@@ -159,6 +164,7 @@ private:
     runtime::SiteRuntimeManager site_runtime_;
     runtime::RuntimeSynchronizer runtime_sync_;
     runtime::HealthRegistry health_;
+    mail::SiteMailOrchestrator mail_orchestrator_;
     proxy::ProxyViewService proxy_view_;
     provider::DockerComposeProvider hosting_provider_;
     core::RecoveryManager recovery_manager_;

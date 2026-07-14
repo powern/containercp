@@ -155,17 +155,14 @@ core::OperationResult DockerRuntime::disconnect_mail_network(
 
 core::OperationResult DockerRuntime::sync_site_mail(uint64_t site_id) {
     (void)site_id;
-    // Trigger config regeneration via RuntimeSync::sync("mail")
-    // This is handled by the daemon's runtime sync mechanism
-    // For now, use a simple Postfix reload
+    // Reload Postfix to pick up sender_login and rate limit changes
     std::string cmd = "docker exec containercp-mail-postfix postfix reload 2>&1";
     int rc = std::system(cmd.c_str());
-
     if (rc != 0) {
         logger_.warning("MAIL", "Postfix reload returned non-zero");
     }
 
-    // Also sync Dovecot config
+    // Reload Dovecot to pick up SASL passdb changes
     cmd = "docker exec containercp-mail-dovecot doveadm reload 2>&1";
     std::system(cmd.c_str());
 

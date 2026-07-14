@@ -292,9 +292,14 @@ core::OperationResult DockerMailProvider::write_dovecot_config(
        << "ssl_cert = </srv/containercp/ssl/0/fullchain.pem\n"
        << "ssl_key = </srv/containercp/ssl/0/privkey.pem\n"
        << "ssl_min_protocol = TLSv1.2\n"
-       << "passdb {\n"
+        << "passdb {\n"
        << "  driver = passwd-file\n"
        << "  args = /etc/dovecot/passwd\n"
+       << "}\n"
+       << "passdb {\n"
+       << "  driver = passwd-file\n"
+       << "  args = /etc/dovecot/passwd-php\n"
+       << "  mechanisms = plain login\n"
        << "}\n"
        << "userdb {\n"
        << "  driver = static\n"
@@ -483,6 +488,14 @@ core::OperationResult DockerMailProvider::write_configs(
     if (!pf.success) return pf;
     auto dv = write_dovecot_config(domains, mailboxes);
     if (!dv.success) return dv;
+
+    // Ensure PHP credentials file exists (populated by SiteMailCredentials)
+    std::string php_passwd_path = config_dir() + "/generated/passwd-php";
+    if (!std::ifstream(php_passwd_path).good()) {
+        std::ofstream php_out(php_passwd_path);
+        php_out << "# ContainerCP PHP SMTP credentials\n";
+    }
+
     auto tm = write_transport_maps(domains, mailboxes);
     if (!tm.success) return tm;
     auto dkim = write_rspamd_config(domains);

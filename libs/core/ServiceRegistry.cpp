@@ -24,6 +24,7 @@ ServiceRegistry::ServiceRegistry()
     , renewal_scheduler_(logger_, cert_store_, jobs_, job_executor_, cert_providers_)
     , auth_(*this)
     , runtime_(logger_, config_.sites_dir())
+    , mail_orchestrator_(mail_, mail_credentials_, runtime_, filesystem_, config_)
     , runtime_action_executor_(logger_)
     , site_runtime_(logger_, config_.sites_dir(), runtime_action_executor_)
     , proxy_view_(logger_, reverse_proxies_, sites_, cert_store_, proxy_provider_, site_runtime_)
@@ -611,6 +612,14 @@ mail::MailboxManager& ServiceRegistry::mailboxes() {
 
 mail::DkimManager& ServiceRegistry::dkim() {
     return dkim_;
+}
+
+mail::SiteMailCredentials& ServiceRegistry::mail_credentials() {
+    return mail_credentials_;
+}
+
+mail::SiteMailOrchestrator& ServiceRegistry::mail_orchestrator() {
+    return mail_orchestrator_;
 }
 
 mail::MailAliasManager& ServiceRegistry::mail_aliases() {

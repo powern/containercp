@@ -18,13 +18,13 @@ public:
         std::string domain;
     };
 
-    virtual ~SiteMailCredentials() = default;
+    ~SiteMailCredentials() = default;
 
-    virtual Credential generate(uint64_t site_id, const std::string& domain) = 0;
-    virtual bool remove(uint64_t site_id) = 0;
-    virtual std::optional<Credential> find(uint64_t site_id) = 0;
-    virtual core::OperationResult apply(const Credential& cred) = 0;
-    virtual core::OperationResult revoke(const Credential& cred) = 0;
+    Credential generate(uint64_t site_id, const std::string& domain);
+    bool remove(uint64_t site_id);
+    std::optional<Credential> find(uint64_t site_id);
+    core::OperationResult apply(const Credential& cred);
+    core::OperationResult revoke(const Credential& cred);
 };
 
 } // namespace containercp::mail

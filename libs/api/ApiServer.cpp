@@ -1948,12 +1948,12 @@ bool ApiServer::start() {
     });
 
     // ── Site mail endpoints (enable/disable/status) ────────────────────
+    // Uses SiteMailOrchestrator for all business logic (Single Source of Truth)
 
     // POST /api/sites/<id>/enable-mail — enable mail for a site
     router_.add_prefix("POST", "/api/sites/", [&s](const Request& req) {
         Response r;
         std::string remaining = req.path.substr(std::string("/api/sites/").size());
-        // remaining is "123/enable-mail" or "123/disable-mail" or "123/mail-status"
         auto slash = remaining.find('/');
         if (slash == std::string::npos || slash == 0) {
             r.status_code = 404;
@@ -1978,87 +1978,39 @@ bool ApiServer::start() {
         }
 
         if (action == "enable-mail") {
-            // Create config/php/ directory
-            std::string site_dir = s.config().sites_dir() + site->domain + "/";
-            s.filesystem().create_directory(site_dir + "config/php/");
-
-            // Connect PHP container to mail network
-            auto net = s.runtime().connect_mail_network(site_id, site->domain);
-            if (!net.success && net.message.find("not exist") == std::string::npos) {
+            auto result = s.mail_orchestrator().enable_mail(site_id, site->domain);
+            if (!result.success) {
                 r.status_code = 500;
-                r.body = "{\"success\":false,\"error\":\"Failed to connect network: " + net.message + "\"}";
+                r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
                 return r;
             }
-
-            // Create MailDomain if not exists
-            bool domain_exists = false;
-            for (const auto& md : s.mail().list()) {
-                if (md.site_id == site_id && md.domain_name == site->domain) {
-                    domain_exists = true; break;
-                }
-            }
-            if (!domain_exists) {
-                s.mail().create(site->domain, mail::MailDomainMode::LocalPrimary, 0, site_id, "");
-                s.save();
-            }
-
-            // Reload Postfix
-            s.runtime().sync_site_mail(site_id);
-
+            s.save();
             r.body = "{\"success\":true,\"data\":{\"message\":\"Mail enabled for site " + site->domain + "\"}}";
             return r;
         }
 
         if (action == "disable-mail") {
-            // Disconnect PHP container from mail network
-            s.runtime().disconnect_mail_network(site_id, site->domain);
-
-            // Set MailDomain to disabled
-            for (auto& md : const_cast<std::vector<mail::MailDomain>&>(s.mail().list())) {
-                if (md.site_id == site_id) {
-                    auto* d = s.mail().find(md.id);
-                    if (d) {
-                        d->mode = mail::MailDomainMode::Disabled;
-                        d->enabled = false;
-                    }
-                    break;
-                }
+            auto result = s.mail_orchestrator().disable_mail(site_id);
+            if (!result.success) {
+                r.status_code = 500;
+                r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
+                return r;
             }
             s.save();
-            s.runtime().sync_site_mail(site_id);
-
             r.body = "{\"success\":true,\"data\":{\"message\":\"Mail disabled for site " + site->domain + "\"}}";
             return r;
         }
 
         if (action == "mail-status") {
-            std::string site_dir = s.config().sites_dir() + site->domain + "/";
-            bool msmtprc_exists = s.filesystem().exists(site_dir + "config/php/msmtprc");
-            bool has_mail_domain = false;
-            std::string mode_str = "none";
-            for (const auto& md : s.mail().list()) {
-                if (md.site_id == site_id) {
-                    has_mail_domain = true;
-                    mode_str = mail::mail_domain_mode_to_string(md.mode);
-                    break;
-                }
-            }
-
-            // Check network
-            runtime::CommandExecutor exec;
-            auto net = exec.run({"docker", "inspect",
-                "site-" + std::to_string(site_id) + "-php",
-                "--format", "{{range $k,$v:=.NetworkSettings.Networks}}{{$k}} {{end}}"});
-            bool net_ok = net.exit_code == 0 &&
-                          net.out.find("containercp-mail") != std::string::npos;
-
+            auto status = s.mail_orchestrator().get_status(site_id, site->domain);
             r.body = "{\"success\":true,\"data\":{"
                 "\"site_id\":" + std::to_string(site_id) + ","
                 "\"domain\":\"" + JsonFormatter::escape(site->domain) + "\","
-                "\"mail_domain\":" + (has_mail_domain ? "true" : "false") + ","
-                "\"mode\":\"" + mode_str + "\","
-                "\"msmtprc\":" + (msmtprc_exists ? "true" : "false") + ","
-                "\"network\":" + (net_ok ? "true" : "false") + "}}";
+                "\"enabled\":" + (status.enabled ? "true" : "false") + ","
+                "\"mail_domain\":" + (status.domain_id > 0 ? "true" : "false") + ","
+                "\"credential_exists\":" + (status.credential_exists ? "true" : "false") + ","
+                "\"msmtprc\":" + (status.msmtprc_exists ? "true" : "false") + ","
+                "\"network\":" + (status.network_connected ? "true" : "false") + "}}";
             return r;
         }
 

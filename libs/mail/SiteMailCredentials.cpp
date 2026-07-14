@@ -35,8 +35,8 @@ bool SiteMailCredentials::remove(uint64_t site_id) {
     std::string username = "site-" + std::to_string(site_id) + "@php.containercp.internal";
     runtime::CommandExecutor exec;
 
-    // Remove from Dovecot passwd file
-    std::string passwd_path = "/srv/containercp/mail/config/generated/passwd";
+    // Remove from Dovecot PHP credentials file
+    std::string passwd_path = "/srv/containercp/mail/config/generated/passwd-php";
     std::string old_content;
     {
         std::ifstream in(passwd_path);
@@ -99,7 +99,7 @@ bool SiteMailCredentials::remove(uint64_t site_id) {
 std::optional<SiteMailCredentials::Credential> SiteMailCredentials::find(
     uint64_t site_id) {
     std::string username = "site-" + std::to_string(site_id) + "@php.containercp.internal";
-    std::string passwd_path = "/srv/containercp/mail/config/generated/passwd";
+    std::string passwd_path = "/srv/containercp/mail/config/generated/passwd-php";
     std::ifstream in(passwd_path);
     if (!in) return std::nullopt;
 
@@ -135,21 +135,25 @@ std::optional<SiteMailCredentials::Credential> SiteMailCredentials::find(
 core::OperationResult SiteMailCredentials::apply(const Credential& cred) {
     runtime::CommandExecutor exec;
 
-    // 1. Add to Dovecot passwd file
-    std::string passwd_path = "/srv/containercp/mail/config/generated/passwd";
+    // 1. Add to Dovecot PHP credentials file (separate from mailbox passwd)
+    //    This file is NOT overwritten by write_dovecot_config()
+    std::string passwd_path = "/srv/containercp/mail/config/generated/passwd-php";
     std::ofstream passwd_out(passwd_path, std::ios::app);
     if (!passwd_out) {
-        return {false, "Failed to open passwd file: " + passwd_path};
+        return {false, "Failed to open PHP credentials file: " + passwd_path};
     }
     passwd_out << cred.username << ":" << cred.password_hash
                << ":65534:65534::/nonexistent::\n";
 
-    // 2. Add to sender_login map
+    // 2. Add to sender_login map (exact-match: wordpress@domain — @domain wildcard
+    //    is broken on Postfix 3.7.11, see docs/mail-php-integration-plan.md §5.5)
     std::string login_path = "/srv/containercp/mail/config/generated/sender_login";
     std::ofstream login_out(login_path, std::ios::app);
     if (!login_out) {
         return {false, "Failed to open sender_login file: " + login_path};
     }
+    login_out << cred.username << "\twordpress@" << cred.domain << "\n";
+    // Also add @domain wildcard for future Postfix upgrades (currently inactive)
     login_out << cred.username << "\t@" << cred.domain << "\n";
 
     // 3. Regenerate postmap and reload Postfix
@@ -168,8 +172,16 @@ core::OperationResult SiteMailCredentials::apply(const Credential& cred) {
 }
 
 core::OperationResult SiteMailCredentials::revoke(const Credential& cred) {
-    (void)cred;
-    bool ok = remove(0);
+    // Extract site_id from username: "site-{ID}@php.containercp.internal"
+    uint64_t site_id = 0;
+    if (cred.username.size() > 5 && cred.username.substr(0, 5) == "site-") {
+        auto at_pos = cred.username.find('@');
+        if (at_pos != std::string::npos) {
+            std::string id_str = cred.username.substr(5, at_pos - 5);
+            try { site_id = std::stoull(id_str); } catch (...) {}
+        }
+    }
+    bool ok = remove(site_id);
     return ok ? core::OperationResult{true, ""}
               : core::OperationResult{false, "Failed to revoke credentials"};
 }
