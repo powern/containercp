@@ -63,6 +63,21 @@ core::OperationResult DockerMailProvider::prepare_environment() {
         if (php_out) php_out << "# ContainerCP PHP SMTP credentials\n";
     }
 
+    // Ensure sender_login is a regular file (same Docker bind mount issue)
+    std::string sl_path = config_dir() + "/generated/sender_login";
+    struct stat sl_stat;
+    if (stat(sl_path.c_str(), &sl_stat) == 0) {
+        if (!S_ISREG(sl_stat.st_mode)) {
+            logger_.warning("MAIL", "sender_login is not a regular file, recreating");
+            std::remove(sl_path.c_str());
+            std::ofstream sl_out(sl_path);
+            if (sl_out) sl_out << "# ContainerCP sender_login map\n";
+        }
+    } else {
+        std::ofstream sl_out(sl_path);
+        if (sl_out) sl_out << "# ContainerCP sender_login map\n";
+    }
+
     // Ensure Docker network exists
     auto net = executor_.run({
         "docker", "network", "inspect", "containercp-mail"
@@ -525,6 +540,22 @@ core::OperationResult DockerMailProvider::write_configs(
         if (php_out) php_out << "# ContainerCP PHP SMTP credentials\n";
     }
 
+    // Ensure sender_login file exists (populated by SiteMailCredentials).
+    // Must exist before docker compose up to prevent Docker creating a directory.
+    std::string sender_login_path = config_dir() + "/generated/sender_login";
+    struct stat sl_stat;
+    if (stat(sender_login_path.c_str(), &sl_stat) == 0) {
+        if (!S_ISREG(sl_stat.st_mode)) {
+            logger_.warning("MAIL", "sender_login is not a regular file, recreating");
+            std::remove(sender_login_path.c_str());
+            std::ofstream sl_out(sender_login_path);
+            if (sl_out) sl_out << "# ContainerCP sender_login map\n";
+        }
+    } else {
+        std::ofstream sl_out(sender_login_path);
+        if (sl_out) sl_out << "# ContainerCP sender_login map\n";
+    }
+
     auto tm = write_transport_maps(domains, mailboxes);
     if (!tm.success) return tm;
     auto dkim = write_rspamd_config(domains);
@@ -564,8 +595,9 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
          << "      - " << config_dir() << "/generated/virtual_mailboxes:/etc/postfix/virtual_mailboxes:ro\n"
         << "      - " << config_dir() << "/generated/virtual_aliases:/etc/postfix/virtual_aliases:ro\n"
         << "      - " << config_dir() << "/generated/postfix-resolv.conf:/etc/postfix/resolv.conf:ro\n"
-        << "      - " << config_dir() << "/generated/sasl_passwd:/etc/postfix/sasl_passwd:ro\n"
-        << "      - " << config_dir() << "/custom/postfix/:/etc/postfix/custom/:ro\n"
+      << "      - " << config_dir() << "/generated/sasl_passwd:/etc/postfix/sasl_passwd:ro\n"
+       << "      - " << config_dir() << "/generated/sender_login:/etc/postfix/sender_login:ro\n"
+       << "      - " << config_dir() << "/custom/postfix/:/etc/postfix/custom/:ro\n"
         << "      - " << data_root_ << "/ssl/:/srv/containercp/ssl/:ro\n"
         << "    depends_on:\n"
         << "      - redis\n"
