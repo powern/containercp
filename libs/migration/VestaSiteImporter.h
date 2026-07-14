@@ -67,6 +67,7 @@ struct Options {
     bool dry_run = false;
     bool keep_staging = false;
     bool skip_db = false;
+    bool enable_mail = false;
 };
 
 class VestaSiteImporter {

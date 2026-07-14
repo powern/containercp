@@ -545,6 +545,7 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
             else if (arg == "--import-files") is_import_files = true;
             else if (arg == "--import-sql") is_import_sql = true;
             else if (arg == "--upgrade") is_upgrade = true;
+            else if (arg == "--enable-mail") opts.enable_mail = true;
         }
 
         if ((opts.backup_path.empty() && !is_upgrade) || opts.domain.empty() || opts.owner.empty()) {
@@ -617,6 +618,25 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
                 << "  mod_rewrite:  " << (upgrade_result.mod_rewrite_checked ? "✅ checked" : "⚠️ skipped") << "\n"
                 << "  proxy block:  " << (upgrade_result.trusted_proxy_added ? "✅ added/present" : "⚠️ skipped") << "\n"
                 << "  config backup:" << (upgrade_result.wp_config_backed_up ? "✅ done" : "⚠️ none") << "\n";
+
+            // Enable mail if requested
+            if (opts.enable_mail) {
+                auto* site = s.sites().find(opts.domain);
+                if (site) {
+                    // Create config/php/ directory
+                    std::string site_dir = s.config().sites_dir() + opts.domain + "/";
+                    s.filesystem().create_directory(site_dir + "config/php/");
+
+                    // Connect PHP container to mail network
+                    auto net = s.runtime().connect_mail_network(site->id, opts.domain);
+                    if (net.success) {
+                        out << "  mail network: ✅ connected\n";
+                    } else {
+                        out << "  mail network: ⚠️ " << net.message << "\n";
+                    }
+                }
+            }
+
             for (const auto& w : upgrade_result.warnings) out << "\nWarning: " << w;
             return Command::success(out.str());
         }

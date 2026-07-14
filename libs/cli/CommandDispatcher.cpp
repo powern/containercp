@@ -306,7 +306,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
     if (arg1 == "migrate-vesta-site") {
         std::string backup, domain, owner, database;
         bool dry_run = false, execute = false, import_files = false, import_sql = false, is_upgrade = false;
-        bool skip_db = false, keep_staging = false;
+        bool skip_db = false, keep_staging = false, enable_mail = false;
         bool has_error = false;
 
         for (int i = 2; i < argc; ++i) {
@@ -320,6 +320,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
             else if (arg == "--import-files") import_files = true;
             else if (arg == "--import-sql") import_sql = true;
             else if (arg == "--upgrade") is_upgrade = true;
+            else if (arg == "--enable-mail") enable_mail = true;
             else if (arg == "--skip-db") skip_db = true;
             else if (arg == "--keep-staging") keep_staging = true;
             else has_error = true;
@@ -342,9 +343,10 @@ int CommandDispatcher::run(int argc, char* argv[]) {
                       << "  --import-files      Stage 2: import web files\n"
                       << "  --import-sql        Stage 3: import database\n"
                       << "  --upgrade           Upgrade existing site runtime\n"
-                      << "  [--database <name>] Force specific database name\n"
-                      << "  [--skip-db]         Skip database import\n"
-                      << "  [--keep-staging]    Keep temporary files\n";
+              << "  [--database <name>] Force specific database name\n"
+              << "  [--skip-db]         Skip database import\n"
+              << "  [--keep-staging]    Keep temporary files\n"
+              << "  [--enable-mail]     Enable mail after upgrade\n";
             return 1;
         }
 
@@ -360,6 +362,7 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         else cmd += "|--dry-run"; // default safe mode
         if (skip_db) cmd += "|--skip-db";
         if (keep_staging) cmd += "|--keep-staging";
+        if (enable_mail) cmd += "|--enable-mail";
 
         return print_response(send_command(cmd));
     }
