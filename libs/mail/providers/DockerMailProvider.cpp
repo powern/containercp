@@ -875,7 +875,14 @@ ApplyResult DockerMailProvider::apply_config(
         }
     }
 
-    // 6. Reload Postfix
+    // 6. Ensure submission service has sender restrictions
+    //    (set on the service itself, not globally — port 25 must NOT have them)
+    executor_.run({
+        "docker", "exec", "containercp-mail-postfix",
+        "postconf", "-P", "submission/inet/smtpd_sender_restrictions=reject_sender_login_mismatch,permit_sasl_authenticated"
+    });
+
+    // 7. Reload Postfix
     logger_.info("MAIL", "Reloading Postfix");
     auto rl = reload();
     if (!rl.success) {
