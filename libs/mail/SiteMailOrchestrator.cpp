@@ -25,9 +25,14 @@ static std::string generate_msmtprc(const std::string& username,
                                      const std::string& password,
                                      const std::string& envelope_sender) {
     std::ostringstream ms;
-    ms << "defaults\n"
+    ms << "# ContainerCP PHP msmtp configuration\n"
+       << "# Managed by SiteMailOrchestrator — do not edit manually\n"
+       << "\n"
+       << "defaults\n"
        << "auth           on\n"
        << "tls            on\n"
+       << "\n"
+       << "account        default\n"
        << "host           containercp-mail-postfix\n"
        << "port           587\n"
        << "user           " << username << "\n"

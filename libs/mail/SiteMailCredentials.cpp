@@ -54,7 +54,7 @@ bool SiteMailCredentials::remove(uint64_t site_id) {
     std::string line;
     bool found = false;
     while (std::getline(stream, line)) {
-        if (line.find(username) != 0) {
+        if (line.find(username) == std::string::npos) {
             new_content += line + "\n";
         } else {
             found = true;
@@ -81,7 +81,7 @@ bool SiteMailCredentials::remove(uint64_t site_id) {
         stream.clear();
         stream.str(old_content);
         while (std::getline(stream, line)) {
-            if (line.find(username) != 0) {
+            if (line.find(username) == std::string::npos) {
                 new_content += line + "\n";
             }
         }
@@ -155,16 +155,42 @@ core::OperationResult SiteMailCredentials::apply(const Credential& cred) {
     passwd_out << cred.username << ":" << cred.password_hash
                << ":65534:65534::/nonexistent::\n";
 
-    // 2. Add to sender_login map (exact-match: wordpress@domain — @domain wildcard
-    //    is broken on Postfix 3.7.11, see docs/mail-php-integration-plan.md §5.5)
+    // 2. Update sender_login map (key=envelope sender, value=SASL username).
+    //    First remove old entries for this site, then add current ones.
+    //    Idempotent: repeated Enable does not duplicate entries.
     std::string login_path = "/srv/containercp/mail/config/generated/sender_login";
-    std::ofstream login_out(login_path, std::ios::app);
-    if (!login_out) {
-        return {false, "Failed to open sender_login file: " + login_path};
+    {
+        std::string old_content;
+        {
+            std::ifstream in(login_path);
+            if (in) {
+                std::ostringstream ss;
+                ss << in.rdbuf();
+                old_content = ss.str();
+            }
+        }
+        // Remove lines where the VALUE contains this site's SASL username
+        // (the format is: sender_address \t SASL_username)
+        std::string new_content;
+        std::istringstream stream(old_content);
+        std::string line;
+        while (std::getline(stream, line)) {
+            // Keep lines that do NOT contain this site's credentials
+            if (line.find(cred.username) == std::string::npos) {
+                new_content += line + "\n";
+            }
+        }
+        // Add current entry (exact-match: envelope sender → SASL username)
+        new_content += "wordpress@" + cred.domain + "\t" + cred.username + "\n";
+        // Also add @domain wildcard for future Postfix upgrades (currently inactive)
+        new_content += "@" + cred.domain + "\t" + cred.username + "\n";
+
+        std::ofstream login_out(login_path);
+        if (!login_out) {
+            return {false, "Failed to open sender_login file: " + login_path};
+        }
+        login_out << new_content;
     }
-    login_out << cred.username << "\twordpress@" << cred.domain << "\n";
-    // Also add @domain wildcard for future Postfix upgrades (currently inactive)
-    login_out << cred.username << "\t@" << cred.domain << "\n";
 
     // 3. Regenerate postmap and reload Postfix
     auto pm = exec.run({"docker", "exec", "containercp-mail-postfix", "postmap",
