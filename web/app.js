@@ -627,7 +627,6 @@ function renderPhpMailCard(siteId, domain, mailStatus) {
         ` : `
           <button class="btn btn-sm btn-primary" onclick="enablePhpMail('${siteId}','${domain}')">Enable PHP Mail</button>
         `}
-        <button class="btn btn-sm btn-outline" onclick="sendTestEmail('${siteId}','${domain}')">Send Test Email</button>
       </div>
       <div id="php-mail-msg" style="font-size:12px;margin-top:8px;"></div>
     </div>`;
@@ -662,23 +661,6 @@ async function disablePhpMail(siteId, domain) {
       const ms = await api('/api/sites/' + siteId + '/mail-status');
       renderPhpMailCard(siteId, domain, ms);
       if (el) el.innerHTML = '<span style="color:var(--green,#22c55e)">✅ PHP mail disabled</span>';
-    } else {
-      if (el) el.innerHTML = '<span style="color:#ef4444">❌ ' + (r.error||'Failed') + '</span>';
-    }
-  } catch(e) {
-    if (el) el.innerHTML = '<span style="color:#ef4444">❌ ' + e.message + '</span>';
-  }
-}
-
-async function sendTestEmail(siteId, domain) {
-  const to = prompt('Send test email to:', 'admin@' + domain);
-  if (!to) return;
-  const el = $('php-mail-msg');
-  if (el) el.innerHTML = '<span style="color:var(--text3)">Sending test email to ' + esc(to) + '...</span>';
-  try {
-    const r = await apiPost('/api/sites/' + siteId + '/send-test-email', {to: to});
-    if (r.success) {
-      if (el) el.innerHTML = '<span style="color:var(--green,#22c55e)">✅ Test email sent to ' + esc(to) + '</span>';
     } else {
       if (el) el.innerHTML = '<span style="color:#ef4444">❌ ' + (r.error||'Failed') + '</span>';
     }
