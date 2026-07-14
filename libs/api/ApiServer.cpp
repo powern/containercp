@@ -2018,7 +2018,65 @@ bool ApiServer::start() {
         uint64_t site_id = parsed.site_id;
         const std::string action = parsed.action;
 
+        // Helper: regenerate docker-compose.yml from internal model (canonical compose generator)
+        auto regenerate_compose = [&](bool mail_active) -> core::OperationResult {
+            std::string site_dir = s.config().sites_dir() + site->domain + "/";
+            std::string web_server_type = site->web_server.empty() ? "nginx" : site->web_server;
+            std::string php_image = "ghcr.io/powern/containercp-php:8.4";
+            auto* pv = s.php_versions().get_default();
+            if (pv) php_image = pv->image;
+
+            std::string web_image = "nginx:alpine";
+            std::string web_cfg = "/etc/nginx/conf.d";
+            std::string web_log = "/var/log/nginx";
+            std::string web_root = "/var/www/html";
+            std::string web_local_cfg = "config/nginx";
+            std::string web_local_log = "logs/nginx";
+            std::string web_cmd = "";
+            if (web_server_type == "apache") {
+                web_image = "httpd:alpine";
+                web_cfg = "/usr/local/apache2/conf/extra";
+                web_log = "/usr/local/apache2/logs";
+                web_root = "/usr/local/apache2/htdocs";
+                web_local_cfg = "config/apache";
+                web_local_log = "logs/apache";
+                web_cmd = "[\"httpd-foreground\", \"-c\", \"IncludeOptional conf/extra/*.conf\"]";
+            }
+
+            docker::ComposeGenerator gen(s.filesystem(), s.config().templates_dir());
+            std::string gen_path = site_dir + "docker-compose.yml.gen-tmp";
+            bool gen_ok = gen.generate(site->domain, site->owner, php_image, gen_path,
+                std::to_string(site_id), web_image, web_cfg, web_log, web_root,
+                web_local_cfg, web_local_log, web_cmd, mail_active);
+            if (!gen_ok) {
+                std::remove(gen_path.c_str());
+                return {false, "Failed to generate docker-compose.yml"};
+            }
+
+            runtime::CommandExecutor exec;
+            auto validate = exec.run({
+                "docker", "compose", "-f", gen_path, "config", "--quiet"
+            });
+            if (validate.exit_code != 0) {
+                std::remove(gen_path.c_str());
+                return {false, "Compose validation failed: " + validate.err};
+            }
+
+            if (std::rename(gen_path.c_str(), (site_dir + "docker-compose.yml").c_str()) != 0) {
+                std::remove(gen_path.c_str());
+                return {false, "Failed to replace compose file"};
+            }
+            return {true, ""};
+        };
+
         if (action == "enable-mail") {
+            auto comp = regenerate_compose(true);
+            if (!comp.success) {
+                r.status_code = 500;
+                r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(comp.message) + "\"}";
+                return r;
+            }
+
             auto result = s.mail_orchestrator().enable_mail(site_id, site->domain);
             if (!result.success) {
                 r.status_code = 500;
@@ -2031,6 +2089,13 @@ bool ApiServer::start() {
         }
 
         if (action == "disable-mail") {
+            auto comp = regenerate_compose(false);
+            if (!comp.success) {
+                r.status_code = 500;
+                r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(comp.message) + "\"}";
+                return r;
+            }
+
             auto result = s.mail_orchestrator().disable_mail(site_id);
             if (!result.success) {
                 r.status_code = 500;
