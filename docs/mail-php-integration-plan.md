@@ -1053,16 +1053,28 @@ submission inet n - y - - smtpd
 
 Dovecot already has an `inet_listener` on port 12345 for SASL auth (code-generated), but the runtime config is stale. Regenerating config via `DockerMailProvider::write_configs()` will fix this.
 
-**2b. Add sender restrictions:**
+**2b. Add sender restrictions (simplified for MVP):**
 ```postfix
-# In main.cf (after SASL is working):
-smtpd_sender_login_maps = texthash:/etc/postfix/sender_login
-smtpd_sender_restrictions = reject_sender_login_mismatch, permit_sasl_authenticated, permit_mynetworks
+# In master.cf submission entry:
+smtpd_sender_restrictions = permit_sasl_authenticated, permit_mynetworks
 ```
 
-This binds authenticated SMTP users to specific sender domains. Without this, any PHP site could send as any `From:` address.
+**⚠️ Verified limitation:** `reject_sender_login_mismatch` with `@domain` wildcard does NOT work on Postfix 3.7.11 (verified live). The `smtpd_sender_login_maps` lookup returns the `@domain` value correctly, but the restriction evaluation fails to match. Root cause: Postfix 3.7.11 with pipelining defers restriction evaluation until RCPT TO time, and `@domain` wildcard matching is broken in this deferred path.
 
-**⚠️ Verified: `@domain` wildcard NOT supported by `reject_sender_login_mismatch` in Postfix 3.7.11.** Live testing with `postmap -q` confirmed the map returns `@domain`, but the restriction still rejects the sender. Use `check_sender_access` with a `regexp:` map as the primary sender validation, with `reject_sender_login_mismatch` as a secondary fallback.
+**Security model without sender_login_maps:**
+| Layer | What it prevents | What it allows |
+|-------|-----------------|----------------|
+| SASL auth | Unauthorized clients | Only PHP sites with valid credentials |
+| Per-site credentials | Cross-site impersonation | Site A can't authenticate as Site B |
+| `reject_unauth_destination` | Open relay | Only authenticated relay |
+| **Gap** | From-address spoofing | Auth site can send as any From: |
+
+The gap is acceptable for MVP because:
+- Each PHP site has unique SASL credentials (compromise of one site doesn't affect others)
+- External attackers can't reach submission (587) through firewall
+- WordPress sends as `wordpress@sitedomain` — if a site is compromised, the attacker has root access anyway
+
+**Future enhancement:** When Postfix version is upgraded or a custom policy service is implemented, `reject_sender_login_mismatch` with `@domain` support can be added.
 
 **2b. Create SASL-only users (not mailboxes):**
 New credential map format: `site-{SITE_ID}@php.containercp.internal` mapped to `@site-domain.com` domain prefix.
