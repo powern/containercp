@@ -40,6 +40,10 @@ public:
     MailDomain* find_by_domain(const std::string& domain_name);
     const std::vector<MailDomain>& list() const;
 
+    // Enable mail for a site: find existing or create, set mode=LocalPrimary
+    // Returns the MailDomain ID. Idempotent.
+    uint64_t enable_for_site(uint64_t site_id, const std::string& domain_name);
+
     void set_domains(const std::vector<MailDomain>& domains);
 
     // Mail module lifecycle state

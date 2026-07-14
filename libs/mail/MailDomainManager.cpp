@@ -110,6 +110,20 @@ const std::vector<MailDomain>& MailDomainManager::list() const {
     return domains_;
 }
 
+uint64_t MailDomainManager::enable_for_site(uint64_t site_id,
+                                             const std::string& domain_name) {
+    // Look for existing MailDomain for this site+domain
+    for (auto& md : domains_) {
+        if (md.site_id == site_id && md.domain_name == domain_name) {
+            md.mode = MailDomainMode::LocalPrimary;
+            md.enabled = true;
+            return md.id;
+        }
+    }
+    // No existing — create new
+    return create(domain_name, MailDomainMode::LocalPrimary, 0, site_id, "");
+}
+
 void MailDomainManager::set_domains(const std::vector<MailDomain>& domains) {
     domains_ = domains;
     next_id_ = 1;

@@ -2066,22 +2066,22 @@ bool ApiServer::start() {
                 std::remove(gen_path.c_str());
                 return {false, "Failed to replace compose file"};
             }
-
-            // Apply compose changes: force-recreate PHP container to pick up
-            // new image, volume mounts (msmtprc), and mail network.
-            runtime::CommandExecutor exec2;
-            auto up = exec2.run({
-                "docker", "compose", "-f", site_dir + "docker-compose.yml",
-                "up", "-d", "--force-recreate", "php"
-            });
-            if (up.exit_code != 0) {
-                return {false, "Failed to recreate PHP container: " + up.err};
-            }
             return {true, ""};
         };
 
         if (action == "enable-mail") {
-            // Regenerate compose with mail network + volume
+            // 1. Prepare prerequisites: credentials, msmtprc file, directory
+            //    (msmtprc must exist on disk BEFORE compose mounts it)
+            s.mail().enable_for_site(site_id, site->domain);
+            auto result = s.mail_orchestrator().enable_mail(site_id, site->domain);
+            if (!result.success) {
+                r.status_code = 500;
+                r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
+                return r;
+            }
+
+            // 2. Regenerate compose with mail_active=true
+            //    (msmtprc file now exists, compose mount will succeed)
             auto comp = regenerate_compose(true);
             if (!comp.success) {
                 r.status_code = 500;
@@ -2089,27 +2089,32 @@ bool ApiServer::start() {
                 return r;
             }
 
-            // Ensure MailDomain exists with correct mode (idempotent upsert)
-            bool found = false;
-            for (auto& md : const_cast<std::vector<mail::MailDomain>&>(s.mail().list())) {
-                if (md.site_id == site_id && md.domain_name == site->domain) {
-                    auto* d = s.mail().find(md.id);
-                    if (d) { d->mode = mail::MailDomainMode::LocalPrimary; d->enabled = true; }
-                    found = true;
-                    break;
+            // 3. Pull latest PHP image and recreate container
+            //    (applies msmtprc volume, new image with msmtp, mail network)
+            {
+                runtime::CommandExecutor exec;
+                auto pull = exec.run({
+                    "docker", "compose", "-f",
+                    s.config().sites_dir() + site->domain + "/docker-compose.yml",
+                    "pull", "php"
+                });
+                // Non-fatal: pull may fail if no registry access
+                if (pull.exit_code != 0) {
+                    s.logger().warning("MAIL", "PHP image pull failed, using local image");
+                }
+                auto recreate = exec.run({
+                    "docker", "compose", "-f",
+                    s.config().sites_dir() + site->domain + "/docker-compose.yml",
+                    "up", "-d", "--force-recreate", "php"
+                });
+                if (recreate.exit_code != 0) {
+                    r.status_code = 500;
+                    r.body = "{\"success\":false,\"error\":\"Failed to recreate PHP container: "
+                        + JsonFormatter::escape(recreate.err) + "\"}";
+                    return r;
                 }
             }
-            if (!found) {
-                s.mail().create(site->domain, mail::MailDomainMode::LocalPrimary, 0, site_id, "");
-            }
 
-            // Orchestrator: credentials, msmtprc, network, sync
-            auto result = s.mail_orchestrator().enable_mail(site_id, site->domain);
-            if (!result.success) {
-                r.status_code = 500;
-                r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
-                return r;
-            }
             s.save();
             r.body = "{\"success\":true,\"data\":{\"message\":\"Mail enabled for site " + site->domain + "\"}}";
             return r;
