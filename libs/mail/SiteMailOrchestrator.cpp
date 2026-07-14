@@ -29,32 +29,56 @@ core::OperationResult update_compose_mail_network(
     bool changed = false;
 
     if (add) {
-        // Add to php service networks if not already present
-        if (content.find("- containercp-mail") == std::string::npos) {
-            std::string marker = "      - containercp-site-";
-            auto pos = content.find(marker);
-            if (pos == std::string::npos) {
-                return {false, "Cannot find PHP service networks in compose file"};
-            }
-            auto nl = content.find('\n', pos);
-            if (nl == std::string::npos) {
-                return {false, "Malformed compose file"};
-            }
-            content.insert(nl + 1, "      - containercp-mail\n");
+        // Add containercp-mail to the PHP service's networks list.
+        // Find the PHP service by its container_name marker.
+        std::string php_marker = "container_name: site-";
+        auto php_pos = content.find(php_marker);
+        if (php_pos == std::string::npos) {
+            return {false, "Cannot find PHP service in compose file"};
+        }
+        // Find the next "    networks:" after the PHP service
+        auto net_section = content.find("\n    networks:\n", php_pos);
+        if (net_section == std::string::npos) {
+            return {false, "Cannot find networks in PHP service"};
+        }
+        // Find the last entry under this networks section
+        auto net_end = content.find("\n    environment:", net_section);
+        if (net_end == std::string::npos) {
+            net_end = content.find("\n    labels:", net_section);
+        }
+        if (net_end == std::string::npos) {
+            return {false, "Cannot find end of PHP networks section"};
+        }
+        // Insert containercp-mail at the end of the PHP networks list
+        if (content.find("- containercp-mail", net_section) == std::string::npos) {
+            content.insert(net_end, "      - containercp-mail\n");
             changed = true;
         }
-        // Add to top-level networks if not already present
-        if (content.find("  containercp-mail:") == std::string::npos) {
-            auto net_pos = content.find("\nnetworks:");
-            if (net_pos == std::string::npos) {
-                return {false, "Cannot find networks section in compose file"};
+
+        // Add top-level network definition — find the LAST \nnetworks:
+        // (top-level networks are at the end of the YAML, after volumes:)
+        if (content.find("\n  containercp-mail:") == std::string::npos) {
+            auto top_net = content.rfind("\nnetworks:");
+            if (top_net == std::string::npos) {
+                return {false, "Cannot find top-level networks section in compose file"};
             }
-            content.insert(net_pos + 1,
+            // Find the last indented entry under networks (e.g., "  containercp-site-{ID}:")
+            // Insert the new network entry right after it
+            auto last_entry = content.rfind("\n  ");
+            if (last_entry == std::string::npos || last_entry < top_net) {
+                // No entries yet — insert right after \nnetworks: line
+                auto line_end = content.find('\n', top_net + 1);
+                last_entry = (line_end != std::string::npos) ? line_end : top_net;
+            }
+            // Find the end of the last entry line
+            auto after_entry = content.find('\n', last_entry + 1);
+            if (after_entry == std::string::npos) {
+                after_entry = content.size();
+            }
+            content.insert(after_entry + 1,
                 "  containercp-mail:\n"
                 "    external: true\n");
             changed = true;
-            // Re-run docker compose config to apply the new network
-            // (docker compose up -d will follow)
         }
     } else {
         // Remove containercp-mail from php service networks
