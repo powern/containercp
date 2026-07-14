@@ -157,6 +157,9 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site, core:
         return {false, "Failed to generate web server config at " + config_path};
     }
 
+    progress(55, "Creating mail configuration directory...");
+    fs_.create_directory(site_dir + "config/php/");
+
     progress(60, "Creating default index file...");
     fs_.create_file(site_dir + "public/index.php", "<?php\nphpinfo();\n");
 
