@@ -19,7 +19,8 @@ public:
                        const std::string& web_local_config = "config/nginx",
                        const std::string& web_local_log = "logs/nginx",
                        const std::string& web_server_cmd = "",
-                       const std::string& mail_network = "") const;
+                       const std::string& mail_network = "",
+                       const std::string& mail_network_definition = "") const;
 
     std::string render_web(const std::string& template_content,
                            const std::string& domain,
