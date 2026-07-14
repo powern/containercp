@@ -6,6 +6,72 @@
 #include <fstream>
 #include <sstream>
 
+namespace {
+
+// Add or remove containercp-mail network from a site's docker-compose.yml.
+// Ensures PHP container reconnects after docker compose up.
+static bool update_compose_mail_network(const std::string& compose_path, bool add) {
+    std::ifstream in(compose_path);
+    if (!in) return false;
+
+    std::string content((std::istreambuf_iterator<char>(in)),
+                         std::istreambuf_iterator<char>());
+    in.close();
+
+    bool changed = false;
+
+    if (add) {
+        // Check if containercp-mail is already in php networks
+        if (content.find("- containercp-mail") == std::string::npos) {
+            // Add to php service networks (after containercp-site-{ID})
+            std::string marker = "      - containercp-site-";
+            auto pos = content.find(marker);
+            if (pos != std::string::npos) {
+                auto nl = content.find('\n', pos);
+                if (nl != std::string::npos) {
+                    content.insert(nl + 1, "      - containercp-mail\n");
+                    changed = true;
+                }
+            }
+        }
+        // Check if containercp-mail is in top-level networks
+        if (content.find("  containercp-mail:") == std::string::npos) {
+            auto net_pos = content.find("\nnetworks:");
+            if (net_pos != std::string::npos) {
+                content.insert(net_pos + 1,
+                    "  containercp-mail:\n"
+                    "    external: true\n");
+                changed = true;
+            }
+        }
+    } else {
+        // Remove containercp-mail from php service networks
+        std::string line = "      - containercp-mail\n";
+        auto pos = content.find(line);
+        while (pos != std::string::npos) {
+            content.erase(pos, line.length());
+            pos = content.find(line);
+            changed = true;
+        }
+        // Remove from top-level networks
+        std::string net_block = "  containercp-mail:\n    external: true\n";
+        pos = content.find(net_block);
+        if (pos != std::string::npos) {
+            content.erase(pos, net_block.length());
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        std::ofstream out(compose_path);
+        if (!out) return false;
+        out << content;
+    }
+    return true;
+}
+
+} // anonymous namespace
+
 namespace containercp::mail {
 
 SiteMailOrchestrator::SiteMailOrchestrator(MailDomainManager& mail_domains,
@@ -70,21 +136,20 @@ core::OperationResult SiteMailOrchestrator::enable_mail(
     }
 
     // 5. Create MailDomain record
-    // Find the domain_id — look up by domain name
-    uint64_t domain_id = 0;
-    // MailDomain creation with domain_id=0 is OK — it's linked by site_id
-    uint64_t md_id = mail_domains_.create(domain, mode, 0, site_id, "");
-    if (md_id == 0) {
-        // Domain may already exist — that's fine
-    }
+    // domain_id=0 is OK — linked by site_id
+    mail_domains_.create(domain, mode, 0, site_id, "");
 
-    // 6. Connect PHP container to mail network
+    // 6. Update site's docker-compose.yml so mail network persists across recreate
+    std::string compose_path = site_dir + "docker-compose.yml";
+    update_compose_mail_network(compose_path, true);
+
+    // 7. Connect PHP container to mail network (immediate, runtime)
     auto net_result = rt_.connect_mail_network(site_id, domain);
     if (!net_result.success) {
-        // Non-fatal — network may already be connected
+        return net_result;
     }
 
-    // 7. Sync mail config (regenerate Postfix config + reload)
+    // 8. Sync mail config (reload Postfix + Dovecot)
     auto sync_result = rt_.sync_site_mail(site_id);
     if (!sync_result.success) {
         return sync_result;
@@ -94,24 +159,50 @@ core::OperationResult SiteMailOrchestrator::enable_mail(
 }
 
 core::OperationResult SiteMailOrchestrator::disable_mail(uint64_t site_id) {
+    // Find domain for this site (needed for file paths)
+    std::string domain;
+    for (const auto& md : mail_domains_.list()) {
+        if (md.site_id == site_id) {
+            domain = md.domain_name;
+            break;
+        }
+    }
+
     // 1. Remove credentials from Dovecot + Postfix
     auto revoke_result = credentials_.revoke(
-        SiteMailCredentials::Credential{});  // revoke by site_id internally
+        SiteMailCredentials::Credential{});
     if (!revoke_result.success) {
         return revoke_result;
     }
 
-    // 2. Find and update MailDomain to disabled
+    // 2. Remove msmtprc
+    if (!domain.empty()) {
+        std::string msmtprc_path = cfg_.sites_dir() + domain + "/config/php/msmtprc";
+        std::remove(msmtprc_path.c_str());
+
+        // 3. Remove containercp-mail from site's docker-compose.yml
+        std::string compose_path = cfg_.sites_dir() + domain + "/docker-compose.yml";
+        update_compose_mail_network(compose_path, false);
+    }
+
+    // 4. Find and update MailDomain to disabled
     for (auto& md : const_cast<std::vector<MailDomain>&>(mail_domains_.list())) {
         if (md.site_id == site_id) {
             MailDomain* d = mail_domains_.find(md.id);
             if (d != nullptr) {
-                // Set to disabled — can't modify via const ref, use pointer
+                d->mode = MailDomainMode::Disabled;
+                d->enabled = false;
             }
+            break;
         }
     }
 
-    // 3. Sync mail config
+    // 5. Disconnect PHP container from mail network
+    if (!domain.empty()) {
+        rt_.disconnect_mail_network(site_id, domain);
+    }
+
+    // 6. Sync mail config
     rt_.sync_site_mail(site_id);
 
     return {true, ""};
