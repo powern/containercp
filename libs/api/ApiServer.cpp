@@ -1947,6 +1947,126 @@ bool ApiServer::start() {
         return r;
     });
 
+    // ── Site mail endpoints (enable/disable/status) ────────────────────
+
+    // POST /api/sites/<id>/enable-mail — enable mail for a site
+    router_.add_prefix("POST", "/api/sites/", [&s](const Request& req) {
+        Response r;
+        std::string remaining = req.path.substr(std::string("/api/sites/").size());
+        // remaining is "123/enable-mail" or "123/disable-mail" or "123/mail-status"
+        auto slash = remaining.find('/');
+        if (slash == std::string::npos || slash == 0) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Not found\"}";
+            return r;
+        }
+        std::string id_str = remaining.substr(0, slash);
+        std::string action = remaining.substr(slash + 1);
+        uint64_t site_id = 0;
+        try { site_id = std::stoull(id_str); } catch (...) {}
+        if (site_id == 0) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid site ID\"}";
+            return r;
+        }
+
+        auto* site = s.sites().find_by_id(site_id);
+        if (!site) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Site not found\"}";
+            return r;
+        }
+
+        if (action == "enable-mail") {
+            // Create config/php/ directory
+            std::string site_dir = s.config().sites_dir() + site->domain + "/";
+            s.filesystem().create_directory(site_dir + "config/php/");
+
+            // Connect PHP container to mail network
+            auto net = s.runtime().connect_mail_network(site_id, site->domain);
+            if (!net.success && net.message.find("not exist") == std::string::npos) {
+                r.status_code = 500;
+                r.body = "{\"success\":false,\"error\":\"Failed to connect network: " + net.message + "\"}";
+                return r;
+            }
+
+            // Create MailDomain if not exists
+            bool domain_exists = false;
+            for (const auto& md : s.mail().list()) {
+                if (md.site_id == site_id && md.domain_name == site->domain) {
+                    domain_exists = true; break;
+                }
+            }
+            if (!domain_exists) {
+                s.mail().create(site->domain, mail::MailDomainMode::LocalPrimary, 0, site_id, "");
+                s.save();
+            }
+
+            // Reload Postfix
+            s.runtime().sync_site_mail(site_id);
+
+            r.body = "{\"success\":true,\"data\":{\"message\":\"Mail enabled for site " + site->domain + "\"}}";
+            return r;
+        }
+
+        if (action == "disable-mail") {
+            // Disconnect PHP container from mail network
+            s.runtime().disconnect_mail_network(site_id, site->domain);
+
+            // Set MailDomain to disabled
+            for (auto& md : const_cast<std::vector<mail::MailDomain>&>(s.mail().list())) {
+                if (md.site_id == site_id) {
+                    auto* d = s.mail().find(md.id);
+                    if (d) {
+                        d->mode = mail::MailDomainMode::Disabled;
+                        d->enabled = false;
+                    }
+                    break;
+                }
+            }
+            s.save();
+            s.runtime().sync_site_mail(site_id);
+
+            r.body = "{\"success\":true,\"data\":{\"message\":\"Mail disabled for site " + site->domain + "\"}}";
+            return r;
+        }
+
+        if (action == "mail-status") {
+            std::string site_dir = s.config().sites_dir() + site->domain + "/";
+            bool msmtprc_exists = s.filesystem().exists(site_dir + "config/php/msmtprc");
+            bool has_mail_domain = false;
+            std::string mode_str = "none";
+            for (const auto& md : s.mail().list()) {
+                if (md.site_id == site_id) {
+                    has_mail_domain = true;
+                    mode_str = mail::mail_domain_mode_to_string(md.mode);
+                    break;
+                }
+            }
+
+            // Check network
+            runtime::CommandExecutor exec;
+            auto net = exec.run({"docker", "inspect",
+                "site-" + std::to_string(site_id) + "-php",
+                "--format", "{{range $k,$v:=.NetworkSettings.Networks}}{{$k}} {{end}}"});
+            bool net_ok = net.exit_code == 0 &&
+                          net.out.find("containercp-mail") != std::string::npos;
+
+            r.body = "{\"success\":true,\"data\":{"
+                "\"site_id\":" + std::to_string(site_id) + ","
+                "\"domain\":\"" + JsonFormatter::escape(site->domain) + "\","
+                "\"mail_domain\":" + (has_mail_domain ? "true" : "false") + ","
+                "\"mode\":\"" + mode_str + "\","
+                "\"msmtprc\":" + (msmtprc_exists ? "true" : "false") + ","
+                "\"network\":" + (net_ok ? "true" : "false") + "}}";
+            return r;
+        }
+
+        r.status_code = 404;
+        r.body = "{\"success\":false,\"error\":\"Unknown action: " + action + "\"}";
+        return r;
+    });
+
     // ── Mailbox routes (PATCH, POST/password, DELETE) ──────────────────
     // PATCH /api/mail/mailboxes/<id> — update a mailbox
     router_.add_prefix("PATCH", "/api/mail/mailboxes/", [&s, &mailbox_json, &now_utc](const Request& req) {
