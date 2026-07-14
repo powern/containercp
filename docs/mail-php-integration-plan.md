@@ -292,11 +292,17 @@ Note: The sender_login map is generated during enable_mail() but not activated i
 
 The `@php.containercp.internal` domain is a virtual domain that exists ONLY in Postfix/Dovecot for PHP mail authentication. It has no DNS, no MX records, and no mailboxes. It is purely an auth realm.
 
-**Postfix sender_login map entry (prepared for future use — requires Postfix version with working @domain wildcard):**
+**Postfix sender_login map entry (active in MVP — exact match via fixed envelope sender):**
 ```
-site-42@php.containercp.internal  @example.com
+site-42@php.containercp.internal  wordpress@example.com
 ```
-This ensures authenticated PHP site 42 can ONLY send as `*@example.com`. The map is GENERATED during `enable_mail()` but is NOT activated in MVP (Layer 3 deferred). It becomes active when `smtpd_sender_restrictions` is switched from `permit_sasl_authenticated` to `reject_sender_login_mismatch, permit_sasl_authenticated` after a Postfix upgrade.
+This ensures authenticated PHP site 42 can ONLY send with envelope sender `wordpress@example.com`. The envelope sender is fixed by msmtp (`from` + `allow_from_override off`). PHP's `From:` header in the message body is NOT affected (still controlled by PHP).
+
+If the site needs multiple allowed senders, entries can be space-separated:
+```
+site-42@php.containercp.internal  wordpress@example.com noreply@example.com
+```
+(When Postfix @domain wildcard is supported, switch to `@example.com` to allow any sender at the domain)
 
 #### 4.4.1 API Surface
 
@@ -458,10 +464,12 @@ ContainerCP Mail Security Model (MVP + Future):
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 3: Sender identity isolation                        │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │ reject_sender_login_mismatch + sender_login_maps      │  │  ⏳ FUTURE
-│  │ Binds SASL user to authorized From: domains           │  │
-│  │ ⚠ DEFERRED: @domain wildcard broken on Postfix 3.7.11 │  │
-│  │ MVP accepts: auth user can send as any From: address  │  │
+│  │ reject_sender_login_mismatch + sender_login_maps      │  │  ✅ STAGE 2,4
+│  │ Binds SASL user to authorized MAIL FROM address       │  │
+│  │ 🔑 msmtp fixes envelope sender (from + allow_from    │  │
+│  │    _override off) → exact-match Login maps work!      │  │
+│  │ @domain wildcard still broken, but exact-match works  │  │
+│  │ via fixed envelope sender per site                    │  │
 │  └───────────────────────────────────────────────────────┘  │
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 2: Authentication isolation                         │
@@ -474,8 +482,14 @@ ContainerCP Mail Security Model (MVP + Future):
 │  Layer 1: Network isolation                                │
 │  ┌───────────────────────────────────────────────────────┐  │
 │  │ PHP container on containercp-mail network             │  │  Stage 3
-│  │ Only Postfix:587 reachable (no direct DB, Redis, etc) │  │
-│  │ Firewall blocks external access to port 587           │  │
+│  │ PHP can reach ALL mail services:                      │  │
+│  │  • containercp-mail-postfix (25, 465, 587)            │  │
+│  │  • containercp-mail-dovecot (143, 993, 24, 12345)     │  │
+│  │  • containercp-mail-rspamd (11332, 11334)            │  │
+│  │  • containercp-mail-redis (6379)                      │  │
+│  │ ⚠ Port 587 is exposed externally via docker-proxy    │  │
+│  │   (0.0.0.0:587, no iptables restriction). Protection │  │
+│  │   relies on TLS + SASL auth, NOT network isolation.   │  │
 │  └───────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -486,35 +500,67 @@ ContainerCP Mail Security Model (MVP + Future):
 |-------|-----------|----------|-----------------|------------|
 | **L1** | Docker network + firewall | External attackers from reaching Postfix submission | Internal container-to-container attacks | ✅ Stage 3 |
 | **L2** | Per-site SASL credentials | Site A authenticating as Site B; stolen credentials from Site A affecting Site B | Site A sending spoofed emails after auth | ✅ Stage 4-5 |
-| **L3** | `reject_sender_login_mismatch` | Authenticated site sending FROM another site's domain | (when implemented) | ⏳ Deferred |
+| **L3** | `reject_sender_login_mismatch` + fixed envelope sender via msmtp `from` + `allow_from_override off` | Authenticated site sending FROM another site's envelope address | Envelope sender is fixed per site (e.g., `wordpress@sitedomain`); plugins can't override via PHP `-f` | ✅ Stage 2+4 |
 | **L4** | `reject_unauth_destination` | Open relay (unauth clients sending to arbitrary recipients) | Authenticated users from sending to any recipient | ✅ Stage 2 |
 | **L5** | Rate limiting | Single compromised site flooding the mail queue | Coordinated low-rate abuse from multiple sites | ✅ Stage 2 |
 
-**Why Layer 3 is deferred (detailed analysis):**
+**How Layer 3 is achieved without @domain wildcard (updated approach):**
 
-`reject_sender_login_mismatch` + `site-42@php.c.i → @example.com` pattern was tested on Postfix 3.7.11 (Debian 13). The `@domain` wildcard is documented in Postfix but does NOT work in this version. Root cause: Postfix 3.7.11 with pipelining (enabled by default) defers `smtpd_sender_restrictions` evaluation until the SASL identity is established after AUTH. During this deferred evaluation at RCPT TO time, `@domain` pattern matching is broken.
+`reject_sender_login_mismatch` + `site-42@php.c.i → @example.com` pattern was tested on Postfix 3.7.11 (Debian 13). The `@domain` wildcard does NOT work in this version. However, exact-match entries (`user@domain → exact@address`) DO work.
 
-Exact-match entries (`user@domain → user@domain`) DO work, but require knowing all possible sender addresses in advance — impractical for CMS platforms like WordPress.
+The solution: **fix the envelope sender via msmtp**
 
-**Security assessment of the MVP gap (missing Layer 3):**
+msmtp 1.8.28 (available in Debian 13) supports:
+```
+from wordpress@sitedomain.com       # forces MAIL FROM in SMTP
+allow_from_override off             # prevents PHP's -f from overriding
+set_from_header auto                # PHP still controls From: header
+```
+
+With this configuration:
+1. PHP's `mail()` reads stdin and passes message + headers
+2. msmtp forces `MAIL FROM: wordpress@sitedomain.com` (envelope)
+3. PHP controls `From:` header in the message body (non-envelope)
+4. Postfix receives SASL auth + `MAIL FROM: wordpress@sitedomain.com`
+5. `reject_sender_login_mismatch` looks up `site-42@php.c.i` → `wordpress@sitedomain.com`
+6. **EXACT MATCH** between map value and MAIL FROM → ✅ OK
+
+This gives sender identity isolation WITHOUT `@domain` wildcard. The trade-off: all outgoing emails from a site use the same envelope sender address (e.g., `wordpress@sitedomain`). This is standard practice in hosting environments (WordPress default, `bounce@`, `noreply@`, etc.).
+
+**Key technical details:**
+- `reject_sender_login_mismatch` checks the envelope sender (MAIL FROM), NOT the `From:` header
+- msmtp's `from` sets the envelope sender at the SMTP protocol level
+- PHP's `mail()` `-f` parameter is blocked by `allow_from_override off`
+- The `From:` header in the message body is still controlled by PHP (plugins, contact forms, etc.)
+- SPF/DKIM alignment uses the envelope sender domain, which correctly matches the site's domain
+
+**Security assessment of Layer 3 (with msmtp fixed-from approach):**
 
 | Scenario | Risk | Mitigation in MVP | Post-MVP |
 |----------|------|-------------------|----------|
 | External attacker sends spam | 🔴 High | Blocked by L1 (network) + L2 (no credentials) | Same |
-| Compromised PHP site sends FROM another site's domain | 🟡 Medium | L2 limits to this site's credentials; L5 limits volume | Add L3 |
-| Compromised PHP site sends FROM external domain | 🟡 Medium | L5 limits volume; SPF/DKIM/DMARC at DNS level | Add L3 |
-| Compromised PHP site sends FROM own domain (legitimate) | 🟢 Low | This is the intended use case | Same |
+| Compromised PHP site sends FROM another site's domain | 🟡 Medium | L2 limits credentials; L3 (msmtp fixed from + sender_login maps) rejects at Postfix level | ✅ MVP active |
+| Compromised PHP site sends FROM external domain | 🟡 Medium | `reject_sender_login_mismatch` + exact-match login maps reject mismatch | ✅ MVP active |
+| PHP plugin overrides envelope sender via `-f` | 🟡 Medium | msmtp `allow_from_override off` blocks override | ✅ MVP active |
+| Compromised PHP site sends FROM own domain (legitimate) | 🟢 Low | This is the intended use case | ✅ |
 
 **Key distinction: Authentication isolation vs Sender identity isolation**
 - **Authentication isolation (L2)**: prevents site A from USING site B's credentials. Achieved via per-site SASL usernames/passwords stored in Dovecot passdb.
-- **Sender identity isolation (L3)**: prevents authenticated site A from CLAIMING to be site B in the From: header. Achieved via `reject_sender_login_mismatch` + domain-bound sender_login_maps.
+- **Sender identity isolation (L3)**: prevents authenticated site A from sending with site B's envelope sender. Achieved via msmtp `from` (fixes envelope sender) + `reject_sender_login_mismatch` (validates against sender_login maps).
 
-Both are important but independent. MVP implements L2 (authentication) but not L3 (identity). This is equivalent to how most shared hosting panels operate — once authenticated, the user can send as any address.
+Both are ACTIVE in MVP. L3 uses exact-match (not @domain wildcard) because msmtp forces a known envelope sender per site.
 
-**Future upgrade path for Layer 3:**
-1. Postfix version upgrade (≥ 3.8 where @domain may be fixed)
-2. Or custom policy daemon (`check_policy_service`) for sender validation
-3. The sender_login map IS GENERATED during `enable_mail()` with `@domain` entries — ready for immediate activation when Postfix is upgraded
+**Mechanism details:**
+- `enable_mail()` generates site's envelope sender address: `wordpress@{site-domain}` (configurable)
+- msmtprc includes: `from wordpress@{site-domain}` + `allow_from_override off`
+- sender_login map: `site-{ID}@php.containercp.internal → wordpress@{site-domain}`
+- `reject_sender_login_mismatch` validates the EXACT MATCH
+- PHP's `From:` header in message body is still controlled by PHP (only envelope is fixed)
+
+**When @domain wildcard may still be needed:**
+- If a site needs multiple different envelope senders (not just one fixed address)
+- This requires @domain wildcard or a policy service
+- @domain wildcard support should be re-verified after any Postfix version upgrade. The sender_login maps already contain `@domain` entries alongside exact-match entries, ready for immediate activation if wildcards become functional.
 
 ### 4.9 Existing Components to Reuse
 
@@ -988,19 +1034,40 @@ This gives two-layer protection:
 1. `reject_sender_login_mismatch` rejects if SASL user not in login_maps (fallback)
 2. `check_sender_access` whitelists specific sender addresses per site
 
-**Simpler alternative for MVP:** Accept the minor security risk and skip sender_login_maps entirely. Each PHP site has unique SASL credentials and Postfix's `reject_unauth_destination` prevents relaying to arbitrary domains. The sender spoofing risk is acceptable for a controlled environment.
+**MVP approach (msmtp fixed envelope sender + exact-match sender_login):**
 
-**Test matrix for Stage 2 QA (updated — uses check_sender_access or exact-match texthash):**
+Instead of relying on `@domain` wildcard (broken), use msmtp's `from` + `allow_from_override off` to fix the envelope sender per site. Then use exact-match `reject_sender_login_mismatch`:
 
-| # | Test | SASL User | From: address | Expected | Notes |
-|---|------|-----------|---------------|----------|-------|
-| 1 | Own domain, correct user | `site-42@php.c.i` | `wordpress@example.com` | ✅ Accept | SASL matches + sender whitelisted |
-| 2 | Own domain, different local part | `site-42@php.c.i` | `info@example.com` | ✅ Accept | If whitelisted in sender_access |
-| 3 | Wrong domain | `site-42@php.c.i` | `admin@other.com` | ❌ Reject (553) | Not in sender_access |
-| 4 | No auth | (none) | `wordpress@example.com` | ❌ Reject (550) | Submission:587 requires SASL |
-| 5 | Different site's credentials | `site-99@php.c.i` | `wordpress@example.com` | ❌ Reject (553) | Not authorized for @example.com |
-| 6 | Empty from | `site-42@php.c.i` | `<>` | ⚠️ Bypasses check_before | Envelope from <>, used for bounces |
-| 7 | Multiple domains per site | `site-42@php.c.i` | `admin@alias.com` | ✅ Accept | If in sender_access |
+```postfix
+# In main.cf:
+smtpd_sender_restrictions = reject_sender_login_mismatch, permit_sasl_authenticated
+
+# sender_login map (texthash):
+# site-42@php.containercp.internal → wordpress@example.com
+```
+
+The envelope sender is set in msmtprc:
+```msmtprc
+from wordpress@example.com
+allow_from_override off
+set_from_header auto
+```
+
+This ensures:
+- PHP's -f parameter is blocked (allow_from_override off)
+- Envelope sender is always `wordpress@example.com`
+- reject_sender_login_mismatch checks exact match → OK
+- PHP still controls From: header in message body
+
+**Test matrix for Layer 3 verification (using msmtp fixed-from + exact-match texthash):**
+
+| # | Test | SASL User | MAIL FROM (envelope) | Expected | Notes |
+|---|------|-----------|---------------------|----------|-------|
+| 1 | Own site, correct envelope | `site-42@php.c.i` | `wordpress@example.com` | ✅ Accept | Exact match in sender_login map |
+| 2 | Own site, wrong envelope (should be blocked by msmtp) | `site-42@php.c.i` | `admin@other.com` | ❌ Reject (553) | Not in map; also blocked by msmtp allow_from_override |
+| 3 | Different site's credentials | `site-99@php.c.i` | `wordpress@example.com` | ❌ Reject (553) | site-99 not in map for this address |
+| 4 | No auth | none | `wordpress@example.com` | ❌ Reject (550) | Submission:587 requires SASL |
+| 5 | Empty envelope (bounce) | `site-42@php.c.i` | `<>` | ⚠️ Accept | Bounce messages — special case in Postfix |
 | 8 | IP not in mynetworks | (none) | anything | ❌ Reject | Port 25 has different restrictions |
 
 **Postfix `smtpd_sender_restrictions` ordering:**
@@ -1134,17 +1201,27 @@ submission inet n - y - - smtpd
 
 Dovecot already has an `inet_listener` on port 12345 for SASL auth (code-generated), but the runtime config is stale. Regenerating config via `DockerMailProvider::write_configs()` will fix this.
 
-**2b. Add sender restrictions (MVP: permit all authenticated — sender isolation deferred):**
+**2b. Add sender restrictions (ACTIVE — uses msmtp fixed-from + exact-match):**
 ```postfix
-# In master.cf submission entry:
-smtpd_sender_restrictions = permit_sasl_authenticated, permit_mynetworks
-```
-The sender_login map IS generated during `enable_mail()` (entries for each site's SASL user → their domain), but the `reject_sender_login_mismatch` restriction is NOT enabled. This means:
-- Layer 2 (authentication isolation) is ACTIVE: per-site credentials prevent cross-site auth
-- Layer 3 (sender identity isolation) is DEFERRED: authenticated sites can send as any From:
-- The sender_login map is ready for activation when Postfix is upgraded
+# In submission master.cf:
+smtpd_sender_restrictions = reject_sender_login_mismatch, permit_sasl_authenticated
 
-See section 4.8.1 for the full security model analysis and future upgrade path.
+# In main.cf (sender_login map generated per-site):
+smtpd_sender_login_maps = texthash:/etc/postfix/sender_login
+```
+
+**How this works without @domain wildcard:**
+- msmtp forces the envelope sender via `from wordpress@sitedomain.com` + `allow_from_override off`
+- Postfix receives MAIL FROM with the fixed address
+- `reject_sender_login_mismatch` compares it with the sender_login map entry
+- Exact match succeeds → ✅ sender identity isolation achieved
+
+The sender_login map entry per site:
+```
+site-42@php.containercp.internal  wordpress@example.com
+```
+
+See section 4.8.1 for the full security model analysis.
 
 **⚠️ Verified limitation:** `reject_sender_login_mismatch` with `@domain` wildcard does NOT work on Postfix 3.7.11 (verified live). The `smtpd_sender_login_maps` lookup returns the `@domain` value correctly, but the restriction evaluation fails to match. Root cause: Postfix 3.7.11 with pipelining defers restriction evaluation until RCPT TO time, and `@domain` wildcard matching is broken in this deferred path.
 
@@ -1288,13 +1365,20 @@ For each site on mail enable, generate credentials via `SiteMailOrchestrator`:
 defaults
 auth           on
 tls            on
-tls_certcheck  off
 host           containercp-mail-postfix
 port           587
 user           site-{SITE_ID}@php.containercp.internal
 password       <auto-generated>
-from           {domain}@{domain}
+from           wordpress@{site-domain}
+allow_from_override off
+set_from_header auto
 ```
+
+**Note:**
+- `from` forces the envelope sender — essential for exact-match sender_login (Layer 3)
+- `allow_from_override off` prevents PHP's `-f` parameter from changing the envelope sender
+- With `tls_certcheck off` removed: TLS cert now has SAN for `containercp-mail-postfix` (fixed in Stage 2)
+- `set_from_header auto`: PHP still controls the `From:` header in the message body
 
 **Credential storage:**
 - Postfix `smtpd_sender_login_maps` (texthash): `site-{SITE_ID}@php.containercp.internal  @{domain}`
@@ -1430,6 +1514,7 @@ Stage 1 (PHP image) ───→ Stage 2 (Postfix + Dovecot SASL + submission)
 | 16 | **Full SMTP AUTH chain verified live** — Dovecot SASL → Postfix submission → queue | Tested on production: `swaks` with AUTH PLAIN → `250 Ok: queued` ✅ | Dovecot SASL listener (port 12345) + Postfix submission (587) work end-to-end |
 | 17 | **`@domain` wildcard NOT supported by `reject_sender_login_mismatch` in Postfix 3.7.11** | `postmap -q` returns `@domain` correctly, but restriction still rejects matching senders | Use `check_sender_access regexp:` instead of `texthash:` with `@domain` |
 | 18 | **Postfix main.cf change requires container restart** — `postconf -e` fails with `Device or resource busy` on bind-mounted config | Tested: `docker exec ... postconf -e` fails; modifying host file + `docker restart` works | Document in QA guide; implement config change via host file write + container restart in code |
+| 19 | **msmtp 1.8.28 supports `from` + `allow_from_override off`** — enables exact-match sender_login without @domain wildcard | `msmtp --version`: 1.8.28; man page: `from`, `allow_from_override`, `set_from_header` all documented | Layer 3 can be ACTIVE in MVP via fixed envelope sender. All outgoing site emails use one envelope address (e.g., `wordpress@domain`). This is standard practice. |
 
 ### Open for discussion (resolved during verification):
 1. Shared credential for all PHP sites vs per-site SASL user? → **ADR-2026-002: per-site** ✅ verified
@@ -1437,8 +1522,8 @@ Stage 1 (PHP image) ───→ Stage 2 (Postfix + Dovecot SASL + submission)
 3. Should `/etc/msmtprc` be generated per-site or globally? → **per-site, per ADR-2026-002** ✅ verified
 4. Should we offer a "test email" button in the Web UI? → **Yes, Stage 8**
 5. Should msmtp logs be collected centrally? → **Yes, to site's `logs/` directory**
-6. How to handle PHP `mail()` return path / envelope sender? → **Use `from {domain}` in msmtprc**
-7. TLS: `tls_certcheck off` or generate proper certificate? → **Generate proper SAN cert in Stage 2** (not workaround) ✅ ADR updated
+6. How to handle PHP `mail()` return path / envelope sender? → **msmtp `from` + `allow_from_override off`** — fixes envelope sender per site, enables exact-match sender_login for Layer 3
+7. TLS: `tls_certcheck off` or generate proper certificate? → **Generate proper SAN cert in Stage 2** (msmtprc uses `tls on` without certcheck) (not workaround) ✅ ADR updated
 8. Should site::Site gain a `mail_enabled` boolean field? → **No, derive from MailDomain existence** (single source of truth)
 9. Mailbox auto-creation on mail enable (postmaster@)? → **Out of scope for initial implementation**
 10. Default MailDomain mode for "Enable mail" action in UI? → **`local-primary`** (most common use case)
