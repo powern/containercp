@@ -115,25 +115,19 @@ static core::OperationResult repair_compose_mail_network(
     }
 
     // ── Step 4: Atomic replace ──
-    // Backup original
-    std::string bak_path = compose_path + ".mail.bak";
-    std::ifstream src(compose_path, std::ios::binary);
-    std::ofstream dst(bak_path, std::ios::binary);
-    if (src && dst) {
-        dst << src.rdbuf();
+    // docker-compose.yml is a generated artifact — no backup needed.
+    // ContainerCP can always regenerate it from the internal data model.
+    if (std::rename(tmp_path.c_str(), compose_path.c_str()) != 0) {
+        std::remove(tmp_path.c_str());
+        return {false, "Failed to replace compose file"};
     }
-
-    // Replace
-    std::rename(tmp_path.c_str(), compose_path.c_str());
 
     // ── Step 5: docker compose up -d ──
     auto up = exec.run({
         "docker", "compose", "-f", compose_path, "up", "-d", "--no-recreate"
     });
     if (up.exit_code != 0) {
-        // Rollback
-        std::rename(bak_path.c_str(), compose_path.c_str());
-        return {false, "docker compose up failed, rolled back: " + up.err};
+        return {false, "docker compose up failed after compose update: " + up.err};
     }
 
     return {true, "Compose file updated and validated"};
