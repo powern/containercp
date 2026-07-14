@@ -47,34 +47,34 @@ Based on `docs/mail-php-integration-plan.md` (v0.5, architecture phase completed
 
 ### 1.1 — Update Dockerfile
 
-- [ ] Edit `docker/php/Dockerfile` — add packages:
+- [x] Edit `docker/php/Dockerfile` — add packages:
       ```dockerfile
       RUN apt-get update && apt-get install -y --no-install-recommends \
           msmtp msmtp-mta ca-certificates \
           && rm -rf /var/lib/apt/lists/*
       ```
-- [ ] Create `docker/php/php.ini` with:
+- [x] Create `docker/php/php.ini` with:
       ```ini
       sendmail_path = /usr/bin/msmtp -t
       ```
 
 ### 1.2 — Build & verify
 
-- [ ] Build the PHP image locally:
+- [x] Build the PHP image locally:
       ```bash
       docker build -t containercp-php:test docker/php/
       ```
-- [ ] Verify msmtp is installed:
+- [x] Verify msmtp is installed:
       ```bash
       docker run --rm containercp-php:test which msmtp
       # Expected: /usr/bin/msmtp
       ```
-- [ ] Verify sendmail_path:
+- [x] Verify sendmail_path:
       ```bash
       docker run --rm containercp-php:test php -i | grep sendmail_path
       # Expected: sendmail_path => /usr/bin/msmtp -t => /usr/bin/msmtp -t
       ```
-- [ ] Verify msmtp version ≥ 1.8 (needed for `allow_from_override`):
+- [x] Verify msmtp version ≥ 1.8 (needed for `allow_from_override`):
       ```bash
       docker run --rm containercp-php:test msmtp --version | head -1
       # Expected: msmtp version 1.8.x
@@ -85,9 +85,9 @@ Based on `docs/mail-php-integration-plan.md` (v0.5, architecture phase completed
 - Existing sites still use the old image (upgraded in Stage 3 or Stage 6)
 
 **Acceptance criteria:**
-- [ ] `which msmtp` returns `/usr/bin/msmtp`
-- [ ] `php -i | grep sendmail_path` shows `/usr/bin/msmtp -t`
-- [ ] msmtp version ≥ 1.8.0
+- [x] `which msmtp` returns `/usr/bin/msmtp`
+- [x] `php -i | grep sendmail_path` shows `/usr/bin/msmtp -t`
+- [x] msmtp version ≥ 1.8.0
 
 ---
 

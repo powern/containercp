@@ -9,10 +9,18 @@ LABEL org.opencontainers.image.description="PHP-FPM image with MySQL extensions 
 LABEL org.opencontainers.image.source="https://github.com/powern/containercp"
 LABEL org.opencontainers.image.version="${PHP_VERSION}"
 
+# Install msmtp for outbound mail delivery via SMTP
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    msmtp msmtp-mta ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install PHP extensions required by WordPress and common CMS
 RUN docker-php-ext-install \
     mysqli \
     pdo_mysql
+
+# Copy PHP configuration
+COPY php.ini /usr/local/etc/php/conf.d/containercp.ini
 
 # Verify extensions
 RUN php -r "exit(extension_loaded('mysqli') ? 0 : 1);" \
