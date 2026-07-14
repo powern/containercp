@@ -465,13 +465,22 @@ placeholder data.  This is a known limitation.
 
 Creates per-site mail configuration:
 - `MailDomain` record linked to the site's primary domain
-- Dovecot SASL credentials (`passwd-php` file)
+- Dovecot SASL credentials in `/etc/dovecot/passwd-php` (separate from mailbox passwd)
 - `msmtprc` with fixed envelope sender (`wordpress@domain`, `allow_from_override off`)
 - Postfix `sender_login` exact-match entry (`site-{ID}@php.containercp.internal → wordpress@domain`)
-- PHP container connected to `containercp-mail` Docker network
+- Site's `docker-compose.yml` updated: adds `containercp-mail` to PHP service networks + top-level networks section
+- `docker compose up -d --no-recreate` applied to activate the network change
+- PHP container connected to `containercp-mail` Docker network (runtime)
 - Postfix + Dovecot reload to activate changes
 
+After enable-mail, the `containercp-mail` network is persistent in compose. Any `docker compose up -d` or container recreate will automatically reconnect the PHP container to the mail network.
+
 Idempotent — safe to call multiple times. No site files (WordPress, DB, proxy, SSL) are modified.
+
+**Error responses:**
+- 400 — Invalid site ID (non-numeric)
+- 404 — Site not found
+- 500 — Compose file update failed (malformed YAML, write error, docker compose up failure)
 
 **Response:**
 ```json
@@ -481,16 +490,23 @@ Idempotent — safe to call multiple times. No site files (WordPress, DB, proxy,
 **POST /api/sites/<id>/disable-mail**
 
 Removes per-site mail configuration:
-- Removes SASL credentials from Dovecot
-- Removes Postfix sender_login entry
-- Deletes `msmtprc` file
-- Disconnects PHP container from `containercp-mail` network
+- Removes SASL credentials for EXACTLY this `site_id` from Dovecot `passwd-php` (other sites' credentials untouched)
+- Removes Postfix `sender_login` entry for this `site_id`
+- Deletes `msmtprc` file from site's `config/php/`
+- Removes `containercp-mail` from site's `docker-compose.yml`
+- Applies `docker compose up -d` to deactivate the network
+- Disconnects PHP container from `containercp-mail` network (runtime)
 - Sets `MailDomain` mode to `Disabled` (preserves data for re-enable)
 
 **Response:**
 ```json
 { "success": true, "data": { "message": "Mail disabled for site example.com" } }
 ```
+
+**Error responses:**
+- 400 — Invalid site ID (non-numeric)
+- 404 — Site not found
+- 500 — Compose file update failed
 
 **GET /api/sites/<id>/mail-status**
 
