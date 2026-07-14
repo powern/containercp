@@ -2002,27 +2002,54 @@ bool ApiServer::start() {
         }
 
         if (action == "send-test-email") {
-            // Send a test email via the PHP container's mail() function
+            // Tests the msmtp → SMTP submission chain (not PHP internally).
+            // Sends a pre-formed email via msmtp inside the PHP container.
             runtime::CommandExecutor exec;
-            std::string container = "site-" + std::to_string(site_id) + "-php";
 
-            // Check if PHP container exists and has msmtp configured
-            auto check = exec.run({"docker", "exec", container, "which", "msmtp"});
-            if (check.exit_code != 0) {
-                r.status_code = 500;
-                r.body = "{\"success\":false,\"error\":\"PHP container not found or msmtp not installed\"}";
+            // Validate recipient email
+            std::string test_to = json_extract(req.body, "to");
+            if (test_to.empty()) test_to = "admin@" + site->domain;
+            // Basic email validation: contains @ and no shell-dangerous chars
+            bool valid = test_to.find('@') != std::string::npos;
+            for (char c : test_to) {
+                if (!std::isalnum(static_cast<unsigned char>(c)) &&
+                    c != '@' && c != '.' && c != '-' && c != '_' && c != '+') {
+                    valid = false;
+                    break;
+                }
+            }
+            if (!valid) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Invalid recipient email address\"}";
                 return r;
             }
 
-            // Send a test email
-            std::string test_to = "admin@" + site->domain;
-            std::string body = json_extract(req.body, "to");
-            if (!body.empty()) test_to = body;
+            // Write email content to temp file (avoids shell injection in command args)
+            std::string tmp_path = "/tmp/containercp-test-email-" + std::to_string(site_id);
+            {
+                std::ofstream tmp(tmp_path);
+                if (!tmp) {
+                    r.status_code = 500;
+                    r.body = "{\"success\":false,\"error\":\"Failed to create temp file\"}";
+                    return r;
+                }
+                tmp << "Subject: ContainerCP Mail Test\n"
+                    << "To: " << test_to << "\n"
+                    << "\n"
+                    << "This is a test email from ContainerCP PHP mail integration.\n"
+                    << "Sent from: " << site->domain << "\n";
+            }
 
-            auto result = exec.run({"docker", "exec", container, "sh", "-c",
-                "echo \"Subject: ContainerCP Mail Test\n\nThis is a test email from ContainerCP PHP mail integration.\nSent from: " + site->domain + "\n\" | msmtp -t -- " + test_to});
+            // Execute msmtp with stdin from file (no shell interpretation of test_to)
+            auto result = exec.run_with_stdin_file(
+                {"docker", "exec", "-i", "site-" + std::to_string(site_id) + "-php",
+                 "msmtp", "-t", "--", test_to},
+                tmp_path);
+
+            std::remove(tmp_path.c_str());
 
             if (result.exit_code != 0) {
+                r.status_code = 500;
                 r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.err) + "\"}";
             } else {
                 r.body = "{\"success\":true,\"data\":{\"message\":\"Test email sent to " + test_to + "\"}}";

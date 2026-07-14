@@ -511,12 +511,26 @@ Removes per-site mail configuration:
 
 **POST /api/sites/<id>/send-test-email**
 
-Sends a test email using the PHP container's msmtp to verify the full mail chain.
+Tests the **msmtp → Postfix submission** chain (NOT PHP `mail()` or `wp_mail()` directly).
+Sends a pre-formed email via `msmtp` inside the PHP container using the site's SMTP credentials.
 
 Optional body: `{"to": "admin@example.com"}` (defaults to `admin@<site-domain>`).
 
-The email is sent directly via `msmtp` inside the PHP container, testing the exact same path
-that `PHP mail()` and `wp_mail()` use.
+**What this tests:**
+- msmtp can resolve `containercp-mail-postfix` via Docker DNS
+- TLS connection to Postfix submission (port 587) succeeds
+- SASL authentication with the site's credentials works
+- Postfix accepts the message into its queue
+- Sender restrictions (`reject_sender_login_mismatch`) pass
+
+**What this does NOT test:**
+- PHP `mail()` function itself (need a PHP script for that)
+- WordPress `wp_mail()` (need WordPress for that)
+- Final email delivery (Postfix will attempt delivery based on its config)
+
+**Security:** Recipient email is validated (alphanumeric, `@`, `.`, `-`, `_`, `+` only)
+and passed as a separate argument (not via shell string) to prevent command injection.
+Email content is written to a temp file and piped via `run_with_stdin_file`.
 
 **Response:**
 ```json
@@ -524,6 +538,7 @@ that `PHP mail()` and `wp_mail()` use.
 ```
 
 **Error responses:**
+- 400 — Invalid recipient email address
 - 404 — Site not found
 - 500 — PHP container not found, msmtp not installed, or email send failed
 
