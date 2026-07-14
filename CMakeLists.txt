@@ -52,6 +52,8 @@ set(CONTAINERCP_SOURCES
     libs/mail/MailModuleState.cpp
     libs/mail/MailDomainManager.cpp
     libs/mail/MailPasswordHasher.cpp
+    libs/mail/SiteMailCredentials.cpp
+    libs/mail/SiteMailOrchestrator.cpp
     libs/mail/MailboxManager.cpp
     libs/mail/providers/DockerMailProvider.cpp
     libs/node/Node.cpp

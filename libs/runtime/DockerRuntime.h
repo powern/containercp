@@ -20,6 +20,13 @@ public:
 
     core::OperationResult check_compose() override;
 
+    // Mail integration
+    core::OperationResult connect_mail_network(uint64_t site_id,
+                                                const std::string& domain) override;
+    core::OperationResult disconnect_mail_network(uint64_t site_id,
+                                                   const std::string& domain) override;
+    core::OperationResult sync_site_mail(uint64_t site_id) override;
+
 private:
     bool check_docker();
     core::OperationResult run_command(const std::string& site_dir, const std::string& compose_cmd);
