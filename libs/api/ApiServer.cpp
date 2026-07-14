@@ -1950,32 +1950,73 @@ bool ApiServer::start() {
     // ── Site mail endpoints (enable/disable/status) ────────────────────
     // Uses SiteMailOrchestrator for all business logic (Single Source of Truth)
 
-    // POST /api/sites/<id>/enable-mail — enable mail for a site
-    router_.add_prefix("POST", "/api/sites/", [&s](const Request& req) {
-        Response r;
+    // Helper: parse /api/sites/{site_id}/{action} from path
+    // Returns true if parsed, false if 404 should be returned
+    // Sets site_id, action, site (if found). Also sets r if error.
+    struct SiteMailAction {
+        uint64_t site_id = 0;
+        std::string action;
+        site::Site* site = nullptr;
+    };
+    auto parse_site_mail_path = [&s](const Request& req, Response& r) -> SiteMailAction {
+        SiteMailAction result;
         std::string remaining = req.path.substr(std::string("/api/sites/").size());
         auto slash = remaining.find('/');
         if (slash == std::string::npos || slash == 0) {
             r.status_code = 404;
             r.body = "{\"success\":false,\"error\":\"Not found\"}";
-            return r;
+            return result;
         }
         std::string id_str = remaining.substr(0, slash);
-        std::string action = remaining.substr(slash + 1);
-        uint64_t site_id = 0;
-        try { site_id = std::stoull(id_str); } catch (...) {}
-        if (site_id == 0) {
+        result.action = remaining.substr(slash + 1);
+        try { result.site_id = std::stoull(id_str); } catch (...) {}
+        if (result.site_id == 0) {
             r.status_code = 400;
             r.body = "{\"success\":false,\"error\":\"Invalid site ID\"}";
-            return r;
+            return result;
         }
-
-        auto* site = s.sites().find_by_id(site_id);
-        if (!site) {
+        result.site = s.sites().find_by_id(result.site_id);
+        if (!result.site) {
             r.status_code = 404;
             r.body = "{\"success\":false,\"error\":\"Site not found\"}";
+            return result;
+        }
+        return result;
+    };
+
+    // GET /api/sites/<id>/mail-status — read-only status
+    router_.add_prefix("GET", "/api/sites/", [&s, &parse_site_mail_path](const Request& req) {
+        Response r;
+        auto parsed = parse_site_mail_path(req, r);
+        if (!parsed.site) return r;  // r already set by parse
+        if (parsed.action != "mail-status") {
+            r.status_code = 405;
+            r.body = "{\"success\":false,\"error\":\"Only mail-status is available via GET\"}";
             return r;
         }
+        auto status = s.mail_orchestrator().get_status(parsed.site_id, parsed.site->domain);
+        r.body = "{\"success\":true,\"data\":{"
+            "\"site_id\":" + std::to_string(parsed.site_id) + ","
+            "\"domain\":\"" + JsonFormatter::escape(parsed.site->domain) + "\","
+            "\"enabled\":" + (status.enabled ? "true" : "false") + ","
+            "\"mail_domain\":" + (status.domain_id > 0 ? "true" : "false") + ","
+            "\"credential_exists\":" + (status.credential_exists ? "true" : "false") + ","
+            "\"msmtprc\":" + (status.msmtprc_exists ? "true" : "false") + ","
+            "\"network\":" + (status.network_connected ? "true" : "false") + "}}";
+        return r;
+    });
+
+    // POST /api/sites/<id>/enable-mail — enable mail for a site
+    // POST /api/sites/<id>/disable-mail — disable mail
+    // POST /api/sites/<id>/send-test-email — test msmtp chain
+    router_.add_prefix("POST", "/api/sites/", [&s, &parse_site_mail_path](const Request& req) {
+        Response r;
+        auto parsed = parse_site_mail_path(req, r);
+        if (!parsed.site) return r;
+
+        auto* site = parsed.site;
+        uint64_t site_id = parsed.site_id;
+        const std::string action = parsed.action;
 
         if (action == "enable-mail") {
             auto result = s.mail_orchestrator().enable_mail(site_id, site->domain);
@@ -2054,19 +2095,6 @@ bool ApiServer::start() {
             } else {
                 r.body = "{\"success\":true,\"data\":{\"message\":\"Test email sent to " + test_to + "\"}}";
             }
-            return r;
-        }
-
-        if (action == "mail-status") {
-            auto status = s.mail_orchestrator().get_status(site_id, site->domain);
-            r.body = "{\"success\":true,\"data\":{"
-                "\"site_id\":" + std::to_string(site_id) + ","
-                "\"domain\":\"" + JsonFormatter::escape(site->domain) + "\","
-                "\"enabled\":" + (status.enabled ? "true" : "false") + ","
-                "\"mail_domain\":" + (status.domain_id > 0 ? "true" : "false") + ","
-                "\"credential_exists\":" + (status.credential_exists ? "true" : "false") + ","
-                "\"msmtprc\":" + (status.msmtprc_exists ? "true" : "false") + ","
-                "\"network\":" + (status.network_connected ? "true" : "false") + "}}";
             return r;
         }
 

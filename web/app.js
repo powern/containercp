@@ -550,8 +550,8 @@ async function loadSiteDetail(p, siteId) {
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;" id="site-cols-bottom"></div>
       <div style="margin-top:12px;" id="site-php-mail"></div>`;
-    const [domains, databases, ssl, proxy, backups, mailStatus] = await Promise.all([
-      api('/api/domains'), api('/api/databases'), api('/api/ssl'), api('/api/proxy'), api('/api/backups'), api('/api/sites/' + site.id + '/mail-status')
+    const [domains, databases, ssl, proxy, backups] = await Promise.all([
+      api('/api/domains'), api('/api/databases'), api('/api/ssl'), api('/api/proxy'), api('/api/backups')
     ]);
     // Existing cards: Domains + SSL in left column, Databases in right column
     const colLeft = $('site-cols-left');
@@ -568,14 +568,30 @@ async function loadSiteDetail(p, siteId) {
     colBottom.innerHTML =
       makeCard('Proxy', (proxy.data||[]).filter(p=>p.site_id==site.id).map(p=>p.status), '#06b6d4') +
       makeCard('Backups', (backups.data||[]).filter(b=>b.site_id==site.id).map(b=>b.filename), '#f97316');
-    // PHP Mail section
-    renderPhpMailCard(site.id, site.domain, mailStatus);
+    // PHP Mail section (loaded separately — failure does NOT break the page)
+    loadPhpMailCard(site.id, site.domain);
     // Load runtime card
     loadRuntimeCard(site.id, site.domain, site.web_server);
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load site</div>'; }
 }
 
 /* ===== PHP MAIL CARD ===== */
+async function loadPhpMailCard(siteId, domain) {
+  const el = $('site-php-mail');
+  if (!el) return;
+  el.innerHTML = '<div class="card"><h3>PHP Mail</h3><div style="font-size:12px;color:var(--text3)">Loading...</div></div>';
+  try {
+    const res = await api('/api/sites/' + siteId + '/mail-status');
+    renderPhpMailCard(siteId, domain, res);
+  } catch(e) {
+    el.innerHTML = '<div class="card">'
+      + '<h3>PHP Mail</h3>'
+      + '<div style="font-size:12px;color:#ef4444;margin-bottom:8px;">Unable to load PHP Mail status</div>'
+      + '<button class="btn btn-sm btn-outline" onclick="loadPhpMailCard(' + siteId + ',\'' + domain + '\')">Retry</button>'
+      + '</div>';
+  }
+}
+
 function renderPhpMailCard(siteId, domain, mailStatus) {
   const el = $('site-php-mail');
   if (!el) return;
