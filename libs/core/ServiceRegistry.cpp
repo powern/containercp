@@ -441,6 +441,7 @@ void ServiceRegistry::sync_all_https_configs() {
 }
 
 void ServiceRegistry::start() {
+    // Recover certificates stuck in ISSUING state after crash
     // Configure ACME environment: production is default; staging requires explicit opt-in
     const char* staging_env = std::getenv("LETSENCRYPT_STAGING");
     cert_provider_->set_staging(staging_env != nullptr && std::string(staging_env) == "1");
@@ -462,6 +463,22 @@ void ServiceRegistry::start() {
     // Admin proxy setup + HTTPS config sync
     ensure_admin_proxy();
     sync_all_https_configs();
+
+    // Mail configuration recovery: ensure sites with mail are connected
+    if (!mail_.list().empty()) {
+        for (const auto& site : sites_.list()) {
+            bool has_mail = false;
+            for (const auto& md : mail_.list()) {
+                if (md.site_id == site.id && md.enabled) {
+                    has_mail = true;
+                    break;
+                }
+            }
+            if (has_mail) {
+                runtime_.connect_mail_network(site.id, site.domain);
+            }
+        }
+    }
 
     job_executor_.start();
     renewal_scheduler_.start();
