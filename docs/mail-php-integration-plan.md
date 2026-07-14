@@ -1,6 +1,12 @@
 # Mail + PHP Integration Plan
 
-## Status: Draft
+## Status: Draft (Pre-Implementation Verification Complete)
+
+All architectural assumptions verified against Docker Compose v2.26, Postfix 3.6, Dovecot 2.3, and running containers on `web2.softico.ua`. Key corrections:
+- `required: false` for Docker networks is NOT supported (→ ADR-2026-004 updated)
+- Postfix currently has NO SASL auth and NO submission service — must be enabled
+- TLS cert has CN=mail-test.local, NO SANs — `tls_certcheck off` required
+- Dovecot passdb accepts PHP credential entries without mailbox requirement
 
 ## 1. Current State
 
@@ -169,30 +175,64 @@ Current site creation (`SiteCreateOperation::execute()`) follows this order:
     f. docker compose up -d
     g. [NEW] If mail module is active:
        - Create /srv/containercp/sites/{domain}/config/php/ directory
-       - Generate a placeholder msmtprc (SASL credentials unknown yet,
-         so mail cannot actually be sent)
-       - Add sendmail_path to site's php.ini override (see 4.3.2)
+         (empty — msmtprc is created ONLY when mail is enabled, not as placeholder)
     h. [NEW] If mail module is inactive: no mail preparation
+
+**Decision: NO placeholder msmtprc.** The msmtprc file contains plaintext SASL credentials. Creating it without real credentials would serve no purpose — msmtp would fail to authenticate. Creating it with placeholder credentials that need to be replaced on enable adds complexity (file must be rewritten, permissions changed, etc.). Instead:
+- `config/php/` directory is created at site creation (for future use)
+- msmtprc is generated ONLY when `enable_mail()` is called
+- On mail disable, msmtprc is removed
+- This avoids stale credential files and simplifies the lifecycle
 ```
 
 #### 4.3.1 Network: Conditional `containercp-mail` in Compose
 
+**⚠️ Verified: `required: false` is NOT supported by Docker Compose v2.26.** Testing confirmed:
+```
+docker compose config: "networks.nonexistent-net Additional property required is not allowed"
+docker compose up: "network nonexistent-net not found" → EXIT 1
+```
+
 The `containercp-mail` network is created by `DockerMailProvider::prepare_environment()` during mail module activation. It does NOT exist when the mail module is inactive.
 
-The compose generator (`ComposeGenerator.cpp`) already handles service networks. Two approaches:
-
-**Option A (recommended — future-proof): ALWAYS include `containercp-mail` in the compose template, but use `external: true` and `required: false`.** Docker Compose v3.8+ ignores missing external networks. This way every site's compose file is consistent from day one.
+**Decision: Use conditional compose generation** — the compose generator checks the mail module state and only adds `containercp-mail` network when active.
 
 ```yaml
+# Only included when mail module is active:
+php:
+  networks:
+    - containercp-site-{{SITE_ID}}
+    - containercp-mail    # conditional — added only if mail module Active
+
+# (mail module inactive: no containercp-mail network in compose)
+
 networks:
   containercp-mail:
     external: true
-    required: false   # Ignored if network doesn't exist yet
 ```
 
-When the mail module is later activated, all existing compose files already reference the network — just `docker compose up -d` on each site to reconnect.
+When mail module is activated later:
+- `Runtime::upgrade_mail()` iterates all sites with MailDomain ≠ disabled
+- For each: regenerate compose (adds network), `docker compose up -d` (reconnects)
+- This is a batch operation, triggered once after activation
 
-**Option B (current-reality): Add the network only when the mail module is active.** Simpler to implement but requires a batch upgrade path when the mail module is activated.
+When mail is enabled for a specific site:
+- `docker network connect containercp-mail site-{ID}-php` (immediate runtime connection)
+- Regenerate compose file to include the network (for persistence)
+- On next `docker compose up -d`, the network reference is already there
+
+**Why full `containercp-mail` network and not a separate `containercp-mail-submit`?**
+The PHP container only needs to reach `containercp-mail-postfix:587` (submission). A separate network would be more isolated but adds complexity:
+- Another network to create/maintain
+- Postfix would need to be on both networks
+- The current `containercp-mail` network is the single network for all mail services
+- Docker DNS resolves service names within the network — msmtp connects to `containercp-mail-postfix` which resolves to its internal IP
+- If isolation is needed later, a separate `containercp-mail-submit` network can be introduced
+
+**For existing sites during the mail module activation:** `Runtime::upgrade_mail()` will:
+1. Regenerate docker-compose.yml for each site with mail enabled
+2. Run `docker compose -f ... up -d` to apply the new network
+3. Fall back to `docker network connect` if compose fails
 
 #### 4.3.2 PHP `sendmail_path`: Global vs Per-Site
 
@@ -307,10 +347,16 @@ The flow:
    - Same flow as "Enable Mail for Existing Site" (section 4.4)
    - Create MailDomain with `mode=local-primary`
    - Generate SASL credentials + msmtprc
-   - Import VestaCP mailboxes via postfix/dovecot commands
-   - Copy maildir data from backup
 
 4. **Fresh migration (no source mail)**: `upgrade_site()` does NOT enable mail. The user must explicitly enable it later via API/UI/CLI.
+
+**Scope clarification: Mailbox/DKIM/alias import is OUT OF SCOPE for the initial implementation.** The current task is to enable PHP outbound mail (Stage 7 in the Implementation Plan). Full mailbox migration from VestaCP is a separate, larger work item that should be planned independently. It requires:
+- Parsing VestaCP mailbox dumps
+- Creating Dovecot maildirs and setting permissions
+- Importing maildir data (potentially large: GBs per mailbox)
+- Migrating forwarders/aliases
+- Setting up DKIM keys
+- Updating DNS records
 
 **Why not during site creation?** Site creation is for the web application. Mail is an orthogonal feature that should be explicitly opted into, even during migration.
 
@@ -333,8 +379,10 @@ After activation:
        a. Generate SASL credentials (if missing)
        b. Generate msmtprc (if missing)
        c. Connect PHP container to containercp-mail network (via docker network connect)
+       d. Ensure PHP container has sendmail_path configured (global in php.ini)
+       e. Ensure Postfix sender_login map has entry for this site
     2. For every site without MailDomain: connect PHP to network anyway
-       (harmless — no credentials = no mail)
+       (harmless — no credentials = no mail can be sent)
 ```
 
 #### Mail Module Deactivated (`POST /api/mail/deactivate`)
@@ -536,21 +584,29 @@ This section records key architectural decisions made during the design of the s
 
 #### ADR-2026-004: `containercp-mail` Network in Compose Template
 
-**Decision:** Include `containercp-mail` in every site's docker-compose.yml as an optional external network.
+**Decision:** Use **conditional compose generation** — only include `containercp-mail` when the mail module is active.
 
 **Context:** The PHP container must be on the `containercp-mail` network to reach Postfix. The network may or may not exist at site creation time.
 
+**⚠️ Verified: `required: false` is NOT supported by Docker Compose v2.26.** Testing confirmed:
+```
+docker compose version: 2.26.1
+docker compose config: "networks.nonexistent-net Additional property required is not allowed"
+docker compose up: "network nonexistent-net not found" → EXIT 1
+```
+
 **Considered options:**
-- **Optional external:** `required: false` — compose ignores missing network. All compose files are consistent.
-- **Conditional generation:** Only add network when mail module is active. Requires batch upgrade on mail activation.
+- **Optional external (`required: false`):** ❌ Not supported by Docker Compose v2.x (never implemented despite being in some specs).
+- **Conditional generation:** ✅ Only add network when mail module is active. Requires batch upgrade on mail activation.
 
 **Rationale:**
-- Consistency: every site's compose file has the same structure.
-- Future-proof: when mail module is activated, all sites are immediately ready (just `docker compose up -d`).
-- Docker Compose v3.8+ supports `required: false` for external networks.
-- Zero risk: if the network doesn't exist, it's simply ignored.
+- Docker Compose v2.x does NOT support `required: false` for external networks.
+- Conditional generation is the only viable approach.
+- When mail module is activated, `Runtime::upgrade_mail()` handles batch compose regeneration.
+- When mail is enabled per-site, `docker network connect` handles immediate connectivity.
+- The runtime fallback (`docker network connect`) works regardless of compose file content.
 
-**Consequence:** ComposeGenerator must support optional external networks. This is a minor change to the YAML template.
+**Consequence:** `ComposeGenerator::generate()` must accept a `bool mail_network` parameter. `DockerComposeProvider::create_site()` must check mail module state before calling. `Runtime::upgrade_mail()` must regenerate compose for all mail-enabled sites.
 
 #### ADR-2026-005: Mail Enable as Separate API, Not Implicit
 
@@ -649,9 +705,42 @@ sendmail_path = /usr/bin/msmtp -t
 - `libs/mail/providers/DockerMailProvider.cpp`
 - `docker/mail/docker-entrypoint.sh`
 
-**2a. Add sender restrictions:**
+**⚠️ Verified: Current Postfix has NO SASL auth and NO submission service.** Testing confirmed:
+```
+postconf -n: no smtpd_sasl_auth_enable, no smtpd_relay_restrictions, no sender restrictions
+master.cf: submission (587) and submissions (465) fully commented out
+```
+Only port 25 (plain SMTP, no auth) is active. The mail stack CANNOT accept authenticated submissions.
+
+**2a. Enable SASL authentication + submission service:**
 ```postfix
-# In write_postfix_config():
+# In main.cf:
+smtpd_sasl_auth_enable = yes
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = inet:containercp-mail-dovecot:12345
+smtpd_sasl_security_options = noanonymous
+broken_sasl_auth_clients = yes
+
+# In master.cf (enable submission service):
+submission inet n - y - - smtpd
+  -o syslog_name=postfix/submission
+  -o smtpd_tls_security_level=encrypt
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_tls_auth_only=yes
+  -o smtpd_reject_unlisted_recipient=no
+  -o smtpd_client_restrictions=
+  -o smtpd_helo_restrictions=
+  -o smtpd_sender_restrictions=
+  -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
+  -o smtpd_recipient_restrictions=permit_sasl_authenticated,reject
+  -o milter_macro_daemon_name=ORIGINATING
+```
+
+Dovecot already has an `inet_listener` on port 12345 for SASL auth (code-generated), but the runtime config is stale. Regenerating config via `DockerMailProvider::write_configs()` will fix this.
+
+**2b. Add sender restrictions:**
+```postfix
+# In main.cf (after SASL is working):
 smtpd_sender_login_maps = texthash:/etc/postfix/sender_login
 smtpd_sender_restrictions = reject_sender_login_mismatch, permit_sasl_authenticated, permit_mynetworks
 ```
@@ -693,16 +782,32 @@ networks:
 
 ### Stage 4: SMTP Credentials + TLS
 
-**TLS fix:** The existing Postfix self-signed cert has `CN=mail.local` (not `containercp-mail-postfix`). Two options:
+**⚠️ Verified TLS certificate details:**
+```
+subject=CN=mail-test.local
+issuer=CN=mail-test.local
+X509v3 Subject Alternative Name: (NOT PRESENT — "No extensions in certificate")
+Postfix Docker DNS name: containercp-mail-postfix
+```
+The cert has CN=mail-test.local, NO SANs. The `containercp-mail-postfix` hostname will NOT match.
+
+**Two options:**
 
 **Option A (simple):** msmtp connects with `tls_certcheck off` — skips hostname verification but still encrypts traffic.
 ```msmtprc
 tls_certcheck off
 ```
 
-**Option B (proper):** Generate cert with `CN=containercp-mail-postfix` or use Docker DNS alt name. More complex but properly verifiable.
+**Option B (proper):** Re-generate the self-signed cert with proper SAN. Add to `DockerMailProvider::ensure_certificate()`:
+```bash
+openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+  -keyout /srv/containercp/ssl/0/privkey.pem \
+  -out /srv/containercp/ssl/0/fullchain.pem \
+  -subj "/CN=containercp-mail-postfix" \
+  -addext "subjectAltName = DNS:containercp-mail-postfix"
+```
 
-**Recommended:** Start with Option A for simplicity, generate proper cert as a follow-up.
+**Recommended:** Start with Option A for simplicity (encryption is still active), generate proper cert as a follow-up task.
 
 **New component:** `SiteMailCredentials`
 
@@ -817,28 +922,34 @@ Stage 1 (PHP image) ───→ Stage 2 (Postfix security) ───→ Stage 3
 
 ## 8. Open Questions
 
-### Verified (code confirmed):
-1. **Per-site SASL credentials** — needed because no `reject_sender_login_mismatch` exists
-2. **TLS cert CN mismatch** — must use `tls_certcheck off` or generate proper SAN cert
-3. **msmtp = runtime concern** — belongs in `DockerComposeProvider::create_site()` or `SiteMailOrchestrator`, not migration
-4. **No local queue** — Postfix downtime = immediate mail failure from PHP
-5. **No rate limiting** — must be added to Postfix config during implementation
-6. **No sender restrictions** — must add `smtpd_sender_login_maps` + `reject_sender_login_mismatch`
-7. **No MailDomain auto-creation at site creation** — ADR-2026-001
-8. **`containercp-mail` network as optional external** — ADR-2026-004
+### Verified (code + practical tests):
 
-### Open for discussion:
-1. Shared credential for all PHP sites vs per-site SASL user? → **ADR-2026-002: per-site**
-2. Is a Web UI for outbound mail configuration required?
-3. Should `/etc/msmtprc` be generated per-site (via DockerComposeProvider) or globally? → **per-site, per ADR-2026-002**
-4. Should we offer a "test email" button in the Web UI?
-5. Should msmtp logs be collected centrally?
-6. How to handle PHP `mail()` return path / envelope sender?
-7. TLS: `tls_certcheck off` or generate proper certificate? → **start with off, proper cert as follow-up**
-8. Should site::Site gain a `mail_enabled` boolean field?
-9. Mailbox auto-creation on mail enable (postmaster@)?
-10. Default MailDomain mode for "Enable mail" action in UI?
-11. Self-service credential rotation from Web UI?
+| # | Finding | Code Evidence | Test Result |
+|---|---------|---------------|-------------|
+| 1 | **Per-site SASL credentials needed** — no `reject_sender_login_mismatch` exists | `postconf -n`: no sender_login_maps, no sender_restrictions | Confirmed — currently ANY auth user can send from ANY domain |
+| 2 | **TLS cert CN=mail-test.local, NO SANs** | `openssl x509 -in fullchain.pem -noout -text`: CN=mail-test.local, no extensions | msmtp → `containercp-mail-postfix` will fail CN check; `tls_certcheck off` required |
+| 3 | **msmtp = runtime concern** | `DockerComposeProvider::create_site()` has zero mail logic | Confirmed — migrate must reuse runtime, not the reverse |
+| 4 | **No local queue** | PHP image has no MTA; msmtp has no spool | Postfix downtime = immediate silent mail failure from all sites |
+| 5 | **No rate limiting** | All `smtpd_client_*_rate_limit` settings absent | Confirmed — must be added to `write_postfix_config()` |
+| 6 | **No sender restrictions** | `smtpd_sender_login_maps`, `smtpd_sender_restrictions`, `reject_sender_login_mismatch` all absent | Confirmed — must be added |
+| 7 | **No MailDomain auto-creation at site creation** | `SiteCreateOperation` does not inject `MailDomainManager` | ADR-2026-001 confirmed |
+| 8 | **`required: false` NOT supported** by Docker Compose v2.26 | Test: `docker compose config` rejects `required` property | Must use conditional compose generation (ADR-2026-004 updated) |
+| 9 | **Postfix submission (587) NOT configured** — no SASL auth at all | `master.cf`: submission fully commented out; `postconf -n`: no `smtpd_sasl_auth_enable` | Must add submission service + SASL + Dovecot auth before PHP mail can work |
+| 10 | **Dovecot passdb uses single `passwd-file`** — can add PHP credential entries | `doveconf -n`: `passdb { driver = passwd-file; args = /etc/dovecot/passwd }` | PHP credential users share the same passdb; `static` userdb assigns home dir regardless — no mailbox needed |
+| 11 | **No existing PHP containers connected to `containercp-mail`** | `docker inspect`: all site PHP containers have only per-site networks | Network must be connected at enable time or daemon startup
+
+### Open for discussion (resolved during verification):
+1. Shared credential for all PHP sites vs per-site SASL user? → **ADR-2026-002: per-site** ✅ verified
+2. Is a Web UI for outbound mail configuration required? → **Yes, but Stage 8 (lowest priority)**
+3. Should `/etc/msmtprc` be generated per-site or globally? → **per-site, per ADR-2026-002** ✅ verified
+4. Should we offer a "test email" button in the Web UI? → **Yes, Stage 8**
+5. Should msmtp logs be collected centrally? → **Yes, to site's `logs/` directory**
+6. How to handle PHP `mail()` return path / envelope sender? → **Use `from {domain}` in msmtprc**
+7. TLS: `tls_certcheck off` or generate proper certificate? → **start with off** ✅ verified (CN=mail-test.local, NO SANs)
+8. Should site::Site gain a `mail_enabled` boolean field? → **No, derive from MailDomain existence** (single source of truth)
+9. Mailbox auto-creation on mail enable (postmaster@)? → **Out of scope for initial implementation**
+10. Default MailDomain mode for "Enable mail" action in UI? → **`local-primary`** (most common use case)
+11. Self-service credential rotation from Web UI? → **Stage 8**
 
 ## 9. Risk Assessment
 
