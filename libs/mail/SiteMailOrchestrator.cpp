@@ -133,10 +133,9 @@ core::OperationResult SiteMailOrchestrator::enable_mail(
 
     // 1. Find the site's directory
     std::string site_dir = cfg_.sites_dir() + domain + "/";
-    if (!fs_.exists(site_dir)) {
-        // Create config/php/ if it doesn't exist (e.g., for sites created before Stage 3)
-        fs_.create_directory(site_dir + "config/php/");
-    }
+    // Ensure config/php/ directory exists (may be missing for sites created before Stage 3)
+    fs_.create_directory(site_dir + "config/");
+    fs_.create_directory(site_dir + "config/php/");
 
     // 2. Generate credentials
     auto cred = credentials_.generate(site_id, domain);
