@@ -9,120 +9,130 @@
 namespace containercp::mail {
 namespace {
 
-// Repair a site's docker-compose.yml to have containercp-mail correctly
-// configured: in php service networks + top-level networks section.
-// Removes wrong entries from web service, volumes section, etc.
-// Validates with 'docker compose config' before overwriting.
-static core::OperationResult repair_compose_mail_network(
+// Regenerate a site's docker-compose.yml with the correct
+// containercp-mail network configuration. Handles corrupted files by
+// rebuilding the YAML from scratch using the existing file structure.
+static core::OperationResult regenerate_compose_mail_network(
     const std::string& site_dir, uint64_t site_id, bool add) {
 
     std::string compose_path = site_dir + "docker-compose.yml";
 
+    // ── Step 1: Read current file into memory ──
     std::ifstream in(compose_path);
     if (!in) {
         return {true, ""};  // No compose file
     }
-    std::string content((std::istreambuf_iterator<char>(in)),
-                         std::istreambuf_iterator<char>());
+
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(in, line)) {
+        lines.push_back(line);
+    }
     in.close();
 
-    // ── Step 1: Remove ALL wrong containercp-mail entries ──
-    bool changed = false;
-
-    // Remove from ANY service's networks (web, volumes — wherever it leaked)
-    auto remove_all = [&](const std::string& pattern) {
-        auto p = content.find(pattern);
-        while (p != std::string::npos) {
-            content.erase(p, pattern.length());
-            p = content.find(pattern);
-            changed = true;
+    // ── Step 2: Remove ALL lines containing containercp-mail ──
+    // (from web service, volumes section, or any leaked location)
+    std::vector<std::string> out;
+    for (const auto& l : lines) {
+        if (l.find("containercp-mail") == std::string::npos) {
+            out.push_back(l);
         }
-    };
-    remove_all("      - containercp-mail\n");
-    // Remove from volumes section or anywhere else as a top-level declaration
-    remove_all("  containercp-mail:\n    external: true\n");
-    remove_all("  containercp-mail:\n");
+    }
 
-    // ── Step 2: If adding, insert correctly ──
+    // ── Step 3: If adding, insert correct entries ──
     if (add) {
-        // 2a. Add to PHP service networks.
-        //     Find PHP by its container_name: site-{ID}-php
-        std::string php_marker = "container_name: site-" + std::to_string(site_id) + "-php";
-        auto php_pos = content.find(php_marker);
-        if (php_pos == std::string::npos) {
-            return {false, "Cannot find PHP container (" + php_marker + ") in compose file"};
-        }
-        // Find the "    networks:" line under the PHP service
-        auto net_section = content.find("\n    networks:\n", php_pos);
-        if (net_section == std::string::npos) {
-            return {false, "Cannot find networks section in PHP service"};
-        }
-        // Insert at end of networks list (before next key at same indentation)
-        auto net_end = content.find("\n    environment:", net_section);
-        if (net_end == std::string::npos) {
-            net_end = content.find("\n    labels:", net_section);
-        }
-        if (net_end == std::string::npos) {
-            return {false, "Cannot find end of PHP networks section"};
-        }
-        content.insert(net_end, "      - containercp-mail\n");
-        changed = true;
+        // 3a. Insert containercp-mail into PHP service's network list.
+        //     Strategy: find the PHP service section by container_name,
+        //     then find the line just before "    environment:" within it.
+        bool inserted_php_net = false;
+        std::string php_marker = "site-" + std::to_string(site_id) + "-php";
+        int php_section_start = -1;
 
-        // 2b. Add top-level network declaration under networks:
-        //     Find the LAST \nnetworks: (top-level, after volumes:)
-        auto top_net = content.rfind("\nnetworks:");
-        if (top_net == std::string::npos) {
-            return {false, "Cannot find top-level networks section in compose file"};
+        // Find which line starts the PHP service section
+        for (int i = 0; i < (int)out.size(); i++) {
+            if (out[i].find(php_marker) != std::string::npos) {
+                php_section_start = i;
+                break;
+            }
         }
-        // Find the last indented entry under this networks section
-        // and insert the new network after it
-        auto last_line = content.rfind("\n  ", content.size() - 2);
-        if (last_line == std::string::npos || last_line < top_net) {
-            // No entries yet — insert after \nnetworks: line
-            last_line = top_net;
+
+        if (php_section_start >= 0) {
+            // Find "    environment:" or "    labels:" AFTER the PHP section start
+            for (int i = php_section_start; i < (int)out.size(); i++) {
+                if (out[i].find("    environment:") != std::string::npos ||
+                    out[i].find("    labels:") != std::string::npos) {
+                    // Insert containercp-mail at end of network list (before this line)
+                    out.insert(out.begin() + i, "      - containercp-mail");
+                    inserted_php_net = true;
+                    break;
+                }
+            }
+            if (!inserted_php_net) {
+                // Fallback: insert after the last line in PHP section
+                out.insert(out.begin() + php_section_start + 3, "      - containercp-mail");
+            }
         }
-        auto after_line = content.find('\n', last_line + 1);
-        if (after_line == std::string::npos) {
-            after_line = content.size();
+
+        // 3b. Add top-level network declaration.
+        //     Find the top-level "networks:" line and add an entry after it.
+        bool inserted_top_net = false;
+        for (int i = 0; i < (int)out.size(); i++) {
+            const std::string& l = out[i];
+            // Top-level networks: non-indented line exactly "networks:"
+            if (l.size() >= 9 && l[0] != ' ' && l.substr(0, 9) == "networks:") {
+                // Insert at the end of the file (after all entries under networks)
+                // Find the last line of the networks section
+                int insert_at = i + 1;
+                // Skip indented entries under networks
+                while (insert_at < (int)out.size() &&
+                       out[insert_at].size() > 0 && out[insert_at][0] == ' ') {
+                    insert_at++;
+                }
+                // Insert the new network entry
+                out.insert(out.begin() + insert_at, "  containercp-mail:");
+                out.insert(out.begin() + insert_at + 1, "    external: true");
+                inserted_top_net = true;
+                break;
+            }
         }
-        content.insert(after_line + 1,
-            "  containercp-mail:\n"
-            "    external: true\n");
-        changed = true;
+        if (!inserted_top_net) {
+            // No networks section — add it at the end
+            out.push_back("");
+            out.push_back("networks:");
+            out.push_back("  containercp-mail:");
+            out.push_back("    external: true");
+        }
     }
 
-    if (!changed) {
-        return {true, ""};
-    }
-
-    // ── Step 3: Write to temp file and validate ──
+    // ── Step 4: Write to temp file and validate ──
     std::string tmp_path = compose_path + ".mail-tmp";
     {
         std::ofstream tmp(tmp_path);
         if (!tmp) {
             return {false, "Failed to write temporary compose file"};
         }
-        tmp << content;
+        for (const auto& l : out) {
+            tmp << l << "\n";
+        }
     }
 
+    // ── Step 5: Validate with docker compose config ──
     runtime::CommandExecutor exec;
     auto validate = exec.run({
         "docker", "compose", "-f", tmp_path, "config", "--quiet"
     });
     if (validate.exit_code != 0) {
         std::remove(tmp_path.c_str());
-        return {false, "Compose validation failed: " + validate.err};
+        return {false, "Compose validation failed after repair: " + validate.err};
     }
 
-    // ── Step 4: Atomic replace ──
-    // docker-compose.yml is a generated artifact — no backup needed.
-    // ContainerCP can always regenerate it from the internal data model.
+    // ── Step 6: Atomic replace ──
     if (std::rename(tmp_path.c_str(), compose_path.c_str()) != 0) {
         std::remove(tmp_path.c_str());
         return {false, "Failed to replace compose file"};
     }
 
-    // ── Step 5: docker compose up -d ──
+    // ── Step 7: docker compose up -d ──
     auto up = exec.run({
         "docker", "compose", "-f", compose_path, "up", "-d", "--no-recreate"
     });
@@ -130,7 +140,7 @@ static core::OperationResult repair_compose_mail_network(
         return {false, "docker compose up failed after compose update: " + up.err};
     }
 
-    return {true, "Compose file updated and validated"};
+    return {true, "Compose file regenerated and validated"};
 }
 
 } // anonymous namespace
@@ -200,7 +210,7 @@ core::OperationResult SiteMailOrchestrator::enable_mail(
     mail_domains_.create(domain, mode, 0, site_id, "");
 
     // 6. Update site's docker-compose.yml so mail network persists across recreate
-    auto compose_result = repair_compose_mail_network(site_dir, site_id, true);
+    auto compose_result = regenerate_compose_mail_network(site_dir, site_id, true);
     if (!compose_result.success) {
         credentials_.remove(site_id);
         std::remove(msmtprc_path.c_str());
@@ -242,7 +252,7 @@ core::OperationResult SiteMailOrchestrator::disable_mail(uint64_t site_id) {
         std::remove(msmtprc_path.c_str());
 
         // 3. Remove containercp-mail from site's docker-compose.yml
-        auto compose_result = repair_compose_mail_network(site_dir, site_id, false);
+        auto compose_result = regenerate_compose_mail_network(site_dir, site_id, false);
         if (!compose_result.success) {
             return compose_result;
         }
