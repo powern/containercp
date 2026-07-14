@@ -46,6 +46,23 @@ core::OperationResult DockerMailProvider::prepare_environment() {
         return {false, "Failed to create mail directories: " + mkdir.err};
     }
 
+    // Ensure passwd-php is a regular file (Docker bind mount creates directory
+    // if source file doesn't exist)
+    std::string php_passwd = config_dir() + "/generated/passwd-php";
+    struct stat php_pw_stat;
+    if (stat(php_passwd.c_str(), &php_pw_stat) == 0) {
+        if (!S_ISREG(php_pw_stat.st_mode)) {
+            logger_.warning("MAIL", "passwd-php is not a regular file, recreating");
+            std::remove(php_passwd.c_str());
+            std::ofstream php_out(php_passwd);
+            if (php_out) php_out << "# ContainerCP PHP SMTP credentials\n";
+        }
+    } else {
+        // File does not exist — create before Docker compose (prevents directory bind mount)
+        std::ofstream php_out(php_passwd);
+        if (php_out) php_out << "# ContainerCP PHP SMTP credentials\n";
+    }
+
     // Ensure Docker network exists
     auto net = executor_.run({
         "docker", "network", "inspect", "containercp-mail"
@@ -489,11 +506,23 @@ core::OperationResult DockerMailProvider::write_configs(
     auto dv = write_dovecot_config(domains, mailboxes);
     if (!dv.success) return dv;
 
-    // Ensure PHP credentials file exists (populated by SiteMailCredentials)
+    // Ensure PHP credentials file exists — must be a regular file, not a directory.
+    // Docker bind mount creates a directory in source if target file doesn't exist.
     std::string php_passwd_path = config_dir() + "/generated/passwd-php";
-    if (!std::ifstream(php_passwd_path).good()) {
+    struct stat php_pw_stat;
+    if (stat(php_passwd_path.c_str(), &php_pw_stat) == 0) {
+        if (!S_ISREG(php_pw_stat.st_mode)) {
+            // Remove directory/symlink and create regular file
+            logger_.warning("MAIL", "passwd-php is not a regular file, recreating");
+            std::remove(php_passwd_path.c_str());
+            std::ofstream php_out(php_passwd_path);
+            if (php_out) php_out << "# ContainerCP PHP SMTP credentials\n";
+        }
+        // else: regular file exists, good
+    } else {
+        // File does not exist — create it
         std::ofstream php_out(php_passwd_path);
-        php_out << "# ContainerCP PHP SMTP credentials\n";
+        if (php_out) php_out << "# ContainerCP PHP SMTP credentials\n";
     }
 
     auto tm = write_transport_maps(domains, mailboxes);

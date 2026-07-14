@@ -7,6 +7,7 @@
 #include <fstream>
 #include <random>
 #include <sstream>
+#include <sys/stat.h>
 
 namespace containercp::mail {
 
@@ -138,6 +139,15 @@ core::OperationResult SiteMailCredentials::apply(const Credential& cred) {
     // 1. Add to Dovecot PHP credentials file (separate from mailbox passwd)
     //    This file is NOT overwritten by write_dovecot_config()
     std::string passwd_path = "/srv/containercp/mail/config/generated/passwd-php";
+
+    // Ensure the path is a regular file (Docker bind mount may create a directory)
+    struct stat pw_stat;
+    if (stat(passwd_path.c_str(), &pw_stat) == 0 && !S_ISREG(pw_stat.st_mode)) {
+        std::remove(passwd_path.c_str());
+        std::ofstream init(passwd_path);
+        if (init) init << "# ContainerCP PHP SMTP credentials\n";
+    }
+
     std::ofstream passwd_out(passwd_path, std::ios::app);
     if (!passwd_out) {
         return {false, "Failed to open PHP credentials file: " + passwd_path};
