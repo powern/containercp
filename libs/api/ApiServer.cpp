@@ -2066,10 +2066,22 @@ bool ApiServer::start() {
                 std::remove(gen_path.c_str());
                 return {false, "Failed to replace compose file"};
             }
+
+            // Apply compose changes: force-recreate PHP container to pick up
+            // new image, volume mounts (msmtprc), and mail network.
+            runtime::CommandExecutor exec2;
+            auto up = exec2.run({
+                "docker", "compose", "-f", site_dir + "docker-compose.yml",
+                "up", "-d", "--force-recreate", "php"
+            });
+            if (up.exit_code != 0) {
+                return {false, "Failed to recreate PHP container: " + up.err};
+            }
             return {true, ""};
         };
 
         if (action == "enable-mail") {
+            // Regenerate compose with mail network + volume
             auto comp = regenerate_compose(true);
             if (!comp.success) {
                 r.status_code = 500;
@@ -2077,6 +2089,21 @@ bool ApiServer::start() {
                 return r;
             }
 
+            // Ensure MailDomain exists with correct mode (idempotent upsert)
+            bool found = false;
+            for (auto& md : const_cast<std::vector<mail::MailDomain>&>(s.mail().list())) {
+                if (md.site_id == site_id && md.domain_name == site->domain) {
+                    auto* d = s.mail().find(md.id);
+                    if (d) { d->mode = mail::MailDomainMode::LocalPrimary; d->enabled = true; }
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                s.mail().create(site->domain, mail::MailDomainMode::LocalPrimary, 0, site_id, "");
+            }
+
+            // Orchestrator: credentials, msmtprc, network, sync
             auto result = s.mail_orchestrator().enable_mail(site_id, site->domain);
             if (!result.success) {
                 r.status_code = 500;
