@@ -9,39 +9,55 @@
 namespace containercp::mail {
 namespace {
 
-// Add or remove containercp-mail network from a site's docker-compose.yml.
-// Then runs docker compose up -d to apply the change.
-core::OperationResult update_compose_mail_network(
-    const std::string& site_dir, bool add) {
+// Repair a site's docker-compose.yml to have containercp-mail correctly
+// configured: in php service networks + top-level networks section.
+// Removes wrong entries from web service, volumes section, etc.
+// Validates with 'docker compose config' before overwriting.
+static core::OperationResult repair_compose_mail_network(
+    const std::string& site_dir, uint64_t site_id, bool add) {
 
     std::string compose_path = site_dir + "docker-compose.yml";
 
-    // If site was created before mail networks existed, compose file is optional
     std::ifstream in(compose_path);
     if (!in) {
-        return {true, ""};  // No compose file — site may not be compose-managed
+        return {true, ""};  // No compose file
     }
-
     std::string content((std::istreambuf_iterator<char>(in)),
                          std::istreambuf_iterator<char>());
     in.close();
 
+    // ── Step 1: Remove ALL wrong containercp-mail entries ──
     bool changed = false;
 
+    // Remove from ANY service's networks (web, volumes — wherever it leaked)
+    auto remove_all = [&](const std::string& pattern) {
+        auto p = content.find(pattern);
+        while (p != std::string::npos) {
+            content.erase(p, pattern.length());
+            p = content.find(pattern);
+            changed = true;
+        }
+    };
+    remove_all("      - containercp-mail\n");
+    // Remove from volumes section or anywhere else as a top-level declaration
+    remove_all("  containercp-mail:\n    external: true\n");
+    remove_all("  containercp-mail:\n");
+
+    // ── Step 2: If adding, insert correctly ──
     if (add) {
-        // Add containercp-mail to the PHP service's networks list.
-        // Find the PHP service by its container_name marker.
-        std::string php_marker = "container_name: site-";
+        // 2a. Add to PHP service networks.
+        //     Find PHP by its container_name: site-{ID}-php
+        std::string php_marker = "container_name: site-" + std::to_string(site_id) + "-php";
         auto php_pos = content.find(php_marker);
         if (php_pos == std::string::npos) {
-            return {false, "Cannot find PHP service in compose file"};
+            return {false, "Cannot find PHP container (" + php_marker + ") in compose file"};
         }
-        // Find the next "    networks:" after the PHP service
+        // Find the "    networks:" line under the PHP service
         auto net_section = content.find("\n    networks:\n", php_pos);
         if (net_section == std::string::npos) {
-            return {false, "Cannot find networks in PHP service"};
+            return {false, "Cannot find networks section in PHP service"};
         }
-        // Find the last entry under this networks section
+        // Insert at end of networks list (before next key at same indentation)
         auto net_end = content.find("\n    environment:", net_section);
         if (net_end == std::string::npos) {
             net_end = content.find("\n    labels:", net_section);
@@ -49,74 +65,78 @@ core::OperationResult update_compose_mail_network(
         if (net_end == std::string::npos) {
             return {false, "Cannot find end of PHP networks section"};
         }
-        // Insert containercp-mail at the end of the PHP networks list
-        if (content.find("- containercp-mail", net_section) == std::string::npos) {
-            content.insert(net_end, "      - containercp-mail\n");
-            changed = true;
-        }
+        content.insert(net_end, "      - containercp-mail\n");
+        changed = true;
 
-        // Add top-level network definition — find the LAST \nnetworks:
-        // (top-level networks are at the end of the YAML, after volumes:)
-        if (content.find("\n  containercp-mail:") == std::string::npos) {
-            auto top_net = content.rfind("\nnetworks:");
-            if (top_net == std::string::npos) {
-                return {false, "Cannot find top-level networks section in compose file"};
-            }
-            // Find the last indented entry under networks (e.g., "  containercp-site-{ID}:")
-            // Insert the new network entry right after it
-            auto last_entry = content.rfind("\n  ");
-            if (last_entry == std::string::npos || last_entry < top_net) {
-                // No entries yet — insert right after \nnetworks: line
-                auto line_end = content.find('\n', top_net + 1);
-                last_entry = (line_end != std::string::npos) ? line_end : top_net;
-            }
-            // Find the end of the last entry line
-            auto after_entry = content.find('\n', last_entry + 1);
-            if (after_entry == std::string::npos) {
-                after_entry = content.size();
-            }
-            content.insert(after_entry + 1,
-                "  containercp-mail:\n"
-                "    external: true\n");
-            changed = true;
+        // 2b. Add top-level network declaration under networks:
+        //     Find the LAST \nnetworks: (top-level, after volumes:)
+        auto top_net = content.rfind("\nnetworks:");
+        if (top_net == std::string::npos) {
+            return {false, "Cannot find top-level networks section in compose file"};
         }
-    } else {
-        // Remove containercp-mail from php service networks
-        std::string line = "      - containercp-mail\n";
-        auto pos = content.find(line);
-        while (pos != std::string::npos) {
-            content.erase(pos, line.length());
-            pos = content.find(line);
-            changed = true;
+        // Find the last indented entry under this networks section
+        // and insert the new network after it
+        auto last_line = content.rfind("\n  ", content.size() - 2);
+        if (last_line == std::string::npos || last_line < top_net) {
+            // No entries yet — insert after \nnetworks: line
+            last_line = top_net;
         }
-        // Remove from top-level networks
-        std::string net_block = "  containercp-mail:\n    external: true\n";
-        pos = content.find(net_block);
-        if (pos != std::string::npos) {
-            content.erase(pos, net_block.length());
-            changed = true;
+        auto after_line = content.find('\n', last_line + 1);
+        if (after_line == std::string::npos) {
+            after_line = content.size();
         }
+        content.insert(after_line + 1,
+            "  containercp-mail:\n"
+            "    external: true\n");
+        changed = true;
     }
 
-    if (changed) {
-        std::ofstream out(compose_path);
-        if (!out) {
-            return {false, "Failed to write updated compose file"};
-        }
-        out << content;
-        out.close();
-
-        // Apply the compose change — up -d reconnects the PHP container
-        runtime::CommandExecutor exec;
-        auto up = exec.run({
-            "docker", "compose", "-f", compose_path, "up", "-d", "--no-recreate"
-        });
-        if (up.exit_code != 0) {
-            return {false, "docker compose up failed: " + up.err};
-        }
+    if (!changed) {
+        return {true, ""};
     }
 
-    return {true, ""};
+    // ── Step 3: Write to temp file and validate ──
+    std::string tmp_path = compose_path + ".mail-tmp";
+    {
+        std::ofstream tmp(tmp_path);
+        if (!tmp) {
+            return {false, "Failed to write temporary compose file"};
+        }
+        tmp << content;
+    }
+
+    runtime::CommandExecutor exec;
+    auto validate = exec.run({
+        "docker", "compose", "-f", tmp_path, "config", "--quiet"
+    });
+    if (validate.exit_code != 0) {
+        std::remove(tmp_path.c_str());
+        return {false, "Compose validation failed: " + validate.err};
+    }
+
+    // ── Step 4: Atomic replace ──
+    // Backup original
+    std::string bak_path = compose_path + ".mail.bak";
+    std::ifstream src(compose_path, std::ios::binary);
+    std::ofstream dst(bak_path, std::ios::binary);
+    if (src && dst) {
+        dst << src.rdbuf();
+    }
+
+    // Replace
+    std::rename(tmp_path.c_str(), compose_path.c_str());
+
+    // ── Step 5: docker compose up -d ──
+    auto up = exec.run({
+        "docker", "compose", "-f", compose_path, "up", "-d", "--no-recreate"
+    });
+    if (up.exit_code != 0) {
+        // Rollback
+        std::rename(bak_path.c_str(), compose_path.c_str());
+        return {false, "docker compose up failed, rolled back: " + up.err};
+    }
+
+    return {true, "Compose file updated and validated"};
 }
 
 } // anonymous namespace
@@ -186,7 +206,7 @@ core::OperationResult SiteMailOrchestrator::enable_mail(
     mail_domains_.create(domain, mode, 0, site_id, "");
 
     // 6. Update site's docker-compose.yml so mail network persists across recreate
-    auto compose_result = update_compose_mail_network(site_dir, true);
+    auto compose_result = repair_compose_mail_network(site_dir, site_id, true);
     if (!compose_result.success) {
         credentials_.remove(site_id);
         std::remove(msmtprc_path.c_str());
@@ -228,7 +248,7 @@ core::OperationResult SiteMailOrchestrator::disable_mail(uint64_t site_id) {
         std::remove(msmtprc_path.c_str());
 
         // 3. Remove containercp-mail from site's docker-compose.yml
-        auto compose_result = update_compose_mail_network(site_dir, false);
+        auto compose_result = repair_compose_mail_network(site_dir, site_id, false);
         if (!compose_result.success) {
             return compose_result;
         }
