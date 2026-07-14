@@ -465,8 +465,16 @@ void ServiceRegistry::start() {
     ensure_admin_proxy();
     sync_all_https_configs();
 
-    // Mail configuration recovery: ensure sites with mail are connected
+    // Mail configuration recovery: regenerate config and ensure connectivity
     if (!mail_.list().empty()) {
+        // Regenerate mail server config (Postfix main.cf, Dovecot, Rspamd) from
+        // canonical code. This applies any code-level changes (e.g., milter protocol
+        // version) to the running mail stack.
+        auto sync_result = runtime_sync_.sync("mail");
+        if (!sync_result.success) {
+            logger_.warning("MAIL", "Mail config regeneration at startup: " + sync_result.message);
+        }
+
         for (const auto& site : sites_.list()) {
             bool has_mail = false;
             for (const auto& md : mail_.list()) {
