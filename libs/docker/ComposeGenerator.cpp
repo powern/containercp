@@ -121,7 +121,10 @@ bool ComposeGenerator::generate(const std::string& domain, const std::string& ow
                                  const std::string& web_local_log,
                                  const std::string& web_server_cmd,
                                  bool mail_module_active) {
-    std::string template_content = get_or_create_template();
+    // Use canonical default_template_ as source of truth (not disk file).
+    // The disk copy is synced for diagnostics but never read back.
+    get_or_create_template();  // sync to disk for diagnostic viewing only
+    std::string template_content = default_template_;
     std::string mail_net = mail_module_active ? "      - containercp-mail\n" : "";
     std::string mail_net_def = mail_module_active
         ? "  containercp-mail:\n    external: true\n"
