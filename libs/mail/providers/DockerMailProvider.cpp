@@ -98,7 +98,8 @@ core::OperationResult DockerMailProvider::ensure_certificate() {
         "-out", cert_path,
         "-days", "365",
         "-nodes",
-        "-subj", "/CN=mail.local"
+        "-subj", "/CN=containercp-mail-postfix",
+        "-addext", "subjectAltName=DNS:containercp-mail-postfix,DNS:mail.local"
     });
     if (gen.exit_code != 0) {
         return {false, "Failed to generate self-signed certificate: " + gen.err};
@@ -150,6 +151,23 @@ core::OperationResult DockerMailProvider::write_postfix_config(
        << "smtpd_tls_security_level = may\n"
        << "smtpd_tls_loglevel = 1\n"
        << "smtp_tls_security_level = may\n";
+
+    // SASL authentication via Dovecot
+    pf << "smtpd_sasl_auth_enable = yes\n"
+       << "smtpd_sasl_type = dovecot\n"
+       << "smtpd_sasl_path = inet:containercp-mail-dovecot:12345\n"
+       << "smtpd_sasl_security_options = noanonymous\n"
+       << "broken_sasl_auth_clients = yes\n";
+
+    // sender_login map populated per-site by SiteMailOrchestrator
+    // Note: sender_restrictions are applied ONLY on submission (587) via
+    // docker-entrypoint.sh, NOT on port 25 (incoming mail from external servers).
+    pf << "smtpd_sender_login_maps = texthash:/etc/postfix/sender_login\n";
+
+    // Rate limiting
+    pf << "smtpd_client_connection_rate_limit = 30\n"
+       << "smtpd_client_message_rate_limit = 100\n"
+       << "smtpd_client_recipient_rate_limit = 50\n";
 
     // DKIM signing via Rspamd milter
     pf        << "milter_protocol = 2\n"

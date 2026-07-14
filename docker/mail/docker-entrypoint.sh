@@ -56,6 +56,17 @@ postconf -P submission/inet/smtpd_sasl_type=dovecot
 postconf -P submission/inet/smtpd_sasl_path=inet:containercp-mail-dovecot:12345
 postconf -P submission/inet/smtpd_sasl_security_options=noanonymous
 postconf -P submission/inet/smtpd_relay_restrictions=permit_sasl_authenticated,reject
+postconf -P submission/inet/smtpd_sender_restrictions=reject_sender_login_mismatch,permit_sasl_authenticated
+
+# Create empty sender_login map (populated per-site by SiteMailOrchestrator)
+touch /etc/postfix/sender_login
+postmap /etc/postfix/sender_login 2>/dev/null || true
+postconf smtpd_sender_login_maps=texthash:/etc/postfix/sender_login
+
+# Rate limiting (global, applies to all ports)
+postconf smtpd_client_connection_rate_limit=30
+postconf smtpd_client_message_rate_limit=100
+postconf smtpd_client_recipient_rate_limit=50
 
 # Start Postfix
 postfix start 2>&1
