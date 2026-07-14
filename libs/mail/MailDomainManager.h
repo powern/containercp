@@ -44,6 +44,9 @@ public:
     // Returns the MailDomain ID. Idempotent.
     uint64_t enable_for_site(uint64_t site_id, const std::string& domain_name);
 
+    // Disable mail for a site: find existing, set mode=Disabled
+    void disable_for_site(uint64_t site_id);
+
     void set_domains(const std::vector<MailDomain>& domains);
 
     // Mail module lifecycle state
