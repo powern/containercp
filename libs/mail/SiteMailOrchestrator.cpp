@@ -31,6 +31,8 @@ static std::string generate_msmtprc(const std::string& username,
        << "defaults\n"
        << "auth           on\n"
        << "tls            on\n"
+       << "tls_certcheck  off\n"
+       << "tls_starttls   on\n"
        << "\n"
        << "account        default\n"
        << "host           containercp-mail-postfix\n"
