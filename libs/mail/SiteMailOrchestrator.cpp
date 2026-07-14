@@ -6,13 +6,21 @@
 #include <fstream>
 #include <sstream>
 
+namespace containercp::mail {
 namespace {
 
 // Add or remove containercp-mail network from a site's docker-compose.yml.
-// Ensures PHP container reconnects after docker compose up.
-static bool update_compose_mail_network(const std::string& compose_path, bool add) {
+// Then runs docker compose up -d to apply the change.
+core::OperationResult update_compose_mail_network(
+    const std::string& site_dir, bool add) {
+
+    std::string compose_path = site_dir + "docker-compose.yml";
+
+    // If site was created before mail networks existed, compose file is optional
     std::ifstream in(compose_path);
-    if (!in) return false;
+    if (!in) {
+        return {true, ""};  // No compose file — site may not be compose-managed
+    }
 
     std::string content((std::istreambuf_iterator<char>(in)),
                          std::istreambuf_iterator<char>());
@@ -21,28 +29,32 @@ static bool update_compose_mail_network(const std::string& compose_path, bool ad
     bool changed = false;
 
     if (add) {
-        // Check if containercp-mail is already in php networks
+        // Add to php service networks if not already present
         if (content.find("- containercp-mail") == std::string::npos) {
-            // Add to php service networks (after containercp-site-{ID})
             std::string marker = "      - containercp-site-";
             auto pos = content.find(marker);
-            if (pos != std::string::npos) {
-                auto nl = content.find('\n', pos);
-                if (nl != std::string::npos) {
-                    content.insert(nl + 1, "      - containercp-mail\n");
-                    changed = true;
-                }
+            if (pos == std::string::npos) {
+                return {false, "Cannot find PHP service networks in compose file"};
             }
+            auto nl = content.find('\n', pos);
+            if (nl == std::string::npos) {
+                return {false, "Malformed compose file"};
+            }
+            content.insert(nl + 1, "      - containercp-mail\n");
+            changed = true;
         }
-        // Check if containercp-mail is in top-level networks
+        // Add to top-level networks if not already present
         if (content.find("  containercp-mail:") == std::string::npos) {
             auto net_pos = content.find("\nnetworks:");
-            if (net_pos != std::string::npos) {
-                content.insert(net_pos + 1,
-                    "  containercp-mail:\n"
-                    "    external: true\n");
-                changed = true;
+            if (net_pos == std::string::npos) {
+                return {false, "Cannot find networks section in compose file"};
             }
+            content.insert(net_pos + 1,
+                "  containercp-mail:\n"
+                "    external: true\n");
+            changed = true;
+            // Re-run docker compose config to apply the new network
+            // (docker compose up -d will follow)
         }
     } else {
         // Remove containercp-mail from php service networks
@@ -64,15 +76,26 @@ static bool update_compose_mail_network(const std::string& compose_path, bool ad
 
     if (changed) {
         std::ofstream out(compose_path);
-        if (!out) return false;
+        if (!out) {
+            return {false, "Failed to write updated compose file"};
+        }
         out << content;
+        out.close();
+
+        // Apply the compose change — up -d reconnects the PHP container
+        runtime::CommandExecutor exec;
+        auto up = exec.run({
+            "docker", "compose", "-f", compose_path, "up", "-d", "--no-recreate"
+        });
+        if (up.exit_code != 0) {
+            return {false, "docker compose up failed: " + up.err};
+        }
     }
-    return true;
+
+    return {true, ""};
 }
 
 } // anonymous namespace
-
-namespace containercp::mail {
 
 SiteMailOrchestrator::SiteMailOrchestrator(MailDomainManager& mail_domains,
                                              SiteMailCredentials& credentials,
@@ -140,8 +163,12 @@ core::OperationResult SiteMailOrchestrator::enable_mail(
     mail_domains_.create(domain, mode, 0, site_id, "");
 
     // 6. Update site's docker-compose.yml so mail network persists across recreate
-    std::string compose_path = site_dir + "docker-compose.yml";
-    update_compose_mail_network(compose_path, true);
+    auto compose_result = update_compose_mail_network(site_dir, true);
+    if (!compose_result.success) {
+        credentials_.remove(site_id);
+        std::remove(msmtprc_path.c_str());
+        return compose_result;
+    }
 
     // 7. Connect PHP container to mail network (immediate, runtime)
     auto net_result = rt_.connect_mail_network(site_id, domain);
@@ -169,20 +196,19 @@ core::OperationResult SiteMailOrchestrator::disable_mail(uint64_t site_id) {
     }
 
     // 1. Remove credentials from Dovecot + Postfix
-    auto revoke_result = credentials_.revoke(
-        SiteMailCredentials::Credential{});
-    if (!revoke_result.success) {
-        return revoke_result;
-    }
+    credentials_.remove(site_id);
 
     // 2. Remove msmtprc
     if (!domain.empty()) {
-        std::string msmtprc_path = cfg_.sites_dir() + domain + "/config/php/msmtprc";
+        std::string site_dir = cfg_.sites_dir() + domain + "/";
+        std::string msmtprc_path = site_dir + "config/php/msmtprc";
         std::remove(msmtprc_path.c_str());
 
         // 3. Remove containercp-mail from site's docker-compose.yml
-        std::string compose_path = cfg_.sites_dir() + domain + "/docker-compose.yml";
-        update_compose_mail_network(compose_path, false);
+        auto compose_result = update_compose_mail_network(site_dir, false);
+        if (!compose_result.success) {
+            return compose_result;
+        }
     }
 
     // 4. Find and update MailDomain to disabled
