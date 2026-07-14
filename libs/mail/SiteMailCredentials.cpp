@@ -148,12 +148,36 @@ core::OperationResult SiteMailCredentials::apply(const Credential& cred) {
         if (init) init << "# ContainerCP PHP SMTP credentials\n";
     }
 
-    std::ofstream passwd_out(passwd_path, std::ios::app);
-    if (!passwd_out) {
-        return {false, "Failed to open PHP credentials file: " + passwd_path};
+    // Read existing entries, remove old ones for this username, then write all.
+    // Prevents duplicate entries on repeated enable (idempotent).
+    {
+        std::string old_pw;
+        {
+            std::ifstream in(passwd_path);
+            if (in) {
+                std::ostringstream ss;
+                ss << in.rdbuf();
+                old_pw = ss.str();
+            }
+        }
+        std::string new_pw;
+        {
+            std::istringstream stream(old_pw);
+            std::string line;
+            while (std::getline(stream, line)) {
+                if (line.find(cred.username) == std::string::npos) {
+                    new_pw += line + "\n";
+                }
+            }
+        }
+        new_pw += cred.username + ":" + cred.password_hash
+                  + ":65534:65534::/nonexistent::\n";
+        std::ofstream passwd_out(passwd_path);
+        if (!passwd_out) {
+            return {false, "Failed to write PHP credentials file: " + passwd_path};
+        }
+        passwd_out << new_pw;
     }
-    passwd_out << cred.username << ":" << cred.password_hash
-               << ":65534:65534::/nonexistent::\n";
 
     // 2. Update sender_login map (key=envelope sender, value=SASL username).
     //    First remove old entries for this site, then add current ones.

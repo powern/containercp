@@ -2070,18 +2070,10 @@ bool ApiServer::start() {
         };
 
         if (action == "enable-mail") {
-            // 1. Prepare prerequisites: credentials, msmtprc file, directory
-            //    (msmtprc must exist on disk BEFORE compose mounts it)
+            // 1. Ensure MailDomain in correct state
             s.mail().enable_for_site(site_id, site->domain);
-            auto result = s.mail_orchestrator().enable_mail(site_id, site->domain);
-            if (!result.success) {
-                r.status_code = 500;
-                r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
-                return r;
-            }
 
-            // 2. Regenerate compose with mail_active=true
-            //    (msmtprc file now exists, compose mount will succeed)
+            // 2. Regenerate compose with mail_active=true (validates with compose config)
             auto comp = regenerate_compose(true);
             if (!comp.success) {
                 r.status_code = 500;
@@ -2089,25 +2081,31 @@ bool ApiServer::start() {
                 return r;
             }
 
-            // 3. Pull latest PHP image and recreate container
-            //    (applies msmtprc volume, new image with msmtp, mail network)
+            // 3. Create credentials, msmtprc, connect network, sync Postfix/Dovecot
+            auto result = s.mail_orchestrator().enable_mail(site_id, site->domain);
+            if (!result.success) {
+                r.status_code = 500;
+                r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
+                return r;
+            }
+
+            // 4. Pull latest PHP image and recreate container
+            //    (applies msmtprc volume mount, new image with msmtp, mail network)
             {
                 runtime::CommandExecutor exec;
-                auto pull = exec.run({
+                exec.run({
                     "docker", "compose", "-f",
                     s.config().sites_dir() + site->domain + "/docker-compose.yml",
                     "pull", "php"
                 });
-                // Non-fatal: pull may fail if no registry access
-                if (pull.exit_code != 0) {
-                    s.logger().warning("MAIL", "PHP image pull failed, using local image");
-                }
                 auto recreate = exec.run({
                     "docker", "compose", "-f",
                     s.config().sites_dir() + site->domain + "/docker-compose.yml",
                     "up", "-d", "--force-recreate", "php"
                 });
                 if (recreate.exit_code != 0) {
+                    // Rollback: remove credentials, msmtprc, disconnect network
+                    s.mail_orchestrator().disable_mail(site_id);
                     r.status_code = 500;
                     r.body = "{\"success\":false,\"error\":\"Failed to recreate PHP container: "
                         + JsonFormatter::escape(recreate.err) + "\"}";
@@ -2121,19 +2119,22 @@ bool ApiServer::start() {
         }
 
         if (action == "disable-mail") {
-            auto comp = regenerate_compose(false);
-            if (!comp.success) {
-                r.status_code = 500;
-                r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(comp.message) + "\"}";
-                return r;
-            }
-
+            // 1. Remove credentials, msmtprc, disconnect network FIRST
+            //    (compose unchanged — if removal fails, compose is still valid)
             auto result = s.mail_orchestrator().disable_mail(site_id);
             if (!result.success) {
                 r.status_code = 500;
                 r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
                 return r;
             }
+
+            // 2. Regenerate compose without mail (removes msmtprc volume, mail network)
+            auto comp = regenerate_compose(false);
+            if (!comp.success) {
+                // Non-fatal: credentials are removed, compose still has mail config
+                s.logger().warning("MAIL", "Compose regeneration after disable failed: " + comp.message);
+            }
+
             s.save();
             r.body = "{\"success\":true,\"data\":{\"message\":\"Mail disabled for site " + site->domain + "\"}}";
             return r;
