@@ -39,6 +39,7 @@ ComposeGenerator::ComposeGenerator(filesystem::Filesystem& fs, const std::string
         "      - ./public:{{WEB_DOC_ROOT}}\n"
         "      - ./logs:/var/log/php\n"
         "      - ./tmp:/tmp\n"
+        "{{PHP_MAIL_VOLUME}}"
         "    networks:\n"
         "      - containercp-site-{{SITE_ID}}\n"
         "{{MAIL_NETWORK}}"
@@ -129,9 +130,12 @@ bool ComposeGenerator::generate(const std::string& domain, const std::string& ow
     std::string mail_net_def = mail_module_active
         ? "  containercp-mail:\n    external: true\n"
         : "";
+    std::string mail_volume = mail_module_active
+        ? "      - ./config/php/msmtprc:/etc/msmtprc:ro\n"
+        : "";
     std::string rendered = engine_.render(template_content, domain, owner, php_image, site_id,
         web_server_image, web_config_dir, web_log_dir, web_doc_root,
-        web_local_config, web_local_log, web_server_cmd, mail_net, mail_net_def);
+        web_local_config, web_local_log, web_server_cmd, mail_net, mail_net_def, mail_volume);
     return fs_.create_file(output_path, rendered);
 }
 

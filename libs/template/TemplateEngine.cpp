@@ -23,7 +23,8 @@ std::string TemplateEngine::render(const std::string& template_content,
                                     const std::string& web_local_log,
                                     const std::string& web_server_cmd,
                                     const std::string& mail_network,
-                                    const std::string& mail_network_definition) const {
+                                    const std::string& mail_network_definition,
+                                    const std::string& mail_volume) const {
     std::string result = template_content;
 
     std::string web_health_cmd = "nginx";
@@ -51,6 +52,7 @@ std::string TemplateEngine::render(const std::string& template_content,
     replace_all(result, "{{WEB_SERVER_CMD}}", cmd_line);
     replace_all(result, "{{MAIL_NETWORK}}", mail_network);
     replace_all(result, "{{MAIL_NETWORK_DEFINITION}}", mail_network_definition);
+    replace_all(result, "{{PHP_MAIL_VOLUME}}", mail_volume);
     return result;
 }
 
