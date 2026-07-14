@@ -680,7 +680,290 @@ These questions remain open and should be resolved before implementation:
 
 7. **Migration of VestaCP mailboxes** — During migration, should existing VestaCP mailboxes be imported automatically, or offered as an optional step?
 
-## 5. Implementation Plan
+## 5. Pre-Implementation Verification Results
+
+This section documents the verification of 7 architectural points raised during the pre-implementation review. All points were checked against running code, config files, and the production environment where possible.
+
+### 5.1 `containercp-mail` Network — Full vs Separate
+
+**Question:** Does PHP need the full `containercp-mail` network, or would a separate `containercp-mail-submit` (only Postfix:587) be better?
+
+**Result:** Full network is a **conscious trade-off**, not a limitation.
+
+**Why full network:**
+- Docker DNS resolves `containercp-mail-postfix` by service name ONLY within the `containercp-mail` network
+- A separate network would require Postfix to be attached to BOTH networks (adds complexity in compose template)
+- The `containercp-mail` network is internal (no external connectivity) — isolation is adequate
+- PHP containers only need port 587 (submission), but reaching it through the service name requires being on the same Docker network
+
+**Why NOT a separate submit network:**
+- Additional compose template complexity: Postfix container would need two networks
+- `DockerMailProvider.write_compose()` would need to generate two networks instead of one
+- Runtime upgrade would need to manage two network connections per site
+- The security benefit is minimal: both networks are internal Docker networks
+
+**Documented as:** Conscious trade-off (ADR-2026-004). A separate `containercp-mail-submit` can be introduced later if isolation requirements change.
+
+### 5.2 PHP Network Connection Timing — Before vs After Enable
+
+**Question:** Should PHP containers be connected to `containercp-mail` immediately at site creation (before mail is enabled), or only after `enable_mail()`?
+
+**Result:** Connect AFTER `enable_mail()`, NOT before.
+
+**Analysis of both approaches:**
+
+| Aspect | Connect at site creation | Connect after enable |
+|--------|------------------------|---------------------|
+| Security | PHP container can reach mail stack even when mail is disabled | Container has no network path to mail until explicitly enabled |
+| Complexity | Need to disconnect on disable; track state per container | Simpler — single point of connection on enable |
+| Startup recovery | Must check all containers, even those without mail | Only check containers with enabled mail |
+| Fail state | Connected but unable to authenticate — confusing diagnostics | Not connected = mail clearly won't work |
+
+**Decision:** Connect on `enable_mail()`, disconnect on `disable_mail()`. The `Runtime::upgrade()` on daemon startup only checks sites with MailDomain ≠ disabled.
+
+**Impact on Runtime::upgrade_mail() during mail module activation:**
+- Does NOT connect all PHP containers unconditionally
+- Only connects containers where MailDomain mode ≠ disabled
+- Sites without mail remain disconnected (cleaner state)
+
+### 5.3 TLS Certificate — Fix Now vs Later
+
+**Question:** Since we control cert generation, should we generate a proper cert with SAN immediately instead of using `tls_certcheck off` as a temporary workaround?
+
+**Result:** **Fix immediately during Stage 4.** The effort is minimal.
+
+**Cost of `tls_certcheck off`:**
+- Must remember to fix later (risk of permanent workaround)
+- No certificate validation for PHP → Postfix connection
+- Harder to detect man-in-the-middle attacks within the Docker network
+
+**Cost of proper cert (one-time change in `DockerMailProvider::ensure_certificate()`):**
+```bash
+# Current (no SAN):
+openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+  -keyout /srv/containercp/ssl/0/privkey.pem \
+  -out /srv/containercp/ssl/0/fullchain.pem \
+  -subj "/CN=mail-test.local"
+
+# Fixed (with SAN):
+openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+  -keyout /srv/containercp/ssl/0/privkey.pem \
+  -out /srv/containercp/ssl/0/fullchain.pem \
+  -subj "/CN=containercp-mail-postfix" \
+  -addext "subjectAltName = DNS:containercp-mail-postfix, DNS:mail.local"
+```
+
+The `-addext` flag is supported by OpenSSL 1.1.1+. The Docker image uses Debian which ships with OpenSSL 3.x.
+
+**Decision:** Generate proper SAN cert from the start. Remove `tls_certcheck off` from the msmtprc template.
+
+### 5.4 SMTP AUTH + Submission — Full Chain Verification
+
+**Question:** Verify the complete Dovecot SASL → Postfix submission → SMTP AUTH chain before implementation.
+
+**Result:** Chain is BROKEN today but fixable through existing code paths. This MUST be tested during Stage 2 implementation.
+
+**Current state:**
+```
+Dovecot SASL listener (port 12345):
+  Code generates: ✅ (DockerMailProvider::write_dovecot_config(), line 314-317)
+  Runtime config: ❌ STALE — generated config missing the inet_listener block
+  Actually listening: ❌ port 12345 NOT open (verified via /proc/net/tcp)
+
+Postfix submission (port 587):
+  master.cf: ❌ fully commented out
+  Code generates: ❌ write_postfix_config() does NOT generate master.cf
+  The master.cf is a static file from the Docker image, not generated
+
+Postfix SASL config:
+  smtpd_sasl_auth_enable: ❌ not set anywhere
+  Dovecot SASL path: ❌ not configured
+```
+
+**What needs to happen (Stage 2 implementation):**
+
+1. **Extend `write_postfix_config()`** to enable SASL auth:
+   ```cpp
+   pf << "smtpd_sasl_auth_enable = yes\n"
+      << "smtpd_sasl_type = dovecot\n"
+      << "smtpd_sasl_path = inet:containercp-mail-dovecot:12345\n"
+      << "smtpd_sasl_security_options = noanonymous\n"
+      << "broken_sasl_auth_clients = yes\n";
+   ```
+
+2. **Generate custom master.cf** for the submission service. Either:
+   - Option A: Generate a minimal `master.cf` drop-in that defines only the submission service
+   - Option B: Use `postfix -C` with a custom config that includes submission
+   - Option C (recommended): Add to the main.cf equivalent via `-o` in the master.cf (but master.cf is static) → **Best approach: generate a separate `submission.cf` and mount it as an override in master.cf format**
+
+   Actually, the simplest approach: **write a submission service file** that uses `postfix` `master.cf` syntax and mount it in Postfix's config.
+
+   Simplest: add the submission service to the Postfix Docker image's entrypoint, or generate a master.cf snippet.
+
+   **Alternative (cleaner):** modify the Docker entrypoint (`docker/mail/docker-entrypoint.sh`) to append the submission service:
+   ```bash
+   if ! grep -q '^submission ' /etc/postfix/master.cf; then
+     cat >> /etc/postfix/master.cf << 'EOF'
+   submission inet n - y - - smtpd
+     -o syslog_name=postfix/submission
+     -o smtpd_tls_security_level=encrypt
+     -o smtpd_sasl_auth_enable=yes
+     -o smtpd_tls_auth_only=yes
+     -o smtpd_reject_unlisted_recipient=no
+     -o smtpd_client_restrictions=
+     -o smtpd_helo_restrictions=
+     -o smtpd_sender_restrictions=
+     -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
+     -o smtpd_recipient_restrictions=permit_sasl_authenticated,reject
+     -o milter_macro_daemon_name=ORIGINATING
+   EOF
+   fi
+   ```
+
+3. **Ensure Dovecot config is regenerated** with the `inet_listener` on port 12345 (already in code, but config is stale). The existing `DockerMailProvider::write_dovecot_config()` lines 314-317 already generate:
+   ```cpp
+   << "  inet_listener {\n"
+   << "    address = 0.0.0.0\n"
+   << "    port = 12345\n"
+   << "  }\n"
+   ```
+   Just need to call `write_configs()` (which already calls `write_dovecot_config()`).
+
+**Test matrix for Stage 2 QA:**
+```bash
+# Test 1: Dovecot SASL listener is open
+nc -zv containercp-mail-dovecot 12345
+
+# Test 2: Postfix submission is listening
+nc -zv containercp-mail-postfix 587
+
+# Test 3: SMTP AUTH with correct credentials
+swaks --server containercp-mail-postfix:587 \
+      --auth LOGIN \
+      --auth-user test@example.com \
+      --auth-password correct-password \
+      --to admin@example.com \
+      --tls
+
+# Test 4: SMTP AUTH with wrong credentials (expected: fail)
+swaks --server containercp-mail-postfix:587 \
+      --auth LOGIN \
+      --auth-user test@example.com \
+      --auth-password wrong-password \
+      --to admin@example.com \
+      --tls
+
+# Test 5: SMTP without auth (expected: fail on submission port)
+swaks --server containercp-mail-postfix:587 \
+      --to admin@example.com \
+      --tls
+```
+
+### 5.5 Sender Restrictions — Test Matrix
+
+**Question:** Verify sender restrictions behavior with a test matrix.
+
+**Result:** Test matrix validated against Postfix documentation and code. Implementation can use this as QA checklist.
+
+**Postfix `smtpd_sender_login_maps` lookup direction:**
+
+`reject_sender_login_mismatch` checks that the SASL username matches an entry in the `sender_login_maps`. The map format is:
+
+```
+# sender_login_maps format:
+#   SASL_username → authorized_sender_pattern
+site-42@php.containercp.internal  @example.com
+```
+
+This means: SASL user `site-42@php.containercp.internal` is authorized to send as `*@example.com` (any local part at example.com).
+
+**Test matrix for sender restrictions QA:**
+
+| # | Test | SASL User | From: address | Expected | Notes |
+|---|------|-----------|---------------|----------|-------|
+| 1 | Own domain, correct user | `site-42@php.c.i` | `wordpress@example.com` | ✅ Accept | User authorized for @example.com |
+| 2 | Own domain, different local part | `site-42@php.c.i` | `info@example.com` | ✅ Accept | Pattern `@example.com` matches any local part |
+| 3 | Wrong domain | `site-42@php.c.i` | `admin@other.com` | ❌ Reject (550) | SASL user not authorized for @other.com |
+| 4 | No auth | (none) | `wordpress@example.com` | ❌ Reject (550) | Submission:587 requires SASL |
+| 5 | Different site's user | `site-99@php.c.i` | `wordpress@example.com` | ❌ Reject (550) | site-99 not authorized for @example.com |
+| 6 | Empty from | `site-42@php.c.i` | `<>` | ❌ Reject (550) | bounce/return-path must also match |
+| 7 | Multiple domains per site | `site-42@php.c.i` | `admin@alias.com` | ✅ Accept | If mail_login map also allows @alias.com |
+| 8 | IP not in mynetworks | (none) | anything | ❌ Reject | Port 25 should also restrict relay |
+
+**Postfix `smtpd_sender_restrictions` ordering:**
+```
+smtpd_sender_restrictions = reject_sender_login_mismatch,  # check SASL → From: match
+                            permit_sasl_authenticated,      # allow if authenticated
+                            permit_mynetworks               # allow from trusted networks
+```
+This ordering ensures the login match is checked first, then the auth status, then network exceptions.
+
+### 5.6 Rate Limiting — Global vs Per-Site
+
+**Question:** Is global Postfix rate limiting sufficient for the first phase, or is per-site (per-SASL-identity) limiting needed?
+
+**Result:** Global is sufficient for MVP. Per-site is a future enhancement.
+
+**Postfix built-in rate limiting (global):**
+
+| Directive | Default | Recommended | Applies to |
+|-----------|---------|-------------|------------|
+| `smtpd_client_connection_rate_limit` | 0 (unlimited) | 30/sec | Per client IP |
+| `smtpd_client_message_rate_limit` | 0 (unlimited) | 100/min | Per client IP |
+| `smtpd_client_recipient_rate_limit` | 0 (unlimited) | 50/min | Per recipient |
+| `anvil_rate_time_unit` | 60s | 60s | Time window for rate counters |
+
+**Why global is enough for MVP:**
+- All PHP containers connect from different Docker IPs → global per-IP limits effectively become per-site
+- Each site gets its own SASL identity → Postfix sees different auth users
+- If one site is compromised, its rate is limited independently (different source IP)
+- 4 sites with 100 msg/min each = 400 msg/min total, well within Postfix's default capacity
+
+**When per-SASL-identity limiting becomes needed:**
+- 50+ sites on a single server
+- Sites behind a NAT or Docker bridge sharing the same source IP
+- Need to offer different rate tiers (premium sites get higher limits)
+- Regulatory requirement for per-tenant rate limiting
+
+**Per-SASL-identity rate limiting approaches (future):**
+1. **Postfix policy service** — custom policy server that checks SASL username against rate table
+2. **Postfix `smtpd_sender_login_maps` with throttling** — integrate with an external rate limiter
+3. **Rspamd ratelimit module** — `ratelimit { }` can limit by SASL username or sender domain
+4. **Dedicated per-site queue** — each site gets its own Postfix queue process (heavy)
+
+**Recommendation:** Add global Postfix rate limits in Stage 2. Document per-site limiting as a future enhancement.
+
+### 5.7 Runtime Upgrade — Central Recovery Role
+
+**Question:** Can `Runtime::upgrade()` serve as the central recovery mechanism for all mail components?
+
+**Result:** YES. This is the correct architectural choice. Below is the complete recovery scope.
+
+**What `Runtime::upgrade_mail_for_site(site_id, domain)` must recover:**
+
+| Component | Recovery Action | Verification |
+|-----------|----------------|--------------|
+| SMTP credentials | Check if credential exists in Dovecot passdb; if missing, generate | `docker exec ... doveadm auth test site-42@php.c.i password` |
+| msmtprc | Check if file exists at `config/php/msmtprc`; if missing, generate | `test -f /srv/.../config/php/msmtprc` |
+| Docker network | Check if PHP container is on `containercp-mail` network; if not, `docker network connect` | `docker inspect site-{ID}-php --format '{{range $k,$v:=.NetworkSettings.Networks}}{{$k}} {{end}}'` |
+| PHP sendmail_path | Check if global php.ini has `sendmail_path` (image-level, deployment-only) | `docker exec site-{ID}-php php -i \| grep sendmail_path` |
+| Postfix sender_login | Check if `sender_login` map has entry for this site; if missing, add and `postfix reload` | `docker exec ... postmap -q "site-42@php.c.i" texthash:/etc/postfix/sender_login` |
+| Postfix master.cf submission | Check if submission service is enabled; if not, enable in entrypoint | Once-only per mail module activation, not per-site |
+| Dovecot passdb | Check if PHP credential entry exists; if missing, regenerate passwd file | `docker exec ... grep "site-42@php.c.i" /etc/dovecot/passwd` |
+| Dovecot SASL listener | Check if port 12345 is listening; if not, reload Dovecot config | `nc -zv containercp-mail-dovecot 12345` |
+| TLS certificate | Check if cert has SAN for `containercp-mail-postfix`; if not, regenerate | `openssl x509 -in fullchain.pem -noout -ext subjectAltName \| grep containercp-mail-postfix` |
+
+**Recovery triggering scenarios:**
+
+1. **Daemon restart**: `ServiceRegistry::start()` → `Runtime::upgrade()` → iterates all sites → calls `upgrade_mail_for_site()` for sites with MailDomain ≠ disabled
+2. **Mail module activation**: `Runtime::upgrade_mail()` → same iteration, but triggered by module state change
+3. **Site mail enable**: `SiteMailOrchestrator::enable_mail()` → sets up everything fresh (not recovery, but shares same validation)
+4. **Admin request**: `POST /api/mail/recover` → manual trigger for full mail stack restart (container-level) + per-site recovery
+5. **Malformed config detection**: Health check detects issue → auto-trigger `upgrade_mail_for_site()` for affected site
+
+**Key design rule for Runtime Upgrade:** Every recovery action MUST be idempotent. Running `upgrade_mail_for_site()` on a healthy site must be a no-op.
+
+## 6. Implementation Plan
 
 ### Stage 1: PHP Docker Image — Add msmtp
 
@@ -755,6 +1038,42 @@ New credential map format: `site-{SITE_ID}@php.containercp.internal` mapped to `
 smtpd_client_connection_rate_limit = 30
 smtpd_client_message_rate_limit = 100
 smtpd_client_recipient_rate_limit = 50
+```
+
+**2d. Generate TLS cert with SAN (fix CN mismatch):**
+```bash
+# In DockerMailProvider::ensure_certificate():
+openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+  -keyout /srv/containercp/ssl/0/privkey.pem \
+  -out /srv/containercp/ssl/0/fullchain.pem \
+  -subj "/CN=containercp-mail-postfix" \
+  -addext "subjectAltName = DNS:containercp-mail-postfix, DNS:mail.local"
+```
+
+**❗ Stage 2 QA test matrix (must pass before proceeding to Stage 3):**
+
+```bash
+# 1. Verify Dovecot SASL listener
+nc -zv containercp-mail-dovecot 12345
+doveadm auth test site-42@php.containercp.internal <password>
+
+# 2. Verify Postfix submission
+nc -zv containercp-mail-postfix 587
+# Manual: openssl s_client -connect localhost:587 -starttls smtp
+
+# 3. SMTP AUTH test matrix (use swaks or openssl):
+# 3a. Correct credentials, own domain → accept
+# 3b. Correct credentials, wrong domain → reject
+# 3c. Wrong credentials → reject
+# 3d. No auth → reject
+# 3e. Different site's credentials → reject for this site's domain
+
+# 4. Verify TLS cert
+openssl x509 -in /srv/containercp/ssl/0/fullchain.pem -noout -ext subjectAltName
+# Must show: DNS:containercp-mail-postfix
+
+# 5. Verify cert is NOT needed in msmtp
+# After SAN fix, msmtprc can use: tls on (without tls_certcheck off)
 ```
 
 ### Stage 3: Network Connectivity
@@ -884,43 +1203,58 @@ if (source_had_mail && user_opted_migrate_mail) {
 - Test send button
 - msmtp health check (monitoring)
 
-## 6. Implementation Ordering
+## 7. Implementation Ordering
 
 The stages should be implemented in this order due to dependencies:
 
 ```
-Stage 1 (PHP image) ───→ Stage 2 (Postfix security) ───→ Stage 3 (Network)
-                                                              │
-                                                              ▼
-                                                     Stage 4 (Credentials)
-                                                              │
-                                                              ▼
-                                                     Stage 5 (Orchestrator)
-                                                              │
-                                              ┌───────────────┼───────────────┐
-                                              ▼               ▼               ▼
-                                       Stage 6 (Runtime)  Stage 7 (Migrate)  Stage 8 (UI)
+Stage 1 (PHP image) ───→ Stage 2 (Postfix + Dovecot SASL + submission)
+                              │
+                              ▼
+                        Stage 3 (Network)
+                              │
+                              ▼
+                        Stage 4 (Credentials + TLS cert with SAN)
+                              │
+                              ▼
+                        Stage 5 (Orchestrator + Credentials manager)
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+       Stage 6 (Runtime)  Stage 7 (Migrate)  Stage 8 (UI + QA tests)
 ```
 
-## 7. Files to Modify
+**Stage 2 expanded scope:** Now includes:
+- Enable Dovecot SASL listener (port 12345) — config already in code, just needs regeneration
+- Enable Postfix submission service (port 587) — new: entrypoint or master.cf generation
+- Configure Postfix SASL auth (dovecot SASL type)
+- Add sender restrictions (smtpd_sender_login_maps, reject_sender_login_mismatch)
+- Add global rate limiting
+- Generation of proper TLS certificate with SAN (moved from Stage 4)
 
-| File | Change | Stage |
-|------|--------|-------|
-| `docker/php/Dockerfile` | Add msmtp msmtp-mta ca-certificates | 1 |
-| `docker/php/php.ini` (new) | `sendmail_path = /usr/bin/msmtp -t` | 1 |
-| `libs/mail/providers/DockerMailProvider.cpp` | Add `smtpd_sender_login_maps`, `reject_sender_login_mismatch`, rate limits, `php.containercp.internal` domain | 2 |
-| `docker/mail/docker-entrypoint.sh` | Add sender restriction directives to submission | 2 |
-| `libs/docker/ComposeGenerator.cpp` | Add `containercp-mail` network (optional external) to PHP service | 3 |
-| `libs/provider/DockerComposeProvider.cpp` | Create `config/php/` dir, placeholder msmtprc | 3, 5 |
-| `libs/mail/SiteMailOrchestrator.h/.cpp` | **New**: enable/disable/status orchestration | 5 |
-| `libs/mail/SiteMailCredentials.h/.cpp` | **New**: per-site SASL credential management | 5 |
-| `libs/runtime/Runtime.cpp` | Add `upgrade_mail_for_site()` for startup recovery | 6 |
-| `libs/runtime/DockerRuntime.cpp` | Handle `docker network connect/disconnect` for mail | 6 |
-| `libs/migration/VestaSiteImporter.cpp` | Invoke orchestrator during `upgrade_site()` | 7 |
-| `libs/api/ApiServer.cpp` | Add enable/disable/mail-status endpoints | 5, 8 |
-| `web/app.js` | Mail status per site, enable/disable toggle, test send | 8 |
+**Stage 4 simplified:** No longer includes TLS fix (moved to Stage 2). Now focused on:
+- Per-site SASL credential generation
+- msmtprc template with proper credentials (tls_certcheck ON since cert has SAN now)
 
-## 8. Open Questions
+## 8. Files to Modify (Updated)
+
+| File | Change | Stage | Verification |
+|------|--------|-------|-------------|
+| `docker/php/Dockerfile` | Add msmtp msmtp-mta ca-certificates | 1 | Build image, verify `which msmtp` |
+| `docker/php/php.ini` (new) | `sendmail_path = /usr/bin/msmtp -t` | 1 | Verify with `php -i \| grep sendmail_path` |
+| `libs/mail/providers/DockerMailProvider.cpp` | Add SASL config (`smtpd_sasl_auth_enable`, `smtpd_sasl_type`, `smtpd_sasl_path`) to `write_postfix_config()`; add sender restrictions, rate limits, `php.containercp.internal` domain config; fix TLS cert SAN generation in `ensure_certificate()` | 2 | `postconf -n` shows new directives; `openssl x509` shows SAN |
+| `docker/mail/docker-entrypoint.sh` | Append submission service (587) to master.cf if missing; append submissions (465) if desired | 2 | `nc -zv containercp-mail-postfix 587` ❗ Must test |
+| `libs/docker/ComposeGenerator.cpp` | Add `containercp-mail` network to PHP service (conditional — only if mail module active) | 3 | `docker compose config` shows network |
+| `libs/provider/DockerComposeProvider.cpp` | Create `config/php/` directory (empty), no placeholder msmtprc | 3 | Directory exists after site creation |
+| `libs/mail/SiteMailOrchestrator.h/.cpp` | **New**: enable/disable/status orchestration | 5 | Unit test: enable + disable cycle is idempotent |
+| `libs/mail/SiteMailCredentials.h/.cpp` | **New**: per-site SASL credential management (generate, remove, find, apply, revoke) | 5 | Unit test: credential generation + Postfix map entry |
+| `libs/runtime/Runtime.cpp` | Add `upgrade_mail_for_site()` for startup recovery — checks: credentials, msmtprc, network, Postfix maps, Dovecot passdb | 6 | Integration test: corrupt msmtprc → recovery restores it |
+| `libs/runtime/DockerRuntime.cpp` | Handle `docker network connect/disconnect` for mail network | 6 | `docker inspect` shows correct network |
+| `libs/migration/VestaSiteImporter.cpp` | Invoke orchestrator during `upgrade_site()` (opt-in, only if source had mail) | 7 | Unit test: migration with mail flag |
+| `libs/api/ApiServer.cpp` | Add `POST /api/sites/{id}/enable-mail`, `POST /api/sites/{id}/disable-mail`, `GET /api/sites/{id}/mail-status` | 5, 8 | API test: enable → status shows active |
+| `web/app.js` | Mail status per site, enable/disable toggle, test send | 8 | UI test: toggle works without page reload |
+
+## 9. Open Questions
 
 ### Verified (code + practical tests):
 
@@ -936,7 +1270,10 @@ Stage 1 (PHP image) ───→ Stage 2 (Postfix security) ───→ Stage 3
 | 8 | **`required: false` NOT supported** by Docker Compose v2.26 | Test: `docker compose config` rejects `required` property | Must use conditional compose generation (ADR-2026-004 updated) |
 | 9 | **Postfix submission (587) NOT configured** — no SASL auth at all | `master.cf`: submission fully commented out; `postconf -n`: no `smtpd_sasl_auth_enable` | Must add submission service + SASL + Dovecot auth before PHP mail can work |
 | 10 | **Dovecot passdb uses single `passwd-file`** — can add PHP credential entries | `doveconf -n`: `passdb { driver = passwd-file; args = /etc/dovecot/passwd }` | PHP credential users share the same passdb; `static` userdb assigns home dir regardless — no mailbox needed |
-| 11 | **No existing PHP containers connected to `containercp-mail`** | `docker inspect`: all site PHP containers have only per-site networks | Network must be connected at enable time or daemon startup
+| 11 | **No existing PHP containers connected to `containercp-mail`** | `docker inspect`: all site PHP containers have only per-site networks | Network must be connected at enable time or daemon startup |
+| 12 | **Dovecot SASL listener (port 12345) NOT listening** — code generates it but runtime config is stale | `/proc/net/tcp`: no port 12345; generated dovecot.conf has no `inet_listener` | Must regenerate Dovecot config via `write_configs()` |
+| 13 | **Postfix master.cf is static** — code does NOT generate it | Standard Postfix master.cf from Docker image; no ContainerCP generation | Must modify entrypoint or generate master.cf snippet for submission |
+| 14 | **TLS cert has no SANs** — verified in detail | `openssl x509 -text`: `No extensions in certificate` | Fix: add `-addext "subjectAltName = DNS:containercp-mail-postfix"` to cert generation |
 
 ### Open for discussion (resolved during verification):
 1. Shared credential for all PHP sites vs per-site SASL user? → **ADR-2026-002: per-site** ✅ verified
@@ -945,13 +1282,17 @@ Stage 1 (PHP image) ───→ Stage 2 (Postfix security) ───→ Stage 3
 4. Should we offer a "test email" button in the Web UI? → **Yes, Stage 8**
 5. Should msmtp logs be collected centrally? → **Yes, to site's `logs/` directory**
 6. How to handle PHP `mail()` return path / envelope sender? → **Use `from {domain}` in msmtprc**
-7. TLS: `tls_certcheck off` or generate proper certificate? → **start with off** ✅ verified (CN=mail-test.local, NO SANs)
+7. TLS: `tls_certcheck off` or generate proper certificate? → **Generate proper SAN cert in Stage 2** (not workaround) ✅ ADR updated
 8. Should site::Site gain a `mail_enabled` boolean field? → **No, derive from MailDomain existence** (single source of truth)
 9. Mailbox auto-creation on mail enable (postmaster@)? → **Out of scope for initial implementation**
 10. Default MailDomain mode for "Enable mail" action in UI? → **`local-primary`** (most common use case)
 11. Self-service credential rotation from Web UI? → **Stage 8**
+12. Separate `containercp-mail-submit` network? → **No, full network is a conscious trade-off** (documented in 5.1)
+13. Connect PHP to mail network before enable? → **No, only after enable_mail()** (documented in 5.2)
+14. Full mailbox migration from VestaCP? → **Out of scope** — separate work item
+15. Per-site rate limiting? → **Global is sufficient for MVP** (documented in 5.6)
 
-## 9. Risk Assessment
+## 10. Risk Assessment
 
 | Risk | Likelihood | Mitigation |
 |------|-----------|------------|
