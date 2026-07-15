@@ -2084,7 +2084,10 @@ bool ApiServer::start() {
 
         if (action == "mail-domain") {
             // Create a MailDomain for this site, linked to its canonical Domain
-            auto* dom = s.domains().find_by_site(site_id);
+            containercp::domain::Domain* dom = nullptr;
+            for (const auto& d : s.domains().list()) {
+                if (d.site_id == site_id) { dom = s.domains().find(d.id); break; }
+            }
             if (!dom) {
                 r.status_code = 400;
                 r.body = "{\"success\":false,\"error\":\"domain_not_found\","

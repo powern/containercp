@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <sys/stat.h>
 
 namespace containercp::core {
 
