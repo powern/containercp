@@ -349,10 +349,14 @@ bool ApiServer::start() {
     });
 
     // GET /api/domains/<domain>/dns-check — live DNS resolution for a domain
+    // Uses prefix routing. Must be registered AFTER more specific domain routes.
+    // Dispatch pattern: /api/domains/<domain>/dns-check → DNS check
+    //                    everything else → 404 (safe for future routes registered before this)
     router_.add_prefix("GET", "/api/domains/", [&s](const Request& req) {
         Response r;
         std::string remaining = req.path.substr(std::string("/api/domains/").size());
 
+        // Dispatch on path suffix
         // Must end with /dns-check
         const std::string suffix = "/dns-check";
         if (remaining.size() <= suffix.size()
@@ -363,11 +367,18 @@ bool ApiServer::start() {
         }
 
         // Extract domain (everything before /dns-check)
-        std::string domain = remaining.substr(0, remaining.size() - suffix.size());
-        if (domain.empty()) {
+        std::string domain_raw = remaining.substr(0, remaining.size() - suffix.size());
+        if (domain_raw.empty()) {
             r.status_code = 400;
             r.body = "{\"success\":false,\"error\":\"Invalid domain\"}";
             return r;
+        }
+
+        // Normalize domain: lowercase
+        std::string domain;
+        domain.reserve(domain_raw.size());
+        for (char c : domain_raw) {
+            domain.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
         }
 
         if (!dns::DnsCheckService::validate_domain(domain)) {
@@ -409,12 +420,12 @@ bool ApiServer::start() {
             }
         }
 
-        // Check for refresh
+        // Clear cache on refresh (using normalized domain)
         if (refresh) {
             s.dns_check().clear_cache(domain);
         }
 
-        // Perform DNS check
+        // Perform DNS check (normalized domain)
         auto result = s.dns_check().check(domain, types);
 
         // Build JSON response
@@ -424,7 +435,7 @@ bool ApiServer::start() {
              << ",\"data\":{"
              << "\"domain\":\"" << JsonFormatter::escape(result.domain)
              << "\",\"resolved_at\":\"" << JsonFormatter::escape(result.resolved_at)
-             << "\",\"cached\":false"
+             << "\",\"cached\":" << (result.cached ? "true" : "false")
              << ",\"overall_status\":\"" << JsonFormatter::escape(result.overall_status)
              << "\",\"per_type\":[";
 
@@ -461,13 +472,22 @@ bool ApiServer::start() {
             json << ",\"error\":\"" << JsonFormatter::escape(result.error) << "\"";
         }
 
-        json << "}}";  // close data + top-level
+        json << "}}";
         r.body = json.str();
 
+        // HTTP status mapping: 200 for all valid DNS responses including NXDOMAIN
+        // 502 only for true resolution failures (SERVFAIL, TIMEOUT, internal errors)
         if (!result.success) {
-            r.status_code = 502;
-        } else if (result.overall_status == "partial") {
-            r.status_code = 200;  // partial success is still a valid response
+            bool is_resolver_failure = false;
+            for (const auto& pt : result.per_type) {
+                if (pt.status_code == "SERVFAIL" || pt.status_code == "TIMEOUT"
+                    || pt.status_code == "ERROR") {
+                    is_resolver_failure = true;
+                    break;
+                }
+            }
+            // If all errors are NXDOMAIN, return 200 (valid DNS response)
+            r.status_code = is_resolver_failure ? 502 : 200;
         }
 
         return r;

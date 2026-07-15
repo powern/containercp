@@ -280,8 +280,15 @@ void DnsCheckService::set_cache_ttl(int seconds) {
 }
 
 void DnsCheckService::clear_cache(const std::string& domain) {
+    // Normalize to lowercase for consistent cache key matching
+    std::string normalized;
+    normalized.reserve(domain.size());
+    for (char c : domain) {
+        normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+
     std::lock_guard<std::mutex> lock(cache_mutex_);
-    auto prefix = domain + ":";
+    auto prefix = normalized + ":";
     for (auto it = cache_.begin(); it != cache_.end(); ) {
         if (it->first.substr(0, prefix.size()) == prefix) {
             it = cache_.erase(it);
@@ -292,8 +299,14 @@ void DnsCheckService::clear_cache(const std::string& domain) {
 }
 
 bool DnsCheckService::has_cached(const std::string& domain) const {
+    std::string normalized;
+    normalized.reserve(domain.size());
+    for (char c : domain) {
+        normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+
     std::lock_guard<std::mutex> lock(cache_mutex_);
-    auto prefix = domain + ":";
+    auto prefix = normalized + ":";
     time_t now = std::time(nullptr);
     for (const auto& [key, entry] : cache_) {
         if (key.substr(0, prefix.size()) == prefix) {
@@ -341,7 +354,9 @@ DnsCheckResult DnsCheckService::check(const std::string& domain,
         std::lock_guard<std::mutex> lock(cache_mutex_);
         auto it = cache_.find(cache_key);
         if (it != cache_.end() && (std::time(nullptr) - it->second.timestamp) < cache_ttl_) {
-            return it->second.result;
+            DnsCheckResult cached = it->second.result;
+            cached.cached = true;
+            return cached;
         }
     }
 

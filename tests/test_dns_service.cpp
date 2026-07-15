@@ -273,9 +273,10 @@ TEST_CASE("DnsCheckService NXDOMAIN handling") {
     CHECK_FALSE(r.success);
     CHECK(r.overall_status == "failed");
     CHECK(r.per_type.size() == 1);
-    CHECK((r.per_type[0].status_code == "NXDOMAIN"
-           || r.per_type[0].status_code == "SERVFAIL"
-           || r.per_type[0].status_code == "TIMEOUT"));
+    bool valid_nx = (r.per_type[0].status_code == "NXDOMAIN"
+                     || r.per_type[0].status_code == "SERVFAIL"
+                     || r.per_type[0].status_code == "TIMEOUT");
+    CHECK(valid_nx);
 }
 
 TEST_CASE("DnsCheckService multiple types") {

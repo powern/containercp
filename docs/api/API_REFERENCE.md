@@ -675,13 +675,13 @@ Performs live DNS resolution using the **c-ares** library (no shell commands, no
 }
 ```
 
-**Error response (all record types failed):**
+**NXDOMAIN response (valid DNS response, HTTP 200):**
 
 ```json
 {
-  "success": false,
+  "success": true,
   "data": {
-    "domain": "example.com",
+    "domain": "nonexistent.example.com",
     "resolved_at": "2026-07-15T12:00:00Z",
     "cached": false,
     "overall_status": "failed",
@@ -694,12 +694,34 @@ Performs live DNS resolution using the **c-ares** library (no shell commands, no
 }
 ```
 
-**Error responses:**
+NXDOMAIN returns HTTP 200 because it is a valid DNS diagnostic result. The frontend can display the per_type status with evidence.
+
+**Resolver failure (HTTP 502):**
+
+```json
+{
+  "success": false,
+  "data": {
+    "domain": "example.com",
+    "resolved_at": "2026-07-15T12:00:00Z",
+    "cached": false,
+    "overall_status": "failed",
+    "per_type": [
+      {"type": "A", "status_code": "SERVFAIL", "error": "SERVFAIL", "records": []}
+    ],
+    "soa": {"mname": "", "rname": "", "serial": 0},
+    "error": "SERVFAIL"
+  }
+}
+```
+
+**HTTP status codes:**
 
 | Code | Condition |
 |------|-----------|
-| 400 | Invalid domain format, unsupported DNS record type |
-| 502 | DNS resolution failed (NXDOMAIN, SERVFAIL, TIMEOUT) |
+| 200 | Valid DNS response (NOERROR, NODATA, or NXDOMAIN with structured per_type results). Also for partial success (some types failed, some succeeded). |
+| 400 | Invalid domain format, unsupported DNS record type, invalid query parameters |
+| 502 | DNS resolver failure (SERVFAIL, TIMEOUT, or internal resolver error with no useful data). NXDOMAIN is NOT a 502 — it is a valid DNS response returning 200 with structured data. |
 
 **overall_status values:**
 
@@ -720,7 +742,14 @@ Performs live DNS resolution using the **c-ares** library (no shell commands, no
 | `TIMEOUT` | Query timed out |
 | `ERROR` | Other DNS error |
 
-**Implementation:** Uses `DnsCheckService` from `libs/dns/`. The service uses c-ares (`ares_query_dnsrec`) with a synchronous event loop. Results are cached in-memory for 60 seconds. The `refresh=1` parameter bypasses the cache.
+**Implementation:** Uses `DnsCheckService` from `libs/dns/`. The service uses c-ares (`ares_query_dnsrec`) with a synchronous event loop. Results are cached in-memory for 60 seconds.
+
+**Cache semantics:**
+- First query for a domain → live lookup → `"cached": false`
+- Repeated query within 60s → cache hit → `"cached": true`
+- `refresh=1` → clears cache → live lookup → `"cached": false`
+- Domain is normalized to lowercase before all cache operations (`GOOGLE.COM` → `google.com`)
+- Cache key includes sorted record types, so different type combinations are cached independently
 
 **Example:**
 

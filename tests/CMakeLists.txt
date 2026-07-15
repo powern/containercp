@@ -10,6 +10,7 @@ add_executable(containercp_tests
     test_api.cpp
     test_daemon.cpp
     test_dns_service.cpp
+    test_dns_api.cpp
     test_template.cpp
     test_runtime.cpp
     test_runtime_sync.cpp

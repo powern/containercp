@@ -35,6 +35,7 @@ struct DnsCheckResult {
         std::string rname;
         uint64_t serial = 0;
     } soa;
+    bool cached = false;
     std::string overall_status;  // "complete" — all types ok, "partial" — some failed, "failed" — all failed
     bool success = false;
     std::string error;
