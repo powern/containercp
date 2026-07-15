@@ -279,25 +279,36 @@ ServiceRegistry::ServiceRegistry()
     }
 
     auto loaded_sites = storage_.load_sites();
-    if (!loaded_sites.empty()) {
-        sites_.set_sites(loaded_sites);
-    }
 
-    // Migrate legacy sites: detect PHP Mail state from artifacts
-    // (old format had no php_mail_enabled field; check for msmtprc + credentials)
-    bool migrated = false;
-    for (auto& site : const_cast<std::vector<site::Site>&>(sites_.list())) {
-        if (!site.php_mail_enabled) {
-            std::string msmtprc_path = config_.sites_dir() + site.domain + "/config/php/msmtprc";
-            if (filesystem_.exists(msmtprc_path)) {
-                site.php_mail_enabled = true;
-                migrated = true;
-                logger_.info("MAIL", "Migrated legacy site " + site.domain + ": php_mail_enabled=true");
+    // One-time migration: legacy 5-field sites get php_mail_enabled detected
+    // from artifacts (msmtprc). Uses a global marker file in the sites directory.
+    // After the first migration, subsequent restarts respect explicit values.
+    {
+        std::string migration_marker = config_.data_root() + "/.sites-mail-migrated";
+        struct stat marker_stat;
+        bool already_migrated = (stat(migration_marker.c_str(), &marker_stat) == 0);
+
+        if (!already_migrated) {
+            bool migrated = false;
+            for (auto& site : loaded_sites) {
+                if (site.php_mail_enabled) continue;
+                std::string msmtprc_path = config_.sites_dir() + site.domain + "/config/php/msmtprc";
+                if (filesystem_.exists(msmtprc_path)) {
+                    site.php_mail_enabled = true;
+                    migrated = true;
+                    logger_.info("MAIL", "Migrated legacy site " + site.domain + ": php_mail_enabled=true");
+                }
             }
+            if (migrated) {
+                storage_.save_sites(loaded_sites);
+            }
+            // Create marker — migration runs only once
+            std::ofstream marker(migration_marker);
         }
     }
-    if (migrated) {
-        storage_.save_sites(sites_.list());
+
+    if (!loaded_sites.empty()) {
+        sites_.set_sites(loaded_sites);
     }
 
     // Scan existing site directories to reclaim allocated ports

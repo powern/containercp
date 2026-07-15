@@ -664,34 +664,47 @@ async function enablePhpMail(siteId, domain) {
     if (el) el.innerHTML = '<span style="color:var(--green,#22c55e)">✅ PHP mail enabled</span>';
   } catch(e) {
     if (e.code === 'mail_domain_missing') {
-      // MailDomain does not exist — offer to create it
+      // MailDomain does not exist — offer to create it via backend endpoint
       if (!confirm('Mail Domain for ' + domain + ' does not exist.\n\nCreate it now with DKIM and enable PHP Mail?')) return;
       if (el) el.innerHTML = '<span style="color:var(--text3)">Creating Mail Domain...</span>';
       try {
-        // Find ContainerCP Domain ID to link MailDomain to site
-        const domainsData = await api('/api/domains');
-        const cpDomain = (domainsData.data||[]).find(d => d.domain === domain || d.fqdn === domain);
-        const body = {domain: domain, mode: 'local-primary'};
-        if (cpDomain) body.domain_id = cpDomain.id;
-        const md = await apiPost('/api/mail/domains', body);
-        await apiPost('/api/mail/domains/' + md.data.id + '/dkim/generate');
-        if (el) el.innerHTML = '<span style="color:var(--green,#22c55e)">✅ Mail Domain created. Retrying enable...</span>';
-        const retry = await apiPost('/api/sites/' + siteId + '/enable-mail');
-        if (retry.success) {
-          const ms = await api('/api/sites/' + siteId + '/mail-status');
-          renderPhpMailCard(siteId, domain, ms);
-          if (el) el.innerHTML = '<span style="color:var(--green,#22c55e)">✅ PHP mail enabled. Add DKIM DNS record in Mail → Domains.</span>';
+        // Use backend endpoint that safely resolves domain_id/site_id
+        const md = await apiPost('/api/sites/' + siteId + '/mail-domain');
+        if (md.data && md.data.id) {
+          await apiPost('/api/mail/domains/' + md.data.id + '/dkim/generate');
+          if (el) el.innerHTML = '<span style="color:var(--green,#22c55e)">✅ Mail Domain created. Retrying enable...</span>';
+          const retry = await apiPost('/api/sites/' + siteId + '/enable-mail');
+          if (retry.success) {
+            const ms = await api('/api/sites/' + siteId + '/mail-status');
+            renderPhpMailCard(siteId, domain, ms);
+            if (el) el.innerHTML = '<span style="color:var(--green,#22c55e)">✅ PHP mail enabled. Add DKIM DNS record in Mail → Domains.</span>';
+          }
         }
       } catch(e2) {
         if (el) el.innerHTML = '<span style="color:#ef4444">❌ ' + (e2.api_message || e2.message || 'Create failed') + '</span>';
       }
     } else if (e.code === 'mail_domain_disabled') {
-      if (confirm('Mail Domain for ' + domain + ' exists but is disabled.\n\nActivate it now?')) {
+      if (confirm('Mail Domain for ' + domain + ' exists but is disabled.\n\nActivate it now and retry Enable PHP Mail?')) {
+        if (el) el.innerHTML = '<span style="color:var(--text3)">Activating Mail Domain...</span>';
         try {
-          // Find the MailDomain and enable it (no API for this yet, user can do it via Mail → Domains)
-          if (el) el.innerHTML = '<span style="color:var(--text3)">Please enable the Mail Domain in Mail → Domains section, then retry.</span>';
+          // Fetch mail domains to find the disabled one
+          const mailDomains = await api('/api/mail/domains');
+          const disabledMd = (mailDomains.data||[]).find(md => md.domain === domain || md.domain_name === domain);
+          if (disabledMd) {
+            await apiPost('/api/mail/domains/' + disabledMd.id, {enabled: true, mode: 'local-primary'});
+            if (el) el.innerHTML = '<span style="color:var(--green,#22c55e)">✅ Mail Domain activated. Retrying enable...</span>';
+            // Retry enable-mail
+            const retry = await apiPost('/api/sites/' + siteId + '/enable-mail');
+            if (retry.success) {
+              const ms = await api('/api/sites/' + siteId + '/mail-status');
+              renderPhpMailCard(siteId, domain, ms);
+              if (el) el.innerHTML = '<span style="color:var(--green,#22c55e)">✅ PHP mail enabled.</span>';
+            }
+          } else {
+            if (el) el.innerHTML = '<span style="color:#ef4444">❌ Mail Domain not found via API</span>';
+          }
         } catch(e2) {
-          if (el) el.innerHTML = '<span style="color:#ef4444">❌ ' + e2.message + '</span>';
+          if (el) el.innerHTML = '<span style="color:#ef4444">❌ ' + (e2.api_message || e2.message) + '</span>';
         }
       }
     } else {

@@ -91,8 +91,10 @@ core::OperationResult SiteMailOrchestrator::disable_mail(
     uint64_t site_id, const std::string& domain) {
 
     // 1. Remove credentials from Dovecot + Postfix
-    //    Note: remove() returns bool — non-critical, continue cleanup either way
-    credentials_.remove(site_id);
+    bool cred_removed = credentials_.remove(site_id);
+    if (!cred_removed) {
+        // Non-fatal: credentials may not exist; continue cleanup
+    }
 
     // 2. Remove msmtprc
     if (!domain.empty()) {
@@ -109,8 +111,11 @@ core::OperationResult SiteMailOrchestrator::disable_mail(
         }
     }
 
-    // 4. Sync mail config
-    rt_.sync_site_mail(site_id);
+    // 4. Sync mail config (reload Postfix + Dovecot)
+    auto sync = rt_.sync_site_mail(site_id);
+    if (!sync.success) {
+        return sync;
+    }
 
     return {true, ""};
 }

@@ -2082,6 +2082,31 @@ bool ApiServer::start() {
             s.save();
         };
 
+        if (action == "mail-domain") {
+            // Create a MailDomain for this site, linked to its canonical Domain
+            auto* dom = s.domains().find_by_site(site_id);
+            if (!dom) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"domain_not_found\","
+                    "\"message\":\"No ContainerCP Domain found for this site\"}";
+                return r;
+            }
+            uint64_t md_id = s.mail().create(site->domain,
+                mail::MailDomainMode::LocalPrimary, dom->id, site_id, "");
+            if (md_id == 0) {
+                r.status_code = 409;
+                r.body = "{\"success\":false,\"error\":\"mail_domain_exists\","
+                    "\"message\":\"MailDomain already exists for this domain\"}";
+                return r;
+            }
+            s.save();
+            // Trigger mail config regeneration
+            s.runtime_sync().sync("mail");
+            auto* created = s.mail().find(md_id);
+            r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(md_id) + "}}";
+            return r;
+        }
+
         if (action == "enable-mail") {
             // 1. MailDomain must exist (created separately via Mail → Domains)
             auto* md = s.mail().find_by_domain(site->domain);

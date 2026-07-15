@@ -126,6 +126,11 @@ std::vector<site::Site> Storage::load_sites() {
     std::string line;
     while (std::getline(file, line)) {
         if (line.empty()) continue;
+
+        // Count pipe characters to distinguish 5-field (legacy) vs 6-field format
+        int pipes = 0;
+        for (char c : line) if (c == '|') pipes++;
+
         std::istringstream ss(line);
         std::string token;
         site::Site s;
@@ -135,6 +140,10 @@ std::vector<site::Site> Storage::load_sites() {
         if (std::getline(ss, token, '|')) s.node_id = std::stoull(token);
         if (std::getline(ss, token, '|')) s.web_server = token.empty() ? "apache" : token;
         if (std::getline(ss, token, '|')) s.php_mail_enabled = (token == "1");
+
+        // Legacy 5-field format: php_mail_enabled field was absent.
+        // Leave it as default (false) — migration is done by ServiceRegistry
+        // on the loaded_sites vector before set_sites(), using one-time criteria.
         s.name = s.domain;
         sites.push_back(std::move(s));
     }
