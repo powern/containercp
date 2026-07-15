@@ -466,6 +466,7 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
 
     dkim_out << "# ContainerCP generated Rspamd DKIM signing configuration\n"
              << "# Do not edit manually — changes will be overwritten.\n\n"
+             << "enabled = true;\n"
              << "sign_authenticated = true;\n"
              << "sign_local = true;\n"
              << "allow_hdrfrom_mismatch = false;\n"
