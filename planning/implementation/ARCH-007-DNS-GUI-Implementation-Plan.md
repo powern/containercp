@@ -153,10 +153,12 @@ Before any implementation, verify the current state of all files that will be to
   - `std::string last_detected_at() const` — ISO 8601 timestamp
 
 - [ ] Detection methods (tried in order):
-  1. **DNS resolution of server hostname** — Resolve `Config::server_hostname()` for A/AAAA via c-ares (reuse `DnsCheckService` or use `ares_query` directly)
-  2. **External DNS helper** — Query `myip.opendns.com @resolver1.opendns.com` via c-ares or `CommandExecutor` with `dig`
-  3. **System routing** — Parse `ip -4 route get 1.1.0.0` for source IP via `CommandExecutor`
-  4. **Fallback** — Return empty string
+  > **Important:** Server hostname DNS is NOT the primary source (circular dependency —
+  > DNS GUI checks DNS correctness, using DNS for expected IP creates a loop).
+  1. **System routing table** — Parse `ip -4 route get 1.1.0.0` and `ip -6 route get 2600::` for source IP via `CommandExecutor`. Local, deterministic, no external dependency.
+  2. **External DNS helper (c-ares)** — Query `myip.opendns.com` via `resolver1.opendns.com` for A/AAAA using c-ares. Optionally try multiple resolvers for consistency.
+  3. **Server hostname fallback** — Only if other methods fail: resolve `Config::server_hostname()` via c-ares. Least preferred due to circular dependency.
+  4. **Final fallback** — Return empty string (IP unknown, status: Not Available).
 
 - [ ] Storage in `Config`:
   - `public_ipv4_` — getter/setter, stored in `/srv/containercp/data/public_ipv4`
@@ -178,14 +180,28 @@ Before any implementation, verify the current state of all files that will be to
 
 - [ ] **Tests:** `tests/test_network_service.cpp`
 
+- [ ] Caching:
+  - In-memory cache with 5-minute TTL
+  - Persisted to Config (disk) for daemon restart resilience
+  - `refresh()` forces immediate re-detection
+  - External lookups only on cache miss or refresh — NOT on every page load
+  - Background re-detection every 5 minutes (async)
+
+- [ ] Logging:
+  - Log detected IP, source method, duration, errors
+  - Log overall detection summary on completion
+  - Logger category: `"NETWORK"`
+
 **Tests for 1.5.1:**
-- IPv4 detection via server_hostname resolution
-- IPv6 detection via server_hostname resolution
-- Fallback when no IP detected (empty string)
+- IPv4 detection via routing table (mock `ip route`)
+- IPv4 detection via external DNS (mock c-ares response)
+- Consistency check: same IP from multiple sources
+- In-memory cache returns cached value within TTL
+- `refresh()` clears cache, forces re-detection
 - Config storage persists across detection runs
-- `refresh()` clears cached values
 - Values not editable via settings API (read-only)
-- Detection runs at startup
+- Logging output contains expected fields
+- Fallback when no IP detected (empty string, Unknown status)
 
 ---
 

@@ -738,18 +738,51 @@ public:
 ```
 
 **Detection methods (tried in order, first success wins):**
-1. **DNS resolution of server hostname** — Resolve `Config::server_hostname()` A/AAAA record via c-ares. This works when the server hostname is a public domain pointing to the server.
-2. **External DNS helper** — Query `myip.opendns.com @resolver1.opendns.com` for A record (returns caller's public IP).
-3. **System routing table** — Parse `ip -4 route get 1.1.0.0` output for source IP.
-4. **Fallback** — Return empty string (IP unknown).
 
-**Storage:** Detected values are cached in `Config` (auto-detected, NOT user-editable):
-- `public_ipv4` — cached in `/srv/containercp/data/public_ipv4`
-- `public_ipv6` — cached in `/srv/containercp/data/public_ipv6`
-- `last_ip_detection` — ISO 8601 timestamp
+> **Important:** The server's own hostname DNS is NOT used as the primary source.
+> DNS GUI checks DNS correctness; using DNS to determine the expected IP would
+> create a circular dependency (DNS → expected IP → DNS). If the hostname's
+> A record is wrong, the diagnostic would be unable to detect the problem.
 
-**Integration:** `NetworkService` is initialized at daemon startup and runs detection
-asynchronously. Values are refreshed every 24 hours or on demand via `refresh()`.
+1. **System routing table** — Parse `ip -4 route get 1.1.0.0` / `ip -6 route get 2600::` output for source IP using `CommandExecutor`. This is a local, deterministic source that does not depend on external services or DNS.
+
+2. **External DNS helper (c-ares)** — Query `myip.opendns.com` via `resolver1.opendns.com` for A/AAAA records using c-ares (not system dig). This returns the caller's public IP as seen by the DNS resolver. Multiple resolvers can be tried for consistency:
+   - `myip.opendns.com @resolver1.opendns.com`
+   - `whoami.akamai.net`
+   - `o-o.myaddr.l.google.com @ns1.google.com`
+
+3. **Consistency check** — If multiple external sources return the same IP, confidence is high. If values differ, log a warning and use the most common value.
+
+4. **Server hostname fallback** — As a last resort, resolve `Config::server_hostname()` via c-ares. This is the least preferred method due to circular dependency, but provides a value when other methods fail.
+
+5. **Fallback** — Return empty string (IP unknown / not available).
+
+**Caching:**
+- Detected values are **cached in memory** for 5 minutes (TTL).
+- Cached values are also persisted to `Config` for daemon restart resilience:
+  - `public_ipv4` → `/srv/containercp/data/public_ipv4`
+  - `public_ipv6` → `/srv/containercp/data/public_ipv6`
+  - `last_ip_detection` → ISO 8601 timestamp
+- On daemon startup, cached values from disk are used immediately.
+- Background re-detection runs asynchronously every 5 minutes.
+- `refresh()` forces immediate re-detection (bypasses cache).
+- External lookups only happen when cache is expired or on explicit refresh — NOT on every page load.
+
+**Logging:**
+Every detection attempt logs:
+```
+[NETWORK] Detecting public IPv4...
+[NETWORK] Public IPv4: 116.202.231.94 (source: routing table, duration: 0.3s)
+[NETWORK] Public IPv6: not available (source: external DNS, duration: 1.2s, error: timeout)
+[NETWORK] Detection complete: v4=116.202.231.94 v6="" source=routing_table+e+dns
+```
+
+This covers:
+- Which IP was detected
+- Which detection method succeeded
+- How long detection took
+- Any errors encountered
+- Overall detection summary
 
 ### `DnsCheckService` (updated: `libs/dns/DnsCheckService.h/.cpp`)
 
