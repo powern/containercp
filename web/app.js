@@ -1902,9 +1902,15 @@ function getEvidenceSteps(type, domain) {
 }
 
 // Recommendation definitions (single source of truth)
-function getRecDefs(domain, serverHostname, stsPublished, caaPublished, tlsPublished, autoPublished) {
+function getRecDefs(domain, serverHostname, dmarcCurrent, dmarcPublished, stsPublished, caaPublished, tlsPublished, autoPublished) {
   function p(v) { return v || '(not published)'; }
-  return {
+  const all = {
+    'dmarc': {
+      type: 'DMARC_POLICY_MISMATCH',
+      configured: dmarcCurrent || '',
+      published: p(dmarcPublished),
+      copyValue: dmarcCurrent || '',
+    },
     'mta-sts': {
       type: 'MTA_STS_NOT_FOUND',
       configured: 'v=STSv1; id=1',
@@ -1930,9 +1936,7 @@ function getRecDefs(domain, serverHostname, stsPublished, caaPublished, tlsPubli
       copyValue: 'autodiscover.' + domain + '. 3600 IN CNAME ' + (serverHostname || 'N/A') + '.',
     },
   };
-  // dmarc is added dynamically in loadDomainSecurity with live dmarcCurrent/dmarcPublished
-  defs['dmarc'] = { type: 'DMARC_POLICY_MISMATCH', configured: _dmarcSelection || '', published: dmarcPublished || '', copyValue: _dmarcSelection || '' };
-  return defs;
+  return all;
 }
 
 function loadDomainSecurity() {
@@ -1946,23 +1950,24 @@ function loadDomainSecurity() {
 
   (async () => {
     // Fetch live DNS for DMARC + all recommendations
+    // Each fetch has its own try/catch so one failure doesn't block the tab
     let dmarcPublished = '', stsPublished = '', caaPublished = '', tlsPublished = '', autoPublished = '';
     try {
       const dmarcDns = await fetchDnsForFqdn('_dmarc.' + domain, 'TXT');
       if (dmarcDns) { const r = window.getDnsRecs(dmarcDns, 'TXT'); if (r.length) dmarcPublished = r[0].value; }
-    } catch(e) { console.error('DMARC fetch failed', e); }
+    } catch(e) { console.error('Failed to fetch _dmarc.' + domain, e); }
     try {
       const d = await fetchDnsForFqdn('_mta-sts.' + domain, 'TXT');
       if (d) { const r = window.getDnsRecs(d, 'TXT'); if (r.length) stsPublished = r[0].value; }
-    } catch(e) { console.error('MTA-STS fetch failed', e); }
+    } catch(e) { console.error('Failed to fetch _mta-sts.' + domain, e); }
     try {
       const d = await fetchDnsForFqdn(domain, 'CAA');
       if (d) { const r = window.getDnsRecs(d, 'CAA'); if (r.length) caaPublished = r.map(x => x.value).join(', '); }
-    } catch(e) { console.error('CAA fetch failed', e); }
+    } catch(e) { console.error('Failed to fetch CAA for ' + domain, e); }
     try {
       const d = await fetchDnsForFqdn('_smtp._tls.' + domain, 'TXT');
       if (d) { const r = window.getDnsRecs(d, 'TXT'); if (r.length) tlsPublished = r[0].value; }
-    } catch(e) { console.error('TLS-RPT fetch failed', e); }
+    } catch(e) { console.error('Failed to fetch _smtp._tls.' + domain, e); }
     try {
       const d = await fetchDnsForFqdn('autodiscover.' + domain, 'CNAME,A');
       if (d) {
@@ -1970,10 +1975,10 @@ function loadDomainSecurity() {
         if (c.length) autoPublished = 'CNAME ' + c[0].value;
         else { const a = window.getDnsRecs(d, 'A'); if (a.length) autoPublished = 'A ' + a[0].value; }
       }
-    } catch(e) { console.error('Autodiscover fetch failed', e); }
+    } catch(e) { console.error('Failed to fetch autodiscover.' + domain, e); }
 
-    const recDefs = getRecDefs(domain, serverHostname, stsPublished, caaPublished, tlsPublished, autoPublished);
     const dmarcCurrent = _dmarcSelection || 'v=DMARC1; p=none;';
+    const recDefs = getRecDefs(domain, serverHostname, dmarcCurrent, dmarcPublished, stsPublished, caaPublished, tlsPublished, autoPublished);
     const dmarcHost = '_dmarc.' + domain;
     const dmarcFqdn = dmarcHost + '.';
     const dmarcFull = dmarcFqdn + ' 3600 IN TXT "' + dmarcCurrent + '"';
@@ -2051,10 +2056,13 @@ function loadDomainSecurity() {
       + card('autodiscover', 'Autodiscover', 'autodiscover', 'CNAME', 'Autodiscover configures email clients automatically.', copyBtn(recDefs['autodiscover'].copyValue) + (serverHostname ? whyBtn('autodiscover') : ''))
       + '</div>';
 
-    // Attach data-copy + security event listeners
     window.attachDataCopyListener('security-tab-content');
     attachSecurityDelegation();
-  })();
+  })().catch(function(err) {
+    console.error('Security tab load failed', err);
+    var el = document.getElementById('domain-tab-content');
+    if (el) el.innerHTML = '<div class="empty-state">Failed to load Security tab</div>';
+  });
 }
 
 // Single event delegation for Security tab
