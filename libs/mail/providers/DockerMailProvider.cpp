@@ -517,6 +517,7 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
                << "upstream \"local\" {\n"
                << "  default = yes;\n"
                << "  self_scan = yes;\n"
+               << "  port = 11334;\n"  // normal worker is on this port
                << "}\n";
 
     // worker-normal.inc — normal HTTP controller worker (needed for rspamadm control)
