@@ -2,7 +2,7 @@
 
 **Status:** Draft  
 **Author:** ContainerCP Architecture  
-**Version:** 1  
+**Version:** 2  
 **Related Epic:** DNS GUI Redesign  
 
 ---
@@ -28,6 +28,8 @@ Admin opens a domain → immediately sees:
 - What's configured correctly
 - What's missing
 - What's recommended
+- Which records are published in DNS vs only generated in ContainerCP
+- Expected value vs actual value comparison
 - All DNS records with one-click copy
 - Mail, SSL, and HTTP status
 
@@ -43,21 +45,49 @@ This eliminates the need to open third-party instructions or switch between mult
 - `DomainViewService`: builds enriched JSON with site name + SSL status
 - API: `GET /api/domains` (enriched list), `POST /api/domains/remove`
 
-### No DNS subsystem
-- There is **no** `libs/dns/` directory
-- No DNS provider interface exists
-- No DNS resolution/checking capability
-- `ProfileType::DNS` enum exists but no implementation
+### DNS-related code — what DOES exist
+The codebase contains NO DNS zone editor, NO DNS provider interface, NO DNS record CRUD. All DNS-adjacent code is limited to:
+
+| Location | What it does |
+|----------|-------------|
+| `libs/profile/ProfileType.h` | `enum ProfileType::DNS` — declared for future, no implementation |
+| `libs/ssl/CertificateProvider.h` | `supports_dns_challenge()` — returns `false` (no DNS-01 ACME) |
+| `libs/mail/DkimManager.h` | DKIM key generation → returns TXT value string (not published) |
+| `libs/mail/MailDomain.h` | `dkim_public_key_dns` field — stores the DKIM TXT record value |
+| `libs/storage/Storage.cpp:415,460` | Pipe-delimited persistence of `dkim_public_key_dns` |
+| `libs/api/ApiServer.cpp:1687-1706` | `POST /api/mail/domains/<id>/dkim/generate` — returns `dns_record` string |
+| `libs/runtime/RuntimeSynchronizer.h:14` | Comment mentioning future DNS sync handler |
+| `libs/mail/providers/DockerMailProvider.cpp:308` | Postfix container DNS resolver (`nameserver 8.8.8.8`) — for SMTP, NOT for serving zones |
+| `tests/test_runtime_sync.cpp:63-81` | Test stub for a `"dns"` sync handler |
+
+### What does NOT exist
+- **No `libs/dns/` directory** — `ls libs/` confirms zero DNS module
+- **No DNS resolution code** — no `dig`, `drill`, `getaddrinfo`, or DoH client anywhere
+- **No DNS provider interface** — nothing that reads or writes to an external DNS service
+- **No API for DNS checking** — no `GET /api/domains/<domain>/dns-check`
+- **No expected-vs-actual comparison** — system cannot tell if a generated DKIM record is actually published in DNS
+
+### Current Web UI DNS column
+```javascript
+// web/app.js:872
+{label:'DNS', html:() => '<span class="badge badge-info">Unknown</span>'}
+```
+Always shows "Unknown" — zero DNS logic exists in the frontend.
+
+### Roadmap status
+```
+DNS-001: DNS resource and manager  ⬜ Planned (v0.6)
+DNS-002: DNS provider interface     ⬜ Planned (v0.6)
+DNS-003: DNS CLI and REST API       ⬜ Planned (v0.6)
+DNS-004: DNS Web UI pages           ⬜ Planned (v0.6)
+```
+All tasks are still planned with the original scope of a full DNS zone editor — **which is no longer the goal**.
 
 ### Mail DKIM
 - Fully implemented in `libs/mail/DkimManager`
 - API: `POST /api/mail/domains/<id>/dkim/generate`
-- Returns DNS TXT record value with copy buttons in UI
-
-### Web UI (`web/app.js`)
-- Single-page application (~2300 lines)
-- Domains table shows: Domain, Type, Site, Target, **DNS (Unknown)**, HTTP (Unknown), SSL, Actions
-- Mail detail page shows DKIM record with copy buttons (Host, Value, FQDN, Full Record)
+- Returns DNS TXT record value with copy buttons in UI (Host, Value, FQDN, Full Record)
+- The record is stored locally but **never published** to DNS automatically
 
 ---
 
@@ -65,7 +95,20 @@ This eliminates the need to open third-party instructions or switch between mult
 
 ### Core principle
 
-> **The Domains section is an INFORMATIONAL dashboard. It does NOT create Sites, Mail Domains, or SSL certificates. It does NOT edit DNS zones. It shows the current state and provides recommendations.**
+> **ContainerCP does NOT manage DNS zones.**
+>
+> It does NOT:
+> - Create, edit, or delete DNS zones
+> - Publish DNS records to any provider (Cloudflare, Route53, BIND, PowerDNS, etc.)
+> - Integrate with external DNS APIs
+> - Act as a DNS server
+>
+> ContainerCP ONLY:
+> - Generates recommended DNS record **content** (TXT values, hostnames)
+> - Shows Host, Value, FQDN, and Full Record for copy-paste
+> - Checks via public DNS resolution whether a record is published
+> - Compares the actual DNS value with the expected value
+> - Shows status, recommendations, and allows the admin to re-check with one click
 
 ### Page structure
 
@@ -93,6 +136,8 @@ Each domain row shows a **Health Score** indicator — a small colored dot plus 
 
 Health Score is computed **entirely on the frontend** from existing API responses.
 
+The DNS Health column is fetched asynchronously per visible row and cached for 60 seconds. A small refresh icon appears when data is stale.
+
 #### 2. Domain Detail (`/domains/<id>`) — NEW PAGE
 
 This is the main informational dashboard. Layout uses the existing tab system (`style.css` already has `.tabs` and `.tab` classes).
@@ -107,7 +152,7 @@ Health Score: 85%  (Good)
 
 ### Tab 1: Overview
 
-Summary of everything at a glance.
+Summary of everything at a glance. Each line shows the DNS publication status for expected records.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -117,12 +162,12 @@ Summary of everything at a glance.
 │  │ ⚠️ AAAA   → Not configured        (recommended: IPv6)  ││
 │  │ ✅ MX      → mail.example.com      Priority: 10         ││
 │  │ ⚠️ SPF     → Not configured        (required for mail)  ││
-│  │ ❌ DKIM    → Missing               (generated but not   ││
-│  │                                      published in DNS)  ││
+│  │ ❌ DKIM    → Generated but NOT     [Copy to publish]    ││
+│  │              published in DNS                           ││
 │  │ ❌ DMARC   → Not configured                              ││
 │  └─────────────────────────────────────────────────────────┘│
-│                                                              │
-│  Quick Actions: [Copy All Records] [DMARC Wizard]            │
+│                                              [Check Again]  │
+│  Quick Actions: [Copy All Records] [DMARC Wizard]           │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────┬─────────────────────────────┐
@@ -137,29 +182,38 @@ Summary of everything at a glance.
 
 ### Tab 2: DNS Records
 
-Shows DNS resolution results with one-click copy helpers.
+Shows DNS resolution results with one-click copy helpers. Each record has a status indicator showing whether the **expected value** (from ContainerCP config) matches the **actual value** (from live DNS).
 
 ```
 DNS Records for example.com
 
-┌──────────────────────────────────────────────────────────────┐
-│ Type │ Name           │ Value                    │ Actions   │
-├──────────────────────────────────────────────────────────────┤
-│ A    │ @              │ 192.168.1.1             │ [Copy]   │
-│ AAAA │ @              │ — (not found)           │ [Copy]   │
-│ MX   │ @              │ mail.example.com (10)   │ [Copy]   │
-│ TXT  │ @              │ v=spf1 ...              │ [Copy]   │
-│ TXT  │ dkim._domainkey│ v=DKIM1; k=rsa; p=...  │ [Copy H] │
-│      │                │                         │ [Copy V] │
-│      │                │                         │ [Copy F] │
-│      │                │                         │ [Copy R] │
-│ TXT  │ _dmarc         │ v=DMARC1; p=quarantine; │ [Copy]   │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│ Status │ Type │ Name           │ Value                     │ TTL │
+├──────────────────────────────────────────────────────────────────┤
+│   ✅   │ A    │ @              │ 192.168.1.1              │ 3600│
+│   ⚠️   │ AAAA │ @              │ (not found)              │  —  │
+│   ✅   │ MX   │ @              │ mail.example.com (10)    │ 3600│
+│   ✅   │ TXT  │ @              │ v=spf1 mx ~all           │ 3600│
+│   ❌   │ TXT  │ dkim._domainkey│ (expected: v=DKIM1;...)  │  —  │
+│        │      │ .example.com   │ [Copy Host] [Copy Value] │     │
+│        │      │                │ [Copy FQDN] [Copy Full]  │     │
+│   ✅   │ TXT  │ _dmarc         │ v=DMARC1; p=none;        │ 3600│
+│        │      │ .example.com   │                          │     │
+└──────────────────────────────────────────────────────────────────┘
+                                              [Check Again]
 ```
 
-Each DNS record type gets dedicated copy buttons:
-- **Copy** → copies the full record value
-- **DKIM** records get 4 buttons: Copy Host, Copy Value, Copy FQDN, Copy Full Record (already implemented pattern from mail detail page)
+**Expected vs actual comparison logic:**
+- For **DKIM**: expected value comes from `MailDomain::dkim_public_key_dns`. The API returns both the expected value and whether DNS matches.
+- For **SPF**: ContainerCP generates a recommended `v=spf1 mx ~all` and checks if DNS has any SPF record. Comparison is advisory (ContainerCP doesn't enforce a specific SPF value).
+- For **DMARC**: expected value comes from the DMARC Wizard selection. If no wizard was used, only checks for any DMARC record in DNS.
+- For **A/AAAA/MX**: no expected value in ContainerCP — just shows what DNS returns.
+
+Each DNS record copy helper:
+- **Copy Host** → copies the name (e.g. `dkim._domainkey.example.com`)
+- **Copy Value** → copies the record value (e.g. `v=DKIM1; k=rsa; p=...`)
+- **Copy FQDN** → copies the full FQDN with trailing dot (e.g. `dkim._domainkey.example.com.`)
+- **Copy Full** → copies the full zone record (e.g. `dkim._domainkey.example.com. 3600 IN TXT "v=DKIM1; k=rsa; p=..."`)
 
 ### Tab 3: Mail
 
@@ -169,28 +223,38 @@ Shows mail configuration status. Integrates with the existing Mail module.
 
 **Scenario A — MailDomain exists:**
 ```
-┌────────────────────────────────────────────────────────────┐
-│  Mail Domain: example.com                                  │
-│  Mode: Local Primary                                       │
-│  Status: ✅ Active                                          │
-│                                                            │
-│  ┌─ Required Records ───────────────────────────────────┐  │
-│  │ ✅ MX     → mail.example.com (10)     In DNS: ✅     │  │
-│  │ ✅ SPF    → v=spf1 mx ~all           In DNS: ⚠️      │  │
-│  │ ✅ DKIM   → Generated                In DNS: ❌      │  │
-│  │ ⚠️ DMARC  → Not configured           [DMARC Wizard]  │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                                                            │
-│  ┌─ Recommended Records ───────────────────────────────┐  │
-│  │ ⚠️ Autodiscover → Not configured                    │  │
-│  │ ⚠️ MTA-STS     → Not configured   [Learn more]      │  │
-│  │ ⚠️ TLS-RPT     → Not configured                     │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                                                            │
-│  Mailboxes: 3       Aliases: 2                             │
-│  PHP Mail: ✅ Enabled for WordPress                        │
-└────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  Mail Domain: example.com                                        │
+│  Mode: Local Primary                                             │
+│  Status: ✅ Active                                                │
+│                                                                  │
+│  ┌─ Required Records ─────────────────────────────────────────┐  │
+│  │ ✅ MX     → mail.example.com (10)    In DNS: ✅  Match     │  │
+│  │ ✅ SPF    → v=spf1 mx ~all          In DNS: ⚠️  Missing   │  │
+│  │          [Copy SPF Record]                                 │  │
+│  │ ✅ DKIM   → Generated                In DNS: ❌  Missing   │  │
+│  │          [Copy Host] [Copy Value] [Copy FQDN] [Copy Full]  │  │
+│  │ ⚠️ DMARC  → Not configured           [DMARC Wizard]        │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  ┌─ Recommended Records ─────────────────────────────────────┐  │
+│  │ ⚠️ Autodiscover → Not configured   [Copy Record]          │  │
+│  │ ⚠️ MTA-STS     → Not configured   [Learn more][Copy TXT] │  │
+│  │ ⚠️ TLS-RPT     → Not configured   [Copy Record]          │  │
+│  │ ⚠️ CAA         → Not configured   [Copy Record]          │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  Mailboxes: 3       Aliases: 2                                   │
+│  PHP Mail: ✅ Enabled for WordPress                              │
+└──────────────────────────────────────────────────────────────────┘
 ```
+
+Each record line shows **three states**:
+1. **Generated** — does ContainerCP have the expected value?
+2. **In DNS** — is the record found in public DNS?
+3. **Match** — if both exist, do they match?
+
+This gives the admin immediate visibility: "DKIM is generated but I forgot to publish the TXT record."
 
 **Scenario B — No MailDomain (clean state):**
 ```
@@ -211,42 +275,47 @@ This is a **critical UX requirement**: when no MailDomain exists, MX/SPF/DKIM/DM
 ```
 ┌────────────────────────────────────────────────────────────┐
 │  DMARC Policy                                              │
-│  Current: none detected in DNS                              │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  [Monitor]    p=none       — Monitor only, no action │  │
-│  │  [Quarantine] p=quarantine — Tag suspicious as spam  │  │
-│  │  [Reject]     p=reject     — Block failing emails    │  │
-│  └──────────────────────────────────────────────────────┘  │
-│  Each option shows the full DMARC TXT record ready to      │
-│  copy to your DNS provider.                                │
-│                                                            │
-│  ┌─ DMARC Record Preview ──────────────────────────────┐  │
-│  │  _dmarc.example.com.  3600  IN  TXT  "v=DMARC1;     │  │
-│  │                                        p=quarantine; │  │
-│  │                                        rua=mailto:   │  │
-│  │                                        dmarc@        │  │
-│  │                                        example.com;" │  │
-│  │                                                     │  │
-│  │  [Copy Record]                                      │  │
-│  └─────────────────────────────────────────────────────┘  │
-│                                                            │
-│  MTA-STS                                                    │
-│  ℹ️  MTA-STS (RFC 8461) ensures TLS is used for mail       │
-│  delivery. Requires a TXT record and a policy file.         │
-│  [Copy _mta-sts TXT] [Copy Policy Template]                 │
-│                                                            │
+│  Current in DNS: v=DMARC1; p=none                          │
+│                                                             │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────┐  │
+│  │    Monitor        │  │   Quarantine     │  │  Reject  │  │
+│  │                   │  │   (Recommended)  │  │          │  │
+│  │  p=none           │  │  p=quarantine    │  │ p=reject │  │
+│  │                   │  │                  │  │          │  │
+│  │  No action taken  │  │  Tag as spam     │  │ Block    │  │
+│  │  on failing msgs  │  │  in quarantine   │  │ delivery │  │
+│  └──────────────────┘  └──────────────────┘  └──────────┘  │
+│                                                             │
+│  Your DNS Record (DMARC):                                   │
+│  _dmarc.example.com.  3600  IN  TXT  "v=DMARC1;            │
+│                                        p=quarantine;        │
+│                                        rua=mailto:          │
+│                                        dmarc@example.com"   │
+│                                                             │
+│  [Copy Record]    [Copy with RUA]    [Check Again]          │
+│                                                             │
+│  ⚠️  Start with p=none to monitor, then escalate            │
+│  to quarantine after 1-2 weeks.                             │
+│                                                             │
+│  ───────────────────────────────────────────────────────    │
+│                                                             │
+│  MTA-STS (RFC 8461)                                         │
+│  ℹ️  Ensures TLS is used for mail delivery.                 │
+│  Requires: _mta-sts.example.com TXT + policy file           │
+│  [Copy _mta-sts TXT]  [Copy Policy Template]                │
+│                                                             │
 │  CAA Record                                                 │
-│  ℹ️  Certification Authority Authorization lets you         │
-│  specify which CAs can issue certificates for your domain.  │
-│  [Copy CAA Record]                                          │
-│                                                            │
-│  TLS-RPT                                                     │
+│  ℹ️  Certification Authority Authorization lets you          │
+│  specify which CAs can issue certificates.                  │
+│  [Copy CAA Record for Let's Encrypt]                        │
+│                                                             │
+│  TLS-RPT                                                    │
 │  ℹ️  TLS-RPT sends delivery failure reports to your email.  │
 │  [Copy TLS-RPT Record]                                      │
 └────────────────────────────────────────────────────────────┘
 ```
 
-The **DMARC Wizard** is the key UX element here. It's not a multi-step wizard — it's a three-card selection that generates the correct TXT record.
+The **DMARC Wizard** is a three-card selector that generates the correct TXT record. It does NOT publish the record — it only shows the value for the admin to copy.
 
 ### Tab 5: Health
 
@@ -254,8 +323,8 @@ Future-ready tab. For now it shows what's available:
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│  DNS Health Score: 85% (Good)                              │
-│                                                            │
+│  DNS Health Score: 85% (Good)          [Check Again]       │
+│                                                             │
 │  ┌─ Checks ─────────────────────────────────────────────┐  │
 │  │ ✅ DNS Resolution          (A record found)           │  │
 │  │ ⚠️ IPv6                   (AAAA record missing)       │  │
@@ -263,18 +332,23 @@ Future-ready tab. For now it shows what's available:
 │  │ ✅ SSL Certificate        (Valid, 85 days remaining)  │  │
 │  │ ⚠️ HTTP Reachability      (Responds with 301)         │  │
 │  └──────────────────────────────────────────────────────┘  │
-│                                                            │
-│  Future: DNS propagation check, TTL analysis,              │
-│  certificate transparency, DNSSEC validation               │
+│                                                             │
+│  Last checked: 2 minutes ago                               │
+│                                                             │
+│  Future: propagation check, TTL analysis,                   │
+│  certificate transparency, DNSSEC validation                │
 └────────────────────────────────────────────────────────────┘
 ```
 
-The architecture is designed so that future tabs (or additions to the Health tab) can show:
-- DNSSEC status
-- DNS propagation across global nameservers
-- Certificate Transparency logs
-- HTTP security headers (HSTS, CSP, etc.)
-- Phishing/Domain squatting checks
+### "Check Again" pattern
+
+Every section that displays DNS check results has a `[Check Again]` button. Clicking it:
+1. Sets the section to "Checking..." state (with a loading spinner)
+2. Calls `GET /api/domains/<domain>/dns-check?types=...` (with relevant record types)
+3. Replaces the stale results with fresh data
+4. Updates the last-checked timestamp
+
+The frontend caches DNS results per domain for 60 seconds. "Check Again" bypasses the cache.
 
 ---
 
@@ -294,43 +368,69 @@ No new managers. This proposal adds a **read-only check service**:
 
 ### `DnsCheckService` (new file: `libs/dns/DnsCheckService.h/.cpp`)
 
-A lightweight service that performs DNS resolution queries and returns structured results. It is **read-only** — no DNS zone editing.
+A lightweight service that executes `dig` queries and returns structured results. It is **read-only** — no DNS zone editing.
 
 ```
 class DnsCheckService {
 public:
     struct DnsRecord {
-        std::string type;    // "A", "AAAA", "MX", "TXT", "CNAME", "NS", "SOA"
-        std::string name;    // e.g. "example.com"
-        std::string value;   // e.g. "192.168.1.1"
+        std::string type;      // "A", "AAAA", "MX", "TXT", "CNAME", "NS"
+        std::string name;      // e.g. "example.com"
+        std::string value;     // e.g. "192.168.1.1"
         int ttl = 0;
-        int priority = 0;    // for MX records
+        int priority = 0;      // for MX records
     };
 
     struct DnsCheckResult {
+        std::string domain;
+        std::string resolved_at;   // ISO 8601
         std::vector<DnsRecord> records;
+        struct {
+            std::string mname;     // primary nameserver
+            std::string rname;     // responsible admin email
+            uint64_t serial = 0;
+        } soa;
         bool success;
         std::string error;
     };
 
     DnsCheckResult check(const std::string& domain,
                           const std::vector<std::string>& record_types);
+
+    // Cache DNS results for N seconds to avoid repeated queries
+    void set_cache_ttl(int seconds);
+    void clear_cache(const std::string& domain);
 };
 ```
 
-**Implementation:** Uses system `dig` or a DNS library. Returns raw DNS data without interpretation — all analysis happens in the frontend.
+**Implementation:**
+- Uses `popen()` or `subprocess` to execute system `dig` with arguments:
+  ```
+  dig +short +time=5 +tries=2 <domain> <type>
+  dig +noall +answer +time=5 +tries=2 <domain> <type>
+  ```
+- Parses the structured output into `DnsRecord` structs
+- Returns structured JSON — **never returns raw stdout**
+- Timeout: 5 seconds per query, 2 retries
+- Error handling: DNS failure, timeout, NXDOMAIN all return structured errors
+- Caching: in-memory, 60-second TTL by default
 
-### `DomainEnrichmentService` (new file, or extend `DomainViewService`)
+**Security:**
+- `dig` arguments are strictly validated (domain character whitelist, record type enum)
+- Timeout prevents resource exhaustion
+- No shell injection possible (only known-safe characters passed to dig)
+
+### Extend `DomainViewService`
 
 Adds mail domain info to the enriched domain JSON. Currently `DomainViewService` enriches with `site_name` and `ssl_status`. We add:
 
 ```cpp
 // Extended enriched JSON adds:
-// "mail_domain_id": 5 or null
-// "mail_domain_mode": "local-primary" or null
-// "mail_enabled": true/false
+// "mail_domain_id": 5 or 0 (null)
+// "mail_domain_mode": "local-primary" or ""
+// "dkim_selector": "dkim" or ""
 // "dkim_generated": true/false
-// "php_mail_enabled": true/false
+// "dkim_public_key_dns": "v=DKIM1;..." or ""
 ```
 
 This runs **zero additional queries** beyond what the frontend already does — it just moves the aggregation from client to server, following the API-first principle.
@@ -345,7 +445,7 @@ No changes. Existing pipe-delimited storage is sufficient for all current data m
 
 ## Providers
 
-No new providers. The DNS checking is a **service** (`DnsCheckService`), not a provider. A future DNS provider interface would be created when ContainerCP needs to *write* DNS records to an external service (Cloudflare, AWS Route53, etc.) — which is **out of scope** for this proposal.
+No new providers. `DnsCheckService` is a **service**, not a provider. No DNS provider interface is created.
 
 ---
 
@@ -355,10 +455,10 @@ No new providers. The DNS checking is a **service** (`DnsCheckService`), not a p
 
 | Endpoint | Used for |
 |----------|----------|
-| `GET /api/domains` | List domains with SSL + site info |
+| `GET /api/domains` | List domains with SSL + site + mail info |
 | `GET /api/mail/domains` | Detect if mail domain exists for each domain |
 | `GET /api/mail/domains/<id>` | Get DKIM DNS record, mail mode |
-| `GET /api/mail/domains/<id>/dkim/generate` | Generate DKIM key pair |
+| `POST /api/mail/domains/<id>/dkim/generate` | Generate DKIM key pair |
 | `GET /api/ssl/<domain>` | SSL details per domain |
 | `GET /api/sites/<id>/mail-status` | PHP mail enabled status |
 | `GET /api/runtime/<site_id>` | HTTP service status |
@@ -367,16 +467,21 @@ No new providers. The DNS checking is a **service** (`DnsCheckService`), not a p
 
 #### `GET /api/domains/<domain>/dns-check`
 
-Performs live DNS resolution for a domain and returns all found records.
+Performs live DNS resolution for a domain via `dig` and returns all found records as structured JSON.
 
 **Request:**
 ```
 GET /api/domains/example.com/dns-check
 ```
 
-Optional query parameter to filter record types:
+Optional query parameter to filter record types (default: all):
 ```
-GET /api/domains/example.com/dns-check?types=A,AAAA,MX,TXT
+GET /api/domains/example.com/dns-check?types=A,AAAA,MX,TXT,NS,CNAME
+```
+
+Optional query parameter to bypass cache:
+```
+GET /api/domains/example.com/dns-check?refresh=1
 ```
 
 **Response:**
@@ -386,8 +491,10 @@ GET /api/domains/example.com/dns-check?types=A,AAAA,MX,TXT
   "data": {
     "domain": "example.com",
     "resolved_at": "2026-07-15T12:00:00Z",
+    "cached": false,
     "records": [
       {"type": "A",     "name": "example.com",       "value": "192.168.1.1",      "ttl": 3600},
+      {"type": "AAAA",  "name": "example.com",       "value": "",                 "ttl": 0},
       {"type": "MX",    "name": "example.com",       "value": "mail.example.com", "ttl": 3600, "priority": 10},
       {"type": "TXT",   "name": "example.com",       "value": "v=spf1 mx ~all",  "ttl": 3600},
       {"type": "TXT",   "name": "dkim._domainkey.example.com", "value": "v=DKIM1; k=rsa; p=...", "ttl": 3600},
@@ -406,22 +513,21 @@ GET /api/domains/example.com/dns-check?types=A,AAAA,MX,TXT
 ```json
 {
   "success": false,
-  "error": "DNS resolution failed for example.com: No DNS servers reachable"
+  "error": "DNS resolution failed for example.com: query timed out"
 }
 ```
 
 **Owner:** `libs/dns/DnsCheckService`  
-**HTTP status codes:** 200 (success), 400 (invalid domain), 502 (DNS resolution failure)
+**HTTP status codes:** 200 (success), 400 (invalid domain format), 502 (DNS resolution failure)  
+**Cache:** 60 seconds per domain, bypassed with `?refresh=1`
 
-### New API endpoint (optional — for richer domain list)
+### Extended existing API
 
-#### `GET /api/domains/enriched` (or extend existing `GET /api/domains`)
+#### `GET /api/domains` — new fields added to response
 
-Currently `GET /api/domains` returns per-domain: `id`, `domain`, `type`, `site_id`, `site_name`, `site_domain`, `target`, `ssl_enabled`, `ssl_status`, `enabled`.
+Currently returns per-domain: `id`, `domain`, `type`, `site_id`, `site_name`, `site_domain`, `target`, `ssl_enabled`, `ssl_status`, `enabled`.
 
-We extend the response to also include mail info by querying `MailDomainManager`:
-
-**New fields added to existing response:**
+New fields (backward-compatible):
 ```json
 {
   "id": 1,
@@ -429,14 +535,13 @@ We extend the response to also include mail info by querying `MailDomainManager`
   ...
   "mail_domain_id": 5,
   "mail_domain_mode": "local-primary",
+  "dkim_selector": "dkim",
   "dkim_generated": true,
-  "php_mail_enabled": true
+  "dkim_public_key_dns": "v=DKIM1; k=rsa; p=..."
 }
 ```
 
-When no MailDomain exists, `mail_domain_id` is `null` (JSON `0` → frontend shows `null`).
-
-**Note:** This is a backward-compatible addition. Existing fields are unchanged. The frontend is updated to use the new fields where available.
+When no MailDomain exists, `mail_domain_id` is `0` and all mail fields are empty strings or `false`.
 
 ---
 
@@ -457,14 +562,16 @@ All changes are in `web/app.js` (single SPA file). The existing DOM-building pat
 
 | Function | Purpose |
 |----------|---------|
-| `loadDomainOverview(domainId)` | Tab 1: Overview with summary cards |
-| `loadDomainDnsRecords(domainId)` | Tab 2: DNS records table with copy helpers |
-| `loadDomainMail(domainId)` | Tab 3: Mail configuration status |
+| `loadDomainOverview(domainId)` | Tab 1: Overview with summary cards + DNS check results |
+| `loadDomainDnsRecords(domainId)` | Tab 2: DNS records table with copy helpers + expected vs actual |
+| `loadDomainMail(domainId)` | Tab 3: Mail configuration status with expected vs actual DNS check |
 | `loadDomainSecurity(domainId)` | Tab 4: DMARC Wizard + MTA-STS + CAA + TLS-RPT |
 | `loadDomainHealth(domainId)` | Tab 5: Health score and check results |
+| `refreshDnsCheck(domainId, section)` | Called by [Check Again] — re-fetches DNS check for a specific section |
 | `computeHealthScore(domain)` | Calculate percentage from DNS + Mail + SSL + HTTP |
 | `showDmarcWizard()` | Modal: DMARC policy selector (Monitor/Quarantine/Reject) |
 | `domainDnsCopy(el, type)` | Copy helper for DNS records (Host/Value/FQDN/Full) |
+| `compareDnsRecord(expected, actual)` | Returns match/mismatch/missing status |
 
 ### Component: DMARC Wizard (modal)
 
@@ -483,14 +590,14 @@ A modal with 3 policy options presented as cards:
 │  │  on failing msgs │  │  in quarantine   │  │ delivery │ │
 │  └─────────────────┘  └─────────────────┘  └──────────┘ │
 │                                                          │
-│  Your DNS Record:                                         │
-│  _dmarc.example.com. 3600 IN TXT "v=DMARC1;              │
-│  p=quarantine; rua=mailto:dmarc@example.com"             │
+│  Your DNS Record (DMARC):                                │
+│  _dmarc.example.com. 3600 IN TXT "v=DMARC1;             │
+│  p=quarantine; rua=mailto:dmarc@example.com"            │
 │                                                          │
 │  [Copy Record]    [Copy with RUA]                        │
 │                                                          │
 │  ⚠️  Set p=none first to monitor, then escalate          │
-│  to quarantine once you're confident.                     │
+│  to quarantine once you're confident.                    │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -547,7 +654,13 @@ No changes. CLI is not affected by this proposal — it only modifies the Web UI
 
 ## Configuration
 
-No new configuration values.
+| Key | Default | Description |
+|-----|---------|-------------|
+| `dns_check_timeout` | `5` | Seconds to wait per DNS query |
+| `dns_check_retries` | `2` | Number of retries on failure |
+| `dns_check_cache_ttl` | `60` | Seconds to cache DNS results |
+
+All values are optional with sensible defaults. Added to the existing settings system.
 
 ---
 
@@ -569,17 +682,32 @@ No migration needed. All changes are additive:
 
 ---
 
+## Roadmap update
+
+The original DNS-001–DNS-004 items were scoped for a full DNS zone management system. Since that is no longer the goal, the items are renamed and re-scoped:
+
+| Old ID | Old name | New ID | New scope |
+|--------|----------|--------|-----------|
+| DNS-001 | DNS resource and manager | **DNS-001** | `DnsCheckService` — DNS resolution checker using `dig`, structured JSON output, caching, timeout config |
+| DNS-002 | DNS provider interface | **DNS-002** | `GET /api/domains/<domain>/dns-check` endpoint — live DNS record lookup with expected-vs-actual comparison |
+| DNS-003 | DNS CLI and REST API | **DNS-003** | Domain detail Web UI (Overview, DNS Records, Mail, Security, Health tabs) with copy helpers |
+| DNS-004 | DNS Web UI pages | **DNS-004** | Enhanced domain list with live DNS/Mail/SSL/HTTP columns and Health Score |
+
+**Core change:** The subsystem is now called `DNS Check` (not `DNS Management`). All four tasks are purely read-only. No zone editing, no provider interface, no DNS publishing.
+
+---
+
 ## Rejected Alternatives
 
 ### 1. Full DNS zone editor
 Create a complete DNS management system where ContainerCP controls DNS zones (like Cloudflare, AWS Route53).
 
-**Rejected because:** It contradicts the Product Vision — ContainerCP is a hosting control panel, not a DNS management platform. The existing `libs/dns/` would need a provider interface, storage, manager, and full CRUD API. This is premature and out of scope for v0.5.
+**Rejected because:** It contradicts the Product Vision — ContainerCP is a hosting control panel, not a DNS management platform. This would require a provider interface, storage, manager, and full CRUD API. Out of scope for v0.5 and beyond.
 
 ### 2. Client-side DNS-over-HTTPS (DoH)
 Use a third-party DoH service (like Cloudflare's `1.1.1.1/dns-query`) directly from the browser to avoid any backend changes.
 
-**Rejected because:** It violates the API-first principle. The frontend would depend on an external service that may be unavailable or blocked. It also exposes DNS queries to a third party. A backend endpoint is more reliable, private, and consistent with ContainerCP's architecture.
+**Rejected because:** It violates the API-first principle. The frontend would depend on an external service that may be unavailable or blocked. It also exposes DNS queries to a third party. A backend `dig`-based service is more reliable, private, and consistent with ContainerCP's architecture.
 
 ### 3. Embed DNS recommendations in the backend
 Have the backend analyze DNS records and generate recommendations (e.g., "SPF is missing") rather than doing it in the frontend.
@@ -596,6 +724,11 @@ Replace the list page with just a search/detail flow.
 
 **Rejected because:** The list view is useful for overview. We enhance it with live status columns instead.
 
+### 6. Use a DNS library instead of `dig`
+Link against a C/C++ DNS resolution library (e.g., `ldns`, `c-ares`, `unbound`) instead of invoking `dig`.
+
+**Rejected for v1:** `dig` is universally available on any system where ContainerCP runs (it's part of `bind9-dnsutils`). Using `dig` avoids adding library dependencies. The output is well-structured and parseable. A native library can be considered in a future version if performance or reliability requirements demand it.
+
 ---
 
 ## Risks
@@ -603,10 +736,11 @@ Replace the list page with just a search/detail flow.
 | Risk | Mitigation |
 |------|------------|
 | DNS resolution can be slow (multiple record types × many domains) | Cache results per domain for 60 seconds. Show stale data while refreshing. Only check visible records. |
-| DNS resolution may fail (firewall, no DNS) | Graceful degradation — show "Unable to check" badge. API returns 502 with clear message. |
+| DNS resolution may fail (firewall, no DNS, `dig` not installed) | Graceful degradation — show "Unable to check" badge. API returns 502 with clear message. Add `bind9-dnsutils` to dependencies. |
 | Large number of domains (100+) could cause many API calls | Batch DNS check. Add rate limiting. The detail page only checks one domain at a time. |
 | The single `web/app.js` file grows too large | This is an existing risk. The new code follows existing patterns. A future refactoring could split into modules. |
 | DMARC Wizard suggests policies that break email | Add clear warnings: "Start with p=none to monitor. Only escalate after monitoring." |
+| `dig` output parsing fragile across versions | Pin specific `dig` flags (`+short`, `+noall`, `+answer`). Test against multiple `bind9` versions. Fall back to explicit error on parse failure. |
 
 ---
 
@@ -614,43 +748,52 @@ Replace the list page with just a search/detail flow.
 
 ### Unit tests
 - `DnsCheckService::check()` returns correct records for known domains
-- `DnsCheckService::check()` handles resolution failures gracefully
+- `DnsCheckService::check()` handles NXDOMAIN, timeout, no records gracefully
+- `DnsCheckService::check()` validates domain names (rejects invalid chars)
+- Cache hit returns cached data; `?refresh=1` bypasses cache
 - DomainViewService enrichment includes new mail fields
 
 ### Integration tests
-- `GET /api/domains/example.com/dns-check` returns valid JSON
+- `GET /api/domains/example.com/dns-check` returns valid structured JSON
+- `GET /api/domains/example.com/dns-check?types=A,MX` returns only A and MX records
+- `GET /api/domains/example.com/dns-check?refresh=1` returns fresh data
 - Extended `GET /api/domains` includes new fields when MailDomain exists
-- Extended `GET /api/domains` omits new fields (or returns null) when no MailDomain
+- Extended `GET /api/domains` returns empty/null mail fields when no MailDomain
 
 ### Web UI validation
 - Domain list shows correct health indicators for all states
 - Domain detail loads all 5 tabs without errors
+- [Check Again] refreshes each section independently
 - DMARC Wizard generates correct TXT records for all 3 policies
 - Copy buttons work for all DNS record types
 - Mail tab shows clean "not configured" state when no MailDomain exists
+- Expected vs actual comparison shows correct match/mismatch/missing for DKIM
 - Health score calculation matches across all test scenarios
 
 ### Manual validation
 - Open a domain with full configuration → all green, high health score
+- Open a domain with DKIM generated but not published → shows "Generated but Missing from DNS"
 - Open a domain with no mail → mail tab shows clean state, no false errors
-- Open a domain with DKIM generated but not published → shows "Generated" but DNS check shows "Missing"
-- Copy each button type → verifies clipboard content is correct
+- Click each copy button → verifies clipboard content is correct
+- Click [Check Again] → shows spinner, then updates results
 
 ---
 
 ## Implementation order
 
-1. **Backend:** `DnsCheckService` + API endpoint `GET /api/domains/<domain>/dns-check`
-2. **Backend:** Extend `GET /api/domains` with mail domain fields
-3. **Frontend:** Enhanced domain list (live columns + health score)
-4. **Frontend:** Domain detail page → Overview tab
-5. **Frontend:** Domain detail page → DNS Records tab with copy helpers
-6. **Frontend:** Domain detail page → Mail tab with conditional display
-7. **Frontend:** Domain detail page → Security tab with DMARC Wizard
-8. **Frontend:** Domain detail page → Health tab
-9. **Documentation:** Update `docs/api/API_REFERENCE.md` with new endpoint
-10. **Tests:** Unit + integration tests for backend
-11. **Changelog:** Record in CHANGELOG.md
+1. **Backend:** `DnsCheckService` (`libs/dns/DnsCheckService.h/.cpp`) — dig wrapper with structured output
+2. **Backend:** API endpoint `GET /api/domains/<domain>/dns-check`
+3. **Backend:** Extend `GET /api/domains` with mail domain fields
+4. **Frontend:** Enhanced domain list (live columns + health score)
+5. **Frontend:** Domain detail page → Overview tab
+6. **Frontend:** Domain detail page → DNS Records tab with copy helpers + expected vs actual
+7. **Frontend:** Domain detail page → Mail tab with conditional display
+8. **Frontend:** Domain detail page → Security tab with DMARC Wizard
+9. **Frontend:** Domain detail page → Health tab
+10. **Documentation:** Update `docs/api/API_REFERENCE.md` with new endpoint
+11. **Documentation:** Update `planning/project-status.md` with new DNS-001–DNS-004 scope
+12. **Tests:** Unit + integration tests for backend
+13. **Changelog:** Record in CHANGELOG.md
 
 ---
 
@@ -676,25 +819,44 @@ Domains  (12 domains)
 ```
 Domains / example.com                       [Open] [Copy] [Remove]
 
-Health Score: 95/100 (Excellent)                          [History]
+Health Score: 95/100 (Excellent)
+
+┌─ DNS Check ────────────────────────────────────────────────┐
+│ ✅ A       → 192.168.1.1              TTL: 3600            │
+│ ⚠️ AAAA   → Not found                (IPv6 recommended)   │
+│ ✅ MX      → mail.example.com (10)    TTL: 3600            │
+│ ✅ SPF     → v=spf1 mx ~all           Found in DNS ✓      │
+│ ❌ DKIM    → Generated but NOT        [Copy Host][Copy V]  │
+│              published in DNS         [Copy FQDN][Copy F]  │
+│ ✅ DMARC   → v=DMARC1; p=none         Found in DNS ✓      │
+│                                          [Check Again]     │
+└────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────┬──────────────────────┬──────────────────────┐
-│ DNS                  │ Mail                 │ SSL                  │
-│ A     ✅ 192.168.1.1 │ Domain: example.com  │ Certificate: Active  │
-│ AAAA  ⚠️ Missing     │ Mode: Local Primary  │ HTTPS: Enabled       │
-│ MX    ✅ mail.ex.com  │ DKIM: ✅ Generated   │ Redirect: Enabled    │
-│ SPF   ✅ v=spf1 ...   │ Mailboxes: 3         │ Expires: 2026-10-06 │
-│ DKIM  ✅ Found in DNS │ PHP Mail: Enabled    │ Issuer: Let's Encrypt│
-│ DMARC ✅ p=quarantine │                     │                     │
+│ Mail                 │ SSL                  │ Site                 │
+│ Domain: example.com  │ Certificate: Active  │ MySite               │
+│ Mode: Local Primary  │ HTTPS: Enabled       │ Backend: Apache2     │
+│ DKIM: ✅ Generated   │ Redirect: Enabled    │ PHP: 8.4             │
+│ Mailboxes: 3         │ Expires: 2026-10-06 │ Runtime: All Running │
 └──────────────────────┴──────────────────────┴──────────────────────┘
+```
 
-Required Records                          Recommended Records
-┌────────────────────────────────────┐   ┌────────────────────────────┐
-│ ✅ MX    → mail.example.com       │   │ ⚠️ Autodiscover → Add     │
-│ ✅ SPF   → v=spf1 mx ~all         │   │ ⚠️ MTA-STS     → Add     │
-│ ✅ DKIM  → Generated + Published  │   │ ⚠️ TLS-RPT     → Add     │
-│ ✅ DMARC → p=quarantine            │   │ ℹ️  CAA        → Add     │
-└────────────────────────────────────┘   └────────────────────────────┘
+### Domain detail — DNS Records tab
+
+```
+DNS Records for example.com                         [Check Again]
+
+Status  Type  Name                     Value                      TTL
+─────────────────────────────────────────────────────────────────────
+   ✅   A     @                        192.168.1.1                3600
+   ⚠️   AAAA  @                        (not found)                 —
+   ✅   MX    @                        mail.example.com (10)     3600
+   ✅   TXT   @                        v=spf1 mx ~all            3600
+   ❌   TXT   dkim._domainkey          (missing from DNS)          —
+              .example.com             Expected: v=DKIM1; k=rsa;...
+                                       [Copy Host] [Copy Value]
+                                       [Copy FQDN] [Copy Full]
+   ✅   TXT   _dmarc.example.com       v=DMARC1; p=none;         3600
 ```
 
 ### DMARC Wizard
@@ -706,7 +868,7 @@ DMARC Policy Wizard
   p=none            p=quarantine         p=reject
   Monitor only      Tag as spam          Block delivery
 
-Preivew:
+Preview:
 _dmarc.example.com. 3600 IN TXT "v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com"
 
 [Copy Record]    [Copy with RUA]
