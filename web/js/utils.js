@@ -132,6 +132,16 @@ window.attachDataCopyListener = function(containerId) {
   });
 };
 
+// Determine expected MX target based on MailDomain mode
+// For local-primary: MX target = domain name itself (Postfix receives mail for the domain)
+// For external-relay/split-m365: MX target = relay_host from MailDomain config
+window.getExpectedMxTarget = function(mailDomain, serverHostname) {
+  if (!mailDomain) return '';
+  if (mailDomain.mode === 'local-primary') return mailDomain.domain || '';
+  if (mailDomain.mode === 'external-relay' || mailDomain.mode === 'split-m365') return mailDomain.relay_host || '';
+  return '';
+};
+
 // Compute DNS record status: Match/Mismatch/Not Published/Unexpected/N/A
 window.computeRecordStatus = function(configuredVal, publishedVal, matchFn) {
   const hasCfg = !!configuredVal;

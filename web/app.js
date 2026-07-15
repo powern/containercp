@@ -1122,14 +1122,7 @@ async function loadDomainOverview() {
   }
 
   // Determine expected MX target based on MailDomain mode
-  let expectedMx = '';
-  if (mailDomain) {
-    if (mailDomain.mode === 'local-primary') {
-      expectedMx = serverHostname || mailDomain.domain;
-    } else if (mailDomain.mode === 'external-relay' || mailDomain.mode === 'split-m365') {
-      expectedMx = mailDomain.relay_host || '';
-    }
-  }
+  let expectedMx = window.getExpectedMxTarget(mailDomain, serverHostname);
 
   // Build DNS check summary table
   const expectedTypes = ['A', 'AAAA', 'MX'];
@@ -1180,7 +1173,12 @@ async function loadDomainOverview() {
     }
 
     if (recs.length > 0) {
-      published = recs.map(r => fmtVal(r.value)).join(', ');
+      if (type === 'MX') {
+        // MX: show hostname primarily, priority as secondary
+        published = recs.map(r => fmtVal(r.value) + (r.priority ? ' (priority ' + r.priority + ')' : '')).join(', ');
+      } else {
+        published = recs.map(r => fmtVal(r.value)).join(', ');
+      }
     }
 
     // Determine column label and status
@@ -1198,11 +1196,8 @@ async function loadDomainOverview() {
         statusLabel = (pubNorm === cfgNorm) ? 'Match' : 'Mismatch';
         statusCls = (pubNorm === cfgNorm) ? 'badge-ok' : 'badge-warn';
       } else if (type === 'MX' && expectedMx) {
-        const mxMatch = recs.some(r => {
-          const mxVal = (r.value || '').toLowerCase();
-          const expVal = expectedMx.toLowerCase();
-          return mxVal.includes(expVal) || expVal.includes(mxVal);
-        });
+        const mxNormExp = window.normalizeHostname(expectedMx);
+        const mxMatch = recs.some(r => window.normalizeHostname(r.value) === mxNormExp);
         statusLabel = mxMatch ? 'Match' : 'Mismatch';
         statusCls = mxMatch ? 'badge-ok' : 'badge-warn';
       } else if (type === 'A' || type === 'AAAA') {
@@ -1361,8 +1356,7 @@ async function loadDomainDnsRecords() {
   }
 
   let expectedMx = '';
-  if (mailDomain && mailDomain.mode === 'local-primary') expectedMx = serverHostname || '';
-  else if (mailDomain && (mailDomain.mode === 'external-relay' || mailDomain.mode === 'split-m365')) expectedMx = mailDomain.relay_host || '';
+  expectedMx = window.getExpectedMxTarget(mailDomain, serverHostname);
 
   const now = Date.now();
   const ts = new Date(now).toLocaleTimeString();
@@ -1715,8 +1709,7 @@ async function loadDomainMail() {
 
   // Determine expected MX
   let expectedMx = '';
-  if (mailDomain.mode === 'local-primary') expectedMx = serverHostname || '';
-  else if (mailDomain.mode === 'external-relay' || mailDomain.mode === 'split-m365') expectedMx = mailDomain.relay_host || '';
+  expectedMx = window.getExpectedMxTarget(mailDomain, serverHostname);
 
   // === Required Records ===
   const mxPubRecs = window.getDnsRecs(rootMx, 'MX');
