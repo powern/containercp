@@ -1290,10 +1290,216 @@ async function refreshDomainOverview() {
   loadDomainOverview();
 }
 
-// Stub tabs for Phases 5-8
-function loadDomainDnsRecords() {
+// --- DNS Records tab ---
+async function loadDomainDnsRecords() {
   const content = document.getElementById('domain-tab-content');
-  if (content) content.innerHTML = '<div class="empty-state">DNS Records tab — coming in Phase 5</div>';
+  if (!content) return;
+  const dd = window._domainDetailData;
+  if (!dd) { content.innerHTML = '<div class="empty-state">No data</div>'; return; }
+  const {domainRow, mailDomain, serverHostname} = dd;
+  const domain = domainRow.domain;
+
+  content.innerHTML = '<div class="empty-state">Checking DNS...</div>';
+
+  // Helper: get records for a type from DNS result
+  function getRecs(dnsResult, typeName) {
+    if (!dnsResult || !Array.isArray(dnsResult.per_type)) return [];
+    const pt = dnsResult.per_type.find(x => x && x.type === typeName);
+    if (!pt || !Array.isArray(pt.records)) return [];
+    return pt.records;
+  }
+
+  // Fetch all DNS data
+  const rootDns = await fetchDnsForFqdn(domain, 'A,AAAA,MX,TXT,NS,CNAME,CAA');
+  let dkimDns = null, dmarcDns = null, mtaStsDns = null;
+
+  if (mailDomain && mailDomain.dkim_public_key_dns) {
+    const sel = mailDomain.dkim_selector || 'dkim';
+    dkimDns = await fetchDnsForFqdn(sel + '._domainkey.' + domain, 'TXT');
+  }
+  if (mailDomain) {
+    dmarcDns = await fetchDnsForFqdn('_dmarc.' + domain, 'TXT');
+    mtaStsDns = await fetchDnsForFqdn('_mta-sts.' + domain, 'TXT');
+  }
+
+  // Determine expected MX
+  let expectedMx = '';
+  if (mailDomain && mailDomain.mode === 'local-primary') expectedMx = serverHostname || '';
+  else if (mailDomain && (mailDomain.mode === 'external-relay' || mailDomain.mode === 'split-m365')) expectedMx = mailDomain.relay_host || '';
+
+  const now = Date.now();
+  const ts = new Date(now).toLocaleTimeString();
+
+  // Build table content
+  function fmtVal(v, max) {
+    if (!v || typeof v !== 'string') return '—';
+    if (v.length > (max || 40)) return esc(v.substr(0, max || 40)) + '...';
+    return esc(v);
+  }
+
+  function statusBadge(label, cls) {
+    if (!label) return '<span class="badge badge-info">—</span>';
+    return `<span class="badge ${cls || 'badge-info'}">${esc(label)}</span>`;
+  }
+
+  function copyBtn(text, label) {
+    const safe = esc(text);
+    return `<button class="btn-icon" onclick="copyText('${safe.replace(/'/g, "\\'")}')" title="${esc(label)}">${esc(label)}</button>`;
+  }
+
+  function dkimCopyButtons(selector, domain, pubKey) {
+    const host = selector + '._domainkey.' + domain;
+    const fqdn = host + '.';
+    const full = fqdn + ' 3600 IN TXT "' + pubKey + '"';
+    return `<span style="white-space:nowrap;">
+      <button class="btn-icon" onclick="copyText('${esc(host)}')" title="Copy Host">H</button>
+      <button class="btn-icon" onclick="copyText('${esc(pubKey)}')" title="Copy Value">V</button>
+      <button class="btn-icon" onclick="copyText('${esc(fqdn)}')" title="Copy FQDN">F</button>
+      <button class="btn-icon" onclick="copyText('${esc(full)}')" title="Copy Full Record">R</button>
+    </span>`;
+  }
+
+  let rows = '';
+
+  // 1. A record
+  {
+    const recs = getRecs(rootDns, 'A');
+    const expected = rootDns && rootDns.expected_ipv4 || '';
+    const published = recs.length > 0 ? recs[0].value : '';
+    const status = expected && published ? (expected === published ? 'Match' : 'Mismatch') : expected && !published ? 'Not Published' : 'Unexpected';
+    const cls = expected && published ? (expected === published ? 'badge-ok' : 'badge-warn') : expected && !published ? 'badge-err' : 'badge-warn';
+    const ttl = recs.length > 0 ? recs[0].ttl : 0;
+    rows += `<tr><td>${statusBadge(status, cls)}</td><td>A</td><td style="font-family:monospace;">@</td><td style="font-family:monospace;">${fmtVal(expected)}</td><td style="font-family:monospace;">${fmtVal(published)}</td><td>${ttl || '—'}</td><td>${published ? copyBtn(published, 'Copy') : '—'}</td></tr>`;
+  }
+
+  // 2. AAAA
+  {
+    const recs = getRecs(rootDns, 'AAAA');
+    const hasExpected = rootDns && rootDns.expected_ipv6 && rootDns.expected_ipv6.length > 0;
+    const expected = hasExpected ? rootDns.expected_ipv6 : '';
+    const published = recs.length > 0 ? recs[0].value : '';
+    let status, cls;
+    if (!hasExpected && !published) { status = 'N/A'; cls = 'badge-info'; }
+    else if (hasExpected && published) { status = expected === published ? 'Match' : 'Mismatch'; cls = expected === published ? 'badge-ok' : 'badge-warn'; }
+    else if (hasExpected && !published) { status = 'Not Published'; cls = 'badge-err'; }
+    else { status = 'Unexpected'; cls = 'badge-warn'; }
+    const ttl = recs.length > 0 ? recs[0].ttl : 0;
+    rows += `<tr><td>${statusBadge(status, cls)}</td><td>AAAA</td><td style="font-family:monospace;">@</td><td style="font-family:monospace;">${fmtVal(expected)}</td><td style="font-family:monospace;">${fmtVal(published)}</td><td>${ttl || '—'}</td><td>${published ? copyBtn(published, 'Copy') : '—'}</td></tr>`;
+  }
+
+  // 3. MX
+  {
+    const recs = getRecs(rootDns, 'MX');
+    const configured = expectedMx ? expectedMx : '';
+    const published = recs.map(r => (r.priority ? r.priority + ' ' : '') + (r.value || '')).join(', ');
+    const hasPublished = recs.length > 0;
+    let status, cls;
+    if (configured && hasPublished) {
+      const mxMatch = recs.some(r => (r.value || '').toLowerCase().includes(configured.toLowerCase()) || configured.toLowerCase().includes((r.value || '').toLowerCase()));
+      status = mxMatch ? 'Match' : 'Mismatch'; cls = mxMatch ? 'badge-ok' : 'badge-warn';
+    } else if (configured && !hasPublished) { status = 'Not Published'; cls = 'badge-err'; }
+    else if (!configured && hasPublished) { status = 'Unexpected'; cls = 'badge-warn'; }
+    else { status = '—'; cls = 'badge-info'; }
+    rows += `<tr><td>${statusBadge(status, cls)}</td><td>MX</td><td style="font-family:monospace;">@</td><td style="font-family:monospace;">${fmtVal(configured)}</td><td style="font-family:monospace;">${fmtVal(published)}</td><td>—</td><td>${published ? copyBtn(published, 'Copy') : '—'}</td></tr>`;
+  }
+
+  // 4. SPF (TXT starting with v=spf1)
+  {
+    const recs = getRecs(rootDns, 'TXT').filter(r => typeof r.value === 'string' && r.value.startsWith('v=spf1'));
+    const recommended = mailDomain ? 'v=spf1 mx ~all' : '';
+    const published = recs.length > 0 ? recs[0].value : '';
+    let status, cls;
+    if (recommended && published) { status = 'Found'; cls = 'badge-ok'; }
+    else if (recommended && !published) { status = 'Not Published'; cls = 'badge-err'; }
+    else if (!recommended && published) { status = 'Unexpected'; cls = 'badge-warn'; }
+    else { status = '—'; cls = 'badge-info'; }
+    rows += `<tr><td>${statusBadge(status, cls)}</td><td>SPF</td><td style="font-family:monospace;">@</td><td style="font-family:monospace;">${recommended ? esc(recommended) : '—'}</td><td style="font-family:monospace;">${fmtVal(published)}</td><td>${recs.length > 0 ? recs[0].ttl : '—'}</td><td>${published ? copyBtn(published, 'Copy') : recommended ? copyBtn(recommended, 'Copy') : '—'}</td></tr>`;
+  }
+
+  // 5. DKIM
+  if (dkimDns) {
+    const recs = getRecs(dkimDns, 'TXT');
+    const selector = mailDomain ? mailDomain.dkim_selector || 'dkim' : 'dkim';
+    const host = selector + '._domainkey.' + domain;
+    const pubKey = mailDomain ? mailDomain.dkim_public_key_dns || '' : '';
+    const published = recs.length > 0 ? recs[0].value : '';
+    let status, cls;
+    if (pubKey && published) {
+      const pn = published.replace(/\s+/g, '');
+      const cn = pubKey.replace(/\s+/g, '');
+      status = pn === cn ? 'Match' : 'Mismatch';
+      cls = pn === cn ? 'badge-ok' : 'badge-warn';
+    } else if (pubKey && !published) { status = 'Not Published'; cls = 'badge-err'; }
+    else { status = '—'; cls = 'badge-info'; }
+    const ttl = recs.length > 0 ? recs[0].ttl : 0;
+    rows += `<tr><td>${statusBadge(status, cls)}</td><td>DKIM</td><td style="font-family:monospace;">${esc(host)}</td><td style="font-family:monospace;">${pubKey ? fmtVal(pubKey, 60) : '—'}</td><td style="font-family:monospace;">${published ? fmtVal(published, 60) : '—'}</td><td>${ttl || '—'}</td><td>${pubKey ? dkimCopyButtons(selector, domain, pubKey) : '—'}</td></tr>`;
+  }
+
+  // 6. DMARC
+  if (dmarcDns) {
+    const recs = getRecs(dmarcDns, 'TXT');
+    const recommended = 'v=DMARC1; p=none;';
+    const published = recs.length > 0 ? recs[0].value : '';
+    let status, cls;
+    if (published) { status = 'Found'; cls = 'badge-ok'; }
+    else { status = 'Not Published'; cls = 'badge-err'; }
+    const host = '_dmarc.' + domain;
+    const fullRecord = host + '. 3600 IN TXT "' + recommended + '"';
+    rows += `<tr><td>${statusBadge(status, cls)}</td><td>DMARC</td><td style="font-family:monospace;">${esc(host)}</td><td style="font-family:monospace;">${esc(recommended)}</td><td style="font-family:monospace;">${fmtVal(published)}</td><td>${recs.length > 0 ? recs[0].ttl : '—'}</td><td><span style="white-space:nowrap;"><button class="btn-icon" onclick="copyText('${esc(host)}')" title="Copy Host">H</button><button class="btn-icon" onclick="copyText('${esc(recommended)}')" title="Copy Value">V</button><button class="btn-icon" onclick="copyText('${esc(host + '.')}')" title="Copy FQDN">F</button><button class="btn-icon" onclick="copyText('${esc(fullRecord)}')" title="Copy Full Record">R</button></span></td></tr>`;
+  }
+
+  // 7. CAA
+  {
+    const recs = getRecs(rootDns, 'CAA');
+    const recommended = '0 issue "letsencrypt.org"';
+    const published = recs.length > 0 ? recs.map(r => r.value).join(', ') : '';
+    let status, cls;
+    if (published) { status = 'Found'; cls = 'badge-ok'; }
+    else { status = '—'; cls = 'badge-info'; }
+    rows += `<tr><td>${statusBadge(status, cls)}</td><td>CAA</td><td style="font-family:monospace;">@</td><td style="font-family:monospace;">${esc(recommended)}</td><td style="font-family:monospace;">${fmtVal(published)}</td><td>—</td><td>${published ? copyBtn(published, 'Copy') : copyBtn(recommended, 'Copy')}</td></tr>`;
+  }
+
+  // 8. NS
+  {
+    const recs = getRecs(rootDns, 'NS');
+    const published = recs.map(r => r.value).join(', ');
+    rows += `<tr><td>${statusBadge(published ? 'Found' : '—', published ? 'badge-ok' : 'badge-info')}</td><td>NS</td><td style="font-family:monospace;">@</td><td>—</td><td style="font-family:monospace;">${fmtVal(published)}</td><td>${recs.length > 0 ? recs[0].ttl : '—'}</td><td>${published ? copyBtn(published, 'Copy') : '—'}</td></tr>`;
+  }
+
+  // 9. MTA-STS
+  if (mtaStsDns) {
+    const recs = getRecs(mtaStsDns, 'TXT');
+    const published = recs.length > 0 ? recs[0].value : '';
+    rows += `<tr><td>${statusBadge(published ? 'Found' : '—', published ? 'badge-ok' : 'badge-info')}</td><td>MTA-STS</td><td style="font-family:monospace;">_mta-sts.${esc(domain)}</td><td>—</td><td style="font-family:monospace;">${fmtVal(published)}</td><td>${recs.length > 0 ? recs[0].ttl : '—'}</td><td>—</td></tr>`;
+  }
+
+  content.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <h3 style="font-size:14px;">DNS Records</h3>
+      <button class="btn btn-sm" onclick="refreshDnsRecordsTab()">Check Again</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Status</th><th>Type</th><th>Name</th><th>Configured</th><th>Published</th><th>TTL</th><th>Actions</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div style="margin-top:8px;font-size:11px;color:var(--text3);text-align:right;">Last checked: ${ts}</div>`;
+}
+
+async function refreshDnsRecordsTab() {
+  // Clear cache for all domain-related FQDNs
+  const dd = window._domainDetailData;
+  if (!dd) return;
+  const domain = dd.domainRow.domain;
+  DnsCache.clear(domain);
+  DnsCache.clear('_dmarc.' + domain);
+  DnsCache.clear('_mta-sts.' + domain);
+  if (dd.mailDomain && dd.mailDomain.dkim_public_key_dns) {
+    const sel = dd.mailDomain.dkim_selector || 'dkim';
+    DnsCache.clear(sel + '._domainkey.' + domain);
+  }
+  loadDomainDnsRecords();
 }
 function loadDomainMail() {
   const content = document.getElementById('domain-tab-content');
