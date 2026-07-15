@@ -1878,10 +1878,207 @@ async function refreshMailTab() {
   }
   loadDomainMail();
 }
+// ===== SECURITY TAB =====
+let _dmarcSelection = '';
+
+// Reason codes for Evidence panels
+function getEvidenceReason(recordType, configured, published, domain) {
+  const reasons = {
+    'DNS_LOOKUP_FAILED': { reason: 'Public DNS lookup failed. Check your DNS provider or try again later.', fix: 'Verify DNS server availability and network connectivity.' },
+    'MX_NOT_FOUND': { reason: 'No MX record found in DNS. Email delivery to this domain will fail.', fix: 'Add an MX record pointing to your mail server.' },
+    'SPF_NOT_FOUND': { reason: 'No SPF record found in DNS. Without SPF, spammers can forge emails from your domain.', fix: 'Add a TXT record: v=spf1 mx ~all' },
+    'SPF_MISMATCH': { reason: 'Published SPF record differs from the recommended value.', fix: 'Update the SPF TXT record to match the recommended value.' },
+    'DKIM_NOT_PUBLISHED': { reason: 'ContainerCP generated the DKIM key pair, but no TXT record exists at the DKIM selector.', fix: 'Add the DKIM TXT record to your DNS zone.' },
+    'DKIM_KEY_MISMATCH': { reason: 'The public key in DNS differs from the one ContainerCP generated. The key may have been regenerated without updating DNS.', fix: 'Update the DKIM TXT record with the new public key.' },
+    'DMARC_NOT_PUBLISHED': { reason: 'No DMARC record found in DNS. Without DMARC, you have no visibility into email authentication failures.', fix: 'Add a DMARC TXT record. Start with p=none to monitor.' },
+    'DMARC_POLICY_MISMATCH': { reason: 'The DMARC policy differs. Recommended: ' + configured + '. Published: ' + published, fix: 'Update the DMARC TXT record at _dmarc.' + domain + ' to match the recommended policy.' },
+    'CAA_MISSING': { reason: 'No CAA record found. Any CA can issue certificates for your domain.', fix: 'Add a CAA record: 0 issue "letsencrypt.org"' },
+    'MTA_STS_NOT_FOUND': { reason: 'No MTA-STS TXT record found. Mail delivery without TLS may be insecure.', fix: 'Add TXT record at _mta-sts.' + domain },
+  };
+  return reasons[recordType] || { reason: 'Unexpected DNS configuration. Review the published and expected values.', fix: 'Align the published DNS record with the expected value.' };
+}
+
+function buildEvidenceHtml(recordType, configured, published, domain, dnsDetails, copyValue) {
+  const info = getEvidenceReason(recordType, configured, published, domain);
+  return `
+    <div class="evidence-panel" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:12px;margin:8px 0;">
+      <div style="margin-bottom:8px;">
+        <strong style="font-size:13px;">${esc(recordType)}</strong>
+      </div>
+      <div style="display:grid;gap:6px;font-size:12px;">
+        <div><strong>Expected (ContainerCP):</strong><br><code style="word-break:break-all;">${esc(configured)}</code></div>
+        <div><strong>Published (public DNS):</strong><br><code style="word-break:break-all;">${esc(published)}</code></div>
+        <div><strong>Reason:</strong> ${esc(info.reason)}</div>
+        <div><strong>How to fix:</strong> ${esc(info.fix)}</div>
+        ${dnsDetails ? '<div><strong>DNS Response Details:</strong><br><code style="font-size:11px;word-break:break-all;">' + esc(dnsDetails) + '</code></div>' : ''}
+      </div>
+      <div style="margin-top:8px;display:flex;gap:6px;">
+        <button class="btn btn-sm btn-primary" onclick="copyText('${esc(copyValue)}')">Copy Correct Record</button>
+        <button class="btn btn-sm" onclick="this.closest('.evidence-panel').remove()">Dismiss</button>
+      </div>
+    </div>`;
+}
+
 function loadDomainSecurity() {
   const content = document.getElementById('domain-tab-content');
-  if (content) content.innerHTML = '<div class="empty-state">Security tab — coming in Phase 7</div>';
+  if (!content) return;
+  const dd = window._domainDetailData;
+  if (!dd) { content.innerHTML = '<div class="empty-state">No data</div>'; return; }
+  const {domainRow, mailDomain, serverHostname} = dd;
+  const domain = domainRow.domain;
+
+  // Check if DMARC is published
+  async function checkPublishedDmarc() {
+    const dmarcDns = await fetchDnsForFqdn('_dmarc.' + domain, 'TXT');
+    const recs = dmarcDns ? window.getDnsRecs(dmarcDns, 'TXT') : [];
+    return recs.length > 0 ? recs[0].value : '';
+  }
+
+  checkPublishedDmarc().then(dmarcPublished => {
+    const dmarcCurrent = _dmarcSelection || 'v=DMARC1; p=none;';
+
+    content.innerHTML = `
+      <div id="security-tab-content">
+        <h3 style="font-size:14px;margin-bottom:12px;">DMARC Policy</h3>
+
+        <div style="margin-bottom:12px;">
+          <div style="font-size:12px;color:var(--text3);margin-bottom:8px;">
+            ${dmarcPublished ? 'Current in DNS: <code>' + esc(dmarcPublished) + '</code>' : 'No DMARC record found in DNS'}
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px;">
+          <div class="card" style="cursor:pointer;${_dmarcSelection && _dmarcSelection.includes('p=none') ? 'border-color:var(--primary);' : ''}" onclick="selectDmarcPolicy('monitor', '${esc('v=DMARC1; p=none;')}')">
+            <h3>Monitor</h3>
+            <div style="margin-top:8px;font-size:12px;font-family:monospace;">v=DMARC1; p=none;</div>
+            <div style="margin-top:4px;font-size:11px;color:var(--text3);">No action taken on failing messages</div>
+          </div>
+          <div class="card" style="cursor:pointer;${_dmarcSelection && _dmarcSelection.includes('p=quarantine') ? 'border-color:var(--primary);' : ''}" onclick="selectDmarcPolicy('quarantine', '${esc('v=DMARC1; p=quarantine; rua=mailto:dmarc@' + domain)}')">
+            <h3>Quarantine</h3>
+            <div style="margin-top:8px;font-size:12px;font-family:monospace;">v=DMARC1; p=quarantine;</div>
+            <div style="margin-top:4px;font-size:11px;color:var(--text3);">Tag suspicious emails as spam</div>
+          </div>
+          <div class="card" style="cursor:pointer;${_dmarcSelection && _dmarcSelection.includes('p=reject') ? 'border-color:var(--primary);' : ''}" onclick="selectDmarcPolicy('reject', '${esc('v=DMARC1; p=reject; rua=mailto:dmarc@' + domain)}')">
+            <h3>Reject</h3>
+            <div style="margin-top:8px;font-size:12px;font-family:monospace;">v=DMARC1; p=reject;</div>
+            <div style="margin-top:4px;font-size:11px;color:var(--text3);">Block failing emails entirely</div>
+          </div>
+        </div>`;
+
+    // Show selected policy preview
+    if (_dmarcSelection) {
+      const host = '_dmarc.' + domain;
+      const fqdn = host + '.';
+      const fullRecord = fqdn + ' 3600 IN TXT "' + _dmarcSelection + '"';
+
+      // Compare with published
+      let compareHtml = '';
+      if (dmarcPublished) {
+        const pn = dmarcPublished.replace(/\s+/g, '');
+        const sn = _dmarcSelection.replace(/\s+/g, '');
+        const isMatch = pn === sn;
+        compareHtml = `
+          <div class="card" style="margin-top:8px;">
+            <div style="font-size:12px;">Comparison</div>
+            <div style="margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">
+              <div><strong>Recommended:</strong><br><code style="font-size:11px;word-break:break-all;">${esc(_dmarcSelection)}</code></div>
+              <div><strong>Published:</strong><br><code style="font-size:11px;word-break:break-all;">${esc(dmarcPublished)}</code></div>
+            </div>
+            <div style="margin-top:6px;">${window.statusBadge(isMatch ? 'Match' : 'Mismatch', isMatch ? 'badge-ok' : 'badge-warn')}
+            ${!isMatch ? buildEvidenceHtml('DMARC_POLICY_MISMATCH', _dmarcSelection, dmarcPublished, domain, '', _dmarcSelection) : ''}</div>
+          </div>`;
+      }
+
+      content.innerHTML += `
+        <div class="card">
+          <h3>Your DMARC Record Preview</h3>
+          <div style="margin-top:8px;font-size:12px;font-family:monospace;word-break:break-all;background:var(--bg3);padding:8px;border-radius:4px;">
+            ${esc(fullRecord)}
+          </div>
+          <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-primary" onclick="copyText('${esc(_dmarcSelection)}')">Copy Record</button>
+            <button class="btn btn-sm" onclick="copyText('${esc('v=DMARC1; ' + _dmarcSelection.slice(_dmarcSelection.indexOf('p=')) + '; rua=mailto:dmarc@' + domain)}')">Copy with RUA</button>
+            <button class="btn btn-sm" onclick="copyText('${esc(fullRecord)}')">Copy Full Record</button>
+          </div>
+          <div style="margin-top:8px;font-size:11px;color:var(--yellow);">⚠️ Start with p=none to monitor, then escalate to quarantine after 1-2 weeks.</div>
+          ${compareHtml}
+        </div>`;
+    }
+
+    // Additional sections
+    content.innerHTML += `
+      <h3 style="font-size:14px;margin:16px 0 8px;">Additional Recommendations</h3>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;">
+
+        <div class="card">
+          <h3>MTA-STS</h3>
+          <div style="margin-top:8px;font-size:12px;">
+            <div>Ensures TLS is used for mail delivery (RFC 8461).</div>
+            <div style="margin-top:6px;font-family:monospace;font-size:11px;">Host: _mta-sts<br>Type: TXT<br>Value: v=STSv1; id=1</div>
+          </div>
+          <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn btn-sm" onclick="copyText('v=STSv1; id=1')">Copy TXT</button>
+            <button class="btn btn-sm" onclick="copyText('{\"version\":\"STSv1\",\"mode\":\"enforce\",\"mx\":[\"${esc(serverHostname || domain)}\"],\"max_age\":86400}')">Copy Policy Template</button>
+            <button class="btn btn-sm" onclick="showMtaStsEvidence()">Why?</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>CAA</h3>
+          <div style="margin-top:8px;font-size:12px;">
+            <div>Certification Authority Authorization lets you specify which CAs can issue certificates.</div>
+            <div style="margin-top:6px;font-family:monospace;font-size:11px;">Host: @<br>Type: CAA<br>Value: 0 issue "letsencrypt.org"</div>
+          </div>
+          <div style="margin-top:8px;display:flex;gap:6px;">
+            <button class="btn btn-sm" onclick="copyText('0 issue \"letsencrypt.org\"')">Copy Record</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>TLS-RPT</h3>
+          <div style="margin-top:8px;font-size:12px;">
+            <div>TLS-RPT sends delivery failure reports to your email.</div>
+            <div style="margin-top:6px;font-family:monospace;font-size:11px;">Host: _smtp._tls<br>Type: TXT<br>Value: v=TLSRPTv1; rua=mailto:tlsreports@${esc(domain)}</div>
+          </div>
+          <div style="margin-top:8px;display:flex;gap:6px;">
+            <button class="btn btn-sm" onclick="copyText('v=TLSRPTv1; rua=mailto:tlsreports@${esc(domain)}')">Copy Record</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Autodiscover</h3>
+          <div style="margin-top:8px;font-size:12px;">
+            <div>Autodiscover configures email clients automatically.</div>
+            <div style="margin-top:6px;font-family:monospace;font-size:11px;">Host: autodiscover<br>Type: CNAME<br>Value: ${esc(serverHostname || 'N/A')}</div>
+          </div>
+          <div style="margin-top:8px;display:flex;gap:6px;">
+            <button class="btn btn-sm" onclick="copyText('autodiscover.${esc(domain)}. 3600 IN CNAME ${esc(serverHostname)}.')">Copy Record</button>
+          </div>
+        </div>
+
+      </div>`;
+
+    window.attachDataCopyListener('security-tab-content');
+  });
 }
+
+window.selectDmarcPolicy = function(policy, value) {
+  _dmarcSelection = value;
+  loadDomainSecurity();
+};
+
+window.showMtaStsEvidence = function() {
+  const dd = window._domainDetailData;
+  if (!dd) return;
+  const content = document.getElementById('security-tab-content');
+  if (!content) return;
+  const evidence = buildEvidenceHtml('MTA_STS_NOT_FOUND', 'v=STSv1; id=1', '(not checked)', dd.domainRow.domain, '', 'v=STSv1; id=1');
+  // Insert after the MTA-STS card
+  const mtaCard = content.querySelector('.card h3');
+  if (mtaCard && mtaCard.textContent === 'MTA-STS') {
+    mtaCard.closest('.card').insertAdjacentHTML('afterend', evidence);
+  }
+};
 function loadDomainHealth() {
   const content = document.getElementById('domain-tab-content');
   if (content) content.innerHTML = '<div class="empty-state">Health tab — coming in Phase 8</div>';
