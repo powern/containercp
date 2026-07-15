@@ -517,7 +517,6 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
                << "upstream \"local\" {\n"
                << "  default = yes;\n"
                << "  self_scan = yes;\n"
-               << "  port = 11334;\n"  // normal worker is on this port
                << "}\n";
 
     // worker-normal.inc — normal HTTP controller worker (needed for rspamadm control)
@@ -525,7 +524,9 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
     std::ofstream norm_out(norm_path);
     if (!norm_out.is_open()) return {false, "Failed to write " + norm_path};
     norm_out << "# ContainerCP generated Rspamd normal worker override\n\n"
-             << "bind_socket = \"*:11334\";\n"
+             << "# Note: bind_socket is intentionally NOT set here.\n"
+             << "# The base config already binds normal to localhost:11333.\n"
+             << "# Changing it (e.g. to port 11334) conflicts with the controller.\n"
              << "type = \"normal\";\n";
 
     return {true, ""};
