@@ -6,6 +6,26 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-15 | `db07c1a` | Fix DKIM signing for PHP Mail — username mismatch
+
+**Root cause:** Rspamd's `dkim_signing` module defaults to `allow_username_mismatch=false`.
+When PHP Mail sends via msmtp, the SASL username (`site-11@php.containercp.internal`)
+differs from the `From:` header (`wordpress@unity.softico.ua`), causing the module
+to skip signing. SnappyMail worked because its SASL username matches the `From:` address.
+
+**Fix:**
+- Added `allow_username_mismatch = true` to generated `dkim_signing.conf`
+- Removed all experimental patches (Docker image patch, Lua wrappers, settings.conf overrides)
+- Stock Rspamd image restored — no modifications to `dkim_signing.lua`
+
+**update.sh improved:**
+- Mail stack Docker images (Rspamd, Dovecot, Postfix, SnappyMail) now rebuilt on each update
+- Prevents stale images after Dockerfile changes
+
+**Changed files:** `libs/mail/providers/DockerMailProvider.cpp`, `docker/mail/Dockerfile.rspamd`, `scripts/update.sh`
+
+---
+
 ## 2025-07-09 | Phase 1–5: Runtime management
 
 - Runtime subsystem with `RuntimeActionExecutor`, `ServiceRole`, `CommandExecutor`
