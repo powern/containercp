@@ -283,6 +283,23 @@ ServiceRegistry::ServiceRegistry()
         sites_.set_sites(loaded_sites);
     }
 
+    // Migrate legacy sites: detect PHP Mail state from artifacts
+    // (old format had no php_mail_enabled field; check for msmtprc + credentials)
+    bool migrated = false;
+    for (auto& site : const_cast<std::vector<site::Site>&>(sites_.list())) {
+        if (!site.php_mail_enabled) {
+            std::string msmtprc_path = config_.sites_dir() + site.domain + "/config/php/msmtprc";
+            if (filesystem_.exists(msmtprc_path)) {
+                site.php_mail_enabled = true;
+                migrated = true;
+                logger_.info("MAIL", "Migrated legacy site " + site.domain + ": php_mail_enabled=true");
+            }
+        }
+    }
+    if (migrated) {
+        storage_.save_sites(sites_.list());
+    }
+
     // Scan existing site directories to reclaim allocated ports
     port_manager_.scan_existing_sites(config_.sites_dir());
 

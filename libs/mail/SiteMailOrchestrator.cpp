@@ -91,6 +91,7 @@ core::OperationResult SiteMailOrchestrator::disable_mail(
     uint64_t site_id, const std::string& domain) {
 
     // 1. Remove credentials from Dovecot + Postfix
+    //    Note: remove() returns bool — non-critical, continue cleanup either way
     credentials_.remove(site_id);
 
     // 2. Remove msmtprc
@@ -102,7 +103,10 @@ core::OperationResult SiteMailOrchestrator::disable_mail(
 
     // 3. Disconnect PHP container from mail network
     if (!domain.empty()) {
-        rt_.disconnect_mail_network(site_id, domain);
+        auto net = rt_.disconnect_mail_network(site_id, domain);
+        if (!net.success) {
+            return net;
+        }
     }
 
     // 4. Sync mail config

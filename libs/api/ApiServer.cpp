@@ -2085,10 +2085,16 @@ bool ApiServer::start() {
         if (action == "enable-mail") {
             // 1. MailDomain must exist (created separately via Mail → Domains)
             auto* md = s.mail().find_by_domain(site->domain);
-            if (!md || !md->enabled) {
+            if (!md) {
                 r.status_code = 400;
                 r.body = "{\"success\":false,\"error\":\"mail_domain_missing\","
                     "\"message\":\"Mail Domain not found. Create one via Mail → Domains first.\"}";
+                return r;
+            }
+            if (!md->enabled || md->mode == mail::MailDomainMode::Disabled) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"mail_domain_disabled\","
+                    "\"message\":\"Mail Domain exists but is disabled. Enable it in Mail → Domains first.\"}";
                 return r;
             }
 
