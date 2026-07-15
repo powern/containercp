@@ -523,14 +523,22 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
                 << "  group = 'dkim',\n"
                 << "})\n";
 
-        // rspamd.conf.local — extend lua to load our fixup script + main rspamd.lua
-        std::string rcl_path = conf_dir + "/rspamd.conf.local";
-        std::ofstream rcl_out(rcl_path);
-        if (!rcl_out.is_open()) return {false, "Failed to write " + rcl_path};
-        rcl_out << "lua = [\n"
-                << "  \"$RULESDIR/rspamd.lua\",\n"
-                << "  \"" << lua_fix << "\",\n"
-                << "];\n";
+        // rspamd_wrapper.lua — loads main rspamd.lua then our fixup
+        {
+            std::string wrap_path = conf_dir + "/rspamd_wrapper.lua";
+            std::ofstream wrap_out(wrap_path);
+            if (!wrap_out.is_open()) return {false, "Failed to write " + wrap_path};
+            wrap_out << "dofile(\"/usr/share/rspamd/rules/rspamd.lua\")\n"
+                     << "dofile(\"" << lua_fix << "\")\n";
+        }
+
+        // rspamd.conf.local — override lua to use our wrapper
+        {
+            std::string rcl_path = conf_dir + "/rspamd.conf.local";
+            std::ofstream rcl_out(rcl_path);
+            if (!rcl_out.is_open()) return {false, "Failed to write " + rcl_path};
+            rcl_out << "lua = \"" << conf_dir << "/rspamd_wrapper.lua\";\n";
+        }
     }
 
     // logging.inc — log to stderr for Docker
@@ -687,7 +695,8 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "      - " << config_dir() << "/generated/rspamd/worker-normal.inc:/etc/rspamd/local.d/worker-normal.inc:ro\n"
         << "      - " << config_dir() << "/generated/rspamd/worker-proxy.inc:/etc/rspamd/local.d/worker-proxy.inc:ro\n"
         << "      - " << config_dir() << "/generated/rspamd/logging.inc:/etc/rspamd/local.d/logging.inc:ro\n"
-       << "      - " << config_dir() << "/generated/rspamd/dkim_fixup.lua:/etc/rspamd/local.d/dkim_fixup.lua:ro\n"
+        << "      - " << config_dir() << "/generated/rspamd/dkim_fixup.lua:/etc/rspamd/local.d/dkim_fixup.lua:ro\n"
+       << "      - " << config_dir() << "/generated/rspamd/rspamd_wrapper.lua:/etc/rspamd/local.d/rspamd_wrapper.lua:ro\n"
        << "      - " << config_dir() << "/generated/rspamd/rspamd.conf.local:/etc/rspamd/local.d/rspamd.conf.local:ro\n"
        << "      - " << config_dir() << "/state/dkim/:/etc/rspamd/keys/:ro\n"
         << "  redis:\n"
