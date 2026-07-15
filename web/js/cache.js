@@ -1,46 +1,72 @@
 // Cache module — in-memory cache with TTL for DNS, Runtime, and Health data.
-// All caches are keyed stores with automatic expiry.
 // Health Score is currently frontend-calculated.
 // TODO: Move Health Score calculation to backend as the single source of truth.
 //       Frontend should only display the pre-computed value from the API.
 
+// Build canonical cache key from FQDN and optional types.
+// Normalizes: lowercase FQDN, sorted unique uppercase types.
+function cacheKey(fqdn, types) {
+  const normDomain = fqdn.toLowerCase().replace(/\.+$/, '');
+  if (!types) return normDomain;
+  const typeList = types.split(',').map(t => t.trim().toUpperCase()).filter(Boolean);
+  const unique = [...new Set(typeList)].sort();
+  return normDomain + '|' + unique.join(',');
+}
+
 window.DnsCache = {
   _store: {},
 
-  get(domain) {
-    const entry = this._store[domain];
+  get(domain, types) {
+    const key = cacheKey(domain, types);
+    const entry = this._store[key];
     if (!entry) return null;
     if (entry.loading) return 'loading';
     if (Date.now() - entry.timestamp > 60000) {
-      delete this._store[domain];
+      delete this._store[key];
       return null;
     }
     return entry.data;
   },
 
-  set(domain, data) {
-    this._store[domain] = {data, timestamp: Date.now(), loading: false};
+  set(domain, types, data) {
+    const key = cacheKey(domain, types);
+    this._store[key] = {data, timestamp: Date.now(), loading: false};
   },
 
-  setLoading(domain) {
-    this._store[domain] = {data: null, timestamp: Date.now(), loading: true};
+  setLoading(domain, types) {
+    const key = cacheKey(domain, types);
+    this._store[key] = {data: null, timestamp: Date.now(), loading: true};
   },
 
-  isLoading(domain) {
-    const entry = this._store[domain];
+  isLoading(domain, types) {
+    const key = cacheKey(domain, types);
+    const entry = this._store[key];
     return entry && entry.loading;
   },
 
   // Wait for in-flight request to complete
-  async waitFor(domain) {
-    while (this.isLoading(domain)) {
+  async waitFor(domain, types) {
+    const key = cacheKey(domain, types);
+    while (this.isLoading(domain, types)) {
       await new Promise(r => setTimeout(r, 100));
     }
-    return this.get(domain);
+    return this.get(domain, types);
   },
 
-  clear(domain) {
-    delete this._store[domain];
+  // Clear specific type variant, or all variants for a domain
+  clear(domain, types) {
+    if (types) {
+      const key = cacheKey(domain, types);
+      delete this._store[key];
+    } else {
+      // Clear ALL variants for this domain
+      const prefix = domain.toLowerCase().replace(/\.+$/, '') + '|';
+      for (const key of Object.keys(this._store)) {
+        if (key === prefix.replace('|', '') || key.startsWith(prefix)) {
+          delete this._store[key];
+        }
+      }
+    }
   }
 };
 

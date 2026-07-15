@@ -870,7 +870,7 @@ async function loadDomains(p) {
           return '<span class="badge badge-info">—</span>';
         }},
         {label:'DNS', html: r => {
-          const dnsData = DnsCache.get(r.domain);
+          const dnsData = DnsCache.get(r.domain, 'A,AAAA,MX');
           if (!dnsData) return '<span class="badge badge-info">...</span>';
           return window.dnsStatusBadge(dnsData.overall_status);
         }},
@@ -884,7 +884,7 @@ async function loadDomains(p) {
         }},
         {label:'SSL', html: r => domainSslBadge(r.ssl_status)},
         {label:'Health', html: r => {
-          const dnsData = DnsCache.get(r.domain);
+          const dnsData = DnsCache.get(r.domain, 'A,AAAA,MX');
           const hs = window.computeDomainHealthScore(r, dnsData);
           return window.healthGradeBadge(hs.score, hs.grade);
         }},
@@ -906,23 +906,21 @@ async function loadDomains(p) {
       return (r.domain||'').toLowerCase().includes((searchTerm||'').toLowerCase());
     });
 
+    const domainListTypes = 'A,AAAA,MX';
     await window.processBatch(rows, 3, async (r) => {
-      // Check cache first
-      if (DnsCache.get(r.domain)) return;
-      if (DnsCache.isLoading(r.domain)) {
-        await DnsCache.waitFor(r.domain);
+      if (DnsCache.get(r.domain, domainListTypes)) return;
+      if (DnsCache.isLoading(r.domain, domainListTypes)) {
+        await DnsCache.waitFor(r.domain, domainListTypes);
         return;
       }
-      // Fetch
-      DnsCache.setLoading(r.domain);
+      DnsCache.setLoading(r.domain, domainListTypes);
       try {
-        const res = await api('/api/domains/' + encodeURIComponent(r.domain) + '/dns-check?types=A,AAAA,MX');
-        DnsCache.set(r.domain, res.data || {});
+        const res = await api('/api/domains/' + encodeURIComponent(r.domain) + '/dns-check?types=' + domainListTypes);
+        DnsCache.set(r.domain, domainListTypes, res.data || {});
       } catch(e) {
-        DnsCache.set(r.domain, null);
+        DnsCache.set(r.domain, domainListTypes, null);
         return;
       }
-      // Update row cells
       const idx = rows.indexOf(r);
       const row = document.querySelector(`#domains-table table tbody tr:nth-child(${idx+1})`);
       if (!row) return;
@@ -1009,8 +1007,8 @@ async function loadDomainDetail(p, domainId) {
       }
     }
 
-    // Compute health score
-    const dnsCacheData = DnsCache.get(domainRow.domain);
+    // Compute health score (use any cached DNS data — A,AAAA,MX,TXT is the most common)
+    const dnsCacheData = DnsCache.get(domainRow.domain, 'A,AAAA,MX') || DnsCache.get(domainRow.domain, 'A,AAAA,MX,TXT') || DnsCache.get(domainRow.domain, 'A,TXT');
     const hs = window.computeDomainHealthScore(domainRow, dnsCacheData);
     const hsBadge = window.healthGradeBadge(hs.score, hs.grade);
 
@@ -1055,24 +1053,25 @@ function switchDomainTab(tabId) {
   else content.innerHTML = '<div class="empty-state">Coming soon</div>';
 }
 
-// Helper: fetch DNS check for a specific FQDN, cached via DnsCache
+// Helper: fetch DNS check for a specific FQDN with typed cache
+// Cache key includes both FQDN and type list (e.g., 'example.com|A,TXT')
+// to prevent cache collisions between different type queries for the same domain.
 async function fetchDnsForFqdn(fqdn, types) {
-  const cached = DnsCache.get(fqdn);
+  const cached = DnsCache.get(fqdn, types);
   if (cached) return cached;
-  if (DnsCache.isLoading(fqdn)) return DnsCache.waitFor(fqdn);
-  DnsCache.setLoading(fqdn);
+  if (DnsCache.isLoading(fqdn, types)) return DnsCache.waitFor(fqdn, types);
+  DnsCache.setLoading(fqdn, types);
   try {
-    // Types are allowlist values (A,AAAA,MX,TXT) — not user input. No URL encoding needed.
     const res = await api('/api/domains/' + encodeURIComponent(fqdn) + '/dns-check?types=' + types);
     if (res && res.success && res.data) {
-      DnsCache.set(fqdn, res.data);
+      DnsCache.set(fqdn, types, res.data);
       return res.data;
     }
-    DnsCache.set(fqdn, null);
+    DnsCache.set(fqdn, types, null);
     return null;
   } catch(e) {
     console.error('DNS check failed for ' + fqdn, e);
-    DnsCache.set(fqdn, null);
+    DnsCache.set(fqdn, types, null);
     return null;
   }
 }
@@ -1281,7 +1280,7 @@ async function loadDomainOverview() {
 
 async function refreshDomainOverview() {
   if (!_currentDomain) return;
-  DnsCache.clear(_currentDomain.domain);
+  DnsCache.clear(_currentDomain.domain);  // clears ALL type variants for this domain
   loadDomainOverview();
 }
 
@@ -1731,7 +1730,7 @@ async function loadDomainMail() {
   const dmarcRecs = dmarcDns ? window.getDnsRecs(dmarcDns, 'TXT') : [];
   const dmarcRecommended = 'v=DMARC1; p=none;';
   const dmarcPublished = dmarcRecs.length > 0 ? dmarcRecs[0].value : '';
-  const dmarcStatus = window.computeRecordStatus(dmarcRecommended, dmarcPublished, (a,b) => window.normalizeDnsValue(a) === window.normalizeDnsValue(b));
+  const dmarcStatus = window.computeRecordStatus(dmarcRecommended, dmarcPublished, (a,b) => window.normalizeDmarcValue(a) === window.normalizeDmarcValue(b));
 
   // === Recommended Records ===
   // Autodiscover: standard is CNAME autodiscover.<domain> → <server_hostname>

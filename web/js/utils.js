@@ -79,6 +79,16 @@ window.normalizeHostname = function(h) {
   return h;
 };
 
+// Normalize a DMARC/TXT value for semantic comparison
+// Splits by ';', trims each token, ignores empty trailing tokens,
+// lowercase tag names, compares normalized set.
+window.normalizeDmarcValue = function(v) {
+  if (!v || typeof v !== 'string') return '';
+  const tokens = v.split(';').map(t => t.trim().toLowerCase()).filter(t => t.length > 0);
+  tokens.sort();  // normalize order
+  return tokens.join(';');
+};
+
 // Normalize a DNS value for comparison: lowercase, strip whitespace
 window.normalizeDnsValue = function(v) {
   if (!v || typeof v !== 'string') return '';
