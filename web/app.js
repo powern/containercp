@@ -1901,16 +1901,35 @@ function getEvidenceSteps(type, domain) {
   return [...shared, ...extra];
 }
 
-function showEvidenceFor(type, configured, published, copyValue, anchorSelector) {
-  const dd = window._domainDetailData;
-  if (!dd) return;
-  const content = document.getElementById('security-tab-content');
-  if (!content) return;
-  const anchor = content.querySelector(anchorSelector);
-  if (!anchor) return;
-  const steps = getEvidenceSteps(type, dd.domainRow.domain);
-  const html = evidenceHtml(type, configured, published, '', copyValue, steps);
-  toggleEvidencePanel('evidence-' + type, anchor, html);
+// Recommendation definitions (single source of truth)
+function getRecDefs(domain, serverHostname, stsPublished, caaPublished, tlsPublished, autoPublished) {
+  function p(v) { return v || '(not published)'; }
+  return {
+    'mta-sts': {
+      type: 'MTA_STS_NOT_FOUND',
+      configured: 'v=STSv1; id=1',
+      published: p(stsPublished),
+      copyValue: 'v=STSv1; id=1',
+    },
+    'caa': {
+      type: 'CAA_MISSING',
+      configured: '0 issue "letsencrypt.org"',
+      published: p(caaPublished),
+      copyValue: '0 issue "letsencrypt.org"',
+    },
+    'tls-rpt': {
+      type: 'TLS_RPT_NOT_FOUND',
+      configured: 'v=TLSRPTv1; rua=mailto:tlsreports@' + domain,
+      published: p(tlsPublished),
+      copyValue: 'v=TLSRPTv1; rua=mailto:tlsreports@' + domain,
+    },
+    'autodiscover': {
+      type: 'AUTODISCOVER_NOT_FOUND',
+      configured: serverHostname || 'N/A',
+      published: p(autoPublished),
+      copyValue: 'autodiscover.' + domain + '. 3600 IN CNAME ' + (serverHostname || 'N/A') + '.',
+    }
+  };
 }
 
 function loadDomainSecurity() {
@@ -1923,147 +1942,160 @@ function loadDomainSecurity() {
   closeEvidencePanel();
 
   (async () => {
-    let dmarcPublished = '';
+    // Fetch live DNS for DMARC + all recommendations
+    let dmarcPublished = '', stsPublished = '', caaPublished = '', tlsPublished = '', autoPublished = '';
     try {
       const dmarcDns = await fetchDnsForFqdn('_dmarc.' + domain, 'TXT');
-      if (dmarcDns) {
-        const recs = window.getDnsRecs(dmarcDns, 'TXT');
-        if (recs.length > 0) dmarcPublished = recs[0].value;
-      }
+      if (dmarcDns) { const r = window.getDnsRecs(dmarcDns, 'TXT'); if (r.length) dmarcPublished = r[0].value; }
     } catch(e) { console.error('DMARC fetch failed', e); }
+    try {
+      const d = await fetchDnsForFqdn('_mta-sts.' + domain, 'TXT');
+      if (d) { const r = window.getDnsRecs(d, 'TXT'); if (r.length) stsPublished = r[0].value; }
+    } catch(e) { console.error('MTA-STS fetch failed', e); }
+    try {
+      const d = await fetchDnsForFqdn(domain, 'CAA');
+      if (d) { const r = window.getDnsRecs(d, 'CAA'); if (r.length) caaPublished = r.map(x => x.value).join(', '); }
+    } catch(e) { console.error('CAA fetch failed', e); }
+    try {
+      const d = await fetchDnsForFqdn('_smtp._tls.' + domain, 'TXT');
+      if (d) { const r = window.getDnsRecs(d, 'TXT'); if (r.length) tlsPublished = r[0].value; }
+    } catch(e) { console.error('TLS-RPT fetch failed', e); }
+    try {
+      const d = await fetchDnsForFqdn('autodiscover.' + domain, 'CNAME,A');
+      if (d) {
+        const c = window.getDnsRecs(d, 'CNAME');
+        if (c.length) autoPublished = 'CNAME ' + c[0].value;
+        else { const a = window.getDnsRecs(d, 'A'); if (a.length) autoPublished = 'A ' + a[0].value; }
+      }
+    } catch(e) { console.error('Autodiscover fetch failed', e); }
 
+    const recDefs = getRecDefs(domain, serverHostname, stsPublished, caaPublished, tlsPublished, autoPublished);
     const dmarcCurrent = _dmarcSelection || 'v=DMARC1; p=none;';
-    const dmarcStatus = _dmarcSelection && dmarcPublished
-      ? window.compareDmarcRecords(_dmarcSelection, dmarcPublished)
-      : null;
-
     const dmarcHost = '_dmarc.' + domain;
     const dmarcFqdn = dmarcHost + '.';
     const dmarcFull = dmarcFqdn + ' 3600 IN TXT "' + dmarcCurrent + '"';
-
-    // Build Copy with RUA value safely
     const hasRua = dmarcCurrent.includes('rua=');
-    const copyWithRua = hasRua
-      ? dmarcCurrent
-      : dmarcCurrent.replace(/;?\s*$/, '; rua=mailto:dmarc@' + domain);
+    const copyWithRua = hasRua ? dmarcCurrent : dmarcCurrent.replace(/;?\s*$/, '; rua=mailto:dmarc@' + domain);
 
-    content.innerHTML = `
-      <div id="security-tab-content">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-          <h3 style="font-size:14px;">DMARC Policy</h3>
-          <button class="btn btn-sm" onclick="refreshSecurityTab()">Check Again</button>
-        </div>
+    const card = function(key, title, host, type, val, btns) {
+      const def = recDefs[key];
+      return '<div class="card" data-security-record="' + key + '"'
+        + ' data-evidence-configured="' + escAttr(def.configured) + '"'
+        + ' data-evidence-published="' + escAttr(def.published) + '"'
+        + ' data-evidence-copy="' + escAttr(def.copyValue) + '">'
+        + '<h3>' + title + '</h3>'
+        + '<div style="margin-top:8px;font-size:12px;"><div>' + esc(val) + '</div>'
+        + '<div style="margin-top:6px;font-family:monospace;font-size:11px;">Host: ' + esc(host) + '<br>Type: ' + esc(type) + '<br>Value: ' + esc(def.configured) + '</div></div>'
+        + '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">' + btns + '</div></div>';
+    };
 
-        <div style="margin-bottom:12px;font-size:12px;color:var(--text3);">
-          ${dmarcPublished ? 'Current in DNS: <code>' + esc(dmarcPublished) + '</code>' : 'No DMARC record found in DNS'}
-        </div>
+    const whyBtn = function(key) {
+      return '<button class="btn btn-sm" data-security-why="1" data-evidence-type="' + recDefs[key].type + '" data-security-record-key="' + key + '">Why?</button>';
+    };
+    const copyBtn = function(v) { return '<button class="btn btn-sm" data-copy="' + escAttr(v) + '">Copy Record</button>'; };
 
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px;">
-          <div class="card" style="cursor:pointer;${_dmarcSelection && _dmarcSelection.includes('p=none') ? 'border-color:var(--primary);' : ''}" onclick="selectDmarcPolicy('v=DMARC1; p=none;')">
-            <h3>Monitor</h3>
-            <div style="margin-top:8px;font-size:12px;font-family:monospace;">v=DMARC1; p=none;</div>
-            <div style="margin-top:4px;font-size:11px;color:var(--text3);">No action taken on failing messages</div>
-          </div>
-          <div class="card" style="cursor:pointer;${_dmarcSelection && _dmarcSelection.includes('p=quarantine') ? 'border-color:var(--primary);' : ''}" onclick="selectDmarcPolicy('v=DMARC1; p=quarantine; rua=mailto:dmarc@${esc(domain)}')">
-            <h3>Quarantine</h3>
-            <div style="margin-top:8px;font-size:12px;font-family:monospace;">v=DMARC1; p=quarantine;</div>
-            <div style="margin-top:4px;font-size:11px;color:var(--text3);">Tag suspicious emails as spam</div>
-          </div>
-          <div class="card" style="cursor:pointer;${_dmarcSelection && _dmarcSelection.includes('p=reject') ? 'border-color:var(--primary);' : ''}" onclick="selectDmarcPolicy('v=DMARC1; p=reject; rua=mailto:dmarc@${esc(domain)}')">
-            <h3>Reject</h3>
-            <div style="margin-top:8px;font-size:12px;font-family:monospace;">v=DMARC1; p=reject;</div>
-            <div style="margin-top:4px;font-size:11px;color:var(--text3);">Block failing emails entirely</div>
-          </div>
-        </div>`;
+    content.innerHTML = '<div id="security-tab-content">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
+      + '<h3 style="font-size:14px;">DMARC Policy</h3>'
+      + '<button class="btn btn-sm" data-security-check-again="1">Check Again</button></div>'
+      + '<div style="margin-bottom:12px;font-size:12px;color:var(--text3);">'
+      + (dmarcPublished ? 'Current in DNS: <code>' + esc(dmarcPublished) + '</code>' : 'No DMARC record found in DNS') + '</div>'
+
+      + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px;">'
+      + '<div class="card" style="cursor:pointer;' + (_dmarcSelection && _dmarcSelection.includes('p=none') ? 'border-color:var(--primary);' : '') + '" data-dmarc-policy="v=DMARC1; p=none;">'
+      + '<h3>Monitor</h3><div style="margin-top:8px;font-size:12px;font-family:monospace;">v=DMARC1; p=none;</div>'
+      + '<div style="margin-top:4px;font-size:11px;color:var(--text3);">No action taken on failing messages</div></div>'
+      + '<div class="card" style="cursor:pointer;' + (_dmarcSelection && _dmarcSelection.includes('p=quarantine') ? 'border-color:var(--primary);' : '') + '" data-dmarc-policy="v=DMARC1; p=quarantine; rua=mailto:dmarc@' + domain + '">'
+      + '<h3>Quarantine</h3><div style="margin-top:8px;font-size:12px;font-family:monospace;">v=DMARC1; p=quarantine;</div>'
+      + '<div style="margin-top:4px;font-size:11px;color:var(--text3);">Tag suspicious emails as spam</div></div>'
+      + '<div class="card" style="cursor:pointer;' + (_dmarcSelection && _dmarcSelection.includes('p=reject') ? 'border-color:var(--primary);' : '') + '" data-dmarc-policy="v=DMARC1; p=reject; rua=mailto:dmarc@' + domain + '">'
+      + '<h3>Reject</h3><div style="margin-top:8px;font-size:12px;font-family:monospace;">v=DMARC1; p=reject;</div>'
+      + '<div style="margin-top:4px;font-size:11px;color:var(--text3);">Block failing emails entirely</div></div></div>';
 
     if (_dmarcSelection) {
-      let compareHtml = '';
+      let cmp = '';
       if (dmarcPublished) {
-        const dmarcR = window.compareDmarcRecords(_dmarcSelection, dmarcPublished);
-        compareHtml = '<div class="card" style="margin-top:8px;">'
-          + '<div style="font-size:12px;">Comparison</div>'
+        const r = window.compareDmarcRecords(_dmarcSelection, dmarcPublished);
+        cmp = '<div class="card" style="margin-top:8px;"><div style="font-size:12px;">Comparison</div>'
           + '<div style="margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">'
           + '<div><strong>Recommended:</strong><br><code style="font-size:11px;word-break:break-all;">' + esc(_dmarcSelection) + '</code></div>'
           + '<div><strong>Published:</strong><br><code style="font-size:11px;word-break:break-all;">' + esc(dmarcPublished) + '</code></div></div>'
-          + '<div style="margin-top:6px;">' + window.statusBadge(dmarcR.status, dmarcR.cls) + '</div></div>';
+          + '<div style="margin-top:6px;">' + window.statusBadge(r.status, r.cls)
+          + (r.status === 'Mismatch' ? whyBtn('dmarc') : '') + '</div></div>';
       }
-
-      content.innerHTML += '<div class="card">'
-        + '<h3>Your DMARC Record Preview</h3>'
+      content.innerHTML += '<div class="card"><h3>Your DMARC Record Preview</h3>'
         + '<div style="margin-top:8px;font-size:12px;font-family:monospace;word-break:break-all;background:var(--bg3);padding:8px;border-radius:4px;">' + esc(dmarcFull) + '</div>'
         + '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">'
         + '<button class="btn btn-sm btn-primary" data-copy="' + escAttr(_dmarcSelection) + '">Copy Record</button>'
         + '<button class="btn btn-sm" data-copy="' + escAttr(copyWithRua) + '">Copy with RUA</button>'
         + '<button class="btn btn-sm" data-copy="' + escAttr(dmarcFull) + '">Copy Full Record</button></div>'
         + '<div style="margin-top:8px;font-size:11px;color:var(--yellow);">⚠️ Start with p=none to monitor, then escalate to quarantine after 1-2 weeks.</div>'
-        + compareHtml + '</div>';
+        + cmp + '</div>';
     }
 
-    // Additional recommendations with data-security-record attributes
     content.innerHTML += '<h3 style="font-size:14px;margin:16px 0 8px;">Additional Recommendations</h3>'
       + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;">'
-
-      + '<div class="card" data-security-record="mta-sts">'
-      + '<h3>MTA-STS</h3>'
-      + '<div style="margin-top:8px;font-size:12px;"><div>Ensures TLS is used for mail delivery (RFC 8461).</div>'
-      + '<div style="margin-top:6px;font-family:monospace;font-size:11px;">Host: _mta-sts<br>Type: TXT<br>Value: v=STSv1; id=1</div></div>'
-      + '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">'
-      + '<button class="btn btn-sm" data-copy="v=STSv1; id=1">Copy TXT</button>'
-      + '<button class="btn btn-sm" onclick="showEvidenceFor(\'MTA_STS_NOT_FOUND\',\'v=STSv1; id=1\',\'(not checked)\',\'v=STSv1; id=1\',\'[data-security-record=\\\'mta-sts\\\']\')">Why?</button></div></div>'
-
-      + '<div class="card" data-security-record="caa">'
-      + '<h3>CAA</h3>'
-      + '<div style="margin-top:8px;font-size:12px;"><div>Certification Authority Authorization lets you specify which CAs can issue certificates.</div>'
-      + '<div style="margin-top:6px;font-family:monospace;font-size:11px;">Host: @<br>Type: CAA<br>Value: 0 issue "letsencrypt.org"</div></div>'
-      + '<div style="margin-top:8px;display:flex;gap:6px;">'
-      + '<button class="btn btn-sm" data-copy="0 issue &quot;letsencrypt.org&quot;">Copy Record</button>'
-      + '<button class="btn btn-sm" onclick="showEvidenceFor(\'CAA_MISSING\',\'0 issue \\"letsencrypt.org\\"\',\'(not checked)\',\'0 issue \\"letsencrypt.org\\"\',\'[data-security-record=\\\'caa\\\']\')">Why?</button></div></div>'
-
-      + '<div class="card" data-security-record="tls-rpt">'
-      + '<h3>TLS-RPT</h3>'
-      + '<div style="margin-top:8px;font-size:12px;"><div>TLS-RPT sends delivery failure reports to your email.</div>'
-      + '<div style="margin-top:6px;font-family:monospace;font-size:11px;">Host: _smtp._tls<br>Type: TXT<br>Value: v=TLSRPTv1; rua=mailto:tlsreports@' + esc(domain) + '</div></div>'
-      + '<div style="margin-top:8px;display:flex;gap:6px;">'
-      + '<button class="btn btn-sm" data-copy="v=TLSRPTv1; rua=mailto:tlsreports@' + escAttr(domain) + '">Copy Record</button>'
-      + '<button class="btn btn-sm" onclick="showEvidenceFor(\'TLS_RPT_NOT_FOUND\',\'v=TLSRPTv1; rua=mailto:tlsreports@' + domain + '\',\'(not checked)\',\'v=TLSRPTv1; rua=mailto:tlsreports@' + domain + '\',\'[data-security-record=\\\'tls-rpt\\\']\')">Why?</button></div></div>'
-
-      + '<div class="card" data-security-record="autodiscover">'
-      + '<h3>Autodiscover</h3>'
-      + '<div style="margin-top:8px;font-size:12px;"><div>Autodiscover configures email clients automatically.</div>'
-      + '<div style="margin-top:6px;font-family:monospace;font-size:11px;">Host: autodiscover<br>Type: CNAME<br>Value: ' + esc(serverHostname || 'N/A') + '</div></div>'
-      + '<div style="margin-top:8px;display:flex;gap:6px;">'
-      + '<button class="btn btn-sm" data-copy="autodiscover.' + escAttr(domain) + '. 3600 IN CNAME ' + escAttr(serverHostname) + '.">Copy Record</button></div></div>'
-
+      + card('mta-sts', 'MTA-STS', '_mta-sts', 'TXT', 'Ensures TLS is used for mail delivery (RFC 8461).', copyBtn('v=STSv1; id=1') + whyBtn('mta-sts'))
+      + card('caa', 'CAA', '@', 'CAA', 'Certification Authority Authorization lets you specify which CAs can issue certificates.', copyBtn('0 issue "letsencrypt.org"') + whyBtn('caa'))
+      + card('tls-rpt', 'TLS-RPT', '_smtp._tls', 'TXT', 'TLS-RPT sends delivery failure reports to your email.', copyBtn(recDefs['tls-rpt'].configured) + whyBtn('tls-rpt'))
+      + card('autodiscover', 'Autodiscover', 'autodiscover', 'CNAME', 'Autodiscover configures email clients automatically.', copyBtn(recDefs['autodiscover'].copyValue) + (serverHostname ? whyBtn('autodiscover') : ''))
       + '</div>';
 
+    // Attach data-copy + security event listeners
     window.attachDataCopyListener('security-tab-content');
+    attachSecurityDelegation();
   })();
+}
+
+// Single event delegation for Security tab
+function attachSecurityDelegation() {
+  const sec = document.getElementById('security-tab-content');
+  if (!sec) return;
+  sec.addEventListener('click', function(e) {
+    // DMARC policy selection
+    const policyCard = e.target.closest('[data-dmarc-policy]');
+    if (policyCard) {
+      _dmarcSelection = policyCard.getAttribute('data-dmarc-policy');
+      closeEvidencePanel();
+      loadDomainSecurity();
+      return;
+    }
+    // Check Again
+    if (e.target.closest('[data-security-check-again]')) {
+      closeEvidencePanel();
+      const dd = window._domainDetailData;
+      if (dd) {
+        const d = dd.domainRow.domain;
+        DnsCache.clear(d);
+        DnsCache.clear('_dmarc.' + d);
+        DnsCache.clear('_mta-sts.' + d);
+        DnsCache.clear('_smtp._tls.' + d);
+        DnsCache.clear('autodiscover.' + d);
+      }
+      loadDomainSecurity();
+      return;
+    }
+    // Why? evidence
+    const whyBtn = e.target.closest('[data-security-why]');
+    if (!whyBtn) return;
+    const key = whyBtn.getAttribute('data-security-record-key');
+    const type = whyBtn.getAttribute('data-evidence-type');
+    const dd = window._domainDetailData;
+    if (!dd) return;
+    const card = sec.querySelector('[data-security-record="' + key + '"]');
+    if (!card) return;
+    const configured = card.getAttribute('data-evidence-configured') || '';
+    const published = card.getAttribute('data-evidence-published') || '(not published)';
+    const copyValue = card.getAttribute('data-evidence-copy') || '';
+    const steps = getEvidenceSteps(type, dd.domainRow.domain);
+    const html = evidenceHtml(type, configured, published, '', copyValue, steps);
+    toggleEvidencePanel('ev-' + key, card, html);
+  });
 }
 
 window.selectDmarcPolicy = function(value) {
   _dmarcSelection = value;
   closeEvidencePanel();
-  loadDomainSecurity();
-};
-
-window.showEvidenceFor = function(type, configured, published, copyValue, anchorSelector) {
-  const dd = window._domainDetailData;
-  if (!dd) return;
-  const content = document.getElementById('security-tab-content');
-  if (!content) return;
-  const anchor = content.querySelector(anchorSelector);
-  if (!anchor) return;
-  const steps = getEvidenceSteps(type, dd.domainRow.domain);
-  const html = evidenceHtml(type, configured, published, '', copyValue, steps);
-  toggleEvidencePanel('ev-' + type, anchor, html);
-};
-
-window.refreshSecurityTab = function() {
-  closeEvidencePanel();
-  const dd = window._domainDetailData;
-  if (!dd) return;
-  const domain = dd.domainRow.domain;
-  DnsCache.clear('_dmarc.' + domain);
   loadDomainSecurity();
 };
 
