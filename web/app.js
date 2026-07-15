@@ -840,122 +840,6 @@ function domainUsableHttps(r) {
   return r.ssl_status === 'Active' || r.ssl_status === 'Expiring';
 }
 
-// Domain list DNS + Runtime cache (keyed by domain name)
-window._dnsCache = {};   // {domain: {data, timestamp, loading}}
-window._rtCache = {};    // {site_id: {data, timestamp}}
-
-function dnsStatusBadge(status) {
-  if (!status) return '<span class="badge badge-info">...</span>';
-  const m = {'complete':'badge-ok','partial':'badge-warn','failed':'badge-err'};
-  return `<span class="badge ${m[status]||'badge-info'}">${esc(status)}</span>`;
-}
-
-function runtimeStatusBadge(status) {
-  if (!status) return '<span class="badge badge-info">...</span>';
-  const m = {'Running':'badge-ok','Healthy':'badge-ok','Active':'badge-ok',
-    'Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn',
-    'Expiring':'badge-warn','Error':'badge-err','Expired':'badge-err',
-    'Disabled':'badge-info','Issuing':'badge-warn','Unknown':'badge-info'};
-  return `<span class="badge ${m[status]||'badge-info'}">${esc(status)}</span>`;
-}
-
-function healthGradeBadge(score, grade) {
-  if (score == null) return '<span class="badge badge-info">...</span>';
-  const colors = {'Excellent':'badge-ok','Good':'badge-info',
-    'Fair':'badge-warn','Poor':'badge-err','Critical':'badge-err'};
-  return `<span class="badge ${colors[grade]||'badge-info'}">${score}%</span>`;
-}
-
-function computeHealthGrade(score) {
-  if (score >= 90) return 'Excellent';
-  if (score >= 70) return 'Good';
-  if (score >= 40) return 'Fair';
-  if (score >= 1) return 'Poor';
-  return 'Critical';
-}
-
-function computeDomainHealthScore(r, dnsResult) {
-  // Context-aware: only applicable checks affect score
-  const checks = [];
-  // Always applicable
-  checks.push({id:'a', label:'A record', weight:25, ok: dnsResult && dnsResult.per_type && dnsResult.per_type.some(pt => pt.type === 'A' && pt.status_code === 'NOERROR')});
-  // Mail-dependent
-  if (r.mail_domain_id && r.mail_domain_id > 0) {
-    if (r.dkim_generated) {
-      checks.push({id:'dkim', label:'DKIM', weight:10, ok: dnsResult && dnsResult.per_type && dnsResult.per_type.some(pt => pt.type === 'TXT' && pt.status_code === 'NOERROR')});
-    }
-  }
-  // Site-dependent (site_id >= 0, including admin panel)
-  if (r.site_id !== undefined) {
-    checks.push({id:'ssl', label:'SSL', weight:20, ok: r.ssl_status === 'Active' || r.ssl_status === 'Expiring'});
-  }
-
-  const applicable = checks.filter(c => c.weight > 0);
-  if (applicable.length === 0) return {score: null, grade: 'N/A'};
-
-  const totalWeight = applicable.reduce((s, c) => s + c.weight, 0);
-  const earned = applicable.reduce((s, c) => s + (c.ok ? c.weight : 0), 0);
-  const score = Math.round((earned / totalWeight) * 100);
-  const grade = computeHealthGrade(score);
-  return {score, grade};
-}
-
-async function fetchDnsWithCache(domain) {
-  const now = Date.now();
-  const cached = window._dnsCache[domain];
-  if (cached && (now - cached.timestamp) < 60000 && !cached.loading) {
-    return cached.data;
-  }
-  if (cached && cached.loading) {
-    // Wait for in-flight request
-    while (window._dnsCache[domain] && window._dnsCache[domain].loading) {
-      await new Promise(r => setTimeout(r, 100));
-    }
-    const entry = window._dnsCache[domain];
-    return entry ? entry.data : null;
-  }
-  window._dnsCache[domain] = {data: null, timestamp: now, loading: true};
-  try {
-    const res = await api('/api/domains/' + encodeURIComponent(domain) + '/dns-check?types=A,AAAA,MX');
-    window._dnsCache[domain] = {data: res.data, timestamp: Date.now(), loading: false};
-    return res.data;
-  } catch(e) {
-    window._dnsCache[domain] = {data: null, timestamp: Date.now(), loading: false};
-    return null;
-  }
-}
-
-async function fetchRuntimeWithCache(siteId) {
-  if (!siteId && siteId !== 0) return null;
-  if (siteId === 0) return null;  // Runtime API rejects site_id=0
-  const now = Date.now();
-  const cached = window._rtCache[siteId];
-  if (cached && (now - cached.timestamp) < 30000) return cached.data;
-  try {
-    const res = await api('/api/runtime/' + siteId);
-    window._rtCache[siteId] = {data: res.data, timestamp: Date.now()};
-    return res.data;
-  } catch(e) {
-    return null;
-  }
-}
-
-// Concurrency-limited batch processor
-async function processBatch(items, concurrency, fn) {
-  let index = 0;
-  async function worker() {
-    while (index < items.length) {
-      const i = index++;
-      await fn(items[i], i);
-    }
-  }
-  const workers = [];
-  for (let i = 0; i < Math.min(concurrency, items.length); i++) {
-    workers.push(worker());
-  }
-  await Promise.all(workers);
-}
-
 async function loadDomains(p) {
   try {
     const data = await api('/api/domains');
@@ -986,24 +870,23 @@ async function loadDomains(p) {
           return '<span class="badge badge-info">—</span>';
         }},
         {label:'DNS', html: r => {
-          const cached = window._dnsCache[r.domain];
-          if (!cached || !cached.data) return '<span class="badge badge-info">...</span>';
-          return dnsStatusBadge(cached.data.overall_status);
+          const dnsData = DnsCache.get(r.domain);
+          if (!dnsData) return '<span class="badge badge-info">...</span>';
+          return window.dnsStatusBadge(dnsData.overall_status);
         }},
         {label:'Mail', html: r => r.mail_domain_id && r.mail_domain_id > 0 ? '<span class="badge badge-ok">Active</span>' : '<span class="badge badge-info">—</span>'},
         {label:'Runtime', html: r => {
           if (r.site_id === 0) return '<span class="badge badge-info">N/A</span>';
           if (!r.site_id && r.site_id !== 0) return '<span class="badge badge-info">N/A</span>';
-          const cached = window._rtCache[r.site_id];
-          if (!cached || !cached.data) return '<span class="badge badge-info">...</span>';
-          return runtimeStatusBadge(cached.data.web);
+          const rtData = RuntimeCache.get(r.site_id);
+          if (!rtData) return '<span class="badge badge-info">...</span>';
+          return window.runtimeStatusBadge(rtData.web);
         }},
         {label:'SSL', html: r => domainSslBadge(r.ssl_status)},
         {label:'Health', html: r => {
-          const cached = window._dnsCache[r.domain];
-          const dnsResult = cached ? cached.data : null;
-          const hs = computeDomainHealthScore(r, dnsResult);
-          return healthGradeBadge(hs.score, hs.grade);
+          const dnsData = DnsCache.get(r.domain);
+          const hs = window.computeDomainHealthScore(r, dnsData);
+          return window.healthGradeBadge(hs.score, hs.grade);
         }},
         {label:'Actions', html: r => {
           let acts = `<button class="btn-icon" onclick="navigate('domain-detail',${r.id})" title="View details">&#128065;</button>`;
@@ -1017,41 +900,57 @@ async function loadDomains(p) {
     p.innerHTML += `<div id="domains-table"></div>`;
     window.renderTable();
 
-    // Progressive DNS loading: process domains one at a time (concurrency=3)
+    // Progressive DNS loading: concurrency=3, one domain at a time
     const rows = domains.filter(r => {
       if (!searchTerm) return true;
       return (r.domain||'').toLowerCase().includes((searchTerm||'').toLowerCase());
     });
 
-    await processBatch(rows, 3, async (r) => {
-      await fetchDnsWithCache(r.domain);
-      // Re-render just this row's cells
-      const row = document.querySelector(`#domains-table table tbody tr:nth-child(${rows.indexOf(r)+1})`);
+    await window.processBatch(rows, 3, async (r) => {
+      // Check cache first
+      if (DnsCache.get(r.domain)) return;
+      if (DnsCache.isLoading(r.domain)) {
+        await DnsCache.waitFor(r.domain);
+        return;
+      }
+      // Fetch
+      DnsCache.setLoading(r.domain);
+      try {
+        const res = await api('/api/domains/' + encodeURIComponent(r.domain) + '/dns-check?types=A,AAAA,MX');
+        DnsCache.set(r.domain, res.data || {});
+      } catch(e) {
+        DnsCache.set(r.domain, null);
+        return;
+      }
+      // Update row cells
+      const idx = rows.indexOf(r);
+      const row = document.querySelector(`#domains-table table tbody tr:nth-child(${idx+1})`);
       if (!row) return;
       const cells = row.querySelectorAll('td');
       if (cells.length < 9) return;
-      // Update DNS cell (index 4)
-      const dnsCached = window._dnsCache[r.domain];
-      if (dnsCached && dnsCached.data) {
-        cells[4].innerHTML = dnsStatusBadge(dnsCached.data.overall_status);
-      }
-      // Update Health cell (index 8)
-      const hs = computeDomainHealthScore(r, dnsCached ? dnsCached.data : null);
-      cells[8].innerHTML = healthGradeBadge(hs.score, hs.grade);
+      const dnsData = DnsCache.get(r.domain);
+      cells[4].innerHTML = window.dnsStatusBadge(dnsData ? dnsData.overall_status : null);
+      const hs = window.computeDomainHealthScore(r, dnsData);
+      cells[8].innerHTML = window.healthGradeBadge(hs.score, hs.grade);
     });
 
-    // Progressive Runtime loading (separate pass, also concurrency=3)
+    // Progressive Runtime loading (separate pass, concurrency=3)
     const siteRows = rows.filter(r => r.site_id && r.site_id > 0);
-    await processBatch(siteRows, 3, async (r) => {
-      await fetchRuntimeWithCache(r.site_id);
-      const row = document.querySelector(`#domains-table table tbody tr:nth-child(${rows.indexOf(r)+1})`);
+    await window.processBatch(siteRows, 3, async (r) => {
+      if (RuntimeCache.get(r.site_id)) return;
+      try {
+        const res = await api('/api/runtime/' + r.site_id);
+        RuntimeCache.set(r.site_id, res.data || {});
+      } catch(e) {
+        return;
+      }
+      const idx = rows.indexOf(r);
+      const row = document.querySelector(`#domains-table table tbody tr:nth-child(${idx+1})`);
       if (!row) return;
       const cells = row.querySelectorAll('td');
       if (cells.length < 9) return;
-      const rtCached = window._rtCache[r.site_id];
-      if (rtCached && rtCached.data) {
-        cells[6].innerHTML = runtimeStatusBadge(rtCached.data.web);
-      }
+      const rtData = RuntimeCache.get(r.site_id);
+      if (rtData) cells[6].innerHTML = window.runtimeStatusBadge(rtData.web);
     });
 
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load domains</div>'; }
