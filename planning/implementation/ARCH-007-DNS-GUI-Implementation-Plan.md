@@ -427,7 +427,7 @@ After NetworkService implementation, the Overview tab's A/AAAA comparison change
 
 ### 5.2 — Add Configured/Published/Status labels for mail records
 
-### 5.3 — SPF Semantic Analysis (backend)
+### 5.3 — SPF Semantic Analysis (backend) ✅
 
 **Files:** NEW: `libs/dns/SpfAnalyzer.h`, `libs/dns/SpfAnalyzer.cpp`
 **Depends on:** 1.1 (DnsCheckService), 1.5 (NetworkService for expected IP)

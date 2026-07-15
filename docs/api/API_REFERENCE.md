@@ -795,6 +795,61 @@ This allows the frontend to display NXDOMAIN with structured evidence and recomm
 | `expected_ip_detected_at` | ISO 8601 timestamp of when detection was last performed. |
 | `expected_ip_stale` | `true` if the value is from a cache that has exceeded its 5-minute TTL but was loaded from persisted storage. |
 
+**SPF analysis fields:**
+
+| Field | Description |
+|-------|-------------|
+| `spf_analysis.status` | Overall status: `"ok"`, `"error"`, `"not_found"` |
+| `spf_analysis.match` | Match result: `"match"`, `"mismatch"`, `"not_published"`, `"error"` |
+| `spf_analysis.expected_ip_allowed` | Boolean — whether the server's public IPv4/IPv6 is allowed by the SPF record |
+| `spf_analysis.record` | Raw SPF record text (e.g. `v=spf1 ip4:116.202.231.94 -all`) |
+| `spf_analysis.all_qualifier` | All qualifier: `"-"`, `"~"`, `"?"`, `"+"` |
+| `spf_analysis.lookup_count` | Number of DNS lookups performed during SPF evaluation |
+| `spf_analysis.mechanism_matched` | The mechanism that matched the expected IP (e.g. `ip4:116.202.231.94`) |
+| `spf_analysis.errors[]` | Array of error strings (syntax, loop, lookup limit, duplicate) |
+| `spf_analysis.warnings[]` | Array of warning strings (softfail, neutral, lookup count near limit) |
+| `spf_analysis.checks[]` | Array of check objects: `{code, status, reason}` |
+
+**SPF match semantics:**
+
+| `match` value | Meaning |
+|---------------|---------|
+| `"match"` | SPF record exists, syntax valid, expected sender IP is allowed |
+| `"mismatch"` | SPF record exists, expected sender IP is NOT allowed |
+| `"not_published"` | No SPF record found |
+| `"error"` | SPF syntax error, duplicate records, include loop, lookup limit exceeded |
+
+The SPF analysis is performed by `SpfAnalyzer` (`libs/dns/SpfAnalyzer.h/.cpp`) which implements
+RFC 7208 semantics. Supported mechanisms: `ip4`, `ip6`, `a`, `mx`, `include`, `redirect`, `all`.
+The analyzer uses c-ares (via `DnsCheckService`) for DNS resolution — no shell commands or dig.
+
+**Example JSON with SPF analysis:**
+```json
+{
+  "success": true,
+  "data": {
+    "domain": "maillab.softi.co",
+    "expected_ipv4": "116.202.231.94",
+    "spf_analysis": {
+      "status": "ok",
+      "match": "match",
+      "expected_ip_allowed": true,
+      "record": "v=spf1 ip4:116.202.231.94 -all",
+      "all_qualifier": "-",
+      "lookup_count": 1,
+      "mechanism_matched": "ip4:116.202.231.94",
+      "errors": [],
+      "warnings": [],
+      "checks": [
+        {"code": "spf_syntax", "status": "ok", "reason": "SPF syntax is valid"},
+        {"code": "spf_expected_ip", "status": "ok", "reason": "Expected IP is allowed by ip4:116.202.231.94"}
+      ]
+    },
+    "per_type": []
+  }
+}
+```
+
 These fields are populated by `NetworkService` (auto-detection, NOT user-editable). Detection order:
 1. System routing table (`ip route get`)
 2. External DNS helper (`myip.opendns.com` via c-ares)
