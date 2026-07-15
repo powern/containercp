@@ -1,3 +1,4 @@
+#include "api/Router.h"
 #include "dns/DnsCheckService.h"
 #include "doctest/doctest.h"
 
@@ -65,14 +66,20 @@ TEST_CASE("DnsCheck API: NXDOMAIN returns success=true with structured data") {
     DnsCheckService svc;
 
     auto r = svc.check("thisshouldnotexistexample123456789.com", {"A"});
-    CHECK_FALSE(r.success);
+    // NXDOMAIN is a valid DNS diagnostic result — success=true
+    bool is_nxdomain = (r.per_type.size() == 1
+                        && r.per_type[0].status_code == "NXDOMAIN");
+    bool is_resolver_fail = (r.per_type.size() == 1
+                             && (r.per_type[0].status_code == "SERVFAIL"
+                                 || r.per_type[0].status_code == "TIMEOUT"));
+    if (is_nxdomain) {
+        CHECK(r.success);
+        CHECK(r.overall_status == "complete");
+    } else if (is_resolver_fail) {
+        CHECK_FALSE(r.success);
+        CHECK(r.overall_status == "failed");
+    }
     CHECK_FALSE(r.per_type.empty());
-    bool valid_nx = (r.per_type[0].status_code == "NXDOMAIN"
-                     || r.per_type[0].status_code == "SERVFAIL"
-                     || r.per_type[0].status_code == "TIMEOUT");
-    CHECK(valid_nx);
-
-    // NXDOMAIN should have a record with the status
     CHECK_FALSE(r.overall_status.empty());
 }
 
@@ -181,4 +188,114 @@ TEST_CASE("DnsCheck API: soa fields empty when not queried") {
     CHECK(r.soa.mname.empty());
     CHECK(r.soa.rname.empty());
     CHECK(r.soa.serial == 0);
+}
+
+// --- Routing tests ---
+
+TEST_CASE("DnsCheck API routing: exact match /api/domains is not blocked") {
+    containercp::api::Router router;
+
+    // Register exact match first (like the real code)
+    bool exact_called = false;
+    router.add("GET", "/api/domains", [&exact_called](const containercp::api::Request&) {
+        exact_called = true;
+        containercp::api::Response r;
+        r.body = "{\"success\":true,\"data\":[]}";
+        return r;
+    });
+
+    // Register prefix after
+    router.add_prefix("GET", "/api/domains/", [](const containercp::api::Request&) {
+        containercp::api::Response r;
+        r.body = "{\"prefix\":true}";
+        return r;
+    });
+
+    // Exact path should match exact handler
+    containercp::api::Request req_exact;
+    req_exact.method = "GET";
+    req_exact.path = "/api/domains";
+    auto resp_exact = router.dispatch(req_exact);
+    CHECK(exact_called);
+    CHECK(resp_exact.body.find("\"data\":[]") != std::string::npos);
+
+    // Sub-path should match prefix handler
+    containercp::api::Request req_sub;
+    req_sub.method = "GET";
+    req_sub.path = "/api/domains/example.com/dns-check";
+    auto resp_sub = router.dispatch(req_sub);
+    CHECK(resp_sub.body.find("\"prefix\"") != std::string::npos);
+
+    // POST /api/domains/remove should not match GET prefix
+    containercp::api::Request req_remove;
+    req_remove.method = "POST";
+    req_remove.path = "/api/domains/remove";
+    auto resp_remove = router.dispatch(req_remove);
+    CHECK(resp_remove.status_code == 404);
+}
+
+TEST_CASE("DnsCheck API routing: prefix dispatcher returns 404 for unknown paths") {
+    containercp::api::Router router;
+
+    router.add_prefix("GET", "/api/domains/", [](const containercp::api::Request& req) {
+        containercp::api::Response r;
+        std::string remaining = req.path.substr(std::string("/api/domains/").size());
+        if (remaining == "example.com/dns-check") {
+            r.body = "{\"dns\":true}";
+        } else {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Not found\"}";
+        }
+        return r;
+    });
+
+    // dns-check handled
+    containercp::api::Request req_ok;
+    req_ok.method = "GET";
+    req_ok.path = "/api/domains/example.com/dns-check";
+    auto resp_ok = router.dispatch(req_ok);
+    CHECK(resp_ok.body.find("\"dns\"") != std::string::npos);
+
+    // Unknown path gets 404
+    containercp::api::Request req_unknown;
+    req_unknown.method = "GET";
+    req_unknown.path = "/api/domains/42";
+    auto resp_unknown = router.dispatch(req_unknown);
+    CHECK(resp_unknown.status_code == 404);
+}
+
+TEST_CASE("DnsCheck API routing: future specific routes work when registered before prefix") {
+    containercp::api::Router router;
+
+    // Register specific route first
+    bool specific_called = false;
+    router.add("GET", "/api/domains/42", [&specific_called](const containercp::api::Request&) {
+        specific_called = true;
+        containercp::api::Response r;
+        r.body = "{\"id\":42}";
+        return r;
+    });
+
+    // Register prefix after
+    router.add_prefix("GET", "/api/domains/", [](const containercp::api::Request&) {
+        containercp::api::Response r;
+        r.status_code = 404;
+        r.body = "{\"success\":false,\"error\":\"Not found\"}";
+        return r;
+    });
+
+    // Specific route matches first (registered before prefix)
+    containercp::api::Request req;
+    req.method = "GET";
+    req.path = "/api/domains/42";
+    auto resp = router.dispatch(req);
+    CHECK(specific_called);
+    CHECK(resp.body.find("\"id\":42") != std::string::npos);
+
+    // Unknown path falls through to prefix
+    containercp::api::Request req_unknown;
+    req_unknown.method = "GET";
+    req_unknown.path = "/api/domains/unknown";
+    auto resp_unknown = router.dispatch(req_unknown);
+    CHECK(resp_unknown.status_code == 404);
 }

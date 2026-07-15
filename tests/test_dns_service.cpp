@@ -125,7 +125,7 @@ TEST_CASE("DnsCheckService overall_status: partial with single success") {
     CHECK(success);
 }
 
-TEST_CASE("DnsCheckService overall_status: failed") {
+TEST_CASE("DnsCheckService overall_status: failed (all resolver failures)") {
     std::vector<PerTypeResult> pts = {
         make_result("A", "TIMEOUT", "TIMEOUT"),
         make_result("AAAA", "SERVFAIL", "SERVFAIL"),
@@ -137,6 +137,102 @@ TEST_CASE("DnsCheckService overall_status: failed") {
     CHECK(status == "failed");
     CHECK_FALSE(success);
     CHECK_FALSE(error.empty());
+}
+
+TEST_CASE("DnsCheckService overall_status: NXDOMAIN is complete") {
+    // NXDOMAIN is a valid DNS response — should be "complete" not "failed"
+    std::vector<PerTypeResult> pts = {
+        make_result("A", "NXDOMAIN", "NXDOMAIN"),
+    };
+    bool success = false;
+    std::string error;
+    std::string status = DnsCheckService::compute_overall_status(pts, success, error);
+
+    CHECK(status == "complete");
+    CHECK(success);
+    CHECK(error.empty());
+}
+
+TEST_CASE("DnsCheckService overall_status: NODATA is complete") {
+    std::vector<PerTypeResult> pts = {
+        make_result("AAAA", "NODATA", ""),
+    };
+    bool success = false;
+    std::string error;
+    std::string status = DnsCheckService::compute_overall_status(pts, success, error);
+
+    CHECK(status == "complete");
+    CHECK(success);
+}
+
+TEST_CASE("DnsCheckService overall_status: mixed NXDOMAIN + NOERROR = complete") {
+    std::vector<PerTypeResult> pts = {
+        make_result("A", "NOERROR", "", 2),
+        make_result("AAAA", "NXDOMAIN", "NXDOMAIN"),
+        make_result("MX", "NODATA", ""),
+    };
+    bool success = false;
+    std::string error;
+    std::string status = DnsCheckService::compute_overall_status(pts, success, error);
+
+    CHECK(status == "complete");
+    CHECK(success);
+}
+
+TEST_CASE("DnsCheckService overall_status: mixed NXDOMAIN + TIMEOUT = partial") {
+    std::vector<PerTypeResult> pts = {
+        make_result("A", "NXDOMAIN", "NXDOMAIN"),
+        make_result("AAAA", "TIMEOUT", "TIMEOUT"),
+    };
+    bool success = false;
+    std::string error;
+    std::string status = DnsCheckService::compute_overall_status(pts, success, error);
+
+    CHECK(status == "partial");
+    CHECK(success);  // partial = still successful overall
+    CHECK_FALSE(error.empty());
+}
+
+TEST_CASE("DnsCheckService HTTP status: NXDOMAIN → 200") {
+    std::vector<PerTypeResult> pts = {
+        make_result("A", "NXDOMAIN", "NXDOMAIN"),
+    };
+    int status = DnsCheckService::compute_http_status(pts, true);
+    CHECK(status == 200);
+}
+
+TEST_CASE("DnsCheckService HTTP status: NOERROR → 200") {
+    std::vector<PerTypeResult> pts = {
+        make_result("A", "NOERROR", "", 1),
+    };
+    int status = DnsCheckService::compute_http_status(pts, true);
+    CHECK(status == 200);
+}
+
+TEST_CASE("DnsCheckService HTTP status: partial (NOERROR + TIMEOUT) → 200") {
+    std::vector<PerTypeResult> pts = {
+        make_result("A", "NOERROR", "", 2),
+        make_result("AAAA", "TIMEOUT", "TIMEOUT"),
+    };
+    int status = DnsCheckService::compute_http_status(pts, true);
+    CHECK(status == 200);
+}
+
+TEST_CASE("DnsCheckService HTTP status: all SERVFAIL → 502") {
+    std::vector<PerTypeResult> pts = {
+        make_result("A", "SERVFAIL", "SERVFAIL"),
+    };
+    int status = DnsCheckService::compute_http_status(pts, false);
+    CHECK(status == 502);
+}
+
+TEST_CASE("DnsCheckService HTTP status: mixed NXDOMAIN + SERVFAIL → 200") {
+    std::vector<PerTypeResult> pts = {
+        make_result("A", "NXDOMAIN", "NXDOMAIN"),
+        make_result("AAAA", "SERVFAIL", "SERVFAIL"),
+    };
+    int status = DnsCheckService::compute_http_status(pts, true);  // partial
+    CHECK(status == 200);
 }
 
 TEST_CASE("DnsCheckService overall_status: empty list") {
@@ -270,13 +366,18 @@ TEST_CASE("DnsCheckService NXDOMAIN handling") {
     DnsCheckService svc;
 
     auto r = svc.check("thisshouldnotexistexample123456.com", {"A"});
-    CHECK_FALSE(r.success);
-    CHECK(r.overall_status == "failed");
     CHECK(r.per_type.size() == 1);
-    bool valid_nx = (r.per_type[0].status_code == "NXDOMAIN"
-                     || r.per_type[0].status_code == "SERVFAIL"
-                     || r.per_type[0].status_code == "TIMEOUT");
-    CHECK(valid_nx);
+    bool is_nxdomain = (r.per_type[0].status_code == "NXDOMAIN");
+    bool is_resolver_fail = (r.per_type[0].status_code == "SERVFAIL"
+                             || r.per_type[0].status_code == "TIMEOUT");
+    if (is_nxdomain) {
+        // NXDOMAIN is a valid DNS diagnostic result
+        CHECK(r.success);
+        CHECK(r.overall_status == "complete");
+    } else if (is_resolver_fail) {
+        CHECK_FALSE(r.success);
+        CHECK(r.overall_status == "failed");
+    }
 }
 
 TEST_CASE("DnsCheckService multiple types") {

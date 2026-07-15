@@ -675,7 +675,7 @@ Performs live DNS resolution using the **c-ares** library (no shell commands, no
 }
 ```
 
-**NXDOMAIN response (valid DNS response, HTTP 200):**
+**NXDOMAIN response (valid DNS diagnostic result, HTTP 200):**
 
 ```json
 {
@@ -684,17 +684,23 @@ Performs live DNS resolution using the **c-ares** library (no shell commands, no
     "domain": "nonexistent.example.com",
     "resolved_at": "2026-07-15T12:00:00Z",
     "cached": false,
-    "overall_status": "failed",
+    "overall_status": "complete",
     "per_type": [
       {"type": "A", "status_code": "NXDOMAIN", "error": "NXDOMAIN", "records": []}
     ],
     "soa": {"mname": "", "rname": "", "serial": 0},
-    "error": "NXDOMAIN"
+    "error": ""
   }
 }
 ```
 
-NXDOMAIN returns HTTP 200 because it is a valid DNS diagnostic result. The frontend can display the per_type status with evidence.
+**Important:** NXDOMAIN and NODATA are valid DNS diagnostic results, NOT transport errors. They return:
+- HTTP 200 (not 502)
+- `success: true` (the diagnostic completed successfully)
+- `overall_status: "complete"` (the DNS response was valid)
+- `per_type[].status_code: "NXDOMAIN"` (specific result)
+
+This allows the frontend to display NXDOMAIN with structured evidence and recommendations, rather than treating it as a transport failure.
 
 **Resolver failure (HTTP 502):**
 
@@ -719,28 +725,35 @@ NXDOMAIN returns HTTP 200 because it is a valid DNS diagnostic result. The front
 
 | Code | Condition |
 |------|-----------|
-| 200 | Valid DNS response (NOERROR, NODATA, or NXDOMAIN with structured per_type results). Also for partial success (some types failed, some succeeded). |
+| 200 | All valid DNS diagnostic results: NOERROR, NODATA, NXDOMAIN, or partial results (some valid, some resolver failures). NXDOMAIN is a valid DNS response, NOT a transport error. |
 | 400 | Invalid domain format, unsupported DNS record type, invalid query parameters |
-| 502 | DNS resolver failure (SERVFAIL, TIMEOUT, or internal resolver error with no useful data). NXDOMAIN is NOT a 502 — it is a valid DNS response returning 200 with structured data. |
+| 502 | All requested record types returned resolver failures (SERVFAIL, TIMEOUT, ERROR) — no useful DNS data available. Only applies when `success=false`. |
 
 **overall_status values:**
 
 | Value | Meaning |
 |-------|---------|
-| `complete` | All requested record types resolved successfully |
-| `partial` | Some record types succeeded, some failed |
-| `failed` | All requested record types failed |
+| `complete` | All requested record types returned valid DNS responses (NOERROR, NODATA, or NXDOMAIN — all are valid diagnostic results) |
+| `partial` | Some record types returned valid responses, some had resolver failures (SERVFAIL, TIMEOUT, ERROR) |
+| `failed` | All requested record types had resolver failures — no diagnostic data available |
 
 **per_type[].status_code values:**
 
+| Value | Category | Meaning |
+|-------|----------|---------|
+| `NOERROR` | Valid | Query succeeded, records may be present |
+| `NODATA` | Valid | Domain exists but has no records of this type |
+| `NXDOMAIN` | Valid | Domain does not exist — valid DNS response, not a failure |
+| `SERVFAIL` | Resolver failure | DNS server failure — no useful data |
+| `TIMEOUT` | Resolver failure | Query timed out — no useful data |
+| `ERROR` | Resolver failure | Other DNS error — no useful data |
+
+**`success` field semantics:**
+
 | Value | Meaning |
 |-------|---------|
-| `NOERROR` | Query succeeded, records may be present |
-| `NODATA` | Domain exists but has no records of this type |
-| `NXDOMAIN` | Domain does not exist |
-| `SERVFAIL` | DNS server failure |
-| `TIMEOUT` | Query timed out |
-| `ERROR` | Other DNS error |
+| `true` | DNS diagnostic completed successfully. Data includes valid responses (NOERROR, NODATA, NXDOMAIN) even if some types had resolver failures (partial). The frontend can display `per_type` results with evidence. |
+| `false` | DNS diagnostic failed entirely — all queried types returned resolver failures (SERVFAIL, TIMEOUT, ERROR). No useful DNS data available. |
 
 **Implementation:** Uses `DnsCheckService` from `libs/dns/`. The service uses c-ares (`ares_query_dnsrec`) with a synchronous event loop. Results are cached in-memory for 60 seconds.
 

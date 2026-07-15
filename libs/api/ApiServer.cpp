@@ -475,20 +475,7 @@ bool ApiServer::start() {
         json << "}}";
         r.body = json.str();
 
-        // HTTP status mapping: 200 for all valid DNS responses including NXDOMAIN
-        // 502 only for true resolution failures (SERVFAIL, TIMEOUT, internal errors)
-        if (!result.success) {
-            bool is_resolver_failure = false;
-            for (const auto& pt : result.per_type) {
-                if (pt.status_code == "SERVFAIL" || pt.status_code == "TIMEOUT"
-                    || pt.status_code == "ERROR") {
-                    is_resolver_failure = true;
-                    break;
-                }
-            }
-            // If all errors are NXDOMAIN, return 200 (valid DNS response)
-            r.status_code = is_resolver_failure ? 502 : 200;
-        }
+        r.status_code = dns::DnsCheckService::compute_http_status(result.per_type, result.success);
 
         return r;
     });

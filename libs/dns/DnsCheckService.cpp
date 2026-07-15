@@ -455,7 +455,8 @@ DnsCheckResult DnsCheckService::do_check(const std::string& domain,
 std::string DnsCheckService::compute_overall_status(
     const std::vector<PerTypeResult>& per_type,
     bool& success_out, std::string& error_out) {
-    size_t ok_count = 0, fail_count = 0, nodata_count = 0;
+    // NXDOMAIN and NODATA are valid DNS responses — not failures
+    size_t ok_count = 0, nodata_count = 0, nxdomain_count = 0, fail_count = 0;
     std::string first_error;
 
     for (const auto& pt : per_type) {
@@ -463,6 +464,9 @@ std::string DnsCheckService::compute_overall_status(
             ok_count++;
         } else if (pt.status_code == "NODATA") {
             nodata_count++;
+        } else if (pt.status_code == "NXDOMAIN") {
+            nxdomain_count++;
+            // NXDOMAIN is a valid DNS diagnostic result — not a failure
         } else {
             fail_count++;
             if (first_error.empty() && !pt.error.empty()) {
@@ -471,11 +475,13 @@ std::string DnsCheckService::compute_overall_status(
         }
     }
 
+    size_t valid_count = ok_count + nodata_count + nxdomain_count;
+
     if (fail_count == 0) {
         success_out = true;
         error_out.clear();
         return "complete";
-    } else if (ok_count > 0 || nodata_count > 0) {
+    } else if (valid_count > 0) {
         success_out = true;
         error_out = first_error.empty() ? std::string("Some queries failed") : first_error;
         return "partial";
@@ -484,6 +490,31 @@ std::string DnsCheckService::compute_overall_status(
         error_out = first_error.empty() ? std::string("All queries failed") : first_error;
         return "failed";
     }
+}
+
+int DnsCheckService::compute_http_status(
+    const std::vector<PerTypeResult>& per_type,
+    bool overall_success) {
+    if (!overall_success) return 502;
+
+    // Check if ANY type has a resolver failure
+    bool has_resolver_failure = false;
+    for (const auto& pt : per_type) {
+        if (pt.status_code == "SERVFAIL" || pt.status_code == "TIMEOUT"
+            || pt.status_code == "ERROR") {
+            has_resolver_failure = true;
+            break;
+        }
+    }
+
+    // 502 only if ALL results are resolver failures (already handled by success=false)
+    if (has_resolver_failure) {
+        // But if overall_success is true (partial), it means SOME types succeeded
+        // so we return 200
+        return 200;
+    }
+
+    return 200;
 }
 
 } // namespace containercp::dns

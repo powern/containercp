@@ -58,6 +58,8 @@ public:
     static std::string compute_overall_status(const std::vector<PerTypeResult>& per_type,
                                                 bool& success_out,
                                                 std::string& error_out);
+    static int compute_http_status(const std::vector<PerTypeResult>& per_type,
+                                    bool overall_success);
 
 private:
     struct CacheEntry {
