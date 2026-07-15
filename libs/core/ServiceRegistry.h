@@ -19,6 +19,7 @@
 #include "core/RecoveryManager.h"
 #include "database/DatabaseManager.h"
 #include "dns/DnsCheckService.h"
+#include "network/NetworkService.h"
 #include "domain/DomainManager.h"
 #include "filesystem/Filesystem.h"
 #include "logger/Logger.h"
@@ -66,6 +67,7 @@ public:
     domain::DomainManager& domains();
     domain::DomainViewService& domain_view();
     dns::DnsCheckService& dns_check();
+    network::NetworkService& network();
     php::PhpVersionManager& php_versions();
     profile::ProfileManager& profiles();
     database::DatabaseManager& databases();
@@ -146,6 +148,7 @@ private:
     ssl::CertificateStore cert_store_;
     domain::DomainViewService domain_view_;
     dns::DnsCheckService dns_check_;
+    network::NetworkService network_;
     ssl::HTTP01ChallengeProvider http01_challenge_;
     std::shared_ptr<ssl::LetsEncryptProvider> cert_provider_;
     std::shared_ptr<ssl::PemCertificateProvider> pem_cert_provider_;

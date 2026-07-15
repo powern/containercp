@@ -1150,15 +1150,13 @@ async function loadDomainOverview() {
 
     if (type === 'A') {
       recs = getRecs(rootDns, 'A');
-      // Expected IPv4 from server_hostname DNS resolution
-      const srvRecs = getRecs(serverDns, 'A');
-      configured = srvRecs.length > 0 ? srvRecs[0].value : '';
+      // Expected IPv4 from NetworkService (auto-detected, via API)
+      configured = (dnsData && dnsData.expected_ipv4) || '';
       hasExpected = !!configured;
     } else if (type === 'AAAA') {
       recs = getRecs(rootDns, 'AAAA');
-      // Expected IPv6 from server_hostname DNS resolution (if configured)
-      const srvRecs = getRecs(serverDns, 'AAAA');
-      configured = srvRecs.length > 0 ? srvRecs[0].value : '';
+      // Expected IPv6 from NetworkService (auto-detected, via API)
+      configured = (dnsData && dnsData.expected_ipv6) || '';
       hasExpected = !!configured;
     } else if (type === 'MX') {
       recs = getRecs(rootDns, 'MX');

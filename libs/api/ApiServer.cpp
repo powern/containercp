@@ -431,6 +431,18 @@ bool ApiServer::start() {
         // Perform DNS check (normalized domain)
         auto result = s.dns_check().check(domain, types);
 
+        // Populate expected IPs from NetworkService (auto-detected public IP)
+        {
+            auto v4 = s.network().public_ipv4();
+            auto v6 = s.network().public_ipv6();
+            result.expected_ipv4 = v4.address;
+            result.expected_ipv6 = v6.address;
+            result.expected_ipv4_source = v4.source;
+            result.expected_ipv6_source = v6.source;
+            result.expected_ip_detected_at = v4.detected_at.empty() ? v6.detected_at : v4.detected_at;
+            result.expected_ip_stale = v4.stale || v6.stale;
+        }
+
         // Build JSON response
         std::ostringstream json;
         json << "{\"success\":"
@@ -439,8 +451,14 @@ bool ApiServer::start() {
              << "\"domain\":\"" << JsonFormatter::escape(result.domain)
              << "\",\"resolved_at\":\"" << JsonFormatter::escape(result.resolved_at)
              << "\",\"cached\":" << (result.cached ? "true" : "false")
-             << ",\"overall_status\":\"" << JsonFormatter::escape(result.overall_status)
-             << "\",\"per_type\":[";
+              << ",\"overall_status\":\"" << JsonFormatter::escape(result.overall_status)
+              << ",\"expected_ipv4\":\"" << JsonFormatter::escape(result.expected_ipv4)
+              << "\",\"expected_ipv6\":\"" << JsonFormatter::escape(result.expected_ipv6)
+              << "\",\"expected_ipv4_source\":\"" << JsonFormatter::escape(result.expected_ipv4_source)
+              << "\",\"expected_ipv6_source\":\"" << JsonFormatter::escape(result.expected_ipv6_source)
+              << "\",\"expected_ip_detected_at\":\"" << JsonFormatter::escape(result.expected_ip_detected_at)
+              << "\",\"expected_ip_stale\":" << (result.expected_ip_stale ? "true" : "false")
+              << ",\"per_type\":[";
 
         bool first_pt = true;
         for (const auto& pt : result.per_type) {

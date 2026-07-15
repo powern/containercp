@@ -668,6 +668,12 @@ characters, spaces, path separators, and invalid DNS labels. This is separate fr
         ]
       }
     ],
+    "expected_ipv4": "116.202.231.94",
+    "expected_ipv6": "",
+    "expected_ipv4_source": "external_dns",
+    "expected_ipv6_source": "",
+    "expected_ip_detected_at": "2026-07-15T12:00:00Z",
+    "expected_ip_stale": false,
     "soa": {
       "mname": "ns1.example.com",
       "rname": "admin.example.com",
@@ -778,7 +784,28 @@ This allows the frontend to display NXDOMAIN with structured evidence and recomm
 | `true` | DNS diagnostic completed successfully. Data includes valid responses (NOERROR, NODATA, NXDOMAIN) even if some types had resolver failures (partial). The frontend can display `per_type` results with evidence. |
 | `false` | DNS diagnostic failed entirely — all queried types returned resolver failures (SERVFAIL, TIMEOUT, ERROR). No useful DNS data available. |
 
-**Implementation:** Uses `DnsCheckService` from `libs/dns/`. The service uses c-ares (`ares_query_dnsrec`) with a synchronous event loop. Results are cached in-memory for 60 seconds.
+**Expected IP fields:**
+
+| Field | Description |
+|-------|-------------|
+| `expected_ipv4` | Auto-detected public IPv4 of the server (from `NetworkService`). Empty string if undetermined. |
+| `expected_ipv6` | Auto-detected public IPv6 of the server. Empty string if unavailable or not configured. |
+| `expected_ipv4_source` | Detection source: `routing_table`, `external_dns`, `hostname_dns_fallback`, or empty. |
+| `expected_ipv6_source` | Same as above for IPv6. |
+| `expected_ip_detected_at` | ISO 8601 timestamp of when detection was last performed. |
+| `expected_ip_stale` | `true` if the value is from a cache that has exceeded its 5-minute TTL but was loaded from persisted storage. |
+
+These fields are populated by `NetworkService` (auto-detection, NOT user-editable). Detection order:
+1. System routing table (`ip route get`)
+2. External DNS helper (`myip.opendns.com` via c-ares)
+3. Server hostname DNS resolution (least preferred — circular dependency risk)
+4. Fallback to stored cached value
+5. Empty string (unknown)
+
+The frontend uses `expected_ipv4` and `expected_ipv6` to compare against the domain's published
+A/AAAA records, showing Match / Mismatch / Not Published / Unknown status.
+
+**Implementation:** Uses `DnsCheckService` from `libs/dns/` and `NetworkService` from `libs/network/`. The DNS resolution uses c-ares (`ares_query_dnsrec`) with a synchronous event loop. Results are cached in-memory for 60 seconds.
 
 **Cache semantics:**
 - First query for a domain → live lookup → `"cached": false`

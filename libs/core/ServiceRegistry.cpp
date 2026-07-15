@@ -33,7 +33,11 @@ ServiceRegistry::ServiceRegistry()
     , dkim_(logger_)
     , recovery_manager_(logger_, proxy_provider_, *this)
     , mail_provider_(logger_, config_.data_root())
+    , network_(config_, logger_)
 {
+    // Initial public IP detection (async — caches result for DNS diagnostics)
+    network_.detect_now();
+
     // Register mail runtime sync callback
     runtime_sync_.register_handler("mail", [this]() -> core::OperationResult {
         if (mail_.module_state() != mail::MailModuleState::Active)
@@ -554,6 +558,10 @@ domain::DomainViewService& ServiceRegistry::domain_view() {
 
 dns::DnsCheckService& ServiceRegistry::dns_check() {
     return dns_check_;
+}
+
+network::NetworkService& ServiceRegistry::network() {
+    return network_;
 }
 
 php::PhpVersionManager& ServiceRegistry::php_versions() {

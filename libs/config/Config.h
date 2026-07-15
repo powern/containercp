@@ -26,6 +26,12 @@ public:
     void load_server_hostname();
     void save_server_hostname() const;
 
+    // Public IP detection metadata (auto-detected, NOT user-editable)
+    std::string public_ipv4() const { return public_ipv4_; }
+    void set_public_ipv4(const std::string& ip) { public_ipv4_ = ip; }
+    std::string public_ipv6() const { return public_ipv6_; }
+    void set_public_ipv6(const std::string& ip) { public_ipv6_ = ip; }
+
 private:
     Config();
 
@@ -37,6 +43,8 @@ private:
     std::string data_root_;
     std::string log_root_;
     std::string server_hostname_;
+    std::string public_ipv4_;  // auto-detected, not user-editable
+    std::string public_ipv6_;  // auto-detected, not user-editable
 };
 
 } // namespace containercp::config

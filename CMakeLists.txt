@@ -48,6 +48,7 @@ set(CONTAINERCP_SOURCES
     libs/logger/Logger.cpp
     libs/migration/VestaSiteImporter.cpp
     libs/mail/MailAliasManager.cpp
+    libs/network/NetworkService.cpp
     libs/mail/DkimManager.cpp
     libs/mail/MailDomain.cpp
     libs/mail/MailModuleState.cpp

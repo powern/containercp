@@ -36,6 +36,12 @@ struct DnsCheckResult {
         uint64_t serial = 0;
     } soa;
     bool cached = false;
+    std::string expected_ipv4;
+    std::string expected_ipv6;
+    std::string expected_ipv4_source;
+    std::string expected_ipv6_source;
+    std::string expected_ip_detected_at;
+    bool expected_ip_stale = false;
     std::string overall_status;  // "complete" — all types ok, "partial" — some failed, "failed" — all failed
     bool success = false;
     std::string error;
