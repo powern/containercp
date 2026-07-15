@@ -427,9 +427,125 @@ After NetworkService implementation, the Overview tab's A/AAAA comparison change
 
 ### 5.2 — Add Configured/Published/Status labels for mail records
 
-**Files:** `web/app.js`  
-**Depends on:** 5.1  
-**Criteria:** Mail records (SPF, DKIM, DMARC) clearly show Configured vs Published.
+### 5.3 — SPF Semantic Analysis (backend)
+
+**Files:** NEW: `libs/dns/SpfAnalyzer.h`, `libs/dns/SpfAnalyzer.cpp`
+**Depends on:** 1.1 (DnsCheckService), 1.5 (NetworkService for expected IP)
+**Criteria:** SPF is analyzed semantically, not by string comparison. All tabs use shared backend result.
+
+**Problem:** Current SPF comparison uses string equality (`"v=spf1 mx ~all"` vs `"v=spf1 ip4:116.202.231.94 -all"` → Mismatch). This is incorrect — both records are equivalent in allowing the server's IP to send mail.
+
+**Architecture:**
+
+```
+SpfAnalyzer
+├── parse(spfRecord) → SpfRecord (struct with mechanisms, qualifier)
+├── analyze(SpfRecord, expectedIpv4, dnsResolver) → SpfAnalysis
+└── result cached per domain
+
+SpfAnalysis
+├── status: "ok" | "error" | "warning" | "not_found"
+├── match: "match" | "mismatch" | "not_published"
+├── expected_ip_allowed: bool
+├── record: string (raw SPF)
+├── all_qualifier: string ("-" | "~" | "?" | "+")
+├── lookup_count: int
+├── mechanism_matched: string (e.g., "ip4:116.202.231.94")
+├── errors: string[]
+├── warnings: string[]
+└── checks: [{code, status, reason}]
+```
+
+**SPF parsing (RFC 7208):**
+
+| Mechanism | Example | Check logic |
+|-----------|---------|-------------|
+| `ip4:<cidr>` | `ip4:116.202.231.94` | Expected IP within CIDR → allowed |
+| `ip6:<cidr>` | `ip6:2001:db8::/32` | Expected IPv6 within CIDR → allowed |
+| `a` | `a` | Resolve domain A/AAAA, check expected IP against results |
+| `a:<domain>` | `a:mail.example.com` | Resolve `<domain>` A/AAAA, check expected IP |
+| `mx` | `mx` | Resolve domain MX → resolve each MX target A/AAAA, check expected IP |
+| `mx:<domain>` | `mx:example.com` | Resolve `<domain>` MX → resolve targets A/AAAA, check expected IP |
+| `include:<domain>` | `include:_spf.google.com` | Recursive check with depth limit (max 10), visited set, loop detection |
+| `redirect=<domain>` | `redirect=_spf.example.com` | Follow redirect (last resort), depth limit |
+| `exp=<domain>` | `exp=explain.example.com` | Explanatory text (not checked in v1) |
+| `exists:<domain>` | `exists:spf.example.com` | Check if domain resolves (not authoritative for IP check) |
+| `all` | `-all`, `~all`, `?all`, `+all` | Determine default policy |
+
+**Qualifiers:**
+- `+` (pass) — default if not specified
+- `-` (fail) — strict reject
+- `~` (softfail) — mark as suspicious
+- `?` (neutral) — no policy
+
+**Status mapping:**
+| Scenario | Status |
+|----------|--------|
+| SPF exists, syntax valid, expected IP allowed | Match |
+| SPF exists, syntax valid, expected IP NOT allowed | Mismatch |
+| SPF exists, syntax valid, expected IP allowed, `~all` | Match + warning |
+| SPF exists, syntax valid, expected IP allowed, `?all` | Match + warning |
+| No SPF record | Not Published |
+| Duplicate SPF records | Error (multiple SPF) |
+| Syntax error | Error |
+| Include loop | Error |
+| > 10 DNS lookups | Error |
+| Lookup count 8-10 | Warning |
+
+**Integration with DnsCheckService:**
+- `DnsCheckResult` gets new field: `spf_analysis: SpfAnalysis`
+- `SpfAnalyzer` is called by the API handler after DNS check, using the same expected_ipv4
+- Frontend uses `dnsData.spf_analysis.match` (not string comparison) for SPF status
+- All tabs (Overview, DNS Records, Mail, Security) use the same `dnsData.spf_analysis`
+
+**Frontend changes:**
+- Replace `normalizeDnsValue(spfRecommended) === normalizeDnsValue(spfPublished)` with `dnsData.spf_analysis.match === 'match'`
+- SPF displayed record comes from `spf_analysis.record` (the actual SPF, not the template)
+- Status badge uses `spf_analysis.match` → Match/Mismatch/Not Published
+
+**API response extension** (`GET /api/domains/<domain>/dns-check`):
+```json
+{
+  "spf_analysis": {
+    "status": "ok",
+    "match": "match",
+    "expected_ip_allowed": true,
+    "record": "v=spf1 ip4:116.202.231.94 -all",
+    "all_qualifier": "-",
+    "lookup_count": 0,
+    "mechanism_matched": "ip4:116.202.231.94",
+    "checks": [
+      {"code": "spf_syntax", "status": "ok"},
+      {"code": "spf_expected_ip", "status": "ok", "reason": "Allowed by ip4:116.202.231.94"}
+    ],
+    "errors": [],
+    "warnings": []
+  }
+}
+```
+
+**Backend tests (deterministic, no live DNS):**
+- ip4 exact match → Match
+- ip4 CIDR match → Match
+- ip4 mismatch → Mismatch
+- a mechanism → resolve domain A, check expected IP
+- mx mechanism → resolve MX → resolve MX targets → check expected IP
+- include → recursive, depth limit
+- include loop → Error
+- duplicate SPF → Error
+- syntax error → Error
+- >10 lookups → Error
+- ~all with allowed IP → Match + warning
+- -all with allowed IP → Match
+- no SPF → Not Published
+- `v=spf1 ip4:116.202.231.94 -all` with expected `116.202.231.94` → Match
+
+**Frontend tests:**
+- spf_analysis.match == 'match' → Status badge Match
+- spf_analysis.match == 'mismatch' → Status badge Mismatch
+- spf_analysis.match == 'not_published' → Status badge Not Published
+- SPF record displayed from analysis (not template)
+- All tabs show same SPF status
 
 - [ ] For DKIM row: if `dkim_public_key_dns` exists, show first 60 chars + `...` in Configured column. Full value in tooltip or copy button.
 - [ ] For SPF row: if MailDomain exists in local-primary mode, show `v=spf1 mx ~all` in Configured. Otherwise show `—`.

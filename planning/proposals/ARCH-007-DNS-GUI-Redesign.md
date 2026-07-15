@@ -815,6 +815,18 @@ public:
         } soa;
         std::string expected_ipv4; // Server's public IPv4 (from NetworkService)
         std::string expected_ipv6; // Server's public IPv6 (from NetworkService)
+        // SPF analysis (semantic, not string comparison)
+        struct {
+            std::string status;  // "ok", "error", "not_found"
+            std::string match;   // "match", "mismatch", "not_published"
+            bool expected_ip_allowed;
+            std::string record;  // raw SPF record text
+            std::string all_qualifier;
+            int lookup_count;
+            std::string mechanism_matched;
+            std::vector<std::string> errors;
+            std::vector<std::string> warnings;
+        } spf_analysis;
         bool success;
         std::string error;
     };
