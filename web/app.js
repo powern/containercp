@@ -978,6 +978,17 @@ async function loadDomainDetail(p, domainId) {
       console.error('Failed to load mail domain', e);
     }
 
+    // Fetch server hostname for expected MX target and other domain-specific values
+    let serverHostname = '';
+    try {
+      const settingsRes = await api('/api/settings');
+      if (settingsRes && settingsRes.data) {
+        serverHostname = settingsRes.data.server_hostname || '';
+      }
+    } catch(e) {
+      console.error('Failed to load settings', e);
+    }
+
     // SSL data from enriched GET /api/domains (ssl_status, ssl_enabled)
     // No extra SSL API call — use domainRow fields directly.
     // ssl_status values: Active, Disabled, Expired, Expiring, Error, Issuing
@@ -1016,8 +1027,8 @@ async function loadDomainDetail(p, domainId) {
       </div>
       <div id="domain-tab-content"></div>`;
 
-    // Store data for tab access (sslData removed — use domainRow.ssl_status directly)
-    window._domainDetailData = {domainRow, mailDomain, runtimeData};
+    // Store data for tab access
+    window._domainDetailData = {domainRow, mailDomain, runtimeData, serverHostname};
 
     // Load first tab
     loadDomainOverview();
@@ -1065,7 +1076,7 @@ async function loadDomainOverview() {
   if (!content) return;
   const dd = window._domainDetailData;
   if (!dd) { content.innerHTML = '<div class="empty-state">No data</div>'; return; }
-  const {domainRow, mailDomain, runtimeData} = dd;
+  const {domainRow, mailDomain, runtimeData, serverHostname} = dd;
   const domain = domainRow.domain;
 
   content.innerHTML = '<div class="empty-state">Checking DNS...</div>';
@@ -1103,9 +1114,20 @@ async function loadDomainOverview() {
     dmarcDns = await fetchDnsForFqdn(dmarcFqdn, 'TXT');
   }
 
+  // Determine expected MX target based on MailDomain mode
+  let expectedMx = '';
+  if (mailDomain) {
+    if (mailDomain.mode === 'local-primary') {
+      expectedMx = serverHostname || mailDomain.domain;
+    } else if (mailDomain.mode === 'external-relay' || mailDomain.mode === 'split-m365') {
+      expectedMx = mailDomain.relay_host || '';
+    }
+  }
+
   // Build DNS check summary table
   const expectedTypes = ['A', 'AAAA', 'MX'];
-  if (mailDomain) {
+  const mailActive = mailDomain && mailDomain.mode !== 'disabled';
+  if (mailActive) {
     expectedTypes.push('SPF');
     if (mailDomain.dkim_public_key_dns) expectedTypes.push('DKIM');
     expectedTypes.push('DMARC');
@@ -1113,65 +1135,81 @@ async function loadDomainOverview() {
 
   let dnsRows = '';
   for (const type of expectedTypes) {
-    let configured = '—';
-    let published = '—';
+    let configured = '';
+    let published = '';
     let statusCls = 'badge-info';
-    let statusLabel = '—';
+    let statusLabel = '';
     let recs = [];
+    let hasExpected = false;
 
     if (type === 'A') {
       recs = getRecs(rootDns, 'A');
+      // No configured IP available (Node model lacks IP fields)
+      configured = '';
+      hasExpected = false;
     } else if (type === 'AAAA') {
       recs = getRecs(rootDns, 'AAAA');
+      configured = '';
+      hasExpected = false;
     } else if (type === 'MX') {
       recs = getRecs(rootDns, 'MX');
+      configured = expectedMx;
+      hasExpected = !!configured;
     } else if (type === 'SPF') {
       recs = getRecs(rootDns, 'TXT').filter(r => typeof r.value === 'string' && r.value.startsWith('v=spf1'));
+      configured = mailActive ? 'v=spf1 mx ~all' : '';
+      hasExpected = !!configured;
     } else if (type === 'DKIM') {
       recs = getRecs(dkimDns, 'TXT');
+      configured = mailDomain && mailDomain.dkim_public_key_dns ? mailDomain.dkim_public_key_dns : '';
+      hasExpected = !!configured;
     } else if (type === 'DMARC') {
       recs = getRecs(dmarcDns, 'TXT');
+      configured = mailActive ? 'v=DMARC1; p=none;' : '';
+      hasExpected = !!configured;
     }
 
     if (recs.length > 0) {
       published = recs.map(r => fmtVal(r.value)).join(', ');
     }
 
-    // Configured value
-    if (type === 'SPF' && mailDomain) {
-      configured = 'v=spf1 mx ~all';
-    } else if (type === 'DKIM' && mailDomain && mailDomain.dkim_public_key_dns) {
-      configured = fmtVal(mailDomain.dkim_public_key_dns);
-    } else if (type === 'DMARC' && mailDomain) {
-      configured = '(Recommended)';
-    } else if (type !== 'A' && type !== 'AAAA' && type !== 'MX') {
-      configured = '—';
-    }
+    // Determine column label and status
+    // For records where ContainerCP has a configured/stored value → "Configured"
+    // For records where ContainerCP generates a recommendation → "Recommended"
+    const colLabel = (type === 'SPF' || type === 'DMARC') ? 'Recommended' : 'Configured';
+    const displayVal = configured ? fmtVal(configured) : '—';
+    const displayPub = published || '—';
 
-    // Status
-    if (configured !== '—' && published !== '—') {
-      // For DKIM, check if the published key matches the configured key
-      if (type === 'DKIM' && mailDomain && mailDomain.dkim_public_key_dns) {
+    if (hasExpected && published) {
+      if (type === 'DKIM') {
         const pubVal = recs[0] && recs[0].value || '';
-        const cfgVal = mailDomain.dkim_public_key_dns;
-        // Normalize: remove whitespace differences
         const pubNorm = pubVal.replace(/\s+/g, '');
-        const cfgNorm = cfgVal.replace(/\s+/g, '');
+        const cfgNorm = configured.replace(/\s+/g, '');
         if (pubNorm === cfgNorm) {
           statusLabel = 'Match'; statusCls = 'badge-ok';
         } else {
           statusLabel = 'Mismatch'; statusCls = 'badge-warn';
         }
+      } else if (type === 'MX' && expectedMx) {
+        // Check if any published MX matches the expected hostname
+        const mxMatch = recs.some(r => {
+          const mxVal = (r.value || '').toLowerCase();
+          const expVal = expectedMx.toLowerCase();
+          return mxVal.includes(expVal) || expVal.includes(mxVal);
+        });
+        statusLabel = mxMatch ? 'Match' : 'Mismatch';
+        statusCls = mxMatch ? 'badge-ok' : 'badge-warn';
       } else {
         statusLabel = 'Found'; statusCls = 'badge-ok';
       }
-    } else if (configured !== '—' && published === '—') {
+    } else if (hasExpected && !published) {
       statusLabel = 'Not Published'; statusCls = 'badge-err';
-    } else if (configured === '—' && published !== '—') {
+    } else if (!hasExpected && published) {
       statusLabel = 'Found'; statusCls = 'badge-ok';
     }
 
-    dnsRows += `<tr><td>${esc(type)}</td><td style="font-family:monospace;font-size:12px;">${esc(configured)}</td><td style="font-family:monospace;font-size:12px;">${esc(published)}</td><td><span class="badge ${statusCls}">${esc(statusLabel)}</span></td></tr>`;
+    // Build column header: show "Recommended" for SPF/DMARC, "Configured" for others
+    dnsRows += `<tr><td>${esc(type)}</td><td style="font-family:monospace;font-size:12px;">${esc(displayVal)}</td><td style="font-family:monospace;font-size:12px;">${esc(displayPub)}</td><td>${statusLabel ? '<span class="badge ' + statusCls + '">' + esc(statusLabel) + '</span>' : '<span class="badge badge-info">—</span>'}</td></tr>`;
   }
 
   // Build info cards
