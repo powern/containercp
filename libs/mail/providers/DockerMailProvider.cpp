@@ -532,9 +532,12 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
                      << "dofile(\"" << lua_fix << "\")\n";
         }
 
-        // rspamd.conf.local — override lua to use our wrapper
+        // rspamd.conf.override — override lua at priority 10 (highest)
+        // NOTE: using override.d/ instead of local.d/ because Rspamd processes
+        // lua immediately when encountered; priority 10 forces override even
+        // if lua was already loaded from common.conf.
         {
-            std::string rcl_path = conf_dir + "/rspamd.conf.local";
+            std::string rcl_path = conf_dir + "/rspamd.conf.override";
             std::ofstream rcl_out(rcl_path);
             if (!rcl_out.is_open()) return {false, "Failed to write " + rcl_path};
             rcl_out << "lua = \"" << conf_dir << "/rspamd_wrapper.lua\";\n";
@@ -697,7 +700,7 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "      - " << config_dir() << "/generated/rspamd/logging.inc:/etc/rspamd/local.d/logging.inc:ro\n"
         << "      - " << config_dir() << "/generated/rspamd/dkim_fixup.lua:/etc/rspamd/local.d/dkim_fixup.lua:ro\n"
        << "      - " << config_dir() << "/generated/rspamd/rspamd_wrapper.lua:/etc/rspamd/local.d/rspamd_wrapper.lua:ro\n"
-       << "      - " << config_dir() << "/generated/rspamd/rspamd.conf.local:/etc/rspamd/local.d/rspamd.conf.local:ro\n"
+       << "      - " << config_dir() << "/generated/rspamd/rspamd.conf.override:/etc/rspamd/override.d/rspamd.conf.override:ro\n"
        << "      - " << config_dir() << "/state/dkim/:/etc/rspamd/keys/:ro\n"
         << "  redis:\n"
         << "    image: redis:7-alpine\n"
