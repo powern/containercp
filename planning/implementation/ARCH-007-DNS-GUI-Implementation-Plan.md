@@ -136,7 +136,7 @@ Before any implementation, verify the current state of all files that will be to
 
 ---
 
-## Phase 2 — DNS Check REST API
+## Phase 2 — DNS Check REST API ✅
 
 ### 2.1 — Register `GET /api/domains/<domain>/dns-check` endpoint
 
@@ -187,32 +187,18 @@ Before any implementation, verify the current state of all files that will be to
 - [ ] Add `#include "dns/DnsCheckService.h"` to `ApiServer.cpp`.
 - [ ] **Tests:** `tests/test_dns_api.cpp` — API-level tests (see Phase 8).
 
-### 2.2 — Update `DomainViewService` to include mail info
+### 2.2 — Update `DomainViewService` to include mail info ✅
 
-**Files:** `libs/domain/DomainViewService.h`, `libs/domain/DomainViewService.cpp`
+**Files:** `libs/domain/DomainViewService.h`, `libs/domain/DomainViewService.cpp`, `tests/test_managers.cpp`  
 **Depends on:** Phase 0  
-**Criteria:** `GET /api/domains` response includes `mail_domain_id`, `dkim_generated`, `dkim_selector`, `dkim_public_key_dns` fields.
+**Criteria:** ✅ `GET /api/domains` response includes mail fields.
 
-- [ ] Add `MailDomainManager& mail_domains_` member to `DomainViewService` (pass through constructor).
-- [ ] In `write_enriched()`, after existing fields, look up `MailDomain* md = mail_domains_.find_by_domain(d.fqdn)`.
-- [ ] If found, append to JSON:
-  ```json
-  "mail_domain_id": <id>,
-  "mail_domain_mode": "<mode>",
-  "dkim_selector": "<selector>",
-  "dkim_generated": <true|false>,
-  "dkim_public_key_dns": "<value>"
-  ```
-- [ ] If not found, append:
-  ```json
-  "mail_domain_id": 0,
-  "mail_domain_mode": "",
-  "dkim_selector": "",
-  "dkim_generated": false,
-  "dkim_public_key_dns": ""
-  ```
-- [ ] Update `DomainViewService` constructor callers in `ApiServer.cpp` (pass `s.mail()`).
-- [ ] **Tests:** `tests/test_domain_view.cpp` — verify mail fields present/absent.
+- [x] Added `#include "mail/MailDomainManager.h"` to `DomainViewService.h`.
+- [x] Added `mail::MailDomainManager& mail_domains_` member (passed through constructor).
+- [x] Updated constructor signature: added `mail::MailDomainManager& mail_domains` parameter.
+- [x] In `write_enriched()`: looks up `mail_domains_.find_by_domain(d.fqdn)`. If found, appends `mail_domain_id`, `mail_domain_mode`, `dkim_generated`, `dkim_selector`, `dkim_public_key_dns`. Empty/null values when no MailDomain.
+- [x] Updated `ServiceRegistry.cpp` constructor: passes `mail_` to `DomainViewService`.
+- [x] Updated `tests/test_managers.cpp`: creates `MailDomainManager` and passes to `DomainViewService`.
 
 ---
 

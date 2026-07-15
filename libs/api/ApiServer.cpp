@@ -13,6 +13,7 @@
 
 #include "ssl/CertificateStore.h"
 #include "ssl/CertificateProvider.h"
+#include "dns/DnsCheckService.h"
 #include "migration/VestaSiteImporter.h"
 #include "utils/Validator.h"
 
@@ -344,6 +345,131 @@ bool ApiServer::start() {
     router_.add("GET", "/api/domains", [&s](const Request&) {
         Response r;
         r.body = "{\"success\":true,\"data\":" + s.domain_view().build_enriched_json() + "}";
+        return r;
+    });
+
+    // GET /api/domains/<domain>/dns-check — live DNS resolution for a domain
+    router_.add_prefix("GET", "/api/domains/", [&s](const Request& req) {
+        Response r;
+        std::string remaining = req.path.substr(std::string("/api/domains/").size());
+
+        // Must end with /dns-check
+        const std::string suffix = "/dns-check";
+        if (remaining.size() <= suffix.size()
+            || remaining.substr(remaining.size() - suffix.size()) != suffix) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Not found\"}";
+            return r;
+        }
+
+        // Extract domain (everything before /dns-check)
+        std::string domain = remaining.substr(0, remaining.size() - suffix.size());
+        if (domain.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid domain\"}";
+            return r;
+        }
+
+        if (!dns::DnsCheckService::validate_domain(domain)) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid domain format\"}";
+            return r;
+        }
+
+        // Parse query parameters (already parsed by parse_request into req.query)
+        std::vector<std::string> types;
+        bool refresh = false;
+
+        auto it = req.query.find("refresh");
+        if (it != req.query.end() && it->second == "1") refresh = true;
+
+        it = req.query.find("types");
+        if (it != req.query.end() && !it->second.empty()) {
+            const std::string& v = it->second;
+            size_t pos = 0;
+            while (pos < v.size()) {
+                auto comma = v.find(',', pos);
+                std::string t = v.substr(pos, comma - pos);
+                if (!t.empty()) types.push_back(t);
+                pos = (comma == std::string::npos) ? v.size() : comma + 1;
+            }
+        }
+
+        if (types.empty()) {
+            types = {"A", "AAAA", "MX", "TXT", "NS", "SOA", "CAA"};
+        }
+
+        // Validate all types
+        for (const auto& t : types) {
+            if (!dns::DnsCheckService::validate_type(t)) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Unsupported DNS record type: "
+                    + JsonFormatter::escape(t) + "\"}";
+                return r;
+            }
+        }
+
+        // Check for refresh
+        if (refresh) {
+            s.dns_check().clear_cache(domain);
+        }
+
+        // Perform DNS check
+        auto result = s.dns_check().check(domain, types);
+
+        // Build JSON response
+        std::ostringstream json;
+        json << "{\"success\":"
+             << (result.success ? "true" : "false")
+             << ",\"data\":{"
+             << "\"domain\":\"" << JsonFormatter::escape(result.domain)
+             << "\",\"resolved_at\":\"" << JsonFormatter::escape(result.resolved_at)
+             << "\",\"cached\":false"
+             << ",\"overall_status\":\"" << JsonFormatter::escape(result.overall_status)
+             << "\",\"per_type\":[";
+
+        bool first_pt = true;
+        for (const auto& pt : result.per_type) {
+            if (!first_pt) json << ",";
+            first_pt = false;
+            json << "{\"type\":\"" << JsonFormatter::escape(pt.type)
+                 << "\",\"status_code\":\"" << JsonFormatter::escape(pt.status_code)
+                 << "\",\"error\":\"" << JsonFormatter::escape(pt.error)
+                 << "\",\"records\":[";
+            bool first_rec = true;
+            for (const auto& rec : pt.records) {
+                if (!first_rec) json << ",";
+                first_rec = false;
+                json << "{\"type\":\"" << JsonFormatter::escape(rec.type)
+                     << "\",\"name\":\"" << JsonFormatter::escape(rec.name)
+                     << "\",\"value\":\"" << JsonFormatter::escape(rec.value)
+                     << "\",\"ttl\":" << rec.ttl
+                     << ",\"priority\":" << rec.priority
+                     << ",\"dns_response_details\":\"" << JsonFormatter::escape(rec.dns_response_details)
+                     << "\"}";
+            }
+            json << "]}";
+        }
+
+        json << "],\"soa\":{"
+             << "\"mname\":\"" << JsonFormatter::escape(result.soa.mname)
+             << "\",\"rname\":\"" << JsonFormatter::escape(result.soa.rname)
+             << "\",\"serial\":" << result.soa.serial
+             << "}";
+
+        if (!result.error.empty()) {
+            json << ",\"error\":\"" << JsonFormatter::escape(result.error) << "\"";
+        }
+
+        json << "}}";  // close data + top-level
+        r.body = json.str();
+
+        if (!result.success) {
+            r.status_code = 502;
+        } else if (result.overall_status == "partial") {
+            r.status_code = 200;  // partial success is still a valid response
+        }
+
         return r;
     });
 

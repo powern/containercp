@@ -145,7 +145,8 @@ TEST_CASE("DomainViewService produces valid JSON for various target values") {
     }
 
     // Create the view service and generate enriched JSON
-    domain::DomainViewService view(logger::Logger::instance(), domains, sites, cert_store);
+    mail::MailDomainManager md_mgr;
+    domain::DomainViewService view(logger::Logger::instance(), domains, sites, cert_store, md_mgr);
     std::string json_result = view.build_enriched_json();
 
     // Verify the JSON is syntactically valid by checking basic structure

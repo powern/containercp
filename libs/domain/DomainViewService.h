@@ -3,6 +3,7 @@
 
 #include "domain/DomainManager.h"
 #include "logger/Logger.h"
+#include "mail/MailDomainManager.h"
 #include "ssl/CertificateStore.h"
 #include "site/SiteManager.h"
 
@@ -22,7 +23,8 @@ public:
     DomainViewService(logger::Logger& logger,
                       DomainManager& domains,
                       site::SiteManager& sites,
-                      ssl::CertificateStore& cert_store);
+                      ssl::CertificateStore& cert_store,
+                      mail::MailDomainManager& mail_domains);
 
     // Build enriched JSON array for all domains.
     std::string build_enriched_json() const;
@@ -37,6 +39,7 @@ private:
     DomainManager& domains_;
     site::SiteManager& sites_;
     ssl::CertificateStore& cert_store_;
+    mail::MailDomainManager& mail_domains_;
 };
 
 } // namespace containercp::domain

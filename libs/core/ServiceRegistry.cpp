@@ -16,7 +16,7 @@ ServiceRegistry::ServiceRegistry()
     , access_provider_(logger_)
     , proxy_provider_(filesystem_, config_, logger_, ssl_, reverse_proxies_)
     , cert_store_(logger_, config_.data_root() + "/ssl")
-    , domain_view_(logger_, domains_, sites_, cert_store_)
+    , domain_view_(logger_, domains_, sites_, cert_store_, mail_)
     , http01_challenge_(logger_, config_.data_root() + "/sites", config_.data_root() + "/ssl/0/.well-known/acme-challenge")
     , cert_provider_(std::make_shared<ssl::LetsEncryptProvider>(logger_, http01_challenge_, cert_store_))
     , pem_cert_provider_(std::make_shared<ssl::PemCertificateProvider>(logger_))
@@ -550,6 +550,10 @@ domain::DomainManager& ServiceRegistry::domains() {
 
 domain::DomainViewService& ServiceRegistry::domain_view() {
     return domain_view_;
+}
+
+dns::DnsCheckService& ServiceRegistry::dns_check() {
+    return dns_check_;
 }
 
 php::PhpVersionManager& ServiceRegistry::php_versions() {

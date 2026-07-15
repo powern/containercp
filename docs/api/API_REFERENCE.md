@@ -188,9 +188,15 @@ Fields: `version`, `server_hostname`.
 `site_domain`, `target`, `ssl_enabled`, `ssl_status` (from
 `CertificateStore::https_display_status`), `enabled`.
 
+**New fields (v0.6):** `mail_domain_id` (0 if no mail domain),
+`mail_domain_mode` (e.g. `"local-primary"` or empty), `dkim_generated`
+(bool), `dkim_selector` (e.g. `"dkim"`), `dkim_public_key_dns` (the
+TXT record value or empty).
+
 The API handler enriches domain records with site info from
-`SiteManager::find_by_id()` and SSL status from
-`CertificateStore::load_metadata()` + `https_display_status()`.
+`SiteManager::find_by_id()`, SSL status from
+`CertificateStore::load_metadata()` + `https_display_status()`,
+and mail domain info from `MailDomainManager::find_by_domain()`.
 No business logic is duplicated — the API consumes the owning
 subsystems.
 
@@ -579,6 +585,155 @@ Fields:
 - 400 — Invalid site ID (non-numeric)
 - 404 — Site not found
 - 500 — Orchestration error (e.g., Docker network not available, mail module inactive)
+
+---
+
+### 2.23 DNS Check
+
+| Method | Path | Purpose | Owner |
+|--------|------|---------|-------|
+| GET | `/api/domains/<domain>/dns-check` | Live DNS resolution for a domain | `DnsCheckService` (`libs/dns/`) |
+
+Performs live DNS resolution using the **c-ares** library (no shell commands, no dig). Returns structured results with per-type status, all found records, and SOA data.
+
+**Query parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `types` | string | `A,AAAA,MX,TXT,NS,SOA,CAA` | Comma-separated list of record types to query. Supported: `A`, `AAAA`, `MX`, `TXT`, `CNAME`, `NS`, `SOA`, `CAA`. |
+| `refresh` | boolean | `false` | If `1`, bypasses the 60-second cache and performs a fresh DNS lookup. |
+
+**Success response (complete):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "domain": "example.com",
+    "resolved_at": "2026-07-15T12:00:00Z",
+    "cached": false,
+    "overall_status": "complete",
+    "per_type": [
+      {
+        "type": "A",
+        "status_code": "NOERROR",
+        "error": "",
+        "records": [
+          {
+            "type": "A",
+            "name": "example.com",
+            "value": "192.168.1.1",
+            "ttl": 3600,
+            "priority": 0,
+            "dns_response_details": "A 192.168.1.1 (ttl=3600)"
+          }
+        ]
+      },
+      {
+        "type": "MX",
+        "status_code": "NOERROR",
+        "error": "",
+        "records": [
+          {
+            "type": "MX",
+            "name": "example.com",
+            "value": "mail.example.com",
+            "ttl": 3600,
+            "priority": 10,
+            "dns_response_details": "MX 10 mail.example.com (ttl=3600)"
+          }
+        ]
+      }
+    ],
+    "soa": {
+      "mname": "ns1.example.com",
+      "rname": "admin.example.com",
+      "serial": 2026071501
+    },
+    "error": ""
+  }
+}
+```
+
+**Success response (partial — some record types failed):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "domain": "example.com",
+    "resolved_at": "2026-07-15T12:00:00Z",
+    "cached": false,
+    "overall_status": "partial",
+    "per_type": [
+      {"type": "A", "status_code": "NOERROR", "error": "", "records": [...]},
+      {"type": "AAAA", "status_code": "TIMEOUT", "error": "TIMEOUT", "records": []}
+    ],
+    "soa": {"mname": "", "rname": "", "serial": 0},
+    "error": "TIMEOUT"
+  }
+}
+```
+
+**Error response (all record types failed):**
+
+```json
+{
+  "success": false,
+  "data": {
+    "domain": "example.com",
+    "resolved_at": "2026-07-15T12:00:00Z",
+    "cached": false,
+    "overall_status": "failed",
+    "per_type": [
+      {"type": "A", "status_code": "NXDOMAIN", "error": "NXDOMAIN", "records": []}
+    ],
+    "soa": {"mname": "", "rname": "", "serial": 0},
+    "error": "NXDOMAIN"
+  }
+}
+```
+
+**Error responses:**
+
+| Code | Condition |
+|------|-----------|
+| 400 | Invalid domain format, unsupported DNS record type |
+| 502 | DNS resolution failed (NXDOMAIN, SERVFAIL, TIMEOUT) |
+
+**overall_status values:**
+
+| Value | Meaning |
+|-------|---------|
+| `complete` | All requested record types resolved successfully |
+| `partial` | Some record types succeeded, some failed |
+| `failed` | All requested record types failed |
+
+**per_type[].status_code values:**
+
+| Value | Meaning |
+|-------|---------|
+| `NOERROR` | Query succeeded, records may be present |
+| `NODATA` | Domain exists but has no records of this type |
+| `NXDOMAIN` | Domain does not exist |
+| `SERVFAIL` | DNS server failure |
+| `TIMEOUT` | Query timed out |
+| `ERROR` | Other DNS error |
+
+**Implementation:** Uses `DnsCheckService` from `libs/dns/`. The service uses c-ares (`ares_query_dnsrec`) with a synchronous event loop. Results are cached in-memory for 60 seconds. The `refresh=1` parameter bypasses the cache.
+
+**Example:**
+
+```bash
+# Basic check
+curl /api/domains/example.com/dns-check
+
+# Check specific record types
+curl "/api/domains/example.com/dns-check?types=A,AAAA,MX"
+
+# Force refresh (bypass cache)
+curl "/api/domains/example.com/dns-check?refresh=1"
+```
 
 ---
 
