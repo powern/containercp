@@ -136,6 +136,59 @@ Before any implementation, verify the current state of all files that will be to
 
 ---
 
+## Phase 1.5 — NetworkService: Auto Public IP Detection
+
+### 1.5.1 — Create `libs/network/NetworkService`
+
+**Files:** NEW: `libs/network/NetworkService.h`, `libs/network/NetworkService.cpp`  
+**Depends on:** Phase 0  
+**Criteria:** Service auto-detects public IPv4/IPv6 at startup, caches in Config.
+
+- [ ] `NetworkService` class with:
+  - `std::string detect_public_ipv4()` — tries methods in order, returns first success
+  - `std::string detect_public_ipv6()` — same for IPv6
+  - `std::string public_ipv4() const` — returns cached value
+  - `std::string public_ipv6() const` — returns cached value
+  - `void refresh()` — clears cache, forces re-detection
+  - `std::string last_detected_at() const` — ISO 8601 timestamp
+
+- [ ] Detection methods (tried in order):
+  1. **DNS resolution of server hostname** — Resolve `Config::server_hostname()` for A/AAAA via c-ares (reuse `DnsCheckService` or use `ares_query` directly)
+  2. **External DNS helper** — Query `myip.opendns.com @resolver1.opendns.com` via c-ares or `CommandExecutor` with `dig`
+  3. **System routing** — Parse `ip -4 route get 1.1.0.0` for source IP via `CommandExecutor`
+  4. **Fallback** — Return empty string
+
+- [ ] Storage in `Config`:
+  - `public_ipv4_` — getter/setter, stored in `/srv/containercp/data/public_ipv4`
+  - `public_ipv6_` — getter/setter, stored in `/srv/containercp/data/public_ipv6`
+  - `last_ip_detection_` — timestamp string
+  - **Not exposed via POST /api/settings** (read-only, auto-detected, not user-editable)
+
+- [ ] Registration in `ServiceRegistry`:
+  - Add `network::NetworkService network_` member
+  - Add `network_service()` accessor
+  - Initialize at daemon startup, run detection
+
+- [ ] Integration with `DnsCheckService`:
+  - `DnsCheckResult` gets `expected_ipv4` and `expected_ipv6` fields
+  - `DnsCheckService::check()` populates these from `NetworkService`
+  - API response includes `expected_ipv4` and `expected_ipv6`
+
+- [ ] `CMakeLists.txt` — add `libs/network/NetworkService.cpp` to `CONTAINERCP_SOURCES`
+
+- [ ] **Tests:** `tests/test_network_service.cpp`
+
+**Tests for 1.5.1:**
+- IPv4 detection via server_hostname resolution
+- IPv6 detection via server_hostname resolution
+- Fallback when no IP detected (empty string)
+- Config storage persists across detection runs
+- `refresh()` clears cached values
+- Values not editable via settings API (read-only)
+- Detection runs at startup
+
+---
+
 ## Phase 2 — DNS Check REST API ✅
 
 ### 2.1 — Register `GET /api/domains/<domain>/dns-check` endpoint
@@ -273,6 +326,14 @@ Before any implementation, verify the current state of all files that will be to
 - [x] Loading state: `<div class="empty-state">Loading...</div>`.
 - [x] Error state: `<div class="empty-state">Failed to load domain</div>`.
 - [x] Data stored in `window._domainDetailData` for tab access.
+
+### 4.2 — Implement Overview tab ✅ (updated for NetworkService)
+
+After NetworkService implementation, the Overview tab's A/AAAA comparison changes:
+- **Before:** Expected IPs resolved from server_hostname via DNS (frontend workaround)
+- **After:** Expected IPs come from `dnsData.expected_ipv4` and `dnsData.expected_ipv6` (backend-provided)
+- Frontend no longer needs to resolve server_hostname DNS
+- Status: Match / Mismatch / Not Published / N/A
 
 ### 4.2 — Implement Overview tab ✅
 
@@ -778,19 +839,31 @@ Logical commits that preserve a working state after each:
 | *(flat build — no sub-CMakeLists needed)* | 1.1 | Add `libs/dns/DnsCheckService.cpp` to root `CMakeLists.txt` `CONTAINERCP_SOURCES`, add `cares` to `target_link_libraries` |
 | `libs/dns/DnsCheckService.h` | 1.1 | DnsCheckService class declaration |
 | `libs/dns/DnsCheckService.cpp` | 1.1 | DnsCheckService implementation |
+| `libs/network/NetworkService.h` | 1.5 | NetworkService class (auto IP detection) |
+| `libs/network/NetworkService.cpp` | 1.5 | NetworkService implementation |
 | `tests/test_dns_service.cpp` | 9.1 | Unit tests for DnsCheckService |
 | `tests/test_dns_api.cpp` | 9.2 | API integration tests for dns-check endpoint |
+| `tests/test_network_service.cpp` | 1.5 | Unit tests for NetworkService |
 
 ## Files to be modified
 
 | File | Phase | Change |
 |------|-------|--------|
-| `CMakeLists.txt` (root) | 1.1 | Add `libs/dns/` subdirectory |
+| `CMakeLists.txt` (root) | 1.1 | Add `libs/dns/DnsCheckService.cpp` + `cares` link lib |
+| `CMakeLists.txt` (root) | 1.5 | Add `libs/network/NetworkService.cpp` |
+| `libs/core/Config.h` | 1.5 | Add `public_ipv4_`, `public_ipv6_`, `last_ip_detection_` fields + getters/setters |
+| `libs/core/Config.cpp` | 1.5 | Load/save IP detection from `data_root_/public_ipv4`, `public_ipv6` |
+| `libs/core/ServiceRegistry.h` | 1.5 | Add `NetworkService` member + accessor |
+| `libs/core/ServiceRegistry.cpp` | 1.5 | Initialize NetworkService at startup |
+| `libs/dns/DnsCheckService.h` | 1.5 | Add `expected_ipv4`, `expected_ipv6` fields to DnsCheckResult |
+| `libs/dns/DnsCheckService.cpp` | 1.5 | Populate expected IPs from NetworkService |
 | `libs/api/ApiServer.cpp` | 2.1 | Add `GET /api/domains/<domain>/dns-check` route |
 | `libs/api/ApiServer.h` | 2.1 | (if needed) Add DnsCheckService reference |
 | `libs/domain/DomainViewService.h` | 2.2 | Add `MailDomainManager&` parameter |
 | `libs/domain/DomainViewService.cpp` | 2.2 | Add mail domain fields to enriched JSON |
 | `web/app.js` | 3.1–8.1 | All GUI changes |
+| `docs/api/API_REFERENCE.md` | 1.5 | Document `expected_ipv4`, `expected_ipv6` in DNS check response |
+| `docs/api/API_REFERENCE.md` | 2.1 | Document new endpoint |
 | `tests/test_domain_view.cpp` | 9.1 | Add mail field tests |
 | `tests/test_api.cpp` | 9.2 | Add dns-check endpoint tests (or new file) |
 | `tests/CMakeLists.txt` | 9.1 | Add new test source files |

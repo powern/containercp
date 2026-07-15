@@ -704,9 +704,56 @@ None. This proposal does NOT create new backend resources. All data models alrea
 
 ---
 
-## Managers
+## New Services
 
-No new managers. This proposal adds a **read-only check service**:
+This proposal adds two new backend services:
+
+### `NetworkService` (new file: `libs/network/NetworkService.h/.cpp`)
+
+Auto-detects the server's public IPv4 and IPv6 addresses. Used by `DnsCheckService`
+to provide expected IP values for A/AAAA record comparison. Designed as a reusable
+service for other modules (SSL, Health, Diagnostics, Monitoring).
+
+```
+class NetworkService {
+public:
+    NetworkService(Config& config, CommandExecutor& executor);
+
+    // Detect and cache public IPv4. Returns empty string if unavailable.
+    std::string detect_public_ipv4();
+
+    // Detect and cache public IPv6. Returns empty string if unavailable.
+    std::string detect_public_ipv6();
+
+    // Return cached values (no re-detection).
+    std::string public_ipv4() const;
+    std::string public_ipv6() const;
+
+    // Force re-detection on next call.
+    void refresh();
+
+    // Timestamp of last successful detection.
+    std::string last_detected_at() const;
+};
+```
+
+**Detection methods (tried in order, first success wins):**
+1. **DNS resolution of server hostname** — Resolve `Config::server_hostname()` A/AAAA record via c-ares. This works when the server hostname is a public domain pointing to the server.
+2. **External DNS helper** — Query `myip.opendns.com @resolver1.opendns.com` for A record (returns caller's public IP).
+3. **System routing table** — Parse `ip -4 route get 1.1.0.0` output for source IP.
+4. **Fallback** — Return empty string (IP unknown).
+
+**Storage:** Detected values are cached in `Config` (auto-detected, NOT user-editable):
+- `public_ipv4` — cached in `/srv/containercp/data/public_ipv4`
+- `public_ipv6` — cached in `/srv/containercp/data/public_ipv6`
+- `last_ip_detection` — ISO 8601 timestamp
+
+**Integration:** `NetworkService` is initialized at daemon startup and runs detection
+asynchronously. Values are refreshed every 24 hours or on demand via `refresh()`.
+
+### `DnsCheckService` (updated: `libs/dns/DnsCheckService.h/.cpp`)
+
+Updated to include expected IP addresses from `NetworkService` in its response:
 
 ### `DnsCheckService` (new file: `libs/dns/DnsCheckService.h/.cpp`)
 
@@ -733,6 +780,8 @@ public:
             std::string rname;     // responsible admin email
             uint64_t serial = 0;
         } soa;
+        std::string expected_ipv4; // Server's public IPv4 (from NetworkService)
+        std::string expected_ipv6; // Server's public IPv6 (from NetworkService)
         bool success;
         std::string error;
     };
