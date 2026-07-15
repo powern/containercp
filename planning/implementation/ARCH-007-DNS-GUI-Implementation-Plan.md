@@ -9,6 +9,29 @@
 
 ---
 
+### Production inspection results (web2.softico.ua, 2026-07-15)
+
+**Method:** Read-only SSH + curl inspection of live ContainerCP instance.
+
+**Confirmed facts:**
+- **Server hostname:** `web2.softico.ua` — used as admin panel hostname
+- **Admin panel proxy:** Configured via system proxy entry at `/srv/containercp/proxy/sites/web2.softico.ua.conf` — proxies directly to daemon API on `172.17.0.1:8081`
+- **SSL for admin panel:** Stored at `/srv/containercp/ssl/0/` — `site_id=0`. Metadata confirms: status `"active"`, `https_enabled: true`, Let's Encrypt, domains `["web2.softico.ua"]`, expires Oct 7 2026
+- **No Site record:** SiteManager has no site with `id=0`. SSL store uses `site_id=0` as a special sentinel for the admin panel
+- **No Domain record:** The admin panel hostname does NOT appear in `domains.db` — admin panel is not a managed Domain resource
+- **Runtime API:** `GET /api/runtime/0` returns 400 ("Invalid site ID") — no Site record exists
+- **Admin panel HTTP accessibility:** Both HTTP and HTTPS respond 200 OK via nginx proxy (`nginx/1.31.2`)
+- **Other sites:** 9 sites total with site_ids 1-11 (not contiguous). SSL present at site_ids 4, 8, 11
+- **Mail domains:** Present for `softi.co` domains with DKIM records
+
+**Impact on implementation:**
+- `site_id=0` in Domains means a Domain record was created without linking to a Site (default value). This does NOT correspond to the admin panel Domain (which doesn't exist as a Domain record).
+- However, `CertificateStore::load_metadata(0)` DOES return the admin panel SSL — so SSL check for `site_id=0` domains is meaningful.
+- Runtime API cannot check admin panel — Runtime column shows N/A for `site_id=0`.
+- All existing implementation plan decisions remain correct.
+
+---
+
 ## Phase 0 — Existing Code Verification (prerequisite)
 
 Before any implementation, verify the current state of all files that will be touched.
