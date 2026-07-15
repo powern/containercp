@@ -978,12 +978,18 @@ async function loadDomainDetail(p, domainId) {
       console.error('Failed to load mail domain', e);
     }
 
-    // Fetch server hostname for expected MX target and other domain-specific values
+    // Fetch server hostname and its DNS (A/AAAA records) for expected IP comparison
     let serverHostname = '';
+    let serverDns = null;
     try {
       const settingsRes = await api('/api/settings');
       if (settingsRes && settingsRes.data) {
         serverHostname = settingsRes.data.server_hostname || '';
+        // Resolve server_hostname's A and AAAA records as the expected IPs
+        if (serverHostname) {
+          const srvDnsRes = await fetchDnsForFqdn(serverHostname, 'A,AAAA');
+          if (srvDnsRes) serverDns = srvDnsRes;
+        }
       }
     } catch(e) {
       console.error('Failed to load settings', e);
@@ -1028,7 +1034,7 @@ async function loadDomainDetail(p, domainId) {
       <div id="domain-tab-content"></div>`;
 
     // Store data for tab access
-    window._domainDetailData = {domainRow, mailDomain, runtimeData, serverHostname};
+    window._domainDetailData = {domainRow, mailDomain, runtimeData, serverHostname, serverDns};
 
     // Load first tab
     loadDomainOverview();
@@ -1076,7 +1082,7 @@ async function loadDomainOverview() {
   if (!content) return;
   const dd = window._domainDetailData;
   if (!dd) { content.innerHTML = '<div class="empty-state">No data</div>'; return; }
-  const {domainRow, mailDomain, runtimeData, serverHostname} = dd;
+  const {domainRow, mailDomain, runtimeData, serverHostname, serverDns} = dd;
   const domain = domainRow.domain;
 
   content.innerHTML = '<div class="empty-state">Checking DNS...</div>';
@@ -1144,13 +1150,16 @@ async function loadDomainOverview() {
 
     if (type === 'A') {
       recs = getRecs(rootDns, 'A');
-      // No configured IP available (Node model lacks IP fields)
-      configured = '';
-      hasExpected = false;
+      // Expected IPv4 from server_hostname DNS resolution
+      const srvRecs = getRecs(serverDns, 'A');
+      configured = srvRecs.length > 0 ? srvRecs[0].value : '';
+      hasExpected = !!configured;
     } else if (type === 'AAAA') {
       recs = getRecs(rootDns, 'AAAA');
-      configured = '';
-      hasExpected = false;
+      // Expected IPv6 from server_hostname DNS resolution (if configured)
+      const srvRecs = getRecs(serverDns, 'AAAA');
+      configured = srvRecs.length > 0 ? srvRecs[0].value : '';
+      hasExpected = !!configured;
     } else if (type === 'MX') {
       recs = getRecs(rootDns, 'MX');
       configured = expectedMx;
@@ -1185,13 +1194,9 @@ async function loadDomainOverview() {
         const pubVal = recs[0] && recs[0].value || '';
         const pubNorm = pubVal.replace(/\s+/g, '');
         const cfgNorm = configured.replace(/\s+/g, '');
-        if (pubNorm === cfgNorm) {
-          statusLabel = 'Match'; statusCls = 'badge-ok';
-        } else {
-          statusLabel = 'Mismatch'; statusCls = 'badge-warn';
-        }
+        statusLabel = (pubNorm === cfgNorm) ? 'Match' : 'Mismatch';
+        statusCls = (pubNorm === cfgNorm) ? 'badge-ok' : 'badge-warn';
       } else if (type === 'MX' && expectedMx) {
-        // Check if any published MX matches the expected hostname
         const mxMatch = recs.some(r => {
           const mxVal = (r.value || '').toLowerCase();
           const expVal = expectedMx.toLowerCase();
@@ -1199,13 +1204,18 @@ async function loadDomainOverview() {
         });
         statusLabel = mxMatch ? 'Match' : 'Mismatch';
         statusCls = mxMatch ? 'badge-ok' : 'badge-warn';
+      } else if (type === 'A' || type === 'AAAA') {
+        // Expected IP vs published IP — exact match
+        const pubVal = recs[0] && recs[0].value || '';
+        statusLabel = (pubVal === configured) ? 'Match' : 'Mismatch';
+        statusCls = (pubVal === configured) ? 'badge-ok' : 'badge-warn';
       } else {
-        statusLabel = 'Found'; statusCls = 'badge-ok';
+        statusLabel = 'Match'; statusCls = 'badge-ok';
       }
     } else if (hasExpected && !published) {
       statusLabel = 'Not Published'; statusCls = 'badge-err';
     } else if (!hasExpected && published) {
-      statusLabel = 'Found'; statusCls = 'badge-ok';
+      statusLabel = 'Unexpected'; statusCls = 'badge-warn';
     }
 
     // Build column header: show "Recommended" for SPF/DMARC, "Configured" for others
