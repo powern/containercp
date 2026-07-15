@@ -1290,6 +1290,46 @@ async function refreshDomainOverview() {
   loadDomainOverview();
 }
 
+// Universal Full DNS Record formatter
+function buildFullDnsRecord(fqdn, ttl, type, value, priority) {
+  const name = fqdn.endsWith('.') ? fqdn : fqdn + '.';
+  const ttlStr = (ttl && ttl > 0) ? ' ' + ttl : ' 3600';
+  if (type === 'MX') {
+    const prio = priority ? ' ' + priority : ' 10';
+    return name + ttlStr + ' IN MX' + prio + ' ' + (value.endsWith('.') ? value : value + '.');
+  }
+  if (type === 'TXT' || type === 'SPF' || type === 'DKIM' || type === 'DMARC' || type === 'MTA-STS') {
+    return name + ttlStr + ' IN TXT "' + value + '"';
+  }
+  if (type === 'CAA') {
+    return name + ttlStr + ' IN CAA ' + value;
+  }
+  if (type === 'CNAME') {
+    return name + ttlStr + ' IN CNAME ' + (value.endsWith('.') ? value : value + '.');
+  }
+  return name + ttlStr + ' IN ' + type + ' ' + value;
+}
+
+// Normalize hostname for comparison: lowercase, strip trailing dot
+function normalizeHostname(h) {
+  if (!h || typeof h !== 'string') return '';
+  h = h.toLowerCase();
+  if (h.endsWith('.')) h = h.slice(0, -1);
+  return h;
+}
+
+// Attach data-copy event listener (single handler for all copy buttons)
+function attachDataCopyListener(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.addEventListener('click', function(e) {
+    const btn = e.target.closest('[data-copy]');
+    if (!btn) return;
+    const text = btn.getAttribute('data-copy');
+    if (text) copyText(text, btn.getAttribute('data-copy-msg') || 'Copied');
+  });
+}
+
 // --- DNS Records tab ---
 async function loadDomainDnsRecords() {
   const content = document.getElementById('domain-tab-content');
@@ -1301,7 +1341,6 @@ async function loadDomainDnsRecords() {
 
   content.innerHTML = '<div class="empty-state">Checking DNS...</div>';
 
-  // Helper: get records for a type from DNS result
   function getRecs(dnsResult, typeName) {
     if (!dnsResult || !Array.isArray(dnsResult.per_type)) return [];
     const pt = dnsResult.per_type.find(x => x && x.type === typeName);
@@ -1309,7 +1348,6 @@ async function loadDomainDnsRecords() {
     return pt.records;
   }
 
-  // Fetch all DNS data
   const rootDns = await fetchDnsForFqdn(domain, 'A,AAAA,MX,TXT,NS,CNAME,CAA');
   let dkimDns = null, dmarcDns = null, mtaStsDns = null;
 
@@ -1322,7 +1360,6 @@ async function loadDomainDnsRecords() {
     mtaStsDns = await fetchDnsForFqdn('_mta-sts.' + domain, 'TXT');
   }
 
-  // Determine expected MX
   let expectedMx = '';
   if (mailDomain && mailDomain.mode === 'local-primary') expectedMx = serverHostname || '';
   else if (mailDomain && (mailDomain.mode === 'external-relay' || mailDomain.mode === 'split-m365')) expectedMx = mailDomain.relay_host || '';
@@ -1330,7 +1367,6 @@ async function loadDomainDnsRecords() {
   const now = Date.now();
   const ts = new Date(now).toLocaleTimeString();
 
-  // Build table content
   function fmtVal(v, max) {
     if (!v || typeof v !== 'string') return '—';
     if (v.length > (max || 40)) return esc(v.substr(0, max || 40)) + '...';
@@ -1342,20 +1378,22 @@ async function loadDomainDnsRecords() {
     return `<span class="badge ${cls || 'badge-info'}">${esc(label)}</span>`;
   }
 
-  function copyBtn(text, label) {
-    const safe = esc(text);
-    return `<button class="btn-icon" onclick="copyText('${safe.replace(/'/g, "\\'")}')" title="${esc(label)}">${esc(label)}</button>`;
+  // Data-copy buttons: safe pattern with attribute-based copying
+  function copyBtn(text, shortLabel, fullLabel) {
+    const safe = text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    return `<button class="btn-icon" data-copy="${safe}" title="${esc(fullLabel || shortLabel)}">${esc(shortLabel)}</button>`;
   }
 
-  function dkimCopyButtons(selector, domain, pubKey) {
-    const host = selector + '._domainkey.' + domain;
-    const fqdn = host + '.';
-    const full = fqdn + ' 3600 IN TXT "' + pubKey + '"';
+  function copyRowButtons(record) {
+    const {host, type, value, ttl, priority, domainName} = record;
+    const name = host === '@' ? domainName : host;
+    const fqdn = name.endsWith('.') ? name : name + '.';
+    const fullRecord = buildFullDnsRecord(name, ttl, type, value, priority);
     return `<span style="white-space:nowrap;">
-      <button class="btn-icon" onclick="copyText('${esc(host)}')" title="Copy Host">H</button>
-      <button class="btn-icon" onclick="copyText('${esc(pubKey)}')" title="Copy Value">V</button>
-      <button class="btn-icon" onclick="copyText('${esc(fqdn)}')" title="Copy FQDN">F</button>
-      <button class="btn-icon" onclick="copyText('${esc(full)}')" title="Copy Full Record">R</button>
+      ${copyBtn(name, 'H', 'Copy Host')}
+      ${copyBtn(value, 'V', 'Copy Value')}
+      ${copyBtn(fqdn, 'F', 'Copy FQDN')}
+      ${copyBtn(fullRecord, 'R', 'Copy Full Record')}
     </span>`;
   }
 
@@ -1365,11 +1403,28 @@ async function loadDomainDnsRecords() {
   {
     const recs = getRecs(rootDns, 'A');
     const expected = rootDns && rootDns.expected_ipv4 || '';
-    const published = recs.length > 0 ? recs[0].value : '';
-    const status = expected && published ? (expected === published ? 'Match' : 'Mismatch') : expected && !published ? 'Not Published' : 'Unexpected';
-    const cls = expected && published ? (expected === published ? 'badge-ok' : 'badge-warn') : expected && !published ? 'badge-err' : 'badge-warn';
+    const publishedIps = recs.map(r => r.value).filter(Boolean);
+    const published = publishedIps.join(', ');
+    const hasExpected = !!expected;
+    const hasPublished = publishedIps.length > 0;
+    let status, cls;
+    if (hasExpected && hasPublished) {
+      if (publishedIps.some(ip => ip === expected)) { status = 'Match'; cls = 'badge-ok'; }
+      else { status = 'Mismatch'; cls = 'badge-warn'; }
+    } else if (hasExpected && !hasPublished) { status = 'Not Published'; cls = 'badge-err'; }
+    else if (!hasExpected && hasPublished) { status = 'Unexpected'; cls = 'badge-warn'; }
+    else { status = 'N/A'; cls = 'badge-info'; }
     const ttl = recs.length > 0 ? recs[0].ttl : 0;
-    rows += `<tr><td>${statusBadge(status, cls)}</td><td>A</td><td style="font-family:monospace;">@</td><td style="font-family:monospace;">${fmtVal(expected)}</td><td style="font-family:monospace;">${fmtVal(published)}</td><td>${ttl || '—'}</td><td>${published ? copyBtn(published, 'Copy') : '—'}</td></tr>`;
+    const valToCopy = publishedIps[0] || expected;
+    rows += `<tr>
+      <td>${statusBadge(status, cls)}</td>
+      <td>A</td>
+      <td style="font-family:monospace;">@</td>
+      <td style="font-family:monospace;">${fmtVal(expected)}</td>
+      <td style="font-family:monospace;">${fmtVal(published)}</td>
+      <td>${ttl || '—'}</td>
+      <td>${valToCopy ? copyRowButtons({host:'@', type:'A', value:valToCopy, ttl, domainName:domain}) : '—'}</td>
+    </tr>`;
   }
 
   // 2. AAAA
@@ -1377,43 +1432,78 @@ async function loadDomainDnsRecords() {
     const recs = getRecs(rootDns, 'AAAA');
     const hasExpected = rootDns && rootDns.expected_ipv6 && rootDns.expected_ipv6.length > 0;
     const expected = hasExpected ? rootDns.expected_ipv6 : '';
-    const published = recs.length > 0 ? recs[0].value : '';
+    const publishedIps = recs.map(r => r.value).filter(Boolean);
+    const published = publishedIps.join(', ');
     let status, cls;
-    if (!hasExpected && !published) { status = 'N/A'; cls = 'badge-info'; }
-    else if (hasExpected && published) { status = expected === published ? 'Match' : 'Mismatch'; cls = expected === published ? 'badge-ok' : 'badge-warn'; }
-    else if (hasExpected && !published) { status = 'Not Published'; cls = 'badge-err'; }
+    if (!hasExpected && !publishedIps.length) { status = 'N/A'; cls = 'badge-info'; }
+    else if (hasExpected && publishedIps.length) {
+      if (publishedIps.some(ip => ip === expected)) { status = 'Match'; cls = 'badge-ok'; }
+      else { status = 'Mismatch'; cls = 'badge-warn'; }
+    } else if (hasExpected && !publishedIps.length) { status = 'Not Published'; cls = 'badge-err'; }
     else { status = 'Unexpected'; cls = 'badge-warn'; }
     const ttl = recs.length > 0 ? recs[0].ttl : 0;
-    rows += `<tr><td>${statusBadge(status, cls)}</td><td>AAAA</td><td style="font-family:monospace;">@</td><td style="font-family:monospace;">${fmtVal(expected)}</td><td style="font-family:monospace;">${fmtVal(published)}</td><td>${ttl || '—'}</td><td>${published ? copyBtn(published, 'Copy') : '—'}</td></tr>`;
+    const valToCopy = publishedIps[0] || expected;
+    rows += `<tr>
+      <td>${statusBadge(status, cls)}</td>
+      <td>AAAA</td>
+      <td style="font-family:monospace;">@</td>
+      <td style="font-family:monospace;">${fmtVal(expected)}</td>
+      <td style="font-family:monospace;">${fmtVal(published)}</td>
+      <td>${ttl || '—'}</td>
+      <td>${valToCopy ? copyRowButtons({host:'@', type:'AAAA', value:valToCopy, ttl, domainName:domain}) : '—'}</td>
+    </tr>`;
   }
 
   // 3. MX
   {
     const recs = getRecs(rootDns, 'MX');
     const configured = expectedMx ? expectedMx : '';
-    const published = recs.map(r => (r.priority ? r.priority + ' ' : '') + (r.value || '')).join(', ');
     const hasPublished = recs.length > 0;
     let status, cls;
     if (configured && hasPublished) {
-      const mxMatch = recs.some(r => (r.value || '').toLowerCase().includes(configured.toLowerCase()) || configured.toLowerCase().includes((r.value || '').toLowerCase()));
-      status = mxMatch ? 'Match' : 'Mismatch'; cls = mxMatch ? 'badge-ok' : 'badge-warn';
+      const normExpected = normalizeHostname(configured);
+      const mxMatch = recs.some(r => normalizeHostname(r.value) === normExpected);
+      status = mxMatch ? 'Match' : 'Mismatch';
+      cls = mxMatch ? 'badge-ok' : 'badge-warn';
     } else if (configured && !hasPublished) { status = 'Not Published'; cls = 'badge-err'; }
     else if (!configured && hasPublished) { status = 'Unexpected'; cls = 'badge-warn'; }
-    else { status = '—'; cls = 'badge-info'; }
-    rows += `<tr><td>${statusBadge(status, cls)}</td><td>MX</td><td style="font-family:monospace;">@</td><td style="font-family:monospace;">${fmtVal(configured)}</td><td style="font-family:monospace;">${fmtVal(published)}</td><td>—</td><td>${published ? copyBtn(published, 'Copy') : '—'}</td></tr>`;
+    else { status = 'N/A'; cls = 'badge-info'; }
+    const publishedStr = recs.map(r => (r.priority ? r.priority + ' ' : '') + (r.value || '')).join(', ');
+    rows += `<tr>
+      <td>${statusBadge(status, cls)}</td>
+      <td>MX</td>
+      <td style="font-family:monospace;">@</td>
+      <td style="font-family:monospace;">${fmtVal(configured)}</td>
+      <td style="font-family:monospace;">${fmtVal(publishedStr)}</td>
+      <td>—</td>
+      <td>${recs.length > 0 ? copyRowButtons({host:'@', type:'MX', value:recs[0].value || configured, ttl:recs[0].ttl, priority:recs[0].priority, domainName:domain}) : configured ? copyRowButtons({host:'@', type:'MX', value:configured, ttl:3600, domainName:domain}) : '—'}</td>
+    </tr>`;
   }
 
-  // 4. SPF (TXT starting with v=spf1)
+  // 4. SPF
   {
     const recs = getRecs(rootDns, 'TXT').filter(r => typeof r.value === 'string' && r.value.startsWith('v=spf1'));
     const recommended = mailDomain ? 'v=spf1 mx ~all' : '';
     const published = recs.length > 0 ? recs[0].value : '';
     let status, cls;
-    if (recommended && published) { status = 'Found'; cls = 'badge-ok'; }
-    else if (recommended && !published) { status = 'Not Published'; cls = 'badge-err'; }
+    if (recommended && published) {
+      const pn = published.replace(/\s+/g, '');
+      const rn = recommended.replace(/\s+/g, '');
+      status = pn === rn ? 'Match' : 'Mismatch';
+      cls = pn === rn ? 'badge-ok' : 'badge-warn';
+    } else if (recommended && !published) { status = 'Not Published'; cls = 'badge-err'; }
     else if (!recommended && published) { status = 'Unexpected'; cls = 'badge-warn'; }
-    else { status = '—'; cls = 'badge-info'; }
-    rows += `<tr><td>${statusBadge(status, cls)}</td><td>SPF</td><td style="font-family:monospace;">@</td><td style="font-family:monospace;">${recommended ? esc(recommended) : '—'}</td><td style="font-family:monospace;">${fmtVal(published)}</td><td>${recs.length > 0 ? recs[0].ttl : '—'}</td><td>${published ? copyBtn(published, 'Copy') : recommended ? copyBtn(recommended, 'Copy') : '—'}</td></tr>`;
+    else { status = 'N/A'; cls = 'badge-info'; }
+    const val = published || recommended;
+    rows += `<tr>
+      <td>${statusBadge(status, cls)}</td>
+      <td>SPF</td>
+      <td style="font-family:monospace;">@</td>
+      <td style="font-family:monospace;">${recommended ? esc(recommended) : '—'}</td>
+      <td style="font-family:monospace;">${fmtVal(published)}</td>
+      <td>${recs.length > 0 ? recs[0].ttl : '—'}</td>
+      <td>${val ? copyRowButtons({host:'@', type:'TXT', value:val, ttl:recs.length > 0 ? recs[0].ttl : 3600, domainName:domain}) : '—'}</td>
+    </tr>`;
   }
 
   // 5. DKIM
@@ -1430,61 +1520,124 @@ async function loadDomainDnsRecords() {
       status = pn === cn ? 'Match' : 'Mismatch';
       cls = pn === cn ? 'badge-ok' : 'badge-warn';
     } else if (pubKey && !published) { status = 'Not Published'; cls = 'badge-err'; }
-    else { status = '—'; cls = 'badge-info'; }
+    else { status = 'N/A'; cls = 'badge-info'; }
     const ttl = recs.length > 0 ? recs[0].ttl : 0;
-    rows += `<tr><td>${statusBadge(status, cls)}</td><td>DKIM</td><td style="font-family:monospace;">${esc(host)}</td><td style="font-family:monospace;">${pubKey ? fmtVal(pubKey, 60) : '—'}</td><td style="font-family:monospace;">${published ? fmtVal(published, 60) : '—'}</td><td>${ttl || '—'}</td><td>${pubKey ? dkimCopyButtons(selector, domain, pubKey) : '—'}</td></tr>`;
+    const val = published || pubKey;
+    rows += `<tr>
+      <td>${statusBadge(status, cls)}</td>
+      <td>DKIM</td>
+      <td style="font-family:monospace;">${esc(host)}</td>
+      <td style="font-family:monospace;">${pubKey ? fmtVal(pubKey, 60) : '—'}</td>
+      <td style="font-family:monospace;">${published ? fmtVal(published, 60) : '—'}</td>
+      <td>${ttl || '—'}</td>
+      <td>${val ? copyRowButtons({host, type:'TXT', value:val, ttl: ttl || 3600, domainName:domain}) : '—'}</td>
+    </tr>`;
   }
 
   // 6. DMARC
   if (dmarcDns) {
     const recs = getRecs(dmarcDns, 'TXT');
     const recommended = 'v=DMARC1; p=none;';
+    const host = '_dmarc.' + domain;
     const published = recs.length > 0 ? recs[0].value : '';
     let status, cls;
-    if (published) { status = 'Found'; cls = 'badge-ok'; }
-    else { status = 'Not Published'; cls = 'badge-err'; }
-    const host = '_dmarc.' + domain;
-    const fullRecord = host + '. 3600 IN TXT "' + recommended + '"';
-    rows += `<tr><td>${statusBadge(status, cls)}</td><td>DMARC</td><td style="font-family:monospace;">${esc(host)}</td><td style="font-family:monospace;">${esc(recommended)}</td><td style="font-family:monospace;">${fmtVal(published)}</td><td>${recs.length > 0 ? recs[0].ttl : '—'}</td><td><span style="white-space:nowrap;"><button class="btn-icon" onclick="copyText('${esc(host)}')" title="Copy Host">H</button><button class="btn-icon" onclick="copyText('${esc(recommended)}')" title="Copy Value">V</button><button class="btn-icon" onclick="copyText('${esc(host + '.')}')" title="Copy FQDN">F</button><button class="btn-icon" onclick="copyText('${esc(fullRecord)}')" title="Copy Full Record">R</button></span></td></tr>`;
+    if (recommended && published) {
+      const pn = published.replace(/\s+/g, '');
+      const rn = recommended.replace(/\s+/g, '');
+      status = pn === rn ? 'Match' : 'Mismatch';
+      cls = pn === rn ? 'badge-ok' : 'badge-warn';
+    } else if (recommended && !published) { status = 'Not Published'; cls = 'badge-err'; }
+    else { status = 'N/A'; cls = 'badge-info'; }
+    const val = published || recommended;
+    rows += `<tr>
+      <td>${statusBadge(status, cls)}</td>
+      <td>DMARC</td>
+      <td style="font-family:monospace;">${esc(host)}</td>
+      <td style="font-family:monospace;">${esc(recommended)}</td>
+      <td style="font-family:monospace;">${fmtVal(published)}</td>
+      <td>${recs.length > 0 ? recs[0].ttl : '—'}</td>
+      <td>${val ? copyRowButtons({host, type:'TXT', value:val, ttl: recs.length > 0 ? recs[0].ttl : 3600, domainName:domain}) : '—'}</td>
+    </tr>`;
   }
 
   // 7. CAA
   {
     const recs = getRecs(rootDns, 'CAA');
     const recommended = '0 issue "letsencrypt.org"';
-    const published = recs.length > 0 ? recs.map(r => r.value).join(', ') : '';
+    const hasPublished = recs.length > 0;
     let status, cls;
-    if (published) { status = 'Found'; cls = 'badge-ok'; }
-    else { status = '—'; cls = 'badge-info'; }
-    rows += `<tr><td>${statusBadge(status, cls)}</td><td>CAA</td><td style="font-family:monospace;">@</td><td style="font-family:monospace;">${esc(recommended)}</td><td style="font-family:monospace;">${fmtVal(published)}</td><td>—</td><td>${published ? copyBtn(published, 'Copy') : copyBtn(recommended, 'Copy')}</td></tr>`;
+    if (hasPublished) {
+      const hasRequired = recs.some(r => {
+        const v = (r.value || '').replace(/\s+/g, '');
+        const rn = recommended.replace(/\s+/g, '');
+        return v === rn;
+      });
+      status = hasRequired ? 'Match' : 'Mismatch';
+      cls = hasRequired ? 'badge-ok' : 'badge-warn';
+    } else { status = 'Not Published'; cls = 'badge-err'; }
+    const publishedStr = recs.map(r => r.value).join(', ');
+    rows += `<tr>
+      <td>${statusBadge(status, cls)}</td>
+      <td>CAA</td>
+      <td style="font-family:monospace;">@</td>
+      <td style="font-family:monospace;">${esc(recommended)}</td>
+      <td style="font-family:monospace;">${fmtVal(publishedStr)}</td>
+      <td>—</td>
+      <td>${copyRowButtons({host:'@', type:'CAA', value:recommended, ttl:3600, domainName:domain})}</td>
+    </tr>`;
   }
 
-  // 8. NS
+  // 8. NS (informational)
   {
     const recs = getRecs(rootDns, 'NS');
-    const published = recs.map(r => r.value).join(', ');
-    rows += `<tr><td>${statusBadge(published ? 'Found' : '—', published ? 'badge-ok' : 'badge-info')}</td><td>NS</td><td style="font-family:monospace;">@</td><td>—</td><td style="font-family:monospace;">${fmtVal(published)}</td><td>${recs.length > 0 ? recs[0].ttl : '—'}</td><td>${published ? copyBtn(published, 'Copy') : '—'}</td></tr>`;
+    const hasPublished = recs.length > 0;
+    const publishedStr = recs.map(r => r.value).join(', ');
+    const val = recs[0] ? recs[0].value : '';
+    rows += `<tr>
+      <td>${statusBadge(hasPublished ? 'Found' : 'N/A', hasPublished ? 'badge-ok' : 'badge-info')}</td>
+      <td>NS</td>
+      <td style="font-family:monospace;">@</td>
+      <td>—</td>
+      <td style="font-family:monospace;">${fmtVal(publishedStr)}</td>
+      <td>${recs.length > 0 ? recs[0].ttl : '—'}</td>
+      <td>${val ? copyRowButtons({host:'@', type:'NS', value:val, ttl:recs[0].ttl, domainName:domain}) : '—'}</td>
+    </tr>`;
   }
 
-  // 9. MTA-STS
+  // 9. MTA-STS (informational if no expected value)
   if (mtaStsDns) {
     const recs = getRecs(mtaStsDns, 'TXT');
-    const published = recs.length > 0 ? recs[0].value : '';
-    rows += `<tr><td>${statusBadge(published ? 'Found' : '—', published ? 'badge-ok' : 'badge-info')}</td><td>MTA-STS</td><td style="font-family:monospace;">_mta-sts.${esc(domain)}</td><td>—</td><td style="font-family:monospace;">${fmtVal(published)}</td><td>${recs.length > 0 ? recs[0].ttl : '—'}</td><td>—</td></tr>`;
+    const hasPublished = recs.length > 0;
+    const val = hasPublished ? recs[0].value : '';
+    const host = '_mta-sts.' + domain;
+    rows += `<tr>
+      <td>${statusBadge(hasPublished ? 'Found' : 'N/A', hasPublished ? 'badge-ok' : 'badge-info')}</td>
+      <td>MTA-STS</td>
+      <td style="font-family:monospace;">${esc(host)}</td>
+      <td>—</td>
+      <td style="font-family:monospace;">${fmtVal(val)}</td>
+      <td>${recs.length > 0 ? recs[0].ttl : '—'}</td>
+      <td>${val ? copyRowButtons({host, type:'TXT', value:val, ttl:recs[0].ttl, domainName:domain}) : '—'}</td>
+    </tr>`;
   }
 
   content.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-      <h3 style="font-size:14px;">DNS Records</h3>
-      <button class="btn btn-sm" onclick="refreshDnsRecordsTab()">Check Again</button>
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Status</th><th>Type</th><th>Name</th><th>Configured</th><th>Published</th><th>TTL</th><th>Actions</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-    <div style="margin-top:8px;font-size:11px;color:var(--text3);text-align:right;">Last checked: ${ts}</div>`;
+    <div id="dns-records-content">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <h3 style="font-size:14px;">DNS Records</h3>
+        <button class="btn btn-sm" onclick="refreshDnsRecordsTab()">Check Again</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Status</th><th>Type</th><th>Name</th><th>Configured</th><th>Published</th><th>TTL</th><th>Actions</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div style="margin-top:8px;font-size:11px;color:var(--text3);text-align:right;">Last checked: ${ts}</div>
+    </div>`;
+
+  // Attach single data-copy event listener
+  attachDataCopyListener('dns-records-content');
 }
 
 async function refreshDnsRecordsTab() {
