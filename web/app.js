@@ -1699,7 +1699,7 @@ async function loadDomainMail() {
   const rootMx = await fetchDnsForFqdn(domain, 'MX');
   const rootCaa = await fetchDnsForFqdn(domain, 'CAA');
 
-  let dkimDns = null, dmarcDns = null, mtaStsDns = null, tlsRptDns = null;
+  let dkimDns = null, dmarcDns = null, mtaStsDns = null, tlsRptDns = null, autoDiscoverDns = null;
   if (mailDomain.dkim_public_key_dns) {
     const sel = mailDomain.dkim_selector || 'dkim';
     dkimDns = await fetchDnsForFqdn(sel + '._domainkey.' + domain, 'TXT');
@@ -1707,6 +1707,9 @@ async function loadDomainMail() {
   dmarcDns = await fetchDnsForFqdn('_dmarc.' + domain, 'TXT');
   mtaStsDns = await fetchDnsForFqdn('_mta-sts.' + domain, 'TXT');
   tlsRptDns = await fetchDnsForFqdn('_smtp._tls.' + domain, 'TXT');
+  if (serverHostname) {
+    autoDiscoverDns = await fetchDnsForFqdn('autodiscover.' + domain, 'CNAME,A');
+  }
 
   // Determine expected MX
   let expectedMx = '';
@@ -1736,9 +1739,25 @@ async function loadDomainMail() {
   const dmarcStatus = window.computeRecordStatus(dmarcRecommended, dmarcPublished, (a,b) => window.normalizeDnsValue(a) === window.normalizeDnsValue(b));
 
   // === Recommended Records ===
-  // Autodiscover: standard target is autodiscover.<domain> for hostname detection
-  const autoRecRecommended = serverHostname ? 'CNAME autodiscover.' + domain + ' → ' + serverHostname : 'N/A';
-  const autoRecStatus = {status: serverHostname ? 'N/A' : 'N/A', cls: 'badge-info'};
+  // Autodiscover: standard is CNAME autodiscover.<domain> → <server_hostname>
+  // or A record pointing to the server's public IP. Query both.
+  const autoCnameRecs = autoDiscoverDns ? window.getDnsRecs(autoDiscoverDns, 'CNAME') : [];
+  const autoARecs = autoDiscoverDns ? window.getDnsRecs(autoDiscoverDns, 'A') : [];
+  let autoPublished = '', autoStatus, autoMatchFn;
+  const autoRecommended = serverHostname || '';
+  if (autoCnameRecs.length > 0) {
+    autoPublished = 'CNAME ' + autoCnameRecs[0].value;
+    const normPub = window.normalizeHostname(autoCnameRecs[0].value);
+    const normExp = window.normalizeHostname(serverHostname);
+    autoMatchFn = () => normPub === normExp;
+  } else if (autoARecs.length > 0) {
+    autoPublished = 'A ' + autoARecs[0].value;
+    const expIp = rootDns && rootDns.expected_ipv4 || '';
+    autoMatchFn = () => expIp && autoARecs[0].value === expIp;
+  }
+  autoStatus = window.computeRecordStatus(autoRecommended, autoPublished, autoMatchFn);
+  if (!serverHostname) autoStatus = {status: 'N/A', cls: 'badge-info'};
+  const autoHost = 'autodiscover.' + domain;
 
   // MTA-STS
   const mtaRecs = mtaStsDns ? window.getDnsRecs(mtaStsDns, 'TXT') : [];
@@ -1824,7 +1843,7 @@ async function loadDomainMail() {
         <table>
           <thead><tr><th>Type</th><th>Recommended</th><th>Published</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
-            <tr><td>Autodiscover</td><td style="font-family:monospace;font-size:12px;">${esc(autoRecRecommended)}</td><td>—</td><td>${window.statusBadge(autoRecStatus.status, autoRecStatus.cls)}</td><td>${serverHostname ? window.copyRowButtons({host:'autodiscover.' + domain, type:'CNAME', value:serverHostname + '.' , ttl:3600, domainName:domain}) : '—'}</td></tr>
+            <tr><td>Autodiscover</td><td style="font-family:monospace;font-size:12px;">${esc(autoRecommended ? 'CNAME → ' + autoRecommended : 'N/A')}</td><td style="font-family:monospace;font-size:12px;">${esc(autoPublished) || '—'}</td><td>${window.statusBadge(autoStatus.status, autoStatus.cls)}</td><td>${autoRecommended ? window.copyRowButtons({host:autoHost, type:'CNAME', value:autoRecommended + '.', ttl:3600, domainName:domain}) : '—'}</td></tr>
             <tr><td>MTA-STS</td><td style="font-family:monospace;font-size:12px;">${esc(mtaRecommended)}</td><td style="font-family:monospace;font-size:12px;">${window.fmtVal(mtaPublished)}</td><td>${window.statusBadge(mtaStatus.status, mtaStatus.cls)}</td><td>${window.copyRowButtons({host:'_mta-sts.' + domain, type:'TXT', value:mtaRecommended, ttl:3600, domainName:domain})}<br><span style="font-size:10px;color:var(--text3);">Also requires HTTPS policy at https://mta-sts.${esc(domain)}/.well-known/mta-sts.txt</span></td></tr>
             <tr><td>TLS-RPT</td><td style="font-family:monospace;font-size:12px;">${esc(tlsRecommended)}</td><td style="font-family:monospace;font-size:12px;">${window.fmtVal(tlsPublished)}</td><td>${window.statusBadge(tlsStatus.status, tlsStatus.cls)}</td><td>${window.copyRowButtons({host:'_smtp._tls.' + domain, type:'TXT', value:tlsRecommended, ttl:3600, domainName:domain})}<br><span style="font-size:10px;color:var(--text3);">Requires mailbox tlsrpt@${esc(domain)}</span></td></tr>
             <tr><td>CAA</td><td style="font-family:monospace;font-size:12px;">${esc(caaRecommended)}</td><td style="font-family:monospace;font-size:12px;">${window.fmtVal(caaPublished)}</td><td>${window.statusBadge(caaStatus.status, caaStatus.cls)}</td><td>${window.copyRowButtons({host:'@', type:'CAA', value:caaRecommended, ttl:3600, domainName:domain})}</td></tr>
@@ -1850,6 +1869,7 @@ async function refreshMailTab() {
     DnsCache.clear('_dmarc.' + domain);
     DnsCache.clear('_mta-sts.' + domain);
     DnsCache.clear('_smtp._tls.' + domain);
+    DnsCache.clear('autodiscover.' + domain);
     if (md.dkim_public_key_dns) {
       const sel = md.dkim_selector || 'dkim';
       DnsCache.clear(sel + '._domainkey.' + domain);
