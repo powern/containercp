@@ -22,7 +22,7 @@ Before any implementation, verify the current state of all files that will be to
 - [x] Verify `MailDomainManager::find_by_domain()` at `libs/mail/MailDomainManager.h:40` — **Confirmed.**
 - [x] Verify `DkimManager::generate_key()` signature at `libs/mail/DkimManager.h:29-34` — **Confirmed:** returns `std::string` (TXT value).
 - [x] Verify `CertificateStore::load_metadata(site_id)` at `libs/ssl/CertificateStore.h:83` — **Confirmed:** returns `MetadataLoadResult`.
-- [x] Verify runtime API response at `libs/api/ApiServer.cpp:453-488` — **Confirmed:** returns `{"web","php","db","cache","https"}`. **Note:** `site_id=0` returns 400 ("Invalid site ID") — runtime API does NOT support admin panel queries.
+- [x] Verify runtime API response at `libs/api/ApiServer.cpp:453-488` — **Confirmed:** returns `{"web","php","db","cache","https"}`. **Note:** `site_id=0` returns 400 ("Invalid site ID") — runtime API does NOT support admin panel queries. **Consequence:** Runtime check is `not_applicable` for `site_id=0`. Column must be named "Runtime" not "HTTP".
 - [x] Verify `MailDomain` JSON format in `mail_domain_json` lambda at `libs/api/ApiServer.cpp:1479-1498` — **Confirmed:** all specified keys present.
 - [x] Verify test framework at `tests/main.cpp:1-2` — **Confirmed:** doctest single-header.
 - [x] Verify API addition procedure at `docs/development/api-rules.md:49-77` — **Confirmed:** 8-step process.
@@ -265,20 +265,23 @@ Before any implementation, verify the current state of all files that will be to
 - [ ] Store computed scores in `window._healthCache` (Map<domainId, {score, grade, timestamp}>).
 - [ ] Add `gradeClass(grade)` helper → badge color: Excellent=green, Good=blue, Fair=yellow, Poor=orange, Critical=red.
 
-### 3.4 — Add Mail and HTTP status columns
+### 3.4 — Add Mail and Runtime status columns
 
 **Files:** `web/app.js`  
 **Depends on:** 2.2  
-**Criteria:** Mail column shows Active/Not configured, HTTP shows status.
+**Criteria:** Mail column shows Active/Not configured, Runtime column shows container status (not external HTTP check).
 
-- [ ] Replace HTTP column (line 873) — use enriched data from `GET /api/domains` + runtime API:
+- [ ] Replace the old HTTP column (line 873) with "Runtime" column:
   ```js
-  {label:'HTTP', html: r => {
-    if (!r.site_id && r.site_id !== 0) return '<span class="badge badge-info">N/A</span>';
-    return `<span class="badge badge-info" id="http-${r.id}">...</span>`;
+  {label:'Runtime', html: r => {
+    // Runtime API rejects site_id=0 (admin panel). Show N/A gracefully, no error.
+    if (r.site_id === 0) return '<span class="badge badge-info">N/A</span>';
+    if (!r.site_id) return '<span class="badge badge-info">N/A</span>';
+    return `<span class="badge badge-info" id="runtime-${r.id}">...</span>`;
   }}
   ```
-- [ ] After renderTable, batch-fetch runtime status for rows with `site_id >= 0`.
+  **Important:** Column is named "Runtime" not "HTTP". It shows container status from `GET /api/runtime/<site_id>`, which is NOT an external HTTP reachability check. For admin panel (site_id=0), runtime API returns 400 — these rows show "N/A" without errors.
+- [ ] After renderTable, batch-fetch runtime status ONLY for rows with `site_id > 0`. Skip site_id=0 (admin panel) gracefully.
 - [ ] Replace Mail column — use `mail_domain_id` from enriched JSON (added in 2.2):
   ```js
   {label:'Mail', html: r => {
@@ -588,7 +591,11 @@ Before any implementation, verify the current state of all files that will be to
     // There is no "negative id" sentinel for unlinked domains in the current model.
     {
       checks.push({id:'ssl', label:'SSL Certificate', weight:20, class:'req'});
-      checks.push({id:'http', label:'HTTP Reachability', weight:15, class:'req'});
+      // Runtime check: only for site_id > 0. Runtime API rejects site_id=0 (admin panel).
+      // Admin panel gets no Runtime check — does not reduce Health Score.
+      if (domain.site_id > 0) {
+        checks.push({id:'runtime', label:'Runtime Status', weight:15, class:'req'});
+      }
       checks.push({id:'caa', label:'CAA', weight:2, class:'rec'});
     }
     return checks;
@@ -609,7 +616,7 @@ Before any implementation, verify the current state of all files that will be to
 
 - [ ] **Test: site with full mail + SSL → expected 100/100**
 - [ ] **Test: site without mail → mail checks n/a, score still 100 if all else ok**
-- [ ] **Test: admin panel site_id=0 → SSL + HTTP checks active**
+- [ ] **Test: admin panel site_id=0 → SSL + DNS checks active, Runtime = N/A (no penalty)**
 - [ ] **Test: unlinked domain → only A record check**
 - [ ] **Test: DKIM not published → score reduced**
 - [ ] **Test: DMARC mismatch → partial score**
@@ -676,7 +683,7 @@ Before any implementation, verify the current state of all files that will be to
 - [ ] Domain list shows DNS column with loading → badge → status
 - [ ] Domain list shows Health Score column with all grade colors
 - [ ] Domain list shows Mail column as Active/Not configured
-- [ ] Domain list shows HTTP column with runtime status
+- [ ] Domain list shows Runtime column (container status, not external HTTP)
 - [ ] Domain detail: Overview tab renders with all data
 - [ ] Domain detail: DNS Records tab shows Configured vs Published
 - [ ] Domain detail: Mail tab shows correct conditional state
@@ -767,7 +774,7 @@ ARCH-007 is considered **fully implemented** only when all of the following are 
 - [ ] `GET /api/domains` includes `mail_domain_id`, `dkim_generated`, `mail_domain_mode`
 - [ ] Domain list shows real DNS status (not "Unknown")
 - [ ] Domain list shows Mail status (Active / Not configured)
-- [ ] Domain list shows HTTP/runtime status
+- [ ] Domain list shows Runtime status (container status, admin panel shows N/A)
 - [ ] Domain list shows Health Score with correct context-aware calculation
 - [ ] Domain detail page opens with 5 tabs (Overview, DNS Records, Mail, Security, Health)
 - [ ] DNS Records tab shows:
@@ -778,7 +785,7 @@ ARCH-007 is considered **fully implemented** only when all of the following are 
 - [ ] Mail tab shows:
   - MailDomain exists → full mail configuration with checks
   - MailDomain absent → neutral informational message, no false errors
-  - `site_id >= 0` → HTTP + SSL checks active (including admin panel)
+  - `site_id >= 0` → SSL checks active (including admin panel). Runtime check only for `site_id > 0` (admin panel shows N/A).
 - [ ] Security tab shows:
   - DMARC Wizard with 3 policies (Monitor/Quarantine/Reject)
   - Preview of generated TXT record (Recommended, not Configured — no backend storage)
@@ -863,7 +870,7 @@ Logical commits that preserve a working state after each:
 | 3 | **CAA record type support** — c-ares may not natively support `ns_t_caa` on older versions. | Conditionally compile CAA support. If unavailable, skip CAA queries and note in documentation. Minimum c-ares version: 1.27.0 (supports all planned types). |
 | 4 | **SPF expected value** — ContainerCP has no SPF configuration. The template `v=spf1 mx ~all` is a reasonable default but may not match the admin's actual mail setup. | Show SPF template as a "recommended" value, not a "configured" value. Mark status as advisory. Clearly label "Recommended SPF record" vs "Your current DNS value". |
 | 5 | **DNS Response Details size** — large TXT records (DKIM 2048-bit keys) could produce long detail strings. | Truncate details display to first 500 chars, with "Show full" toggle. API returns full value but frontend truncates for display. |
-| 6 | **No HTTP check API** — ContainerCP has no endpoint to check HTTP response codes/status. Runtime API rejects `site_id=0` (admin panel), returning 400. | For v1, the HTTP column shows runtime container status (Running/Stopped) from `GET /api/runtime/<site_id>` for `site_id > 0`. Admin panel (`site_id=0`) shows "N/A" for runtime. Clearly label as "Runtime" not "HTTP". A true HTTP check endpoint can be added in a future iteration. |
+| 6 | **No HTTP check API** — ContainerCP has no endpoint to check external HTTP reachability. Runtime API rejects `site_id=0` (admin panel), returning 400. | For v1, the column is named **"Runtime"** not "HTTP". It shows container status from `GET /api/runtime/<site_id>`. Admin panel (`site_id=0`) shows "N/A" — no error shown, no Health Score penalty. A true HTTP check endpoint can be added in a future iteration. |
 | 7 | **`loadDomainDetail` depends on `GET /api/domains` list** — currently there's no `GET /api/domains/<id>` endpoint. | Option A: Add `GET /api/domains/<id>` (new endpoint, follows existing pattern from SSL and Mail). Option B: Fetch all domains and filter by ID (works for small datasets, doesn't scale). Plan assumes Option A for correctness. |
 | 8 | **Evidence reason codes are frontend-only** — no backend standardisation. | Acceptable for v1. Frontend generates reasons from record type, configured value, published value, and context. Reason codes (e.g., `DKIM_NOT_PUBLISHED`) provide a stable key for future i18n. |
 | 9 | **DMARC has no backend storage** — Wizard recommendations are ephemeral, not persisted. | Acceptable for v1. DMARC is "Recommended vs Published" not "Configured vs Published". Revisit when ContainerCP adds SQLite storage. |

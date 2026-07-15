@@ -1,13 +1,47 @@
+# Build directories
 build/
 build-release/
+cmake-build-*/
+
+# CMake generated files
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
+compile_commands.json
 CTestTestfile.cmake
 Makefile
 Testing/
+
+# Binaries
 *.o
 *.a
+*.so
+*.exe
 containercp
 containercpd
 containercp_tests
+
+# Logs
+*.log
+
+# Runtime data
+/srv/containercp/
+/etc/containercp/
+
+# Database files
+*.db
+
+# Certificates and keys
+*.pem
+*.key
+*.crt
+
+# Environment files
+.env
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*~
+.github/
