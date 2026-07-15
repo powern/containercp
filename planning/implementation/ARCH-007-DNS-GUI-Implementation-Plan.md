@@ -13,21 +13,24 @@
 
 Before any implementation, verify the current state of all files that will be touched.
 
-- [ ] Verify `Domain::site_id` field semantics in `libs/domain/Domain.h:13` — `uint64_t site_id = 0`. **Important:** `site_id = 0` IS the admin panel (a real system Site), NOT "unlinked". Since `site_id` is `uint64_t`, all values are `>= 0`. Site-dependent checks (SSL, HTTP, DNS) are applicable for ALL domains — there is no "negative id" sentinel. The "not applicable" state for site checks does not exist in the current data model. Every domain has a valid `site_id`.
-- [ ] Verify `DomainViewService::write_enriched()` output at `libs/domain/DomainViewService.cpp:37-47` — current JSON keys: `id`, `domain`, `type`, `site_id`, `site_name`, `site_domain`, `target`, `ssl_enabled`, `ssl_status`, `enabled`. No `dns` or `mail` fields exist yet.
-- [ ] Verify `loadDomains()` in `web/app.js:842-889` — DNS column at line 872 is hardcoded `"Unknown"`. HTTP column at line 873 is hardcoded `"Unknown"`.
-- [ ] Verify `navigate()` dispatch at `web/app.js:261-286` — all page handlers. Must add `domain-detail` case.
-- [ ] Verify `buildTable()` helper at `web/app.js:345-351` — signature: `buildTable(columns, rows, emptyMsg)`. Used for domain list; domain detail will need custom layout.
-- [ ] Verify `MailDomain::dkim_public_key_dns` field at `libs/mail/MailDomain.h:41` — source of truth for DKIM configured value.
-- [ ] Verify `MailDomainManager::find_by_domain()` at `libs/mail/MailDomainManager.h:40` — used to detect if a MailDomain exists for a given domain name.
-- [ ] Verify `DkimManager::generate_key()` signature at `libs/mail/DkimManager.h:29-34` — returns `std::string` (TXT value).
-- [ ] Verify `CertificateStore::load_metadata(site_id)` at `libs/ssl/CertificateStore.h:83` — returns `MetadataLoadResult`. Used for SSL status.
-- [ ] Verify runtime API response at `libs/api/ApiServer.cpp:453-488` — `GET /api/runtime/<site_id>` returns `{"web":"Running","php":"Running","db":"Running","cache":"Running","https":"Active"}`.
-- [ ] Verify `MailDomain` JSON format in `mail_domain_json` lambda at `libs/api/ApiServer.cpp:1479-1498` — keys: `id`, `domain`, `mode`, `domain_id`, `site_id`, `enabled`, `relay_host`, `dkim_selector`, `dkim_public_key_dns`, `max_mailboxes`, `max_aliases`, `catch_all`, `created_at`, `updated_at`.
-- [ ] Verify test framework at `tests/main.cpp:1-2` — doctest single-header. Test pattern: `TEST_CASE("name") { CHECK(...); }`.
-- [ ] Verify API addition procedure at `docs/development/api-rules.md:49-77` — 8-step process. Must follow for new endpoint.
-- [ ] Verify `Config::data_root()` exists at `libs/core/Config.h:14` — used for DKIM key paths.
-- [ ] Verify `router_.add_prefix()` usage pattern at `libs/api/ApiServer.cpp:453,1590,1630` — prefix routing works by path remainder parsing.
+- [x] Verify `Domain::site_id` field semantics in `libs/domain/Domain.h:13` — `uint64_t site_id = 0`. **Confirmed:** `site_id=0` is the admin panel. Since `uint64_t`, all values `>= 0`. Site checks applicable for ALL domains.
+- [x] Verify `DomainViewService::write_enriched()` output at `libs/domain/DomainViewService.cpp:37-47` — **Confirmed:** JSON keys: `id`, `domain`, `type`, `site_id`, `site_name`, `site_domain`, `target`, `ssl_enabled`, `ssl_status`, `enabled`. No `dns`/`mail` fields.
+- [x] Verify `loadDomains()` in `web/app.js:842-889` — **Confirmed:** DNS column at line 872 hardcoded `"Unknown"`. HTTP at line 873 hardcoded `"Unknown"`.
+- [x] Verify `navigate()` dispatch at `web/app.js:261-286` — **Confirmed:** all page handlers. Must add `domain-detail`.
+- [x] Verify `buildTable()` helper at `web/app.js:345-351` — **Confirmed:** signature `buildTable(columns, rows, emptyMsg)`.
+- [x] Verify `MailDomain::dkim_public_key_dns` field at `libs/mail/MailDomain.h:41` — **Confirmed.**
+- [x] Verify `MailDomainManager::find_by_domain()` at `libs/mail/MailDomainManager.h:40` — **Confirmed.**
+- [x] Verify `DkimManager::generate_key()` signature at `libs/mail/DkimManager.h:29-34` — **Confirmed:** returns `std::string` (TXT value).
+- [x] Verify `CertificateStore::load_metadata(site_id)` at `libs/ssl/CertificateStore.h:83` — **Confirmed:** returns `MetadataLoadResult`.
+- [x] Verify runtime API response at `libs/api/ApiServer.cpp:453-488` — **Confirmed:** returns `{"web","php","db","cache","https"}`. **Note:** `site_id=0` returns 400 ("Invalid site ID") — runtime API does NOT support admin panel queries.
+- [x] Verify `MailDomain` JSON format in `mail_domain_json` lambda at `libs/api/ApiServer.cpp:1479-1498` — **Confirmed:** all specified keys present.
+- [x] Verify test framework at `tests/main.cpp:1-2` — **Confirmed:** doctest single-header.
+- [x] Verify API addition procedure at `docs/development/api-rules.md:49-77` — **Confirmed:** 8-step process.
+- [x] Verify `Config::data_root()` exists — **Confirmed:** used at `ServiceRegistry.cpp:18` (`config_.data_root()`).
+- [x] Verify `router_.add_prefix()` usage pattern at `libs/api/ApiServer.cpp:453,1590,1630` — **Confirmed:** prefix routing by path remainder parsing.
+- [x] **c-ares availability:** `libc-ares-dev` installed (v1.34.5). `pkg-config --libs libcares` returns `-lcares`. Headers at `/usr/include/ares.h`. **Note:** Debian package name is `libc-ares-dev` (with hyphen), but pkg-config module name is `libcares`.
+- [x] **CMake approach confirmed:** Flat source list in `CONTAINERCP_SOURCES`. Add `libs/dns/DnsCheckService.cpp` to sources, add `cares` to `target_link_libraries()` for both `containercpd` and `containercp_tests`. No subdirectory CMakeLists.txt needed.
+- [x] **ServiceRegistry pattern confirmed:** Add `dns::DnsCheckService dns_check_;` member, add `#include`, add accessor `dns_check()`. Initialise in constructor.
 
 ---
 
@@ -35,13 +38,13 @@ Before any implementation, verify the current state of all files that will be to
 
 ### 1.1 — Create `libs/dns/` directory and `DnsCheckService`
 
-**Files:** NEW: `libs/dns/DnsCheckService.h`, `libs/dns/DnsCheckService.cpp`, `libs/dns/CMakeLists.txt`  
-**Dependency:** NEW: `libcares-dev` (Debian package), `pkg-config` for CMake find  
+**Files:** NEW: `libs/dns/DnsCheckService.h`, `libs/dns/DnsCheckService.cpp`  
+**Dependency:** `libc-ares-dev` (installed, v1.34.5). Link: `-lcares` (pkg-config: `libcares`).  
+**Build approach:** Project uses flat source list in `CONTAINERCP_SOURCES`. Add `.cpp` to list, add `cares` to `target_link_libraries()` for both `containercpd` and `containercp_tests`.  
 **Depends on:** Phase 0  
 **Criteria:** Service compiles, c-ares queries work, structured output returned.
 
-- [ ] Add `find_package(PkgConfig)` and `pkg_check_modules(LIBCARES libcares)` to root `CMakeLists.txt`. Link `c-ares` to `dns` library target.
-- [ ] Create `libs/dns/CMakeLists.txt` — add `DnsCheckService.cpp`, link `containercp_dns` against `LIBCARES_LIBRARIES`, add `LIBCARES_INCLUDE_DIRS`.
+- [ ] Add `cares` to `target_link_libraries(containercpd PRIVATE ...)` and `target_link_libraries(containercp_tests PRIVATE ...)` in `CMakeLists.txt`.
 - [ ] Create `libs/dns/DnsCheckService.h` with:
   - `struct DnsRecord` — fields: `type` (string), `name` (string), `value` (string), `ttl` (int), `priority` (int, default 0), `dns_response_details` (string — structured c-ares result for evidence panel)
   - `struct DnsCheckResult` — fields: `domain` (string), `resolved_at` (string, ISO 8601), `records` (vector<DnsRecord>), `soa` (struct with `mname`, `rname`, `serial`), `status_code` (string: `NOERROR`, `NXDOMAIN`, `NODATA`, `SERVFAIL`, `TIMEOUT`), `success` (bool), `error` (string)
@@ -825,7 +828,7 @@ Logical commits that preserve a working state after each:
 
 | File | Phase | Purpose |
 |------|-------|---------|
-| `libs/dns/CMakeLists.txt` | 1.1 | Build configuration for DNS module (links `c-ares`) |
+| *(flat build — no sub-CMakeLists needed)* | 1.1 | Add `libs/dns/DnsCheckService.cpp` to root `CMakeLists.txt` `CONTAINERCP_SOURCES`, add `cares` to `target_link_libraries` |
 | `libs/dns/DnsCheckService.h` | 1.1 | DnsCheckService class declaration |
 | `libs/dns/DnsCheckService.cpp` | 1.1 | DnsCheckService implementation |
 | `tests/test_dns_service.cpp` | 9.1 | Unit tests for DnsCheckService |
@@ -860,7 +863,7 @@ Logical commits that preserve a working state after each:
 | 3 | **CAA record type support** — c-ares may not natively support `ns_t_caa` on older versions. | Conditionally compile CAA support. If unavailable, skip CAA queries and note in documentation. Minimum c-ares version: 1.27.0 (supports all planned types). |
 | 4 | **SPF expected value** — ContainerCP has no SPF configuration. The template `v=spf1 mx ~all` is a reasonable default but may not match the admin's actual mail setup. | Show SPF template as a "recommended" value, not a "configured" value. Mark status as advisory. Clearly label "Recommended SPF record" vs "Your current DNS value". |
 | 5 | **DNS Response Details size** — large TXT records (DKIM 2048-bit keys) could produce long detail strings. | Truncate details display to first 500 chars, with "Show full" toggle. API returns full value but frontend truncates for display. |
-| 6 | **No HTTP check API** — ContainerCP has no endpoint to check HTTP response codes/status. | For v1, the HTTP column shows runtime container status (Running/Stopped) from `GET /api/runtime/<site_id>`, NOT external HTTP reachability. Clearly label as "Runtime" not "HTTP". A true HTTP check endpoint can be added in a future iteration. |
+| 6 | **No HTTP check API** — ContainerCP has no endpoint to check HTTP response codes/status. Runtime API rejects `site_id=0` (admin panel), returning 400. | For v1, the HTTP column shows runtime container status (Running/Stopped) from `GET /api/runtime/<site_id>` for `site_id > 0`. Admin panel (`site_id=0`) shows "N/A" for runtime. Clearly label as "Runtime" not "HTTP". A true HTTP check endpoint can be added in a future iteration. |
 | 7 | **`loadDomainDetail` depends on `GET /api/domains` list** — currently there's no `GET /api/domains/<id>` endpoint. | Option A: Add `GET /api/domains/<id>` (new endpoint, follows existing pattern from SSL and Mail). Option B: Fetch all domains and filter by ID (works for small datasets, doesn't scale). Plan assumes Option A for correctness. |
 | 8 | **Evidence reason codes are frontend-only** — no backend standardisation. | Acceptable for v1. Frontend generates reasons from record type, configured value, published value, and context. Reason codes (e.g., `DKIM_NOT_PUBLISHED`) provide a stable key for future i18n. |
 | 9 | **DMARC has no backend storage** — Wizard recommendations are ephemeral, not persisted. | Acceptable for v1. DMARC is "Recommended vs Published" not "Configured vs Published". Revisit when ContainerCP adds SQLite storage. |
