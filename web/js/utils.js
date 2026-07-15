@@ -48,6 +48,103 @@ window.healthGradeLabel = function(score) {
   return 'Critical';
 };
 
+// ===== Shared DNS Record Helpers =====
+
+// Get records for a specific DNS type from a dnsResult object
+window.getDnsRecs = function(dnsResult, typeName) {
+  if (!dnsResult || !Array.isArray(dnsResult.per_type)) return [];
+  const pt = dnsResult.per_type.find(x => x && x.type === typeName);
+  if (!pt || !Array.isArray(pt.records)) return [];
+  return pt.records;
+};
+
+// Format a value for display (truncate if too long)
+window.fmtVal = function(v, max) {
+  if (!v || typeof v !== 'string') return '—';
+  if (v.length > (max || 40)) return esc(v.substr(0, max || 40)) + '...';
+  return esc(v);
+};
+
+// Render a status badge
+window.statusBadge = function(label, cls) {
+  if (!label) return '<span class="badge badge-info">—</span>';
+  return `<span class="badge ${cls || 'badge-info'}">${esc(label)}</span>`;
+};
+
+// Normalize hostname for comparison: lowercase, strip trailing dot
+window.normalizeHostname = function(h) {
+  if (!h || typeof h !== 'string') return '';
+  h = h.toLowerCase();
+  if (h.endsWith('.')) h = h.slice(0, -1);
+  return h;
+};
+
+// Normalize a DNS value for comparison: lowercase, strip whitespace
+window.normalizeDnsValue = function(v) {
+  if (!v || typeof v !== 'string') return '';
+  return v.replace(/\s+/g, '');
+};
+
+// Build a full DNS record string (for Copy Full Record)
+window.buildFullDnsRecord = function(fqdn, ttl, type, value, priority) {
+  const name = fqdn.endsWith('.') ? fqdn : fqdn + '.';
+  const ttlStr = (ttl && ttl > 0) ? ' ' + ttl : ' 3600';
+  if (type === 'MX') {
+    const prio = priority ? ' ' + priority : ' 10';
+    return name + ttlStr + ' IN MX' + prio + ' ' + (value.endsWith('.') ? value : value + '.');
+  }
+  if (type === 'TXT' || type === 'SPF' || type === 'DKIM' || type === 'DMARC' || type === 'MTA-STS' || type === 'TLS-RPT') {
+    return name + ttlStr + ' IN TXT "' + value + '"';
+  }
+  if (type === 'CAA') {
+    return name + ttlStr + ' IN CAA ' + value;
+  }
+  if (type === 'CNAME') {
+    return name + ttlStr + ' IN CNAME ' + (value.endsWith('.') ? value : value + '.');
+  }
+  return name + ttlStr + ' IN ' + type + ' ' + value;
+};
+
+// Generate data-copy buttons (Host, Value, FQDN, Full Record)
+window.copyRowButtons = function(record) {
+  const {host, type, value, ttl, priority, domainName} = record;
+  const name = host === '@' ? domainName : host;
+  const fqdn = name.endsWith('.') ? name : name + '.';
+  const fullRecord = window.buildFullDnsRecord(name, ttl, type, value, priority);
+  const escA = function(s) { return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); };
+  return `<span style="white-space:nowrap;">
+    <button class="btn-icon" data-copy="${escA(name)}" title="Copy Host">H</button>
+    <button class="btn-icon" data-copy="${escA(value)}" title="Copy Value">V</button>
+    <button class="btn-icon" data-copy="${escA(fqdn)}" title="Copy FQDN">F</button>
+    <button class="btn-icon" data-copy="${escA(fullRecord)}" title="Copy Full Record">R</button>
+  </span>`;
+};
+
+// Attach data-copy event listener (single handler)
+window.attachDataCopyListener = function(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.addEventListener('click', function(e) {
+    const btn = e.target.closest('[data-copy]');
+    if (!btn) return;
+    const text = btn.getAttribute('data-copy');
+    if (text) copyText(text, btn.getAttribute('title') || 'Copied');
+  });
+};
+
+// Compute DNS record status: Match/Mismatch/Not Published/Unexpected/N/A
+window.computeRecordStatus = function(configuredVal, publishedVal, matchFn) {
+  const hasCfg = !!configuredVal;
+  const hasPub = !!publishedVal;
+  if (hasCfg && hasPub) {
+    const isMatch = matchFn ? matchFn(configuredVal, publishedVal) : (configuredVal === publishedVal);
+    return {status: isMatch ? 'Match' : 'Mismatch', cls: isMatch ? 'badge-ok' : 'badge-warn'};
+  }
+  if (hasCfg && !hasPub) return {status: 'Not Published', cls: 'badge-err'};
+  if (!hasCfg && hasPub) return {status: 'Unexpected', cls: 'badge-warn'};
+  return {status: 'N/A', cls: 'badge-info'};
+};
+
 // Context-aware Health Score (frontend-calculated for v1).
 // TODO: Move to backend as single source of truth.
 //       Frontend should only display API-provided health_score field.
