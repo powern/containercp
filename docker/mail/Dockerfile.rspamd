@@ -2,16 +2,6 @@ FROM debian:trixie
 RUN apt-get update && apt-get install -y --no-install-recommends \
     rspamd \
     && rm -rf /var/lib/apt/lists/*
-
-# Patch: remove register_dependency('DKIM_SIGNED', 'DKIM_CHECK') from dkim_signing.lua
-# The DKIM verify module skips DKIM_CHECK for authed users, so the signing
-# module's dependency is never satisfied and signing never runs.
-RUN grep -q "register_dependency(settings\[.symbol.\], .DKIM_CHECK.)" \
-    /usr/share/rspamd/plugins/dkim_signing.lua || \
-    { echo "ERROR: dependency line not found — patch outdated"; exit 1; }
-RUN sed -i "/register_dependency/s/^/-- [ContainerCP] /" \
-    /usr/share/rspamd/plugins/dkim_signing.lua
-
 COPY docker/mail/docker-entrypoint-rspamd.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint-rspamd.sh
 EXPOSE 11332 11334

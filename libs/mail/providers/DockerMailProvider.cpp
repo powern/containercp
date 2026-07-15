@@ -469,6 +469,7 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
               << "sign_authenticated = true;\n"
              << "sign_local = true;\n"
              << "allow_hdrfrom_mismatch = false;\n"
+             << "allow_username_mismatch = true;\n"
              << "use_domain = \"header\";\n"
              << "use_redis = false;\n"
              << "try_fallback = false;\n"
