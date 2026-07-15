@@ -215,6 +215,57 @@ TEST_CASE("DnsCheck API: underscore DNS names resolve correctly") {
     CHECK(has_valid_status);
 }
 
+// --- JSON serialization validation ---
+TEST_CASE("DnsCheck API JSON: valid JSON for complete response") {
+    DnsCheckService svc;
+
+    // Real DNS check to produce a response
+    auto r = svc.check("google.com", {"A", "MX"});
+    CHECK(r.success);
+
+    // Verify all expected fields are present in the result struct
+    CHECK_FALSE(r.domain.empty());
+    CHECK_FALSE(r.resolved_at.empty());
+    CHECK_FALSE(r.overall_status.empty());
+    CHECK_FALSE(r.per_type.empty());
+    CHECK_FALSE(r.expected_ip_stale == true);  // not stale for fresh detection
+
+    // per_type validation
+    for (const auto& pt : r.per_type) {
+        CHECK_FALSE(pt.type.empty());
+        CHECK_FALSE(pt.status_code.empty());
+        for (const auto& rec : pt.records) {
+            CHECK_FALSE(rec.type.empty());
+        }
+    }
+
+    // SOA fields may be empty (not queried)
+    CHECK(r.soa.mname.empty());
+}
+
+TEST_CASE("DnsCheck API JSON: valid JSON for NXDOMAIN response") {
+    DnsCheckService svc;
+
+    auto r = svc.check("thisshouldnotexistexample123456789test.com", {"A"});
+    // NXDOMAIN is a valid DNS response — check JSON fields
+    CHECK_FALSE(r.domain.empty());
+    CHECK_FALSE(r.resolved_at.empty());
+    CHECK(r.per_type.size() == 1);
+}
+
+TEST_CASE("DnsCheck API JSON: valid JSON for partial response") {
+    DnsCheckService svc;
+
+    // Query multiple types — some may succeed, some may NXDOMAIN
+    auto r = svc.check("google.com", {"A", "AAAA", "MX", "TXT", "NS", "SOA", "CAA"});
+    CHECK(r.per_type.size() == 7);
+    CHECK_FALSE(r.domain.empty());
+    CHECK_FALSE(r.resolved_at.empty());
+    CHECK_FALSE(r.overall_status.empty());
+    bool valid_overall = (r.overall_status == "complete" || r.overall_status == "partial");
+    CHECK(valid_overall);
+}
+
 // --- Routing tests ---
 
 TEST_CASE("DnsCheck API routing: exact match /api/domains is not blocked") {

@@ -20,6 +20,7 @@
 #include <arpa/inet.h>
 #include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <climits>
 #include <cstring>
 #include <sys/stat.h>
@@ -73,6 +74,26 @@ static std::string trim(const std::string& s) {
     while (start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r')) ++start;
     while (end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n' || s[end-1] == '\r')) --end;
     return s.substr(start, end - start);
+}
+
+// Simple URL percent-decoding for query parameter values.
+// Decodes %XX hex sequences, %2C → comma, etc.
+static std::string url_decode(const std::string& s) {
+    std::string result;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '%' && i + 2 < s.size()) {
+            char hex[3] = {s[i+1], s[i+2], '\0'};
+            char* end = nullptr;
+            long val = std::strtol(hex, &end, 16);
+            if (end == hex + 2) {
+                result.push_back(static_cast<char>(val));
+                i += 2;
+                continue;
+            }
+        }
+        result.push_back(s[i]);
+    }
+    return result;
 }
 
 // Normalize a domain name: lowercase, trim whitespace, remove trailing dots.
@@ -197,7 +218,7 @@ Request ApiServer::parse_request(int client_fd) const {
         while (std::getline(qs_stream, line, '&')) {
             auto eq = line.find('=');
             if (eq != std::string::npos) {
-                req.query[line.substr(0, eq)] = line.substr(eq + 1);
+                req.query[url_decode(line.substr(0, eq))] = url_decode(line.substr(eq + 1));
             }
         }
     }
@@ -452,7 +473,7 @@ bool ApiServer::start() {
              << "\",\"resolved_at\":\"" << JsonFormatter::escape(result.resolved_at)
              << "\",\"cached\":" << (result.cached ? "true" : "false")
               << ",\"overall_status\":\"" << JsonFormatter::escape(result.overall_status)
-              << ",\"expected_ipv4\":\"" << JsonFormatter::escape(result.expected_ipv4)
+              << "\",\"expected_ipv4\":\"" << JsonFormatter::escape(result.expected_ipv4)
               << "\",\"expected_ipv6\":\"" << JsonFormatter::escape(result.expected_ipv6)
               << "\",\"expected_ipv4_source\":\"" << JsonFormatter::escape(result.expected_ipv4_source)
               << "\",\"expected_ipv6_source\":\"" << JsonFormatter::escape(result.expected_ipv6_source)

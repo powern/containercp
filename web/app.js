@@ -1062,7 +1062,8 @@ async function fetchDnsForFqdn(fqdn, types) {
   if (DnsCache.isLoading(fqdn)) return DnsCache.waitFor(fqdn);
   DnsCache.setLoading(fqdn);
   try {
-    const res = await api('/api/domains/' + encodeURIComponent(fqdn) + '/dns-check?types=' + encodeURIComponent(types));
+    // Types are allowlist values (A,AAAA,MX,TXT) — not user input. No URL encoding needed.
+    const res = await api('/api/domains/' + encodeURIComponent(fqdn) + '/dns-check?types=' + types);
     if (res && res.success && res.data) {
       DnsCache.set(fqdn, res.data);
       return res.data;
@@ -1151,12 +1152,14 @@ async function loadDomainOverview() {
     if (type === 'A') {
       recs = getRecs(rootDns, 'A');
       // Expected IPv4 from NetworkService (auto-detected, via API)
-      configured = (dnsData && dnsData.expected_ipv4) || '';
+      configured = rootDns && typeof rootDns.expected_ipv4 === 'string' && rootDns.expected_ipv4.length > 0
+        ? rootDns.expected_ipv4 : '';
       hasExpected = !!configured;
     } else if (type === 'AAAA') {
       recs = getRecs(rootDns, 'AAAA');
       // Expected IPv6 from NetworkService (auto-detected, via API)
-      configured = (dnsData && dnsData.expected_ipv6) || '';
+      configured = rootDns && typeof rootDns.expected_ipv6 === 'string' && rootDns.expected_ipv6.length > 0
+        ? rootDns.expected_ipv6 : '';
       hasExpected = !!configured;
     } else if (type === 'MX') {
       recs = getRecs(rootDns, 'MX');
