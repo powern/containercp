@@ -1654,9 +1654,211 @@ async function refreshDnsRecordsTab() {
   }
   loadDomainDnsRecords();
 }
-function loadDomainMail() {
+// --- Mail tab ---
+async function loadDomainMail() {
   const content = document.getElementById('domain-tab-content');
-  if (content) content.innerHTML = '<div class="empty-state">Mail tab — coming in Phase 6</div>';
+  if (!content) return;
+  const dd = window._domainDetailData;
+  if (!dd) { content.innerHTML = '<div class="empty-state">No data</div>'; return; }
+  const {domainRow, mailDomain, serverHostname} = dd;
+  const domain = domainRow.domain;
+
+  content.innerHTML = '<div class="empty-state">Loading...</div>';
+
+  // Scenario B — No MailDomain
+  if (!mailDomain) {
+    content.innerHTML = `
+      <div class="card">
+        <h3>Mail</h3>
+        <div style="margin-top:8px;font-size:13px;color:var(--text3);">
+          <p>Mail service is not configured for this domain.</p>
+          <p>MX, SPF, DKIM, DMARC are not shown as errors because mail is not in use.</p>
+        </div>
+        <div style="margin-top:12px;">
+          <button class="btn btn-sm btn-primary" onclick="navigate('mail')">Enable Mail for this Domain</button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  // Scenario A — MailDomain exists
+  function getRecs(dnsResult, typeName) {
+    if (!dnsResult || !Array.isArray(dnsResult.per_type)) return [];
+    const pt = dnsResult.per_type.find(x => x && x.type === typeName);
+    if (!pt || !Array.isArray(pt.records)) return [];
+    return pt.records;
+  }
+
+  function fmtVal(v, max) {
+    if (!v || typeof v !== 'string') return '—';
+    if (v.length > (max || 40)) return esc(v.substr(0, max || 40)) + '...';
+    return esc(v);
+  }
+
+  function statusBadge(label, cls) {
+    if (!label) return '<span class="badge badge-info">—</span>';
+    return `<span class="badge ${cls || 'badge-info'}">${esc(label)}</span>`;
+  }
+
+  function copyBtn(text, shortLabel, fullLabel) {
+    if (!text) return '—';
+    const safe = text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    return `<button class="btn-icon" data-copy="${safe}" title="${esc(fullLabel || shortLabel)}" style="font-size:11px;padding:2px 6px;">${esc(shortLabel)}</button>`;
+  }
+
+  // Fetch mailboxes and aliases counts
+  let mailboxCount = 0, aliasCount = 0;
+  try {
+    const mb = await api('/api/mail/domains/' + mailDomain.id + '/mailboxes');
+    if (mb && mb.data) mailboxCount = mb.data.length;
+  } catch(e) { console.error('Failed to load mailboxes', e); }
+  try {
+    const al = await api('/api/mail/domains/' + mailDomain.id + '/aliases');
+    if (al && al.data) aliasCount = al.data.length;
+  } catch(e) { console.error('Failed to load aliases', e); }
+
+  // Fetch DNS data for mail records
+  const rootDns = await fetchDnsForFqdn(domain, 'TXT');
+  let dkimDns = null, dmarcDns = null;
+
+  if (mailDomain.dkim_public_key_dns) {
+    const sel = mailDomain.dkim_selector || 'dkim';
+    dkimDns = await fetchDnsForFqdn(sel + '._domainkey.' + domain, 'TXT');
+  }
+  dmarcDns = await fetchDnsForFqdn('_dmarc.' + domain, 'TXT');
+
+  // Determine expected MX
+  let expectedMx = '';
+  if (mailDomain.mode === 'local-primary') expectedMx = serverHostname || '';
+  else if (mailDomain.mode === 'external-relay' || mailDomain.mode === 'split-m365') expectedMx = mailDomain.relay_host || '';
+
+  // Build required records section
+  function buildRecordRow(type, configuredVal, publishedVal, matchFn) {
+    const hasCfg = !!configuredVal;
+    const hasPub = !!publishedVal;
+    let status, cls;
+    if (hasCfg && hasPub) {
+      const isMatch = matchFn ? matchFn(configuredVal, publishedVal) : (configuredVal === publishedVal);
+      status = isMatch ? 'Match' : 'Mismatch';
+      cls = isMatch ? 'badge-ok' : 'badge-warn';
+    } else if (hasCfg && !hasPub) { status = 'Not Published'; cls = 'badge-err'; }
+    else if (!hasCfg && hasPub) { status = 'Unexpected'; cls = 'badge-warn'; }
+    else { status = 'N/A'; cls = 'badge-info'; }
+    return {status, cls, displayCfg: fmtVal(configuredVal), displayPub: fmtVal(publishedVal)};
+  }
+
+  // MX
+  const mxRecs = getRecs(rootDns, 'TXT').filter(r => typeof r.value === 'string' && r.value.startsWith('v=spf1') === false);
+  // MX is not found in TXT — need to query MX specifically
+  const mxCheck = await fetchDnsForFqdn(domain, 'MX');
+  const mxPubRecs = mxCheck ? getRecs(mxCheck, 'MX') : [];
+  const mxPublished = mxPubRecs.map(r => (r.priority ? r.priority + ' ' : '') + (r.value || '')).join(', ');
+  const mxNormExpected = expectedMx ? expectedMx.toLowerCase().replace(/\.$/, '') : '';
+  const mxMatchFn = expectedMx ? (() => mxPubRecs.some(r => (r.value || '').toLowerCase().replace(/\.$/, '') === mxNormExpected))() : false;
+  const mxRow = buildRecordRow('MX', expectedMx, mxPublished, () => mxMatchFn);
+
+  // SPF
+  const spfRecs = getRecs(rootDns, 'TXT').filter(r => typeof r.value === 'string' && r.value.startsWith('v=spf1'));
+  const spfRecommended = 'v=spf1 mx ~all';
+  const spfPublished = spfRecs.length > 0 ? spfRecs[0].value : '';
+  const spfRow = buildRecordRow('SPF', spfRecommended, spfPublished, (a,b) => a.replace(/\s+/g,'') === b.replace(/\s+/g,''));
+
+  // DKIM
+  const dkimRecs = dkimDns ? getRecs(dkimDns, 'TXT') : [];
+  const dkimKey = mailDomain.dkim_public_key_dns || '';
+  const dkimPublished = dkimRecs.length > 0 ? dkimRecs[0].value : '';
+  const dkimRow = buildRecordRow('DKIM', dkimKey, dkimPublished, (a,b) => a.replace(/\s+/g,'') === b.replace(/\s+/g,''));
+
+  // DMARC
+  const dmarcRecs = dmarcDns ? getRecs(dmarcDns, 'TXT') : [];
+  const dmarcRecommended = 'v=DMARC1; p=none;';
+  const dmarcPublished = dmarcRecs.length > 0 ? dmarcRecs[0].value : '';
+  const dmarcRow = buildRecordRow('DMARC', dmarcRecommended, dmarcPublished, (a,b) => a.replace(/\s+/g,'') === b.replace(/\s+/g,''));
+
+  // Build PHP Mail card if site has a valid site_id
+  let phpMailHtml = '';
+  if (domainRow.site_id && domainRow.site_id > 0) {
+    try {
+      const ms = await api('/api/sites/' + domainRow.site_id + '/mail-status');
+      if (ms && ms.data) {
+        const s = ms.data;
+        const phpOk = s.enabled && s.credential_exists && s.msmtprc && s.network;
+        phpMailHtml = `
+          <div class="card" style="margin-top:12px;">
+            <h3>PHP Mail</h3>
+            <div style="margin-top:8px;font-size:13px;">
+              <div>Status: ${statusBadge(phpOk ? 'Enabled' : s.enabled ? 'Degraded' : 'Disabled', phpOk ? 'badge-ok' : s.enabled ? 'badge-warn' : 'badge-info')}</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px;font-size:12px;color:var(--text3);">
+                <div>Mail Domain: ${s.mail_domain ? '✅' : '❌'}</div>
+                <div>Credentials: ${s.credential_exists ? '✅' : '❌'}</div>
+                <div>msmtprc: ${s.msmtprc ? '✅' : '❌'}</div>
+                <div>Network: ${s.network ? '✅' : '❌'}</div>
+              </div>
+            </div>
+          </div>`;
+      }
+    } catch(e) { console.error('Failed to load PHP Mail status', e); }
+  }
+
+  // DKIM copy buttons
+  const dkimSelector = mailDomain.dkim_selector || 'dkim';
+  const dkimHost = dkimSelector + '._domainkey.' + domain;
+  const dkimFqdn = dkimHost + '.';
+  const dkimFull = dkimFqdn + ' 3600 IN TXT "' + (dkimKey || dkimPublished || '') + '"';
+
+  const now = Date.now();
+  const ts = new Date(now).toLocaleTimeString();
+
+  content.innerHTML = `
+    <div class="card" style="margin-bottom:12px;">
+      <h3>Mail Domain: ${esc(mailDomain.domain || domain)}</h3>
+      <div style="margin-top:8px;font-size:13px;">
+        <div>Mode: ${statusBadge(mailDomain.mode, 'badge-info')}</div>
+        <div>Status: ${mailDomain.enabled ? statusBadge('Active', 'badge-ok') : statusBadge('Disabled', 'badge-err')}</div>
+        <div>Mailboxes: <strong>${mailboxCount}</strong> &nbsp;|&nbsp; Aliases: <strong>${aliasCount}</strong></div>
+      </div>
+    </div>
+
+    <h3 style="font-size:13px;margin-bottom:8px;">Required Records</h3>
+    <div class="table-wrap" style="margin-bottom:12px;">
+      <table>
+        <thead><tr><th>Type</th><th>Configured</th><th>Published</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr><td>MX</td><td style="font-family:monospace;font-size:12px;">${mxRow.displayCfg}</td><td style="font-family:monospace;font-size:12px;">${mxRow.displayPub}</td><td>${statusBadge(mxRow.status, mxRow.cls)}</td><td>${expectedMx ? copyBtn(expectedMx, 'Copy', 'Copy expected MX') : '—'}</td></tr>
+          <tr><td>SPF</td><td style="font-family:monospace;font-size:12px;">${esc(spfRecommended)}</td><td style="font-family:monospace;font-size:12px;">${spfRow.displayPub}</td><td>${statusBadge(spfRow.status, spfRow.cls)}</td><td>${copyBtn(spfRecommended, 'Copy', 'Copy SPF Record')}</td></tr>
+          <tr><td>DKIM</td><td style="font-family:monospace;font-size:12px;">${dkimKey ? fmtVal(dkimKey, 60) : '—'}</td><td style="font-family:monospace;font-size:12px;">${dkimPublished ? fmtVal(dkimPublished, 60) : '—'}</td><td>${statusBadge(dkimRow.status, dkimRow.cls)}</td><td>${dkimKey ? `<span style="white-space:nowrap;">${copyBtn(dkimHost, 'H', 'Copy Host')} ${copyBtn(dkimKey, 'V', 'Copy Value')} ${copyBtn(dkimFqdn, 'F', 'Copy FQDN')} ${copyBtn(dkimFull, 'R', 'Copy Full Record')}</span>` : '—'}</td></tr>
+          <tr><td>DMARC</td><td style="font-family:monospace;font-size:12px;">${esc(dmarcRecommended)}</td><td style="font-family:monospace;font-size:12px;">${dmarcRow.displayPub}</td><td>${statusBadge(dmarcRow.status, dmarcRow.cls)}</td><td>${copyBtn(dmarcRecommended, 'Copy', 'Copy DMARC Record')}</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="font-size:13px;margin-bottom:8px;">Recommended Records</h3>
+    <div class="table-wrap" style="margin-bottom:12px;">
+      <table>
+        <thead><tr><th>Type</th><th>Recommended</th><th>Published</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr><td>Autodiscover</td><td style="font-family:monospace;font-size:12px;">—</td><td>—</td><td>—</td></tr>
+          <tr><td>MTA-STS</td><td style="font-family:monospace;font-size:12px;">v=STSv1; id=1</td><td>—</td><td>${copyBtn('v=STSv1; id=1', 'Copy', 'Copy MTA-STS TXT')}</td></tr>
+          <tr><td>TLS-RPT</td><td style="font-family:monospace;font-size:12px;">v=TLSRPTv1; rua=mailto:dmarc@${esc(domain)}</td><td>—</td><td>${copyBtn('v=TLSRPTv1; rua=mailto:dmarc@' + domain, 'Copy', 'Copy TLS-RPT Record')}</td></tr>
+          <tr><td>CAA</td><td style="font-family:monospace;font-size:12px;">0 issue "letsencrypt.org"</td><td>—</td><td>${copyBtn('0 issue "letsencrypt.org"', 'Copy', 'Copy CAA Record')}</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div style="text-align:right;font-size:11px;color:var(--text3);margin-bottom:8px;">Last checked: ${ts}</div>
+
+    ${phpMailHtml}`;
+
+  // Attach data-copy listener
+  const mailContent = content.querySelector('.card, .table-wrap') ? content : null;
+  if (content) {
+    content.addEventListener('click', function(e) {
+      const btn = e.target.closest('[data-copy]');
+      if (!btn) return;
+      const text = btn.getAttribute('data-copy');
+      if (text) copyText(text, btn.getAttribute('title') || 'Copied');
+    });
+  }
 }
 function loadDomainSecurity() {
   const content = document.getElementById('domain-tab-content');
