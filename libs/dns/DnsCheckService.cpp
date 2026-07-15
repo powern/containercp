@@ -44,10 +44,9 @@ ares_dns_rec_type_t ares_type_from_string(const std::string& type) {
 
 struct QueryState {
     std::string type_name;
-    std::vector<DnsRecord>* records;
+    PerTypeResult* result_out;
     std::mutex* mutex;
     bool* done;
-    std::string* error_out;
 };
 
 void dns_callback(void* arg, ares_status_t status, size_t timeouts,
@@ -58,32 +57,38 @@ void dns_callback(void* arg, ares_status_t status, size_t timeouts,
 
     if (status != ARES_SUCCESS) {
         if (status == ARES_ENODATA) {
-            // NODATA: domain exists, no records of this type — not an error
+            state->result_out->status_code = "NODATA";
         } else if (status == ARES_ENOTFOUND) {
-            if (state->error_out->empty())
-                *state->error_out = "NXDOMAIN";
+            state->result_out->status_code = "NXDOMAIN";
+            state->result_out->error = "NXDOMAIN";
         } else if (status == ARES_ESERVFAIL) {
-            if (state->error_out->empty())
-                *state->error_out = "SERVFAIL";
+            state->result_out->status_code = "SERVFAIL";
+            state->result_out->error = "SERVFAIL";
         } else if (status == ARES_ETIMEOUT) {
-            if (state->error_out->empty())
-                *state->error_out = "TIMEOUT";
+            state->result_out->status_code = "TIMEOUT";
+            state->result_out->error = "TIMEOUT";
         } else {
-            if (state->error_out->empty())
-                *state->error_out = "DNS_ERROR";
+            state->result_out->status_code = "ERROR";
+            state->result_out->error = "DNS_ERROR";
         }
         *state->done = true;
         return;
     }
 
     if (!dnsrec) {
+        state->result_out->status_code = "ERROR";
+        state->result_out->error = "Empty response";
         *state->done = true;
         return;
     }
 
+    state->result_out->status_code = "NOERROR";
+    std::vector<DnsRecord> records;
+
     size_t rr_count = ares_dns_record_rr_cnt(dnsrec, ARES_SECTION_ANSWER);
     for (size_t i = 0; i < rr_count; ++i) {
-        const ares_dns_rr_t* rr = ares_dns_record_rr_get_const(dnsrec, ARES_SECTION_ANSWER, i);
+        const ares_dns_rr_t* rr = ares_dns_record_rr_get_const(
+            dnsrec, ARES_SECTION_ANSWER, i);
         if (!rr) continue;
 
         DnsRecord rec;
@@ -108,9 +113,11 @@ void dns_callback(void* arg, ares_status_t status, size_t timeouts,
                 break;
             }
             case ARES_REC_TYPE_AAAA: {
-                const struct ares_in6_addr* ares_addr = ares_dns_rr_get_addr6(rr, ARES_RR_AAAA_ADDR);
+                const struct ares_in6_addr* ares_addr =
+                    ares_dns_rr_get_addr6(rr, ARES_RR_AAAA_ADDR);
                 if (ares_addr) {
-                    const struct in6_addr* addr = reinterpret_cast<const struct in6_addr*>(ares_addr);
+                    const struct in6_addr* addr =
+                        reinterpret_cast<const struct in6_addr*>(ares_addr);
                     char buf[INET6_ADDRSTRLEN];
                     inet_ntop(AF_INET6, addr, buf, sizeof(buf));
                     rec.value = buf;
@@ -149,11 +156,13 @@ void dns_callback(void* arg, ares_status_t status, size_t timeouts,
                 break;
             }
             case ARES_REC_TYPE_SOA: {
-                const char* mname = ares_dns_rr_get_str(rr, ARES_RR_SOA_MNAME);
-                const char* rname = ares_dns_rr_get_str(rr, ARES_RR_SOA_RNAME);
+                const char* mname_ref = ares_dns_rr_get_str(rr, ARES_RR_SOA_MNAME);
+                const char* rname_ref = ares_dns_rr_get_str(rr, ARES_RR_SOA_RNAME);
                 uint32_t serial = ares_dns_rr_get_u32(rr, ARES_RR_SOA_SERIAL);
-                rec.value = (mname ? mname : "") + std::string(" ") + (rname ? rname : "");
-                detail << "SOA " << (mname ? mname : "") << " " << (rname ? rname : "")
+                rec.value = (mname_ref ? mname_ref : "") + std::string(" ")
+                          + (rname_ref ? rname_ref : "");
+                detail << "SOA " << (mname_ref ? mname_ref : "") << " "
+                       << (rname_ref ? rname_ref : "")
                        << " serial=" << serial << " (ttl=" << rec.ttl << ")";
                 break;
             }
@@ -161,16 +170,20 @@ void dns_callback(void* arg, ares_status_t status, size_t timeouts,
                 uint8_t critical = ares_dns_rr_get_u8(rr, ARES_RR_CAA_CRITICAL);
                 const char* tag = ares_dns_rr_get_str(rr, ARES_RR_CAA_TAG);
                 size_t val_len = 0;
-                const unsigned char* caa_val = ares_dns_rr_get_bin(rr, ARES_RR_CAA_VALUE, &val_len);
+                const unsigned char* caa_val =
+                    ares_dns_rr_get_bin(rr, ARES_RR_CAA_VALUE, &val_len);
                 rec.value = (critical ? "1" : "0") + std::string(" ");
                 rec.value += tag ? tag : "";
                 rec.value += " \"";
-                rec.value += caa_val ? std::string(reinterpret_cast<const char*>(caa_val), val_len) : "";
+                rec.value += caa_val
+                    ? std::string(reinterpret_cast<const char*>(caa_val), val_len) : "";
                 rec.value += "\"";
                 detail << "CAA " << (critical ? "critical" : "non-critical")
-                       << " " << (tag ? tag : "")
-                       << " \"" << (caa_val ? std::string(reinterpret_cast<const char*>(caa_val), val_len) : "") << "\""
-                       << " (ttl=" << rec.ttl << ")";
+                       << " " << (tag ? tag : "") << " \""
+                       << (caa_val
+                              ? std::string(reinterpret_cast<const char*>(caa_val), val_len)
+                              : "")
+                       << "\" (ttl=" << rec.ttl << ")";
                 break;
             }
             default:
@@ -178,10 +191,41 @@ void dns_callback(void* arg, ares_status_t status, size_t timeouts,
         }
 
         rec.dns_response_details = detail.str();
-        state->records->push_back(std::move(rec));
+        records.push_back(std::move(rec));
     }
 
+    state->result_out->records = std::move(records);
     *state->done = true;
+}
+
+// Extract SOA fields from the SOA per-type result
+void extract_soa_fields(const std::vector<DnsRecord>& soa_records,
+                        std::string& mname, std::string& rname, uint64_t& serial) {
+    for (const auto& rec : soa_records) {
+        if (rec.type == "SOA" && !rec.value.empty()) {
+            // SOA value format: "mname rname" — extract from dns_response_details
+            // which was built as: "SOA <mname> <rname> serial=<N> (ttl=<N>)"
+            const auto& d = rec.dns_response_details;
+            auto soa_pos = d.find("SOA ");
+            if (soa_pos == std::string::npos) continue;
+            auto rest = d.substr(soa_pos + 4);
+            auto space1 = rest.find(' ');
+            if (space1 == std::string::npos) continue;
+            auto space2 = rest.find(' ', space1 + 1);
+            if (space2 == std::string::npos) continue;
+            mname = rest.substr(0, space1);
+            rname = rest.substr(space1 + 1, space2 - space1 - 1);
+            auto serial_pos = rest.find("serial=");
+            if (serial_pos != std::string::npos) {
+                auto num_start = serial_pos + 7;
+                auto num_end = rest.find(' ', num_start);
+                try {
+                    serial = std::stoull(rest.substr(num_start, num_end - num_start));
+                } catch (...) {}
+            }
+            return;
+        }
+    }
 }
 
 struct AresGlobalInit {
@@ -197,19 +241,32 @@ DnsCheckService::DnsCheckService() {
 
 bool DnsCheckService::validate_domain(const std::string& domain) {
     if (domain.empty() || domain.size() > 253) return false;
-    // Reject IP addresses (all digits and dots)
+    if (domain.front() == '.' || domain.back() == '.') return false;
+
+    // Check overall characters
     bool has_alpha = false;
-    bool has_hyphen = false;
     for (char c : domain) {
         if (std::isalpha(static_cast<unsigned char>(c))) has_alpha = true;
-        else if (c == '-') has_hyphen = true;
+        else if (c == '-') continue;
         else if (c == '.') continue;
-        else if (!std::isdigit(static_cast<unsigned char>(c)))
-            return false;
+        else if (std::isdigit(static_cast<unsigned char>(c))) continue;
+        else return false;
     }
-    if (domain.front() == '.' || domain.back() == '.') return false;
-    // Must have at least one alphabetic character (reject pure IPs)
-    if (!has_alpha) return false;
+    if (!has_alpha) return false;  // reject pure IPs
+
+    // Check each label
+    size_t start = 0;
+    while (start < domain.size()) {
+        auto end = domain.find('.', start);
+        if (end == std::string::npos) end = domain.size();
+        size_t label_len = end - start;
+        if (label_len == 0) return false;      // empty label (bad..example)
+        if (label_len > 63) return false;       // label too long
+        if (domain[start] == '-') return false;  // label starts with hyphen
+        if (domain[end - 1] == '-') return false; // label ends with hyphen
+        start = end + 1;
+    }
+
     return true;
 }
 
@@ -218,10 +275,12 @@ bool DnsCheckService::validate_type(const std::string& type) {
 }
 
 void DnsCheckService::set_cache_ttl(int seconds) {
+    std::lock_guard<std::mutex> lock(cache_mutex_);
     cache_ttl_ = seconds;
 }
 
 void DnsCheckService::clear_cache(const std::string& domain) {
+    std::lock_guard<std::mutex> lock(cache_mutex_);
     auto prefix = domain + ":";
     for (auto it = cache_.begin(); it != cache_.end(); ) {
         if (it->first.substr(0, prefix.size()) == prefix) {
@@ -233,10 +292,12 @@ void DnsCheckService::clear_cache(const std::string& domain) {
 }
 
 bool DnsCheckService::has_cached(const std::string& domain) const {
+    std::lock_guard<std::mutex> lock(cache_mutex_);
     auto prefix = domain + ":";
+    time_t now = std::time(nullptr);
     for (const auto& [key, entry] : cache_) {
         if (key.substr(0, prefix.size()) == prefix) {
-            return (std::time(nullptr) - entry.timestamp) < cache_ttl_;
+            return (now - entry.timestamp) < cache_ttl_;
         }
     }
     return false;
@@ -244,11 +305,18 @@ bool DnsCheckService::has_cached(const std::string& domain) const {
 
 DnsCheckResult DnsCheckService::check(const std::string& domain,
                                         const std::vector<std::string>& record_types) {
-    if (!validate_domain(domain)) {
+    // Normalize to lowercase
+    std::string normalized;
+    normalized.reserve(domain.size());
+    for (char c : domain) {
+        normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+
+    if (!validate_domain(normalized)) {
         DnsCheckResult r;
         r.success = false;
         r.error = "Invalid domain format";
-        r.status_code = "INVALID";
+        r.overall_status = "failed";
         return r;
     }
 
@@ -257,25 +325,34 @@ DnsCheckResult DnsCheckService::check(const std::string& domain,
             DnsCheckResult r;
             r.success = false;
             r.error = "Unsupported DNS record type: " + t;
-            r.status_code = "INVALID";
+            r.overall_status = "failed";
             return r;
         }
     }
 
+    // Build cache key
     std::vector<std::string> sorted_types = record_types;
     std::sort(sorted_types.begin(), sorted_types.end());
-    std::string cache_key = domain + ":";
+    std::string cache_key = normalized + ":";
     for (const auto& t : sorted_types) cache_key += t + ",";
 
-    auto it = cache_.find(cache_key);
-    if (it != cache_.end() && (std::time(nullptr) - it->second.timestamp) < cache_ttl_) {
-        return it->second.result;
+    // Check cache (thread-safe)
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        auto it = cache_.find(cache_key);
+        if (it != cache_.end() && (std::time(nullptr) - it->second.timestamp) < cache_ttl_) {
+            return it->second.result;
+        }
     }
 
-    DnsCheckResult result = do_check(domain, record_types);
+    DnsCheckResult result = do_check(normalized, record_types);
 
-    CacheEntry entry{result, std::time(nullptr)};
-    cache_[cache_key] = entry;
+    // Store in cache (thread-safe)
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        CacheEntry entry{result, std::time(nullptr)};
+        cache_[cache_key] = entry;
+    }
 
     return result;
 }
@@ -285,9 +362,12 @@ DnsCheckResult DnsCheckService::do_check(const std::string& domain,
     DnsCheckResult result;
     result.domain = domain;
 
+    // Thread-safe timestamp
     std::time_t now = std::time(nullptr);
+    struct tm utc_tm;
+    gmtime_r(&now, &utc_tm);
     char ts_buf[64];
-    if (std::strftime(ts_buf, sizeof(ts_buf), "%Y-%m-%dT%H:%M:%SZ", std::gmtime(&now))) {
+    if (std::strftime(ts_buf, sizeof(ts_buf), "%Y-%m-%dT%H:%M:%SZ", &utc_tm)) {
         result.resolved_at = ts_buf;
     }
 
@@ -300,30 +380,31 @@ DnsCheckResult DnsCheckService::do_check(const std::string& domain,
     if (status != ARES_SUCCESS) {
         result.success = false;
         result.error = "Failed to initialise DNS channel";
-        result.status_code = "INTERNAL";
+        result.overall_status = "failed";
         return result;
     }
 
-    std::vector<DnsRecord> records;
-    std::string error_str;
-    std::mutex mtx;
+    std::mutex result_mutex;
+    result.per_type.resize(record_types.size());
 
-    for (const auto& type : record_types) {
+    for (size_t i = 0; i < record_types.size(); ++i) {
+        const auto& type = record_types[i];
         ares_dns_rec_type_t ares_type = ares_type_from_string(type);
         if (ares_type == ARES_REC_TYPE_ANY) continue;
 
+        result.per_type[i].type = type;
         bool done = false;
-        QueryState query_state{type, &records, &mtx, &done, &error_str};
+        QueryState query_state{type, &result.per_type[i], &result_mutex, &done};
 
         ares_status_t qstatus = ares_query_dnsrec(channel, domain.c_str(), ARES_CLASS_IN,
                                                      ares_type, dns_callback, &query_state, nullptr);
         if (qstatus != ARES_SUCCESS) {
-            if (error_str.empty()) {
-                error_str = "DNS_QUERY_FAILED";
-            }
+            result.per_type[i].status_code = "ERROR";
+            result.per_type[i].error = "DNS_QUERY_FAILED";
             done = true;
         }
 
+        // Process until this query completes
         while (!done) {
             int nfds = 0;
             fd_set read_fds, write_fds;
@@ -344,15 +425,47 @@ DnsCheckResult DnsCheckService::do_check(const std::string& domain,
 
     ares_destroy(channel);
 
-    result.records = std::move(records);
+    // Collect records and compute overall status
+    std::vector<DnsRecord> all_records;
+    size_t ok_count = 0, fail_count = 0, nodata_count = 0;
 
-    if (!error_str.empty()) {
-        result.success = false;
-        result.error = error_str;
-        result.status_code = error_str;
-    } else {
+    for (const auto& pt : result.per_type) {
+        for (const auto& rec : pt.records) {
+            all_records.push_back(rec);
+        }
+        if (pt.status_code == "NOERROR") {
+            ok_count++;
+        } else if (pt.status_code == "NODATA") {
+            nodata_count++;
+        } else {
+            fail_count++;
+        }
+
+        // Extract SOA fields
+        if (pt.type == "SOA") {
+            extract_soa_fields(pt.records, result.soa.mname,
+                               result.soa.rname, result.soa.serial);
+        }
+    }
+
+    if (fail_count == 0) {
+        result.overall_status = "complete";
         result.success = true;
-        result.status_code = "NOERROR";
+    } else if (ok_count > 0 || nodata_count > 0) {
+        result.overall_status = "partial";
+        result.success = true;
+        result.error = "Some queries failed";
+    } else {
+        result.overall_status = "failed";
+        result.success = false;
+        // Use the first non-empty error
+        for (const auto& pt : result.per_type) {
+            if (!pt.error.empty()) {
+                result.error = pt.error;
+                break;
+            }
+        }
+        if (result.error.empty()) result.error = "All queries failed";
     }
 
     return result;

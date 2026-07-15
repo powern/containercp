@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -17,16 +18,23 @@ struct DnsRecord {
     std::string dns_response_details;
 };
 
+struct PerTypeResult {
+    std::string type;
+    std::string status_code;     // "NOERROR", "NXDOMAIN", "NODATA", "SERVFAIL", "TIMEOUT", "ERROR"
+    std::string error;
+    std::vector<DnsRecord> records;
+};
+
 struct DnsCheckResult {
     std::string domain;
     std::string resolved_at;
-    std::vector<DnsRecord> records;
+    std::vector<PerTypeResult> per_type;
     struct {
         std::string mname;
         std::string rname;
         uint64_t serial = 0;
     } soa;
-    std::string status_code;
+    std::string overall_status;  // "complete" — all types ok, "partial" — some failed, "failed" — all failed
     bool success = false;
     std::string error;
 };
@@ -57,6 +65,7 @@ private:
 
     int cache_ttl_ = 60;
     std::map<std::string, CacheEntry> cache_;
+    mutable std::mutex cache_mutex_;
 };
 
 } // namespace containercp::dns
