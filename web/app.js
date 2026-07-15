@@ -1038,6 +1038,27 @@ function switchDomainTab(tabId) {
   else content.innerHTML = '<div class="empty-state">Coming soon</div>';
 }
 
+// Helper: fetch DNS check for a specific FQDN, cached via DnsCache
+async function fetchDnsForFqdn(fqdn, types) {
+  const cached = DnsCache.get(fqdn);
+  if (cached) return cached;
+  if (DnsCache.isLoading(fqdn)) return DnsCache.waitFor(fqdn);
+  DnsCache.setLoading(fqdn);
+  try {
+    const res = await api('/api/domains/' + encodeURIComponent(fqdn) + '/dns-check?types=' + encodeURIComponent(types));
+    if (res && res.success && res.data) {
+      DnsCache.set(fqdn, res.data);
+      return res.data;
+    }
+    DnsCache.set(fqdn, null);
+    return null;
+  } catch(e) {
+    console.error('DNS check failed for ' + fqdn, e);
+    DnsCache.set(fqdn, null);
+    return null;
+  }
+}
+
 // --- Overview tab ---
 async function loadDomainOverview() {
   const content = document.getElementById('domain-tab-content');
@@ -1045,37 +1066,41 @@ async function loadDomainOverview() {
   const dd = window._domainDetailData;
   if (!dd) { content.innerHTML = '<div class="empty-state">No data</div>'; return; }
   const {domainRow, mailDomain, runtimeData} = dd;
+  const domain = domainRow.domain;
 
   content.innerHTML = '<div class="empty-state">Checking DNS...</div>';
-
-  // Fetch DNS check results
-  let dnsData = DnsCache.get(domainRow.domain);
-  if (!dnsData) {
-    try {
-      DnsCache.setLoading(domainRow.domain);
-      const res = await api('/api/domains/' + encodeURIComponent(domainRow.domain) + '/dns-check?types=A,AAAA,MX,TXT');
-      if (res && res.success) {
-        DnsCache.set(domainRow.domain, res.data);
-        dnsData = res.data;
-      }
-    } catch(e) {
-      console.error('Failed to fetch DNS check for ' + domainRow.domain, e);
-    }
-  }
-
-  // Helper: get records for a specific DNS type from per_type array
-  function getRecordsForType(perType, typeName, filterFn) {
-    if (!Array.isArray(perType)) return [];
-    const pt = perType.find(x => x && x.type === typeName);
-    if (!pt || !Array.isArray(pt.records)) return [];
-    if (filterFn) return pt.records.filter(filterFn);
-    return pt.records;
-  }
 
   // Helper: format a record value for display (truncate if too long)
   function fmtVal(v) {
     if (!v || typeof v !== 'string') return '—';
     return v.length > 40 ? v.substr(0, 40) + '...' : v;
+  }
+
+  // Helper: get records from a dnsResult for a specific type
+  function getRecs(dnsResult, typeName) {
+    if (!dnsResult || !Array.isArray(dnsResult.per_type)) return [];
+    const pt = dnsResult.per_type.find(x => x && x.type === typeName);
+    if (!pt || !Array.isArray(pt.records)) return [];
+    return pt.records;
+  }
+
+  // Fetch DNS data for each FQDN separately
+  // Root domain: A, AAAA, MX, TXT (for SPF)
+  const rootDns = await fetchDnsForFqdn(domain, 'A,AAAA,MX,TXT');
+
+  // DKIM: query <selector>._domainkey.<domain> (separate FQDN)
+  let dkimDns = null;
+  if (mailDomain && mailDomain.dkim_public_key_dns) {
+    const selector = mailDomain.dkim_selector || 'dkim';
+    const dkimFqdn = selector + '._domainkey.' + domain;
+    dkimDns = await fetchDnsForFqdn(dkimFqdn, 'TXT');
+  }
+
+  // DMARC: query _dmarc.<domain> (separate FQDN)
+  let dmarcDns = null;
+  if (mailDomain) {
+    const dmarcFqdn = '_dmarc.' + domain;
+    dmarcDns = await fetchDnsForFqdn(dmarcFqdn, 'TXT');
   }
 
   // Build DNS check summary table
@@ -1086,33 +1111,30 @@ async function loadDomainOverview() {
     expectedTypes.push('DMARC');
   }
 
-  const perType = dnsData ? dnsData.per_type : null;
-
   let dnsRows = '';
   for (const type of expectedTypes) {
     let configured = '—';
     let published = '—';
     let statusCls = 'badge-info';
     let statusLabel = '—';
+    let recs = [];
 
-    if (perType) {
-      let recs = [];
-      if (type === 'A') {
-        recs = getRecordsForType(perType, 'A');
-      } else if (type === 'AAAA') {
-        recs = getRecordsForType(perType, 'AAAA');
-      } else if (type === 'MX') {
-        recs = getRecordsForType(perType, 'MX');
-      } else if (type === 'SPF') {
-        recs = getRecordsForType(perType, 'TXT', r => typeof r.value === 'string' && r.value.startsWith('v=spf1'));
-      } else if (type === 'DKIM') {
-        recs = getRecordsForType(perType, 'TXT', r => typeof r.name === 'string' && r.name.includes('_domainkey'));
-      } else if (type === 'DMARC') {
-        recs = getRecordsForType(perType, 'TXT', r => typeof r.name === 'string' && r.name.includes('_dmarc'));
-      }
-      if (recs.length > 0) {
-        published = recs.map(r => fmtVal(r.value)).join(', ');
-      }
+    if (type === 'A') {
+      recs = getRecs(rootDns, 'A');
+    } else if (type === 'AAAA') {
+      recs = getRecs(rootDns, 'AAAA');
+    } else if (type === 'MX') {
+      recs = getRecs(rootDns, 'MX');
+    } else if (type === 'SPF') {
+      recs = getRecs(rootDns, 'TXT').filter(r => typeof r.value === 'string' && r.value.startsWith('v=spf1'));
+    } else if (type === 'DKIM') {
+      recs = getRecs(dkimDns, 'TXT');
+    } else if (type === 'DMARC') {
+      recs = getRecs(dmarcDns, 'TXT');
+    }
+
+    if (recs.length > 0) {
+      published = recs.map(r => fmtVal(r.value)).join(', ');
     }
 
     // Configured value
@@ -1128,7 +1150,21 @@ async function loadDomainOverview() {
 
     // Status
     if (configured !== '—' && published !== '—') {
-      statusLabel = 'Found'; statusCls = 'badge-ok';
+      // For DKIM, check if the published key matches the configured key
+      if (type === 'DKIM' && mailDomain && mailDomain.dkim_public_key_dns) {
+        const pubVal = recs[0] && recs[0].value || '';
+        const cfgVal = mailDomain.dkim_public_key_dns;
+        // Normalize: remove whitespace differences
+        const pubNorm = pubVal.replace(/\s+/g, '');
+        const cfgNorm = cfgVal.replace(/\s+/g, '');
+        if (pubNorm === cfgNorm) {
+          statusLabel = 'Match'; statusCls = 'badge-ok';
+        } else {
+          statusLabel = 'Mismatch'; statusCls = 'badge-warn';
+        }
+      } else {
+        statusLabel = 'Found'; statusCls = 'badge-ok';
+      }
     } else if (configured !== '—' && published === '—') {
       statusLabel = 'Not Published'; statusCls = 'badge-err';
     } else if (configured === '—' && published !== '—') {
@@ -1153,18 +1189,19 @@ async function loadDomainOverview() {
       <div style="margin-top:8px;font-size:13px;color:var(--text3);">Not configured</div>
     </div>`;
 
-  // SSL display uses ssl_status as the single source of truth.
-  // ssl_enabled is now derived from CertificateStore metadata (consistent with ssl_status).
-  // When ssl_status is "Active" or "Expiring", the certificate exists and HTTPS is configured.
+  // SSL card: ssl_status as single source of truth. Both lines use badge components.
   const sslStatusDisplay = domainRow.ssl_status || 'Unknown';
   const sslBadgeCls = {'active':'badge-ok','http_only':'badge-info','disabled':'badge-info','expiring':'badge-warn','expired':'badge-err','error':'badge-err','issuing':'badge-warn'};
-  const sslHttpsActive = sslStatusDisplay === 'Active' || sslStatusDisplay === 'Expiring';
+  const sslBadgeMap = {'active':'Active','http_only':'HTTP Only','disabled':'Disabled','expiring':'Expiring','expired':'Expired','error':'Error','issuing':'Issuing'};
+  const sslKey = sslStatusDisplay.toLowerCase();
+  const httpsBadge = (domainRow.ssl_enabled || sslStatusDisplay === 'Active' || sslStatusDisplay === 'Expiring') ? 'badge-ok' : 'badge-err';
+  const httpsLabel = (domainRow.ssl_enabled || sslStatusDisplay === 'Active' || sslStatusDisplay === 'Expiring') ? 'Active' : 'Inactive';
   const sslCard = `
     <div class="card">
       <h3>SSL Certificate</h3>
       <div style="margin-top:8px;font-size:13px;">
-        <div>Status: <span class="badge ${sslBadgeCls[sslStatusDisplay.toLowerCase()] || 'badge-info'}">${esc(sslStatusDisplay)}</span></div>
-        <div>HTTPS: ${domainRow.ssl_enabled ? '✅ Active' : sslHttpsActive ? '✅ Active' : '❌ Inactive'}</div>
+        <div>Status: <span class="badge ${sslBadgeCls[sslKey] || 'badge-info'}">${esc(sslBadgeMap[sslKey] || sslStatusDisplay)}</span></div>
+        <div>HTTPS: <span class="badge ${httpsBadge}">${httpsLabel}</span></div>
       </div>
     </div>`;
 
