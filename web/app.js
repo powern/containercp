@@ -268,6 +268,7 @@ function navigate(page, params) {
   else if (page === 'sites') loadSites(p);
   else if (page === 'site-detail') loadSiteDetail(p, params);
   else if (page === 'domains') loadDomains(p);
+  else if (page === 'domain-detail') loadDomainDetail(p, params);
   else if (page === 'mail') loadMail(p);
   else if (page === 'mail-domain') loadMailDomain(p, params);
   else if (page === 'mail-health') loadMailHealth(p);
@@ -839,16 +840,134 @@ function domainUsableHttps(r) {
   return r.ssl_status === 'Active' || r.ssl_status === 'Expiring';
 }
 
+// Domain list DNS + Runtime cache (keyed by domain name)
+window._dnsCache = {};   // {domain: {data, timestamp, loading}}
+window._rtCache = {};    // {site_id: {data, timestamp}}
+
+function dnsStatusBadge(status) {
+  if (!status) return '<span class="badge badge-info">...</span>';
+  const m = {'complete':'badge-ok','partial':'badge-warn','failed':'badge-err'};
+  return `<span class="badge ${m[status]||'badge-info'}">${esc(status)}</span>`;
+}
+
+function runtimeStatusBadge(status) {
+  if (!status) return '<span class="badge badge-info">...</span>';
+  const m = {'Running':'badge-ok','Healthy':'badge-ok','Active':'badge-ok',
+    'Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn',
+    'Expiring':'badge-warn','Error':'badge-err','Expired':'badge-err',
+    'Disabled':'badge-info','Issuing':'badge-warn','Unknown':'badge-info'};
+  return `<span class="badge ${m[status]||'badge-info'}">${esc(status)}</span>`;
+}
+
+function healthGradeBadge(score, grade) {
+  if (score == null) return '<span class="badge badge-info">...</span>';
+  const colors = {'Excellent':'badge-ok','Good':'badge-info',
+    'Fair':'badge-warn','Poor':'badge-err','Critical':'badge-err'};
+  return `<span class="badge ${colors[grade]||'badge-info'}">${score}%</span>`;
+}
+
+function computeHealthGrade(score) {
+  if (score >= 90) return 'Excellent';
+  if (score >= 70) return 'Good';
+  if (score >= 40) return 'Fair';
+  if (score >= 1) return 'Poor';
+  return 'Critical';
+}
+
+function computeDomainHealthScore(r, dnsResult) {
+  // Context-aware: only applicable checks affect score
+  const checks = [];
+  // Always applicable
+  checks.push({id:'a', label:'A record', weight:25, ok: dnsResult && dnsResult.per_type && dnsResult.per_type.some(pt => pt.type === 'A' && pt.status_code === 'NOERROR')});
+  // Mail-dependent
+  if (r.mail_domain_id && r.mail_domain_id > 0) {
+    if (r.dkim_generated) {
+      checks.push({id:'dkim', label:'DKIM', weight:10, ok: dnsResult && dnsResult.per_type && dnsResult.per_type.some(pt => pt.type === 'TXT' && pt.status_code === 'NOERROR')});
+    }
+  }
+  // Site-dependent (site_id >= 0, including admin panel)
+  if (r.site_id !== undefined) {
+    checks.push({id:'ssl', label:'SSL', weight:20, ok: r.ssl_status === 'Active' || r.ssl_status === 'Expiring'});
+  }
+
+  const applicable = checks.filter(c => c.weight > 0);
+  if (applicable.length === 0) return {score: null, grade: 'N/A'};
+
+  const totalWeight = applicable.reduce((s, c) => s + c.weight, 0);
+  const earned = applicable.reduce((s, c) => s + (c.ok ? c.weight : 0), 0);
+  const score = Math.round((earned / totalWeight) * 100);
+  const grade = computeHealthGrade(score);
+  return {score, grade};
+}
+
+async function fetchDnsWithCache(domain) {
+  const now = Date.now();
+  const cached = window._dnsCache[domain];
+  if (cached && (now - cached.timestamp) < 60000 && !cached.loading) {
+    return cached.data;
+  }
+  if (cached && cached.loading) {
+    // Wait for in-flight request
+    while (window._dnsCache[domain] && window._dnsCache[domain].loading) {
+      await new Promise(r => setTimeout(r, 100));
+    }
+    const entry = window._dnsCache[domain];
+    return entry ? entry.data : null;
+  }
+  window._dnsCache[domain] = {data: null, timestamp: now, loading: true};
+  try {
+    const res = await api('/api/domains/' + encodeURIComponent(domain) + '/dns-check?types=A,AAAA,MX');
+    window._dnsCache[domain] = {data: res.data, timestamp: Date.now(), loading: false};
+    return res.data;
+  } catch(e) {
+    window._dnsCache[domain] = {data: null, timestamp: Date.now(), loading: false};
+    return null;
+  }
+}
+
+async function fetchRuntimeWithCache(siteId) {
+  if (!siteId && siteId !== 0) return null;
+  if (siteId === 0) return null;  // Runtime API rejects site_id=0
+  const now = Date.now();
+  const cached = window._rtCache[siteId];
+  if (cached && (now - cached.timestamp) < 30000) return cached.data;
+  try {
+    const res = await api('/api/runtime/' + siteId);
+    window._rtCache[siteId] = {data: res.data, timestamp: Date.now()};
+    return res.data;
+  } catch(e) {
+    return null;
+  }
+}
+
+// Concurrency-limited batch processor
+async function processBatch(items, concurrency, fn) {
+  let index = 0;
+  async function worker() {
+    while (index < items.length) {
+      const i = index++;
+      await fn(items[i], i);
+    }
+  }
+  const workers = [];
+  for (let i = 0; i < Math.min(concurrency, items.length); i++) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
+}
+
 async function loadDomains(p) {
   try {
     const data = await api('/api/domains');
-    p.innerHTML = `<div class="page-header"><h1>Domains</h1><div class="page-actions" style="font-size:12px;color:var(--text3);font-weight:normal;">${(data.data||[]).length} domain${(data.data||[]).length===1?'':'s'}</div></div>`;
+    const domains = data.data || [];
+    p.innerHTML = `<div class="page-header"><h1>Domains</h1><div class="page-actions" style="font-size:12px;color:var(--text3);font-weight:normal;">${domains.length} domain${domains.length===1?'':'s'}</div></div>`;
     p.innerHTML += tb('All Domains');
+
     window.renderTable = () => {
       const tbl = $('domains-table');
       if (!tbl) return;
       const lowerSearch = (searchTerm||'').toLowerCase();
-      const rows = (data.data||[]).filter(r => {
+      const rows = domains.filter(r => {
         if (!lowerSearch) return true;
         return (r.domain||'').toLowerCase().includes(lowerSearch)
             || (r.site_name||'').toLowerCase().includes(lowerSearch)
@@ -858,26 +977,38 @@ async function loadDomains(p) {
             || (r.ssl_status||'').toLowerCase().includes(lowerSearch);
       });
       tbl.innerHTML = buildTable([
-        {label:'Domain',html:r=>{
-          const proto = domainUsableHttps(r) ? 'https' : 'http';
-          return `<a href="${proto}://${esc(r.domain)}" target="_blank" style="color:var(--primary);text-decoration:none;font-weight:500;" title="Open ${proto}://${esc(r.domain)}">${esc(r.domain)}</a> <span style="cursor:pointer;font-size:11px;color:var(--text3);" onclick="copyText('${esc(r.domain)}')" title="Copy domain">&#128203;</span>`;
-        }},
-        {label:'Type',html:r=>domainTypeBadge(r.type)},
-        {label:'Site',html:r=>r.site_name?`<div style="line-height:1.4;"><div>${esc(r.site_name)}</div><div style="font-size:11px;color:var(--text3);">${esc(r.site_domain||'')}</div></div>`:`<span class="badge badge-info">Unlinked</span>`},
-        {label:'Target',html:r=>{
+        {label:'Domain', html: r => `<a href="#" onclick="navigate('domain-detail',${r.id});return false" style="color:var(--primary);text-decoration:none;font-weight:500;">${esc(r.domain)}</a> <span style="cursor:pointer;font-size:11px;color:var(--text3);" onclick="copyText('${esc(r.domain)}')" title="Copy domain">&#128203;</span>`},
+        {label:'Type', html: r => domainTypeBadge(r.type)},
+        {label:'Site', html: r => r.site_name ? `<div style="line-height:1.4;"><div>${esc(r.site_name)}</div><div style="font-size:11px;color:var(--text3);">${esc(r.site_domain||'')}</div></div>` : `<span class="badge badge-info">Unlinked</span>`},
+        {label:'Target', html: r => {
           if (r.target) return `<span style="word-break:break-all;">${esc(r.target)}</span>`;
           if (r.site_domain) return `<span style="color:var(--text3);">${esc(r.site_domain)}</span>`;
           return '<span class="badge badge-info">—</span>';
         }},
-        {label:'DNS',html:()=>'<span class="badge badge-info">Unknown</span>'},
-        {label:'HTTP',html:()=>'<span class="badge badge-info">Unknown</span>'},
-        {label:'SSL',html:r=>domainSslBadge(r.ssl_status)},
-        {label:'Actions',html:r=>{
-          const proto = domainUsableHttps(r) ? 'https' : 'http';
-          let acts = `<button class="btn-icon" onclick="window.open('${proto}://${esc(r.domain)}','_blank')" title="Open in browser">&#8599;</button>`;
+        {label:'DNS', html: r => {
+          const cached = window._dnsCache[r.domain];
+          if (!cached || !cached.data) return '<span class="badge badge-info">...</span>';
+          return dnsStatusBadge(cached.data.overall_status);
+        }},
+        {label:'Mail', html: r => r.mail_domain_id && r.mail_domain_id > 0 ? '<span class="badge badge-ok">Active</span>' : '<span class="badge badge-info">—</span>'},
+        {label:'Runtime', html: r => {
+          if (r.site_id === 0) return '<span class="badge badge-info">N/A</span>';
+          if (!r.site_id && r.site_id !== 0) return '<span class="badge badge-info">N/A</span>';
+          const cached = window._rtCache[r.site_id];
+          if (!cached || !cached.data) return '<span class="badge badge-info">...</span>';
+          return runtimeStatusBadge(cached.data.web);
+        }},
+        {label:'SSL', html: r => domainSslBadge(r.ssl_status)},
+        {label:'Health', html: r => {
+          const cached = window._dnsCache[r.domain];
+          const dnsResult = cached ? cached.data : null;
+          const hs = computeDomainHealthScore(r, dnsResult);
+          return healthGradeBadge(hs.score, hs.grade);
+        }},
+        {label:'Actions', html: r => {
+          let acts = `<button class="btn-icon" onclick="navigate('domain-detail',${r.id})" title="View details">&#128065;</button>`;
+          acts += `<button class="btn-icon" onclick="window.open('http://${esc(r.domain)}','_blank')" title="Open in browser">&#8599;</button>`;
           acts += `<button class="btn-icon" onclick="copyText('${esc(r.domain)}')" title="Copy domain">&#128203;</button>`;
-          acts += `<button class="btn-icon" onclick="navigate('ssl')" title="SSL overview">&#128274;</button>`;
-          if (r.site_id) acts += `<button class="btn-icon" onclick="navigate('site-detail',${r.site_id})" title="View site">&#128065;</button>`;
           acts += `<button class="btn-icon" style="color:var(--red)" onclick="removeDomain('${esc(r.domain)}')" title="Remove domain">&#10005;</button>`;
           return acts;
         }}
@@ -885,7 +1016,50 @@ async function loadDomains(p) {
     };
     p.innerHTML += `<div id="domains-table"></div>`;
     window.renderTable();
+
+    // Progressive DNS loading: process domains one at a time (concurrency=3)
+    const rows = domains.filter(r => {
+      if (!searchTerm) return true;
+      return (r.domain||'').toLowerCase().includes((searchTerm||'').toLowerCase());
+    });
+
+    await processBatch(rows, 3, async (r) => {
+      await fetchDnsWithCache(r.domain);
+      // Re-render just this row's cells
+      const row = document.querySelector(`#domains-table table tbody tr:nth-child(${rows.indexOf(r)+1})`);
+      if (!row) return;
+      const cells = row.querySelectorAll('td');
+      if (cells.length < 9) return;
+      // Update DNS cell (index 4)
+      const dnsCached = window._dnsCache[r.domain];
+      if (dnsCached && dnsCached.data) {
+        cells[4].innerHTML = dnsStatusBadge(dnsCached.data.overall_status);
+      }
+      // Update Health cell (index 8)
+      const hs = computeDomainHealthScore(r, dnsCached ? dnsCached.data : null);
+      cells[8].innerHTML = healthGradeBadge(hs.score, hs.grade);
+    });
+
+    // Progressive Runtime loading (separate pass, also concurrency=3)
+    const siteRows = rows.filter(r => r.site_id && r.site_id > 0);
+    await processBatch(siteRows, 3, async (r) => {
+      await fetchRuntimeWithCache(r.site_id);
+      const row = document.querySelector(`#domains-table table tbody tr:nth-child(${rows.indexOf(r)+1})`);
+      if (!row) return;
+      const cells = row.querySelectorAll('td');
+      if (cells.length < 9) return;
+      const rtCached = window._rtCache[r.site_id];
+      if (rtCached && rtCached.data) {
+        cells[6].innerHTML = runtimeStatusBadge(rtCached.data.web);
+      }
+    });
+
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load domains</div>'; }
+}
+
+// Domain detail page (stub — will be expanded in Phase 4)
+async function loadDomainDetail(p, domainId) {
+  p.innerHTML = `<div class="page-header"><h1><a href="#" onclick="navigate('domains');return false" style="color:var(--text2);text-decoration:none;">&larr;</a> Domain #${esc(domainId)}</h1></div><div class="empty-state">Domain detail page — coming soon</div>`;
 }
 
 function copyText(text, msg) {

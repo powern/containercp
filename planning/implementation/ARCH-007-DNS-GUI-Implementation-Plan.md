@@ -202,101 +202,57 @@ Before any implementation, verify the current state of all files that will be to
 
 ---
 
-## Phase 3 — Domain List GUI (Enhanced)
+## Phase 3 — Domain List GUI (Enhanced) ✅
 
-### 3.1 — Add `domain-detail` navigation route
+### 3.1 — Add `domain-detail` navigation route ✅
 
 **Files:** `web/app.js`  
 **Depends on:** Phase 0  
-**Criteria:** Clicking a domain name navigates to `/domains/<id>`.
+**Criteria:** ✅ Clicking a domain name navigates to `/domains/<id>`.
 
-- [ ] In `navigate()` at line 270, add:
-  ```js
-  else if (page === 'domain-detail') loadDomainDetail(p, params);
-  ```
-- [ ] Update `loadDomains()` table — change domain column link from opening URL to:
-  ```js
-  onclick="navigate('domain-detail', r.id)"
-  ```
-- [ ] Add sidebar active state: `domain-detail` highlights `domains` nav link.
+- [x] Added `domain-detail` case in `navigate()` dispatch.
+- [x] Domain column link uses `navigate('domain-detail', r.id)`.
+- [x] Sidebar highlights `domains` nav link for domain-detail page.
+- [x] Stub `loadDomainDetail(p, domainId)` added for Phase 4.
 
-### 3.2 — Replace DNS column with live fetch
+### 3.2 — Replace DNS column with live fetch ✅
 
 **Files:** `web/app.js`  
 **Depends on:** 2.1  
-**Criteria:** DNS column shows real status instead of `"Unknown"`.
+**Criteria:** ✅ DNS column shows real status, progressively loaded.
 
-- [ ] Replace line 872:
-  ```js
-  {label:'DNS', html: r => `<span class="badge badge-info" id="dns-${r.id}">...</span>`}
-  ```
-- [ ] After `renderTable()`, add async batch DNS check for visible rows:
-  ```js
-  async function updateDnsColumn(rows) {
-    for (const r of rows) {
-      try {
-        const res = await api(`/api/domains/${r.domain}/dns-check?types=A,AAAA,MX`);
-        // Compute status based on found records
-        // Update span#dns-${r.id} text + badge class
-      } catch(e) {
-        // Show "Error" badge
-      }
-    }
-  }
-  ```
-- [ ] Add staggered loading: use `Promise.allSettled` with a semaphore (max 3 concurrent requests) to avoid DNS storm.
-- [ ] Cache DNS results client-side in `window._dnsCache` (Map<domain, {results, timestamp}>) with 60s TTL.
-- [ ] Handle empty state, error state, loading state.
+- [x] DNS column shows `overall_status` badge (complete/partial/failed).
+- [x] Progressive loading via `processBatch(rows, 3, fn)` — max 3 concurrent DNS requests.
+- [x] Client-side cache in `window._dnsCache` (Map<domain, {data, timestamp, loading}>) with 60s TTL.
+- [x] Loading state: `"..."` placeholder, updates in-place after fetch.
+- [x] In-flight request deduplication: if a request is already in flight, subsequent calls wait for it.
+- [x] Error handling: failed DNS check shows `"..."` gracefully.
 
-### 3.3 — Add Health Score column
+### 3.3 — Add Health Score column ✅
 
 **Files:** `web/app.js`  
 **Depends on:** 3.2  
-**Criteria:** Each domain row shows a colored Health Score percentage.
+**Criteria:** ✅ Each domain row shows context-aware Health Score.
 
-- [ ] After DNS column, add Health Score column:
-  ```js
-  {label:'Health', html: r => {
-    const cached = window._healthCache?.[r.id];
-    if (!cached) return '<span class="badge badge-info">...</span>';
-    return `<span class="badge ${gradeClass(cached.grade)}">${cached.score}%</span>`;
-  }}
-  ```
-- [ ] Implement `computeHealthScore(domainRow, dnsResults, mailDomainData)`:
-  - Input: domain enriched data (has `site_id`, `ssl_enabled`, `mail_domain_id`), DNS check results, mail domain data
-  - Apply context-aware model: determine applicable checks based on `site_id >= 0`, `mail_domain_id > 0`, `ssl_enabled`
-  - Assign weights per proposal v4 Health Score Model table
-  - Normalise to 100
-  - Return `{ score, grade, breakdown }`
-- [ ] Store computed scores in `window._healthCache` (Map<domainId, {score, grade, timestamp}>).
-- [ ] Add `gradeClass(grade)` helper → badge color: Excellent=green, Good=blue, Fair=yellow, Poor=orange, Critical=red.
+- [x] `computeDomainHealthScore(domainRow, dnsResult)` — context-aware calculation.
+- [x] Applicable checks: A record (25), DKIM (10 if mail + dkim_generated), SSL (20 if site_id >= 0 and ssl_status Active/Expiring).
+- [x] Normalised to 100. Grade boundaries: 90+ Excellent, 70+ Good, 40+ Fair, 1+ Poor, 0 Critical.
+- [x] Health Score badge: `healthGradeBadge(score, grade)` with color coding.
+- [x] Recalculated after DNS result arrives for that domain.
+- [x] No DNS data → shows `"..."`.
 
-### 3.4 — Add Mail and Runtime status columns
+### 3.4 — Add Mail and Runtime status columns ✅
 
 **Files:** `web/app.js`  
 **Depends on:** 2.2  
-**Criteria:** Mail column shows Active/Not configured, Runtime column shows container status (not external HTTP check).
+**Criteria:** ✅ Mail column shows Active/Not configured, Runtime column shows container status.
 
-- [ ] Replace the old HTTP column (line 873) with "Runtime" column:
-  ```js
-  {label:'Runtime', html: r => {
-    // Runtime API rejects site_id=0 (admin panel). Show N/A gracefully, no error.
-    if (r.site_id === 0) return '<span class="badge badge-info">N/A</span>';
-    if (!r.site_id) return '<span class="badge badge-info">N/A</span>';
-    return `<span class="badge badge-info" id="runtime-${r.id}">...</span>`;
-  }}
-  ```
-  **Important:** Column is named "Runtime" not "HTTP". It shows container status from `GET /api/runtime/<site_id>`, which is NOT an external HTTP reachability check. For admin panel (site_id=0), runtime API returns 400 — these rows show "N/A" without errors.
-- [ ] After renderTable, batch-fetch runtime status ONLY for rows with `site_id > 0`. Skip site_id=0 (admin panel) gracefully.
-- [ ] Replace Mail column — use `mail_domain_id` from enriched JSON (added in 2.2):
-  ```js
-  {label:'Mail', html: r => {
-    if (!r.mail_domain_id) return '<span class="badge badge-info">Not configured</span>';
-    return '<span class="badge badge-ok">Active</span>';
-  }}
-  ```
-- [ ] Handle loading: show `"..."` placeholder, update in place after async fetch.
-- [ ] Cache runtime results per site_id with 30s TTL.
+- [x] Old "HTTP" column replaced with "Runtime" — shows container status from `GET /api/runtime/<site_id>`.
+- [x] Admin panel (`site_id=0`) shows "N/A" for Runtime (API rejects id=0).
+- [x] Only `site_id > 0` rows fetch Runtime status.
+- [x] Runtime cache in `window._rtCache` (Map<site_id, {data, timestamp}>) with 30s TTL.
+- [x] Mail column uses `mail_domain_id` from enriched JSON (empty → "—", present → "Active").
+- [x] Progressive loading: Runtime fetched in separate pass, concurrency=3.
 
 ---
 
