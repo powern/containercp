@@ -1122,12 +1122,20 @@ async function loadMailDomain(p, id) {
 
     // DKIM DNS record if exists — structured display with copy buttons
     if (domain.dkim_public_key_dns) {
-      // Extract subdomain: e.g. unity.softico.ua → unity, softico.ua → softico
+      // Use actual selector from domain data
+      const sel = domain.dkim_selector || 'dkim';
+      // Extract suggested zone: e.g. unity.softico.ua → softico.ua
       const parts = domain.domain.split('.');
       const subdomain = parts.length > 2 ? parts.slice(0, -2).join('.') : '';
-      const zone = parts.length > 2 ? parts.slice(-2).join('.') : domain.domain;
-      const hostLocal = 'dkim._domainkey' + (subdomain ? '.' + subdomain : '');
-      const fqdn = hostLocal + '.' + zone;
+      const suggestedZone = parts.length > 2 ? parts.slice(-2).join('.') : domain.domain;
+      const hostLocal = sel + '._domainkey' + (subdomain ? '.' + subdomain : '');
+      const fqdn = hostLocal + '.' + suggestedZone;
+      const value = domain.dkim_public_key_dns;
+      const fullRecord = fqdn + '. 3600 IN TXT "' + value + '"';
+
+      // Build copy buttons with JSON.stringify for safe JavaScript escaping
+      const btn = (data, msg, label) =>
+        `<button class="btn btn-sm btn-outline" onclick="copyText(${JSON.stringify(data)},${JSON.stringify(msg)})">${label}</button>`;
 
       html += `<div class="card" style="margin-top:16px">
         <div class="card-header"><h3>DKIM DNS Record</h3></div>
@@ -1135,7 +1143,7 @@ async function loadMailDomain(p, id) {
           <div class="details-grid">
             <div class="details-field">
               <div class="details-label">Selector</div>
-              <div class="details-value">${esc(domain.dkim_selector || 'dkim')}</div>
+              <div class="details-value">${esc(sel)}</div>
             </div>
             <div class="details-field">
               <div class="details-label">Host / Name</div>
@@ -1151,18 +1159,19 @@ async function loadMailDomain(p, id) {
             </div>
             <div class="details-field" style="grid-column:1/-1;">
               <div class="details-label">Value (TXT record)</div>
-              <div class="details-value" style="font-family:monospace;font-size:12px;word-break:break-all;background:var(--bg3);padding:8px;border-radius:4px;">${esc(domain.dkim_public_key_dns)}</div>
+              <div class="details-value" style="font-family:monospace;font-size:12px;word-break:break-all;background:var(--bg3);padding:8px;border-radius:4px;">${esc(value)}</div>
             </div>
           </div>
           <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap;">
-            <button class="btn btn-sm btn-outline" onclick="copyText('${esc(hostLocal)}','Host copied')">Copy Host</button>
-            <button class="btn btn-sm btn-outline" onclick="copyText('${esc(domain.dkim_public_key_dns)}','Value copied')">Copy Value</button>
-            <button class="btn btn-sm btn-outline" onclick="copyText('${esc(hostLocal + '.' + zone)}','FQDN copied')">Copy FQDN</button>
-            <button class="btn btn-sm btn-outline" onclick="copyText('${esc(fqdn)}. 3600 IN TXT \"${esc(domain.dkim_public_key_dns)}\"','Full record copied')">Copy Full Record</button>
+            ${btn(hostLocal, 'Host copied', 'Copy Host')}
+            ${btn(value, 'Value copied', 'Copy Value')}
+            ${btn(fqdn, 'FQDN copied', 'Copy FQDN')}
+            ${btn(fullRecord, 'Full record copied', 'Copy Full Record')}
           </div>
           <div style="margin-top:8px;font-size:11px;color:var(--text3);">
             Add this TXT record to the DNS zone that contains the domain.
-            If your DNS zone is <strong>${esc(zone)}</strong>, use host <strong>${esc(hostLocal)}</strong>.
+            Suggested zone: <strong style="font-family:monospace;">${esc(suggestedZone)}</strong>
+            → host <strong style="font-family:monospace;">${esc(hostLocal)}</strong>
           </div>
         </div>
       </div>`;
