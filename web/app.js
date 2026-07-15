@@ -1122,9 +1122,7 @@ async function loadMailDomain(p, id) {
 
     // DKIM DNS record if exists — structured display with copy buttons
     if (domain.dkim_public_key_dns) {
-      // Use actual selector from domain data
       const sel = domain.dkim_selector || 'dkim';
-      // Extract suggested zone: e.g. unity.softico.ua → softico.ua
       const parts = domain.domain.split('.');
       const subdomain = parts.length > 2 ? parts.slice(0, -2).join('.') : '';
       const suggestedZone = parts.length > 2 ? parts.slice(-2).join('.') : domain.domain;
@@ -1133,9 +1131,10 @@ async function loadMailDomain(p, id) {
       const value = domain.dkim_public_key_dns;
       const fullRecord = fqdn + '. 3600 IN TXT "' + value + '"';
 
-      // Build copy buttons with JSON.stringify for safe JavaScript escaping
-      const btn = (data, msg, label) =>
-        `<button class="btn btn-sm btn-outline" onclick="copyText(${JSON.stringify(data)},${JSON.stringify(msg)})">${label}</button>`;
+      // Copy buttons use data-copy attributes — no inline onclick with DKIM values.
+      // Event listeners are attached after p.innerHTML = html below.
+      const btn = (id, label) =>
+        `<button class="btn btn-sm btn-outline" data-copy="${esc(id)}">${label}</button>`;
 
       html += `<div class="card" style="margin-top:16px">
         <div class="card-header"><h3>DKIM DNS Record</h3></div>
@@ -1163,10 +1162,10 @@ async function loadMailDomain(p, id) {
             </div>
           </div>
           <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap;">
-            ${btn(hostLocal, 'Host copied', 'Copy Host')}
-            ${btn(value, 'Value copied', 'Copy Value')}
-            ${btn(fqdn, 'FQDN copied', 'Copy FQDN')}
-            ${btn(fullRecord, 'Full record copied', 'Copy Full Record')}
+            ${btn('dkim-host', 'Copy Host')}
+            ${btn('dkim-value', 'Copy Value')}
+            ${btn('dkim-fqdn', 'Copy FQDN')}
+            ${btn('dkim-full', 'Copy Full Record')}
           </div>
           <div style="margin-top:8px;font-size:11px;color:var(--text3);">
             Add this TXT record to the DNS zone that contains the domain.
@@ -1175,6 +1174,9 @@ async function loadMailDomain(p, id) {
           </div>
         </div>
       </div>`;
+
+      // Store DKIM data for event listeners (attached after p.innerHTML below)
+      window._dkimData = {hostLocal, value, fqdn, fullRecord};
     } else {
       // DKIM not yet generated
       html += `<div class="card" style="margin-top:16px">
@@ -1187,6 +1189,20 @@ async function loadMailDomain(p, id) {
     }
 
     p.innerHTML = html;
+
+    // Attach DKIM copy button listeners — no inline onclick with DKIM values
+    if (window._dkimData) {
+      const d = window._dkimData;
+      const bind = (suffix, text, msg) => {
+        const el = p.querySelector(`[data-copy="dkim-${suffix}"]`);
+        if (el) el.addEventListener('click', () => copyText(text, msg));
+      };
+      bind('host', d.hostLocal, 'Host copied');
+      bind('value', d.value, 'Value copied');
+      bind('fqdn', d.fqdn, 'FQDN copied');
+      bind('full', d.fullRecord, 'Full record copied');
+      window._dkimData = null;
+    }
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load mail domain</div>'; }
 }
 
