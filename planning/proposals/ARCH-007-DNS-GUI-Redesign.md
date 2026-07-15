@@ -2,7 +2,7 @@
 
 **Status:** Draft  
 **Author:** ContainerCP Architecture  
-**Version:** 4  
+**Version:** 5  
 **Related Epic:** DNS GUI Redesign  
 
 ---
@@ -279,11 +279,10 @@ For every record where **Status ≠ Match**, a `[Why?]` or `[Show Details]` butt
     has not been added to your DNS provider.
     Copy the record above and add it to your DNS zone.
 
-  Raw DNS Response (dig)
-    ; <<>> DiG 9.18.28 <<>> dkim._domainkey.example.com TXT
-    ;; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id: 12345
-    ;; QUESTION SECTION:
-    ;dkim._domainkey.example.com.  IN  TXT
+  DNS Response Details (c-ares)
+    Query: dkim._domainkey.example.com TXT
+    Status: NXDOMAIN (domain does not exist)
+    No records found
 
   [Copy Record] [Dismiss]
 ```
@@ -293,7 +292,7 @@ Another example — DMARC Mismatch:
 ```
 ▼ Why is my DMARC record showing "Mismatch"?
 
-  Configured (from DMARC Wizard)
+  Recommended (from DMARC Wizard)
     v=DMARC1; p=reject; rua=mailto:dmarc@example.com
 
   Published (public DNS)
@@ -301,13 +300,15 @@ Another example — DMARC Mismatch:
 
   Reason
     The policy (p=) field differs.
-    Configured: p=reject (block failing emails)
-    Published:  p=none (monitor only, no action)
+    Recommended: p=reject (block failing emails)
+    Published:   p=none (monitor only, no action)
     You selected "Reject" in the DMARC Wizard, but your DNS
     still has the old "Monitor" policy.
 
-  Raw DNS Response (dig)
-    _dmarc.example.com. 3600 IN TXT "v=DMARC1; p=none; rua=mailto:dmarc@example.com"
+  DNS Response Details (c-ares)
+    Query: _dmarc.example.com TXT
+    Status: NOERROR
+    Record: "v=DMARC1; p=none; rua=mailto:dmarc@example.com" (ttl=3600)
 
   [Copy Reject Record] [Dismiss]
 ```
@@ -316,7 +317,7 @@ Each evidence panel contains:
 1. **Expected (Configured)** — the value ContainerCP generated or expects
 2. **Actual (Published)** — the value found in DNS
 3. **Reason** — human-readable explanation of why the status is not OK
-4. **Raw DNS Response** — the raw `dig` output for experienced administrators
+4. **DNS Response Details** — structured c-ares output for experienced administrators
 5. **Action button** — one-click copy of the correct record
 
 #### Copy helpers
@@ -392,13 +393,13 @@ This is a **critical UX requirement**: when no MailDomain exists, MX/SPF/DKIM/DM
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │  DMARC Policy                                                    │
-│  Configured: p=reject  |  Published: p=none  |  Status: ⚠️ Mismatch │
+│  Recommended: p=reject  |  Published: p=none  |  Status: ⚠️ Mismatch │
 │                                                                  │
 │  [Show Details] [DMARC Wizard] [Check Again]                      │
 │                                                                  │
 │  ▼ Why is my DMARC record showing "Mismatch"?                    │
 │                                                                  │
-│    Configured (from DMARC Wizard)                                │
+│    Recommended (from DMARC Wizard)                              │
 │      v=DMARC1; p=reject; rua=mailto:dmarc@example.com           │
 │                                                                  │
 │    Published (public DNS)                                        │
@@ -406,7 +407,7 @@ This is a **critical UX requirement**: when no MailDomain exists, MX/SPF/DKIM/DM
 │                                                                  │
 │    Reason                                                        │
 │      The policy (p=) field differs.                              │
-│      Configured: p=reject (block failing emails)                 │
+│      Recommended: p=reject (block failing emails)                │
 │      Published:  p=none (monitor only, no action)                │
 │      You selected "Reject" in the DMARC Wizard, but your DNS     │
 │      still has the old "Monitor" policy. Update the TXT record   │
@@ -506,7 +507,7 @@ Every Warning or Error in the Domain Diagnostic Center must explain **why** the 
 1. **Configured** (Expected) — the value ContainerCP generated or expects
 2. **Published** (Actual) — the value found in public DNS
 3. **Reason** — a human-readable explanation of the discrepancy
-4. **Raw DNS Response** — the raw `dig` output for experienced administrators
+4. **DNS Response Details** — structured c-ares output for experienced administrators
 5. **Action button** — one-click copy of the correct record
 
 **Interaction model:**
@@ -522,7 +523,7 @@ Every Warning or Error in the Domain Diagnostic Center must explain **why** the 
 | DKIM: Not Published | ContainerCP generated the DKIM key pair, but no TXT record exists at `<selector>._domainkey.<domain>`. Add the record to your DNS zone. |
 | DKIM: Mismatch | The public key in DNS differs from the one ContainerCP generated. This may happen if the key was regenerated without updating DNS. |
 | SPF: Missing | No SPF record found. Without SPF, spammers can forge emails from your domain. Add `v=spf1 mx ~all` to allow your mail servers only. |
-| DMARC: Mismatch | The policy (p=) field differs. Configured: `<value>`, Published: `<value>`. Update your DMARC TXT record. |
+| DMARC: Mismatch | The policy (p=) field differs. Recommended: `<value>`, Published: `<value>`. Update your DMARC TXT record at `_dmarc.<domain>`. |
 | MX: Not found | No MX record found. Email delivery to this domain will fail. |
 | SSL: Expiring | Certificate expires in `<N>` days. Renew via SSL section. |
 | CAA: Missing | No CAA record found. Any CA can issue certificates for your domain. Add a CAA record to restrict to Let's Encrypt. |
@@ -709,7 +710,7 @@ No new managers. This proposal adds a **read-only check service**:
 
 ### `DnsCheckService` (new file: `libs/dns/DnsCheckService.h/.cpp`)
 
-A lightweight service that executes `dig` queries and returns structured results. It is **read-only** — no DNS zone editing.
+A lightweight service using the **c-ares** DNS resolution library that returns structured results. It is **read-only** — no DNS zone editing.
 
 ```
 class DnsCheckService {
@@ -720,7 +721,7 @@ public:
         std::string value;     // e.g. "192.168.1.1"
         int ttl = 0;
         int priority = 0;      // for MX records
-        std::string raw;       // raw dig response line for evidence display
+        std::string dns_response_details;  // structured c-ares result for evidence panel
     };
 
     struct DnsCheckResult {
@@ -746,21 +747,19 @@ public:
 ```
 
 **Implementation:**
-- Uses `popen()` or `subprocess` to execute system `dig` with arguments:
-  ```
-  dig +short +time=5 +tries=2 <domain> <type>
-  dig +noall +answer +time=5 +tries=2 <domain> <type>
-  ```
-- Parses the structured output into `DnsRecord` structs
-- Returns structured JSON — **never returns raw stdout**
-- Timeout: 5 seconds per query, 2 retries
-- Error handling: DNS failure, timeout, NXDOMAIN all return structured errors
+- Uses **c-ares** (asynchronous DNS resolution library) — no shell commands, no `popen()`, no `dig` binary required
+- Initialises c-ares channel with `ares_init()` (timeout 5s, 2 retries)
+- For each requested record type, calls `ares_query()` with the appropriate DNS record type constant
+- Processes responses via `ares_callback` — extracts structured data into `DnsRecord` structs
+- Handles all DNS response statuses: `NOERROR`, `NXDOMAIN`, `NODATA`, `SERVFAIL`, `TIMEOUT`
+- Returns structured JSON — **never returns raw protocol bytes** (only formatted details)
 - Caching: in-memory, 60-second TTL by default
 
 **Security:**
-- `dig` arguments are strictly validated (domain character whitelist, record type enum)
+- Domain validated against strict allowlist (alphanumeric, dots, hyphens only)
+- Record types validated against enum allowlist
+- No shell invocation → no injection possible
 - Timeout prevents resource exhaustion
-- No shell injection possible (only known-safe characters passed to dig)
 
 ### Extend `DomainViewService`
 
@@ -809,7 +808,7 @@ No new providers. `DnsCheckService` is a **service**, not a provider. No DNS pro
 
 #### `GET /api/domains/<domain>/dns-check`
 
-Performs live DNS resolution for a domain via `dig` and returns all found records as structured JSON.
+Performs live DNS resolution for a domain via the **c-ares** library and returns all found records as structured JSON.
 
 **Request:**
 ```
@@ -888,7 +887,7 @@ GET /api/domains/example.com/dns-check?refresh=1
 
 Each record includes a `raw` field containing the full dig response line for that record. This is used by the frontend's evidence panel to show the raw DNS response to experienced administrators.
 
-The `configured` field is populated by the frontend by merging DNS check results with ContainerCP's stored values (DKIM, SPF template, DMARC wizard selection, etc.). See the "Configured vs Published" section for the merge logic.
+The `configured` field is populated by the frontend by merging DNS check results with ContainerCP's stored values (DKIM, SPF template). For DMARC, the Wizard generates a **Recommended** value (not stored — ephemeral session comparison). See the "Configured vs Published" section for the merge logic.
 
 **Error:**
 ```json
@@ -1072,7 +1071,7 @@ The original DNS-001–DNS-004 items were scoped for a full DNS zone management 
 
 | Old ID | Old name | New ID | New scope |
 |--------|----------|--------|-----------|
-| DNS-001 | DNS resource and manager | **DNS-001** | `DnsCheckService` — DNS resolution checker using `dig`, structured JSON output, caching, timeout config |
+| DNS-001 | DNS resource and manager | **DNS-001** | `DnsCheckService` — DNS resolution checker using **c-ares**, structured JSON output, caching, timeout config |
 | DNS-002 | DNS provider interface | **DNS-002** | `GET /api/domains/<domain>/dns-check` endpoint — live DNS record lookup with expected-vs-actual comparison |
 | DNS-003 | DNS CLI and REST API | **DNS-003** | Domain detail Web UI (Overview, DNS Records, Mail, Security, Health tabs) with copy helpers |
 | DNS-004 | DNS Web UI pages | **DNS-004** | Enhanced domain list with live DNS/Mail/SSL/HTTP columns and Health Score |
@@ -1091,7 +1090,7 @@ Create a complete DNS management system where ContainerCP controls DNS zones (li
 ### 2. Client-side DNS-over-HTTPS (DoH)
 Use a third-party DoH service (like Cloudflare's `1.1.1.1/dns-query`) directly from the browser to avoid any backend changes.
 
-**Rejected because:** It violates the API-first principle. The frontend would depend on an external service that may be unavailable or blocked. It also exposes DNS queries to a third party. A backend `dig`-based service is more reliable, private, and consistent with ContainerCP's architecture.
+**Rejected because:** It violates the API-first principle. The frontend would depend on an external service that may be unavailable or blocked. It also exposes DNS queries to a third party. A backend service using c-ares is more reliable, private, and consistent with ContainerCP's architecture.
 
 ### 3. Embed DNS recommendations in the backend
 Have the backend analyze DNS records and generate recommendations (e.g., "SPF is missing") rather than doing it in the frontend.
@@ -1108,10 +1107,10 @@ Replace the list page with just a search/detail flow.
 
 **Rejected because:** The list view is useful for overview. We enhance it with live status columns instead.
 
-### 6. Use a DNS library instead of `dig`
-Link against a C/C++ DNS resolution library (e.g., `ldns`, `c-ares`, `unbound`) instead of invoking `dig`.
+### 6. Use `dig` via `popen()` instead of a DNS library
+Invoke the system `dig` command via `popen()` instead of linking against a C/C++ DNS library.
 
-**Rejected for v1:** `dig` is universally available on any system where ContainerCP runs (it's part of `bind9-dnsutils`). Using `dig` avoids adding library dependencies. The output is well-structured and parseable. A native library can be considered in a future version if performance or reliability requirements demand it.
+**Rejected because:** Shell invocation creates security surface (even with validated arguments), requires `dig` to be installed on the target system, and parsing text output is fragile across `bind9` versions. The c-ares library provides structured DNS responses natively, distinguishes all required response statuses (`NOERROR`, `NXDOMAIN`, `NODATA`, `SERVFAIL`, `TIMEOUT`), and avoids any shell dependency.
 
 ---
 
@@ -1120,11 +1119,11 @@ Link against a C/C++ DNS resolution library (e.g., `ldns`, `c-ares`, `unbound`) 
 | Risk | Mitigation |
 |------|------------|
 | DNS resolution can be slow (multiple record types × many domains) | Cache results per domain for 60 seconds. Show stale data while refreshing. Only check visible records. |
-| DNS resolution may fail (firewall, no DNS, `dig` not installed) | Graceful degradation — show "Unable to check" badge. API returns 502 with clear message. Add `bind9-dnsutils` to dependencies. |
+| DNS resolution may fail (firewall, no DNS, c-ares not available) | Graceful degradation — show "Unable to check" badge. API returns 502 with clear message. Add `libcares-dev` to build dependencies. |
 | Large number of domains (100+) could cause many API calls | Batch DNS check. Add rate limiting. The detail page only checks one domain at a time. |
 | The single `web/app.js` file grows too large | This is an existing risk. The new code follows existing patterns. A future refactoring could split into modules. |
 | DMARC Wizard suggests policies that break email | Add clear warnings: "Start with p=none to monitor. Only escalate after monitoring." |
-| `dig` output parsing fragile across versions | Pin specific `dig` flags (`+short`, `+noall`, `+answer`). Test against multiple `bind9` versions. Fall back to explicit error on parse failure. |
+| c-ares API complexity | Wrap c-ares async queries in a synchronous helper. The complexity is encapsulated within `DnsCheckService` — callers see a simple `check(domain, types)` interface. |
 
 ---
 
@@ -1319,7 +1318,7 @@ Status  Type  Name                     Value                      TTL
 DMARC Policy Wizard
 
 Current status: Mismatch
-  Configured: p=reject    Published: p=none    [Show Details]
+  Recommended: p=reject    Published: p=none    [Show Details]
 
 [Monitor]         [Quarantine]         [Reject]
   p=none            p=quarantine         p=reject
@@ -1327,7 +1326,7 @@ Current status: Mismatch
 
 ▼ Show Details — DMARC Mismatch
 
-  Configured (from DMARC Wizard)
+  Recommended (from DMARC Wizard)
     v=DMARC1; p=reject; rua=mailto:dmarc@example.com
 
   Published (public DNS)
@@ -1335,8 +1334,8 @@ Current status: Mismatch
 
   Reason
     The policy (p=) field differs.
-    Configured: p=reject (block failing emails)
-    Published:  p=none (monitor only, no action)
+    Recommended: p=reject (block failing emails)
+    Published:   p=none (monitor only, no action)
     Update the TXT record at _dmarc.example.com to activate Reject.
 
   Raw DNS Response

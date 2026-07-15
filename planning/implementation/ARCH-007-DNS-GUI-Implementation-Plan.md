@@ -1,6 +1,6 @@
 # ARCH-007 — DNS GUI Implementation Plan
 
-> **Based on:** `planning/proposals/ARCH-007-DNS-GUI-Redesign.md` v4
+> **Based on:** `planning/proposals/ARCH-007-DNS-GUI-Redesign.md` v5
 >
 > **Status:** Draft  
 > **Total phases:** 10  
@@ -13,7 +13,7 @@
 
 Before any implementation, verify the current state of all files that will be touched.
 
-- [ ] Verify `Domain::site_id` field semantics in `libs/domain/Domain.h:13` — `uint64_t site_id = 0`. Confirm: `site_id=0` means domain is not linked to any ContainerCP site (including admin panel). The user requires `site_id >= 0` to be treated as "has a site" for applicability.
+- [ ] Verify `Domain::site_id` field semantics in `libs/domain/Domain.h:13` — `uint64_t site_id = 0`. **Important:** `site_id = 0` IS the admin panel (a real system Site), NOT "unlinked". Since `site_id` is `uint64_t`, all values are `>= 0`. Site-dependent checks (SSL, HTTP, DNS) are applicable for ALL domains — there is no "negative id" sentinel. The "not applicable" state for site checks does not exist in the current data model. Every domain has a valid `site_id`.
 - [ ] Verify `DomainViewService::write_enriched()` output at `libs/domain/DomainViewService.cpp:37-47` — current JSON keys: `id`, `domain`, `type`, `site_id`, `site_name`, `site_domain`, `target`, `ssl_enabled`, `ssl_status`, `enabled`. No `dns` or `mail` fields exist yet.
 - [ ] Verify `loadDomains()` in `web/app.js:842-889` — DNS column at line 872 is hardcoded `"Unknown"`. HTTP column at line 873 is hardcoded `"Unknown"`.
 - [ ] Verify `navigate()` dispatch at `web/app.js:261-286` — all page handlers. Must add `domain-detail` case.
@@ -26,7 +26,7 @@ Before any implementation, verify the current state of all files that will be to
 - [ ] Verify `MailDomain` JSON format in `mail_domain_json` lambda at `libs/api/ApiServer.cpp:1479-1498` — keys: `id`, `domain`, `mode`, `domain_id`, `site_id`, `enabled`, `relay_host`, `dkim_selector`, `dkim_public_key_dns`, `max_mailboxes`, `max_aliases`, `catch_all`, `created_at`, `updated_at`.
 - [ ] Verify test framework at `tests/main.cpp:1-2` — doctest single-header. Test pattern: `TEST_CASE("name") { CHECK(...); }`.
 - [ ] Verify API addition procedure at `docs/development/api-rules.md:49-77` — 8-step process. Must follow for new endpoint.
-- [ ] Verify `Config::data_root()` exists at `libs/core/Config.h:14` — will be needed for dig path detection.
+- [ ] Verify `Config::data_root()` exists at `libs/core/Config.h:14` — used for DKIM key paths.
 - [ ] Verify `router_.add_prefix()` usage pattern at `libs/api/ApiServer.cpp:453,1590,1630` — prefix routing works by path remainder parsing.
 
 ---
@@ -35,32 +35,51 @@ Before any implementation, verify the current state of all files that will be to
 
 ### 1.1 — Create `libs/dns/` directory and `DnsCheckService`
 
-**Files:** NEW: `libs/dns/DnsCheckService.h`, `libs/dns/DnsCheckService.cpp`  
+**Files:** NEW: `libs/dns/DnsCheckService.h`, `libs/dns/DnsCheckService.cpp`, `libs/dns/CMakeLists.txt`  
+**Dependency:** NEW: `libcares-dev` (Debian package), `pkg-config` for CMake find  
 **Depends on:** Phase 0  
-**Criteria:** Service compiles, dig invocations work, structured output returned.
+**Criteria:** Service compiles, c-ares queries work, structured output returned.
 
-- [ ] Create `libs/dns/CMakeLists.txt` — add `DnsCheckService.cpp` to the build. Follow pattern from other lib CMakeLists.
+- [ ] Add `find_package(PkgConfig)` and `pkg_check_modules(LIBCARES libcares)` to root `CMakeLists.txt`. Link `c-ares` to `dns` library target.
+- [ ] Create `libs/dns/CMakeLists.txt` — add `DnsCheckService.cpp`, link `containercp_dns` against `LIBCARES_LIBRARIES`, add `LIBCARES_INCLUDE_DIRS`.
 - [ ] Create `libs/dns/DnsCheckService.h` with:
-  - `struct DnsRecord` — fields: `type` (string), `name` (string), `value` (string), `ttl` (int), `priority` (int, default 0), `raw` (string — full dig line for evidence panel)
-  - `struct DnsCheckResult` — fields: `domain` (string), `resolved_at` (string, ISO 8601), `records` (vector<DnsRecord>), `soa` (struct with `mname`, `rname`, `serial`), `success` (bool), `error` (string)
+  - `struct DnsRecord` — fields: `type` (string), `name` (string), `value` (string), `ttl` (int), `priority` (int, default 0), `dns_response_details` (string — structured c-ares result for evidence panel)
+  - `struct DnsCheckResult` — fields: `domain` (string), `resolved_at` (string, ISO 8601), `records` (vector<DnsRecord>), `soa` (struct with `mname`, `rname`, `serial`), `status_code` (string: `NOERROR`, `NXDOMAIN`, `NODATA`, `SERVFAIL`, `TIMEOUT`), `success` (bool), `error` (string)
   - `DnsCheckResult check(const std::string& domain, const std::vector<std::string>& record_types)` — main method
   - Cache methods: `set_cache_ttl(int seconds)`, `clear_cache(const std::string& domain)`, `bool has_cached(const std::string& domain)` — in-memory cache with TTL
-- [ ] Implement `DnsCheckService::check()` in `DnsCheckService.cpp`:
+- [ ] Implement `DnsCheckService::check()` in `DnsCheckService.cpp` using **c-ares**:
   - Validate domain: lowercase, alphanumeric, dots, hyphens only. Reject IPs, spaces, shell chars. Max length 253 chars.
-  - Validate record_types against allowlist: `A`, `AAAA`, `MX`, `TXT`, `CNAME`, `NS`, `SOA`, `CAA`. Reject unknown types.
-  - Execute `dig +noall +answer +time=5 +tries=2 <domain> <type>` via `popen()` for each requested type.
-  - Parse each output line:
-    - A: `name ttl IN A value`
-    - AAAA: `name ttl IN AAAA value`
-    - MX: `name ttl IN MX priority value`
-    - TXT: `name ttl IN TXT "value"` — join fragments for long DKIM records
-    - CNAME: `name ttl IN CNAME value`
-    - NS: `name ttl IN NS value`
-    - SOA: `name ttl IN SOA mname rname serial ...`
-    - CAA: `name ttl IN CAA flag tag value`
-  - Store full raw line in `DnsRecord::raw` for evidence panel.
-  - Handle `NXDOMAIN`, `SERVFAIL`, timeout, empty response → structured errors, not exceptions.
-  - Set timeout via `+time=5` (seconds), retries via `+tries=2`.
+  - Validate record_types against allowlist: `A`, `AAAA`, `MX`, `TXT`, `CNAME`, `NS`, `SOA`, `CAA`, `PTR`. Reject unknown types.
+  - Initialize c-ares channel: `ares_init()` with timeout 5000ms, tries 2.
+  - For each requested type, call the appropriate c-ares query function:
+    - `ares_query(domain, ns_c_in, ns_t_a)` for A
+    - `ares_query(domain, ns_c_in, ns_t_aaaa)` for AAAA
+    - `ares_query(domain, ns_c_in, ns_t_mx)` for MX
+    - `ares_query(domain, ns_c_in, ns_t_txt)` for TXT
+    - `ares_query(domain, ns_c_in, ns_t_cname)` for CNAME
+    - `ares_query(domain, ns_c_in, ns_t_ns)` for NS
+    - `ares_query(domain, ns_c_in, ns_t_soa)` for SOA
+    - `ares_query(domain, ns_c_in, ns_t_caa)` for CAA
+  - Process each response via `ares_callback`:
+    - Extract structured data from `ares_host_callback` or `ares_dns_record`:
+      - A: `struct in_addr` → string via `inet_ntop`
+      - AAAA: `struct in6_addr` → string via `inet_ntop`
+      - MX: `priority` + `exchange` (hostname)
+      - TXT: join all fragments into single string (for long DKIM records)
+      - CNAME: `cname` (hostname)
+      - NS: `nsname` (hostname)
+      - SOA: `nsname`, `hostmaster`, `serial`, `refresh`, `retry`, `expire`, `minimum`
+      - CAA: `critical` flag, `tag` property, `value`
+    - Store structured string representation in `dns_response_details` for evidence panel.
+    - Preserve raw DNS response bytes (hex-encoded or formatted) for expert review.
+  - Handle all response statuses:
+    - `ARES_SUCCESS` → data available
+    - `ARES_ENODATA` → NODATA (domain exists, but no records of requested type)
+    - `ARES_ENOTFOUND` → NXDOMAIN (domain does not exist)
+    - `ARES_ESERVFAIL` → SERVFAIL (server failure)
+    - `ARES_ETIMEOUT` → TIMEOUT
+    - Map each to `DnsCheckResult::status_code` (string) and `DnsCheckResult::error`.
+  - **No shell invocation, no popen(), no dig binary required.**
 - [ ] Implement caching:
   - Use `std::map<std::string, std::pair<time_t, DnsCheckResult>>` for in-memory cache.
   - Default TTL: 60 seconds.
@@ -68,24 +87,29 @@ Before any implementation, verify the current state of all files that will be to
   - Cache key format: `domain:type1,type2` (sorted types).
 - [ ] Add `#include` guard and `namespace containercp::dns`.
 - [ ] Update root `CMakeLists.txt` to include `libs/dns/` subdirectory.
-- [ ] **Tests:** `tests/test_dns_service.cpp` — see Phase 8 for full test list.
+- [ ] Add build dependency: `libcares-dev` to `README.md`, `INSTALL.md`, `scripts/install.sh`, `packaging/containercp.service` dependencies section.
+- [ ] **Tests:** `tests/test_dns_service.cpp` — see Phase 9 for full test list.
 
 **Tests for 1.1:**
 - Domain validation: valid (`example.com`), invalid (`rm -rf /`, ``, `192.168.1.1`)
 - Type allowlist: valid (`A`, `MX`), invalid (`SPF`, `DMARC`, `INVALID`)
-- A record parsing: `example.com. 3600 IN A 192.168.1.1`
-- AAAA record parsing: `example.com. 3600 IN AAAA 2001:db8::1`
-- MX parsing with priority: `example.com. 3600 IN MX 10 mail.example.com.`
-- TXT parsing with quoted fragments
-- DKIM long TXT fragment joining
-- NXDOMAIN handling
-- SERVFAIL handling
-- Timeout handling
-- Empty response handling
-- Cache hit returns cached data
-- `clear_cache` removes entry
-- Cache TTL expiry
-- Raw evidence line preserved in `DnsRecord::raw`
+- A record parsing from c-ares response: single IPv4
+- AAAA record parsing: IPv6
+- MX parsing: priority extracted correctly
+- TXT record parsing: single fragment
+- TXT fragment joining: multi-fragment (long DKIM records)
+- CNAME parsing: canonical name extraction
+- SOA parsing: all fields extracted
+- CAA parsing: flag + tag + value
+- NXDOMAIN handling → `status_code = "NXDOMAIN"`
+- NODATA handling → `status_code = "NODATA"`, empty records
+- SERVFAIL handling → structured error
+- TIMEOUT handling → structured error
+- Cache hit → returns same data within TTL
+- Cache bypass → `clear_cache` forces fresh lookup
+- Cache TTL expiry → data older than TTL is re-fetched
+- `dns_response_details` contains structured representation
+- No shell commands executed (verify with strace or mock)
 
 ---
 
@@ -114,7 +138,7 @@ Before any implementation, verify the current state of all files that will be to
   - Invalid domain → 400 `{"success":false,"error":"Invalid domain format"}`
   - Invalid type → 400 `{"success":false,"error":"Unsupported DNS record type: SPF"}`
   - DNS resolution failure → 502 `{"success":false,"error":"DNS resolution failed: timeout"}`
-- [ ] Success response format (matches proposal v4):
+- [ ] Success response format:
   ```json
   {
     "success": true,
@@ -122,9 +146,10 @@ Before any implementation, verify the current state of all files that will be to
       "domain": "example.com",
       "resolved_at": "2026-07-15T12:00:00Z",
       "cached": false,
+      "status_code": "NOERROR",
       "records": [
-        {"type": "A", "name": "example.com", "value": "192.168.1.1", "ttl": 3600, "raw": "example.com. 3600 IN A 192.168.1.1"},
-        {"type": "MX", "name": "example.com", "value": "mail.example.com", "ttl": 3600, "priority": 10, "raw": "..."}
+        {"type": "A", "name": "example.com", "value": "192.168.1.1", "ttl": 3600, "dns_response_details": "A 192.168.1.1 (ttl=3600)"},
+        {"type": "MX", "name": "example.com", "value": "mail.example.com", "ttl": 3600, "priority": 10, "dns_response_details": "MX 10 mail.example.com (ttl=3600)"}
       ],
       "soa": {
         "mname": "ns1.example.com",
@@ -306,10 +331,11 @@ Before any implementation, verify the current state of all files that will be to
   - Determine **Configured** value:
     - DKIM: from `MailDomain::dkim_public_key_dns`
     - SPF: template `v=spf1 mx ~all` if MailDomain exists
-    - DMARC: from DMARC Wizard selection (stored in localStorage per domain, fallback: no configured value)
+    - DMARC: **no Configured value** — DMARC Wizard generates **Recommended** value only (not stored in ContainerCP)
     - A/AAAA/MX: `"—"` (no expected value in ContainerCP)
   - Determine **Published** value: from DNS check response.
   - Determine **Status**: Match / Mismatch / Not Published / Not Configured / Not Applicable.
+  - For DMARC: status is **Recommended vs Published**, not Configured vs Published.
 - [ ] Render Mail card: domain, mode, DKIM status, mailboxes count. If no MailDomain: "Not configured".
 - [ ] Render SSL card: status, HTTPS enabled, redirect, expiry date.
 - [ ] Render Site card: site name, backend, PHP version, runtime status.
@@ -348,7 +374,7 @@ Before any implementation, verify the current state of all files that will be to
   | MX | `null` (no expected value) |
   | SPF | Template: `v=spf1 mx ~all` if MailDomain exists AND mode is local-primary |
   | DKIM | `MailDomain::dkim_public_key_dns` if present |
-  | DMARC | localStorage value from DMARC Wizard selection |
+  | DMARC | **Recommended** value from DMARC Wizard (not stored in ContainerCP). Label column as "Recommended" not "Configured" |
   | CAA | Template: `0 issue "letsencrypt.org"` (optional) |
   | MTA-STS | Template: `v=STSv1; id=1` |
   | TLS-RPT | Template: `v=TLSRPTv1; rua=mailto:...` |
@@ -384,7 +410,7 @@ Before any implementation, verify the current state of all files that will be to
 
 - [ ] For DKIM row: if `dkim_public_key_dns` exists, show first 60 chars + `...` in Configured column. Full value in tooltip or copy button.
 - [ ] For SPF row: if MailDomain exists in local-primary mode, show `v=spf1 mx ~all` in Configured. Otherwise show `—`.
-- [ ] For DMARC row: if DMARC Wizard value exists in localStorage, show it in Configured. Otherwise show "Not configured".
+- [ ] For DMARC row: show the Recommended value from DMARC Wizard (if a policy was selected in the current session). Label column as "Recommended". If no selection was made, show "Select a policy in Security tab". **Do not use localStorage.**
 - [ ] Status column uses `recordStatus()` from 5.1.
 
 ---
@@ -429,15 +455,16 @@ Before any implementation, verify the current state of all files that will be to
 **Depends on:** 4.1, 5.2  
 **Criteria:** DMARC Wizard generates correct TXT records. CAA, MTA-STS, TLS-RPT recommendations shown.
 
-- [ ] DMARC current status: show Configured vs Published with status badge.
+- [ ] DMARC current status: show **Recommended** (from Wizard) vs **Published** (from DNS) with status badge. Label clearly: "Recommended" not "Configured".
 - [ ] Three policy cards:
   - Monitor: `v=DMARC1; p=none;`
   - Quarantine: `v=DMARC1; p=quarantine; rua=mailto:dmarc@<domain>`
   - Reject: `v=DMARC1; p=reject; rua=mailto:dmarc@<domain>`
 - [ ] On card click (or radio select):
   - Show preview of full DNS record.
-  - Store selection in `localStorage['dmarc_' + domain]`.
   - Show `[Copy Record]` and `[Copy with RUA]` buttons.
+  - Show Published vs Recommended comparison (if Published DMARC exists).
+  - **No localStorage.** DMARC policy is not persisted. Wizard is ephemeral — generates recommendations on the fly. Comparison is visual only, for the current session.
 - [ ] MTA-STS section:
   - TXT record template: `v=STSv1; id=1`
   - Policy file template (informational, not hosted by ContainerCP).
@@ -458,7 +485,7 @@ Before any implementation, verify the current state of all files that will be to
 **Depends on:** 5.1, 7.1  
 **Criteria:** Every non-Match record shows `[Why?]` or `[Show Details]` with expandable evidence.
 
-- [ ] Implement `async function showEvidence(recordType, configured, published, rawDig, domain)`:
+- [ ] Implement `async function showEvidence(recordType, configured, published, dnsDetails, domain)`:
   - Receives record metadata.
   - Generates inline HTML panel below the record row:
     ```html
@@ -476,8 +503,8 @@ Before any implementation, verify the current state of all files that will be to
         <p>human_readable_explanation</p>
       </div>
       <div class="evidence-section">
-        <strong>Raw DNS Response</strong>
-        <pre>escaped_raw_dig_output</pre>
+        <strong>DNS Response Details</strong>
+        <pre>escaped_c_ares_structured_output</pre>
       </div>
       <button class="btn btn-sm btn-primary">Copy Correct Record</button>
       <button class="btn btn-sm" onclick="this.closest('.evidence-panel').remove()">Dismiss</button>
@@ -489,7 +516,7 @@ Before any implementation, verify the current state of all files that will be to
   | `DKIM_NOT_PUBLISHED` | ContainerCP generated the DKIM key pair, but no TXT record exists at `<selector>._domainkey.<domain>`. Add this record to your DNS provider. |
   | `DKIM_KEY_MISMATCH` | The public key in DNS differs from the one ContainerCP generated. This may happen if the key was regenerated without updating DNS. Copy the new record below. |
   | `SPF_NOT_FOUND` | No SPF record found in DNS. Without SPF, spammers can forge emails from your domain. Add `v=spf1 mx ~all` to authorize your mail servers. |
-  | `DMARC_POLICY_MISMATCH` | The DMARC policy field (p=) differs. Configured: `<value>`. Published: `<value>`. Update your DMARC TXT record at `_dmarc.<domain>`. |
+  | `DMARC_POLICY_MISMATCH` | The DMARC policy field (p=) differs. Recommended: `<value>`. Published: `<value>`. Update your DMARC TXT record at `_dmarc.<domain>`. |
   | `MX_NOT_FOUND` | No MX record found in DNS. Email delivery to this domain will fail. |
   | `SSL_EXPIRING` | Certificate expires in `<N>` days. Renew via the SSL section. |
   | `CAA_MISSING` | No CAA record found. Any CA can issue certificates. Add `0 issue "letsencrypt.org"` to restrict to Let's Encrypt. |
@@ -553,8 +580,10 @@ Before any implementation, verify the current state of all files that will be to
         checks.push({id:'autodiscover', label:'Autodiscover', weight:3, class:'rec'});
       }
     }
-    // Site-dependent (site_id >= 0, including admin panel):
-    if (domain.site_id >= 0) {
+    // Site-dependent: ALL domains have a valid site_id (uint64_t, always >= 0).
+    // site_id = 0 is the admin panel and IS applicable for site checks.
+    // There is no "negative id" sentinel for unlinked domains in the current model.
+    {
       checks.push({id:'ssl', label:'SSL Certificate', weight:20, class:'req'});
       checks.push({id:'http', label:'HTTP Reachability', weight:15, class:'req'});
       checks.push({id:'caa', label:'CAA', weight:2, class:'rec'});
@@ -613,7 +642,7 @@ Before any implementation, verify the current state of all files that will be to
   - [ ] Cache hit — returns same data within TTL
   - [ ] Cache bypass — refresh=1 returns fresh data
   - [ ] Cache expiry — data older than TTL is re-fetched
-  - [ ] Raw evidence — DnsRecord::raw contains full dig line
+  - [ ] DNS Response Details — DnsRecord::dns_response_details contains structured c-ares output
   - [ ] Max records limit — output truncated if too large
 - [ ] Extend `tests/test_domain_view.cpp`:
   - [ ] Enriched JSON includes `mail_domain_id` when MailDomain exists
@@ -681,7 +710,7 @@ Before any implementation, verify the current state of all files that will be to
   - Response schema with all fields
   - Error responses with status codes
   - Cache semantics (60s TTL, refresh=1 bypass)
-  - Implementation: uses system `dig` via `DnsCheckService`
+  - Implementation: uses c-ares library via `DnsCheckService` (no shell commands)
   - Example request and response
 - [ ] Update section "2.9 Domains" `GET /api/domains` response to document new mail fields:
   - `mail_domain_id`, `mail_domain_mode`, `dkim_selector`, `dkim_generated`, `dkim_public_key_dns`
@@ -749,13 +778,13 @@ ARCH-007 is considered **fully implemented** only when all of the following are 
   - `site_id >= 0` → HTTP + SSL checks active (including admin panel)
 - [ ] Security tab shows:
   - DMARC Wizard with 3 policies (Monitor/Quarantine/Reject)
-  - Preview of generated TXT record
+  - Preview of generated TXT record (Recommended, not Configured — no backend storage)
   - CAA, MTA-STS, TLS-RPT, Autodiscover recommendations
 - [ ] Evidence/Why works for all non-Match records:
   - Expected (Configured)
   - Actual (Published)
   - Reason (human-readable)
-  - Raw DNS response (HTML-escaped)
+  - DNS Response Details (structured c-ares output, HTML-escaped)
   - How to fix (actionable steps)
   - Copy correct record button
   - Dismiss button
@@ -796,7 +825,7 @@ Logical commits that preserve a working state after each:
 
 | File | Phase | Purpose |
 |------|-------|---------|
-| `libs/dns/CMakeLists.txt` | 1.1 | Build configuration for DNS module |
+| `libs/dns/CMakeLists.txt` | 1.1 | Build configuration for DNS module (links `c-ares`) |
 | `libs/dns/DnsCheckService.h` | 1.1 | DnsCheckService class declaration |
 | `libs/dns/DnsCheckService.cpp` | 1.1 | DnsCheckService implementation |
 | `tests/test_dns_service.cpp` | 9.1 | Unit tests for DnsCheckService |
@@ -826,11 +855,13 @@ Logical commits that preserve a working state after each:
 
 | # | Risk | Mitigation |
 |---|------|------------|
-| 1 | **`dig` not installed** on target system. | Add `bind9-dnsutils` to system dependencies (install.sh, packaging). Detect at runtime, return clear error. |
-| 2 | **`site_id=0` ambiguity** — Domain struct defaults to `site_id=0` for unlinking, but user says `site_id=0` is admin panel (which is in the proxy, not in Domain). | Need to clarify: does user want ALL domains with `site_id=0` treated as admin panel, or only specific admin panel domains? Implementation plan assumes `site_id >= 0` = applicable for site checks, as instructed. |
-| 3 | **DMARC Wizard persistence** — currently no backend storage for DMARC selection. | Use `localStorage` per domain (keyed by `dmarc_<domain>`). This means DMARC expected value is browser-local, not synced across devices. Acceptable for v1. |
+| 1 | **c-ares not installed** on target system. | Add `libcares-dev` to system dependencies in `scripts/install.sh`, `packaging/`, and `README.md`. Detect at build time via `pkg-config`. Fail at build with clear message if missing. |
+| 2 | **c-ares API complexity** — asynchronous event loop adds complexity compared to synchronous `popen(dig)`. | Use `ares_query()` with a blocking wrapper (synchronous event loop via `ares_process()` or `ares_process_fd()`). Keep the public API synchronous. The complexity is encapsulated within `DnsCheckService.cpp`. |
+| 3 | **CAA record type support** — c-ares may not natively support `ns_t_caa` on older versions. | Conditionally compile CAA support. If unavailable, skip CAA queries and note in documentation. Minimum c-ares version: 1.27.0 (supports all planned types). |
 | 4 | **SPF expected value** — ContainerCP has no SPF configuration. The template `v=spf1 mx ~all` is a reasonable default but may not match the admin's actual mail setup. | Show SPF template as a "recommended" value, not a "configured" value. Mark status as advisory. Clearly label "Recommended SPF record" vs "Your current DNS value". |
-| 5 | **Raw DNS response size** — large TXT records (DKIM 2048-bit keys) could produce long raw lines. | Truncate raw evidence display to first 500 chars, with "Show full" toggle. API returns full value but frontend truncates for display. |
+| 5 | **DNS Response Details size** — large TXT records (DKIM 2048-bit keys) could produce long detail strings. | Truncate details display to first 500 chars, with "Show full" toggle. API returns full value but frontend truncates for display. |
 | 6 | **No HTTP check API** — ContainerCP has no endpoint to check HTTP response codes/status. | For v1, the HTTP column shows runtime container status (Running/Stopped) from `GET /api/runtime/<site_id>`, NOT external HTTP reachability. Clearly label as "Runtime" not "HTTP". A true HTTP check endpoint can be added in a future iteration. |
 | 7 | **`loadDomainDetail` depends on `GET /api/domains` list** — currently there's no `GET /api/domains/<id>` endpoint. | Option A: Add `GET /api/domains/<id>` (new endpoint, follows existing pattern from SSL and Mail). Option B: Fetch all domains and filter by ID (works for small datasets, doesn't scale). Plan assumes Option A for correctness. |
 | 8 | **Evidence reason codes are frontend-only** — no backend standardisation. | Acceptable for v1. Frontend generates reasons from record type, configured value, published value, and context. Reason codes (e.g., `DKIM_NOT_PUBLISHED`) provide a stable key for future i18n. |
+| 9 | **DMARC has no backend storage** — Wizard recommendations are ephemeral, not persisted. | Acceptable for v1. DMARC is "Recommended vs Published" not "Configured vs Published". Revisit when ContainerCP adds SQLite storage. |
+| 10 | **`site_id` is `uint64_t`** — impossible to have negative values for "unlinked" sentinel. | All domains have a valid `site_id >= 0`. Site-dependent checks (SSL, HTTP) are applicable for ALL domains. No "unlinked" sentinel needed. |
