@@ -888,8 +888,8 @@ async function loadDomains(p) {
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load domains</div>'; }
 }
 
-function copyText(text) {
-  navigator.clipboard.writeText(text).then(() => toast('Copied: '+text, 'success')).catch(() => toast('Copy failed', 'error'));
+function copyText(text, msg) {
+  navigator.clipboard.writeText(text).then(() => toast(msg || 'Copied', 'success')).catch(() => toast('Copy failed', 'error'));
 }
 
 async function removeDomain(domain) {
@@ -1120,9 +1120,61 @@ async function loadMailDomain(p, id) {
       {label:'Actions',html:r=>`<button class="btn-icon" style="color:var(--red)" onclick="removeAlias(${r.id})">&#10005;</button>`}
     ], aliases, 'No aliases');
 
-    // DKIM DNS record if exists
+    // DKIM DNS record if exists — structured display with copy buttons
     if (domain.dkim_public_key_dns) {
-      html += `<div class="card" style="margin-top:16px"><div class="card-header"><h3>DKIM DNS Record</h3></div><div style="padding:12px"><code style="word-break:break-all;font-size:12px;">${esc(domain.dkim_public_key_dns)}</code></div></div>`;
+      // Extract subdomain: e.g. unity.softico.ua → unity, softico.ua → softico
+      const parts = domain.domain.split('.');
+      const subdomain = parts.length > 2 ? parts.slice(0, -2).join('.') : '';
+      const zone = parts.length > 2 ? parts.slice(-2).join('.') : domain.domain;
+      const hostLocal = 'dkim._domainkey' + (subdomain ? '.' + subdomain : '');
+      const fqdn = hostLocal + '.' + zone;
+
+      html += `<div class="card" style="margin-top:16px">
+        <div class="card-header"><h3>DKIM DNS Record</h3></div>
+        <div style="padding:12px">
+          <div class="details-grid">
+            <div class="details-field">
+              <div class="details-label">Selector</div>
+              <div class="details-value">${esc(domain.dkim_selector || 'dkim')}</div>
+            </div>
+            <div class="details-field">
+              <div class="details-label">Host / Name</div>
+              <div class="details-value" style="font-family:monospace;font-size:13px;">${esc(hostLocal)}</div>
+            </div>
+            <div class="details-field">
+              <div class="details-label">Type</div>
+              <div class="details-value">TXT</div>
+            </div>
+            <div class="details-field">
+              <div class="details-label">FQDN</div>
+              <div class="details-value" style="font-family:monospace;font-size:13px;">${esc(fqdn)}</div>
+            </div>
+            <div class="details-field" style="grid-column:1/-1;">
+              <div class="details-label">Value (TXT record)</div>
+              <div class="details-value" style="font-family:monospace;font-size:12px;word-break:break-all;background:var(--bg3);padding:8px;border-radius:4px;">${esc(domain.dkim_public_key_dns)}</div>
+            </div>
+          </div>
+          <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-outline" onclick="copyText('${esc(hostLocal)}','Host copied')">Copy Host</button>
+            <button class="btn btn-sm btn-outline" onclick="copyText('${esc(domain.dkim_public_key_dns)}','Value copied')">Copy Value</button>
+            <button class="btn btn-sm btn-outline" onclick="copyText('${esc(hostLocal + '.' + zone)}','FQDN copied')">Copy FQDN</button>
+            <button class="btn btn-sm btn-outline" onclick="copyText('${esc(fqdn)}. 3600 IN TXT \"${esc(domain.dkim_public_key_dns)}\"','Full record copied')">Copy Full Record</button>
+          </div>
+          <div style="margin-top:8px;font-size:11px;color:var(--text3);">
+            Add this TXT record to the DNS zone that contains the domain.
+            If your DNS zone is <strong>${esc(zone)}</strong>, use host <strong>${esc(hostLocal)}</strong>.
+          </div>
+        </div>
+      </div>`;
+    } else {
+      // DKIM not yet generated
+      html += `<div class="card" style="margin-top:16px">
+        <div class="card-header"><h3>DKIM DNS Record</h3></div>
+        <div style="padding:12px;text-align:center;color:var(--text3);">
+          DKIM not generated.
+          <button class="btn btn-sm btn-primary" style="margin-left:8px;" onclick="generateMailDkim(${id})">Generate DKIM</button>
+        </div>
+      </div>`;
     }
 
     p.innerHTML = html;
