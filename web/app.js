@@ -1199,6 +1199,12 @@ async function loadDomainOverview() {
         const mxMatch = recs.some(r => window.normalizeHostname(r.value) === mxNormExp);
         statusLabel = mxMatch ? 'Match' : 'Mismatch';
         statusCls = mxMatch ? 'badge-ok' : 'badge-warn';
+      } else if (type === 'DMARC') {
+        // DMARC: use normalizeDmarcValue (trailing semicolon, whitespace, order)
+        const dmarcNorm = window.normalizeDmarcValue(configured);
+        const pubNorm = window.normalizeDmarcValue(recs[0] && recs[0].value || '');
+        statusLabel = (dmarcNorm === pubNorm) ? 'Match' : 'Mismatch';
+        statusCls = (dmarcNorm === pubNorm) ? 'badge-ok' : 'badge-warn';
       } else if (type === 'A' || type === 'AAAA') {
         // Expected IP vs published IP — exact match
         const pubVal = recs[0] && recs[0].value || '';
