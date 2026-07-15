@@ -466,9 +466,8 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
 
     dkim_out << "# ContainerCP generated Rspamd DKIM signing configuration\n"
              << "# Do not edit manually — changes will be overwritten.\n\n"
-             << "sign_authenticated = true;\n"
+              << "sign_authenticated = true;\n"
              << "sign_local = true;\n"
-             << "use_milter_headers = true;\n"
              << "allow_hdrfrom_mismatch = false;\n"
              << "use_domain = \"header\";\n"
              << "use_redis = false;\n"
@@ -517,7 +516,7 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
                << "milter = true;\n"
                << "upstream \"local\" {\n"
                << "  default = yes;\n"
-               << "  self_scan = yes;\n"
+               << "  hosts = \"localhost\";\n"
                << "}\n";
 
     // worker-normal.inc — normal HTTP controller worker (needed for rspamadm control)
@@ -959,13 +958,6 @@ ApplyResult DockerMailProvider::apply_config(
         }
     }
 
-    // 6. Ensure submission service has sender restrictions
-    //    (set on the service itself, not globally — port 25 must NOT have them)
-    executor_.run({
-        "docker", "exec", "containercp-mail-postfix",
-        "postconf", "-P", "submission/inet/smtpd_sender_restrictions=reject_sender_login_mismatch,permit_sasl_authenticated"
-    });
-
     // 7. Reload Postfix
     logger_.info("MAIL", "Reloading Postfix");
     auto rl = reload();
@@ -977,7 +969,7 @@ ApplyResult DockerMailProvider::apply_config(
         return result;
     }
 
-    // 7. Apply Rspamd config — try graceful reload first, fall back to restart
+    // 6. Apply Rspamd config — try graceful reload first, fall back to restart
     logger_.info("MAIL", "Applying Rspamd configuration");
     auto rs_reload = executor_.run({
         "docker", "exec", "containercp-mail-rspamd",
