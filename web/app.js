@@ -1495,7 +1495,6 @@ async function loadDomainDnsRecords() {
     const host = '_dmarc.' + domain;
     const publishedVal = recs.length > 0 ? recs[0].value : '';
     const dmarcR = window.compareDmarcRecords(recommended, publishedVal);
-    const val = published || recommended;
     const dmarcVal = publishedVal || recommended;
     rows += `<tr>
       <td>${statusBadge(dmarcR.status, dmarcR.cls)}</td>

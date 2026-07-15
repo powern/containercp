@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include "dns/SpfAnalyzer.h"
+
 namespace containercp::dns {
 
 struct DnsRecord {
@@ -42,6 +44,19 @@ struct DnsCheckResult {
     std::string expected_ipv6_source;
     std::string expected_ip_detected_at;
     bool expected_ip_stale = false;
+    // SPF analysis (populated by API handler using SpfAnalyzer + NetworkService)
+    struct {
+        std::string status;
+        std::string match;
+        bool expected_ip_allowed = false;
+        std::string record;
+        std::string all_qualifier;
+        int lookup_count = 0;
+        std::string mechanism_matched;
+        std::vector<std::string> errors;
+        std::vector<std::string> warnings;
+        std::vector<SpfCheck> checks;
+    } spf_analysis;
     std::string overall_status;  // "complete" — all types ok, "partial" — some failed, "failed" — all failed
     bool success = false;
     std::string error;

@@ -33,6 +33,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/domain/DomainManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/domain/DomainViewService.cpp
     ${CMAKE_SOURCE_DIR}/libs/dns/DnsCheckService.cpp
+    ${CMAKE_SOURCE_DIR}/libs/dns/SpfAnalyzer.cpp
     ${CMAKE_SOURCE_DIR}/libs/network/NetworkService.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/DatabaseManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/Database.cpp

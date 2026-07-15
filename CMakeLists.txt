@@ -39,6 +39,7 @@ set(CONTAINERCP_SOURCES
     libs/domain/DomainManager.cpp
     libs/domain/DomainViewService.cpp
     libs/dns/DnsCheckService.cpp
+    libs/dns/SpfAnalyzer.cpp
     libs/docker/ComposeGenerator.cpp
     libs/docker/EnvGenerator.cpp
     libs/filesystem/Filesystem.cpp

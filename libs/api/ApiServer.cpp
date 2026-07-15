@@ -14,6 +14,7 @@
 #include "ssl/CertificateStore.h"
 #include "ssl/CertificateProvider.h"
 #include "dns/DnsCheckService.h"
+#include "dns/SpfAnalyzer.h"
 #include "migration/VestaSiteImporter.h"
 #include "utils/Validator.h"
 
@@ -464,6 +465,26 @@ bool ApiServer::start() {
             result.expected_ip_stale = v4.stale || v6.stale;
         }
 
+        // SPF analysis (semantic, not string comparison)
+        {
+            dns::SpfAnalyzer spf;
+            // Find the first TXT record that looks like SPF
+            std::string spf_record;
+            for (const auto& pt : result.per_type) {
+                if (pt.type == "TXT") {
+                    for (const auto& rec : pt.records) {
+                        if (rec.value.size() >= 7 && rec.value.substr(0, 7) == "v=spf1") {
+                            spf_record = rec.value;
+                            break;
+                        }
+                    }
+                }
+                if (!spf_record.empty()) break;
+            }
+            result.spf_analysis = spf.analyze(spf_record, result.expected_ipv4,
+                                                result.expected_ipv6, domain);
+        }
+
         // Build JSON response
         std::ostringstream json;
         json << "{\"success\":"
@@ -479,6 +500,32 @@ bool ApiServer::start() {
               << "\",\"expected_ipv6_source\":\"" << JsonFormatter::escape(result.expected_ipv6_source)
               << "\",\"expected_ip_detected_at\":\"" << JsonFormatter::escape(result.expected_ip_detected_at)
               << "\",\"expected_ip_stale\":" << (result.expected_ip_stale ? "true" : "false")
+              << ",\"spf_analysis\":{"
+              << "\"status\":\"" << JsonFormatter::escape(result.spf_analysis.status)
+              << "\",\"match\":\"" << JsonFormatter::escape(result.spf_analysis.match)
+              << "\",\"expected_ip_allowed\":" << (result.spf_analysis.expected_ip_allowed ? "true" : "false")
+              << ",\"record\":\"" << JsonFormatter::escape(result.spf_analysis.record)
+              << "\",\"all_qualifier\":\"" << JsonFormatter::escape(result.spf_analysis.all_qualifier)
+              << "\",\"lookup_count\":" << result.spf_analysis.lookup_count
+              << ",\"mechanism_matched\":\"" << JsonFormatter::escape(result.spf_analysis.mechanism_matched)
+              << "\",\"errors\":[";
+            for (size_t i = 0; i < result.spf_analysis.errors.size(); ++i) {
+                if (i > 0) json << ",";
+                json << "\"" << JsonFormatter::escape(result.spf_analysis.errors[i]) << "\"";
+            }
+            json << "],\"warnings\":[";
+            for (size_t i = 0; i < result.spf_analysis.warnings.size(); ++i) {
+                if (i > 0) json << ",";
+                json << "\"" << JsonFormatter::escape(result.spf_analysis.warnings[i]) << "\"";
+            }
+            json << "],\"checks\":[";
+            for (size_t i = 0; i < result.spf_analysis.checks.size(); ++i) {
+                if (i > 0) json << ",";
+                json << "{\"code\":\"" << JsonFormatter::escape(result.spf_analysis.checks[i].code)
+                     << "\",\"status\":\"" << JsonFormatter::escape(result.spf_analysis.checks[i].status)
+                     << "\",\"reason\":\"" << JsonFormatter::escape(result.spf_analysis.checks[i].reason) << "\"}";
+            }
+            json << "]}"
               << ",\"per_type\":[";
 
         bool first_pt = true;
