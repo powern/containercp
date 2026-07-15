@@ -1,0 +1,16 @@
+# ContainerCP: remove dkim_signing dependency on DKIM_CHECK.
+# The DKIM verification module skips DKIM_CHECK for authenticated/local users,
+# so DKIM_SIGNED is never evaluated (register_dependency requires the depended-upon
+# symbol to be processed first). This patch comments out the dependency.
+#
+# If this file ever needs updating (upstream changed), the grep will fail
+# the build with a clear error message.
+
+--- a/dkim_signing.lua
++++ b/dkim_signing.lua
+@@ -180,4 +180,4 @@
+ 
+ rspamd_config:register_symbol(sym_reg_tbl)
+ -- Add dependency on DKIM checks
+-rspamd_config:register_dependency(settings['symbol'], 'DKIM_CHECK')
++-- rspamd_config:register_dependency(settings['symbol'], 'DKIM_CHECK') -- DISABLED by ContainerCP: DKIM_CHECK is skipped for authenticated users

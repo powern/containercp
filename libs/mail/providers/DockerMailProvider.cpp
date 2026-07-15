@@ -468,6 +468,7 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
              << "# Do not edit manually — changes will be overwritten.\n\n"
              << "sign_authenticated = true;\n"
              << "sign_local = true;\n"
+             << "use_milter_headers = true;\n"
              << "allow_hdrfrom_mismatch = false;\n"
              << "use_domain = \"header\";\n"
              << "use_redis = false;\n"
@@ -498,26 +499,6 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
     }
 
     dkim_out << "}\n";
-
-    // settings.conf override: force DKIM_CHECK for authenticated users.
-    // Without this, dkim_signing.lua (which depends on DKIM_CHECK) never runs
-    // because the DKIM verification module skips authenticated/local users.
-    {
-        executor_.run({"mkdir", "-p", conf_dir});
-        std::string settings_local = conf_dir + "/settings.conf";
-        std::ofstream settings_out(settings_local);
-        if (!settings_out.is_open()) return {false, "Failed to write " + settings_local};
-        settings_out << "# ContainerCP generated settings override\n"
-                     << "# Forces DKIM_CHECK for authenticated users so that\n"
-                     << "# dkim_signing (which depends on DKIM_CHECK) can run.\n\n"
-                     << "authenticated_mail {\n"
-                     << "  priority = high;\n"
-                     << "  authenticated = true;\n"
-                     << "  apply {\n"
-                     << "    symbols_enabled = [\"R_DKIM_ALLOW\", \"R_DKIM_NA\", \"DKIM_CHECK\"];\n"
-                     << "  }\n"
-                     << "}\n";
-    }
 
     // logging.inc — log to stderr for Docker
     std::string log_path = conf_dir + "/logging.inc";
@@ -670,7 +651,6 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "      - containercp-mail\n"
         << "    volumes:\n"
         << "      - " << config_dir() << "/generated/rspamd/dkim_signing.conf:/etc/rspamd/local.d/dkim_signing.conf:ro\n"
-       << "      - " << config_dir() << "/generated/rspamd/settings.conf:/etc/rspamd/local.d/settings.conf:ro\n"
        << "      - " << config_dir() << "/generated/rspamd/worker-normal.inc:/etc/rspamd/local.d/worker-normal.inc:ro\n"
        << "      - " << config_dir() << "/generated/rspamd/worker-proxy.inc:/etc/rspamd/local.d/worker-proxy.inc:ro\n"
        << "      - " << config_dir() << "/generated/rspamd/logging.inc:/etc/rspamd/local.d/logging.inc:ro\n"
