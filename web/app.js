@@ -1928,8 +1928,11 @@ function getRecDefs(domain, serverHostname, stsPublished, caaPublished, tlsPubli
       configured: serverHostname || 'N/A',
       published: p(autoPublished),
       copyValue: 'autodiscover.' + domain + '. 3600 IN CNAME ' + (serverHostname || 'N/A') + '.',
-    }
+    },
   };
+  // dmarc is added dynamically in loadDomainSecurity with live dmarcCurrent/dmarcPublished
+  defs['dmarc'] = { type: 'DMARC_POLICY_MISMATCH', configured: _dmarcSelection || '', published: dmarcPublished || '', copyValue: _dmarcSelection || '' };
+  return defs;
 }
 
 function loadDomainSecurity() {
@@ -1990,7 +1993,9 @@ function loadDomainSecurity() {
     };
 
     const whyBtn = function(key) {
-      return '<button class="btn btn-sm" data-security-why="1" data-evidence-type="' + recDefs[key].type + '" data-security-record-key="' + key + '">Why?</button>';
+      const def = recDefs[key];
+      if (!def) { console.error('Missing Security def', {key}); return ''; }
+      return '<button class="btn btn-sm" data-security-why="1" data-evidence-type="' + escAttr(def.type) + '" data-security-record-key="' + escAttr(key) + '">Why?</button>';
     };
     const copyBtn = function(v) { return '<button class="btn btn-sm" data-copy="' + escAttr(v) + '">Copy Record</button>'; };
 
@@ -2016,7 +2021,12 @@ function loadDomainSecurity() {
       let cmp = '';
       if (dmarcPublished) {
         const r = window.compareDmarcRecords(_dmarcSelection, dmarcPublished);
-        cmp = '<div class="card" style="margin-top:8px;"><div style="font-size:12px;">Comparison</div>'
+        const dmarcDef = recDefs['dmarc'];
+        cmp = '<div class="card" style="margin-top:8px;" data-security-record="dmarc"'
+          + ' data-evidence-configured="' + escAttr(dmarcDef.configured) + '"'
+          + ' data-evidence-published="' + escAttr(dmarcDef.published) + '"'
+          + ' data-evidence-copy="' + escAttr(dmarcDef.copyValue) + '">'
+          + '<div style="font-size:12px;">Comparison</div>'
           + '<div style="margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">'
           + '<div><strong>Recommended:</strong><br><code style="font-size:11px;word-break:break-all;">' + esc(_dmarcSelection) + '</code></div>'
           + '<div><strong>Published:</strong><br><code style="font-size:11px;word-break:break-all;">' + esc(dmarcPublished) + '</code></div></div>'
