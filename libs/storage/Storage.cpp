@@ -141,9 +141,9 @@ std::vector<site::Site> Storage::load_sites() {
         if (std::getline(ss, token, '|')) s.web_server = token.empty() ? "apache" : token;
         if (std::getline(ss, token, '|')) s.php_mail_enabled = (token == "1");
 
-        // Legacy 5-field format: php_mail_enabled field was absent.
-        // Leave it as default (false) — migration is done by ServiceRegistry
-        // on the loaded_sites vector before set_sites(), using one-time criteria.
+        // Legacy 5-field format (4 pipes): php_mail_enabled field was absent.
+        // Set transient flag so ServiceRegistry can detect this for migration.
+        s.php_mail_enabled_present = (pipes >= 5);
         s.name = s.domain;
         sites.push_back(std::move(s));
     }

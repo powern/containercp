@@ -691,7 +691,7 @@ async function enablePhpMail(siteId, domain) {
           const mailDomains = await api('/api/mail/domains');
           const disabledMd = (mailDomains.data||[]).find(md => md.domain === domain || md.domain_name === domain);
           if (disabledMd) {
-            await apiPost('/api/mail/domains/' + disabledMd.id, {enabled: true, mode: 'local-primary'});
+            await api('/api/mail/domains/' + disabledMd.id, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled: true, mode: 'local-primary'})});
             if (el) el.innerHTML = '<span style="color:var(--green,#22c55e)">✅ Mail Domain activated. Retrying enable...</span>';
             // Retry enable-mail
             const retry = await apiPost('/api/sites/' + siteId + '/enable-mail');

@@ -292,6 +292,8 @@ ServiceRegistry::ServiceRegistry()
         if (!already_migrated) {
             bool migrated = false;
             for (auto& site : loaded_sites) {
+                // Only migrate legacy 5-field records (php_mail_enabled_present == false)
+                if (site.php_mail_enabled_present) continue;
                 if (site.php_mail_enabled) continue;
                 std::string msmtprc_path = config_.sites_dir() + site.domain + "/config/php/msmtprc";
                 if (filesystem_.exists(msmtprc_path)) {

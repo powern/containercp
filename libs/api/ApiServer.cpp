@@ -1947,6 +1947,46 @@ bool ApiServer::start() {
         return r;
     });
 
+    // PATCH /api/mail/domains/<id> — update a mail domain
+    router_.add_prefix("PATCH", "/api/mail/domains/", [&s, &mail_domain_json](const Request& req) {
+        Response r;
+        std::string id_str = req.path.substr(std::string("/api/mail/domains/").size());
+        uint64_t id = 0;
+        try { id = std::stoull(id_str); } catch (...) {}
+        if (id == 0) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid ID\"}";
+            return r;
+        }
+
+        auto* m = s.mail().find(id);
+        if (!m) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Mail domain not found\"}";
+            return r;
+        }
+
+        std::string mode_str = json_extract(req.body, "mode");
+        if (!mode_str.empty()) {
+            m->mode = mail::mail_domain_mode_from_string(mode_str);
+        }
+
+        std::string enabled_str = json_extract(req.body, "enabled");
+        if (!enabled_str.empty()) {
+            m->enabled = (enabled_str == "true");
+        }
+
+        std::string relay_host = json_extract(req.body, "relay_host");
+        if (!relay_host.empty() && relay_host != "null") {
+            m->relay_host = relay_host;
+        }
+
+        s.save();
+        (void)s.runtime_sync().sync("mail");
+        r.body = "{\"success\":true,\"data\":" + mail_domain_json(*m) + "}";
+        return r;
+    });
+
     // ── Site mail endpoints (enable/disable/status) ────────────────────
     // Uses SiteMailOrchestrator for all business logic (Single Source of Truth)
 
@@ -2103,9 +2143,16 @@ bool ApiServer::start() {
                 return r;
             }
             s.save();
-            // Trigger mail config regeneration
-            s.runtime_sync().sync("mail");
-            auto* created = s.mail().find(md_id);
+            // Trigger mail config regeneration with rollback on failure
+            auto sync_result = s.runtime_sync().sync("mail");
+            if (!sync_result.success) {
+                s.mail().remove(md_id);
+                s.save();
+                r.status_code = 500;
+                r.body = "{\"success\":false,\"error\":\"Failed to sync mail config: "
+                    + JsonFormatter::escape(sync_result.message) + "\"}";
+                return r;
+            }
             r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(md_id) + "}}";
             return r;
         }

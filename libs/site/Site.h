@@ -17,6 +17,11 @@ struct Site : core::Resource {
     std::string db_password;
     std::string web_server = "apache";
     bool php_mail_enabled = false;
+
+    // Transient: set by Storage::load_sites() when the 6th field was present.
+    // Used by ServiceRegistry for one-time legacy migration.
+    // NOT persisted — serialization skips this field.
+    bool php_mail_enabled_present = false;
 };
 
 } // namespace containercp::site
