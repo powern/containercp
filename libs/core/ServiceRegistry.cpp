@@ -35,7 +35,9 @@ ServiceRegistry::ServiceRegistry()
     , mail_provider_(logger_, config_.data_root())
     , network_(config_, logger_)
 {
-    // Initial public IP detection (async — caches result for DNS diagnostics)
+    // Initial public IP detection (runs synchronously at startup, max ~8s total:
+    // IPv4 routing_table + external_dns = ~3s, IPv6 same = ~3s, hostname fallback = ~2s)
+    // This populates the cache so DNS diagnostics can provide expected IP immediately.
     network_.detect_now();
 
     // Register mail runtime sync callback

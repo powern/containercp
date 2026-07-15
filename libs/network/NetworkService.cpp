@@ -105,64 +105,79 @@ void NetworkService::refresh() {
 }
 
 IpDetectionResult NetworkService::public_ipv4() {
-    std::lock_guard<std::mutex> lock(cache_mutex_);
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - cache_v4_.timestamp);
+    // Check cache without blocking for long
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - cache_v4_.timestamp);
 
-    // If refresh requested or cache expired
-    if (refresh_requested_ || elapsed.count() >= kCacheTTLSeconds) {
-        refresh_requested_ = false;
-        if (!cache_v4_.detection_in_progress) {
-            cache_v4_.detection_in_progress = true;
-            lock.~lock_guard(); // release mutex before async detection
-
-            // For simplicity in v1, run detection synchronously.
-            // Background refresh can be added in a future iteration.
-            auto result = detect_with_fallback(false);
-
-            std::lock_guard<std::mutex> relock(cache_mutex_);
-            cache_v4_.result = result;
-            cache_v4_.timestamp = now;
-            cache_v4_.detection_in_progress = false;
-            save_cached("ipv4", result);
-            return result;
+        if (refresh_requested_ || elapsed.count() >= kCacheTTLSeconds) {
+            refresh_requested_ = false;
+            if (!cache_v4_.detection_in_progress) {
+                cache_v4_.detection_in_progress = true;
+            } else {
+                // Detection already in progress by another thread, return stale for now
+                if (cache_v4_.result.success) {
+                    cache_v4_.result.stale = true;
+                }
+                return cache_v4_.result;
+            }
+        } else {
+            // Cache is fresh
+            if (elapsed.count() >= kStaleThresholdSeconds && cache_v4_.result.success) {
+                cache_v4_.result.stale = true;
+            }
+            return cache_v4_.result;
         }
     }
+    // Mutex released — detection runs without holding the lock
+    auto result = detect_with_fallback(false);
 
-    // Return cached, mark stale if older than threshold
-    if (elapsed.count() >= kStaleThresholdSeconds && cache_v4_.result.success) {
-        cache_v4_.result.stale = true;
+    // Store result under lock
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        cache_v4_.result = result;
+        cache_v4_.timestamp = std::chrono::steady_clock::now();
+        cache_v4_.detection_in_progress = false;
     }
-    return cache_v4_.result;
+    save_cached("ipv4", result);
+    return result;
 }
 
 IpDetectionResult NetworkService::public_ipv6() {
-    // Similar to public_ipv4 but for IPv6
-    std::lock_guard<std::mutex> lock(cache_mutex_);
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - cache_v6_.timestamp);
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - cache_v6_.timestamp);
 
-    if (refresh_requested_ || elapsed.count() >= kCacheTTLSeconds) {
-        refresh_requested_ = false;
-        if (!cache_v6_.detection_in_progress) {
-            cache_v6_.detection_in_progress = true;
-            lock.~lock_guard();
-
-            auto result = detect_with_fallback(true);
-
-            std::lock_guard<std::mutex> relock(cache_mutex_);
-            cache_v6_.result = result;
-            cache_v6_.timestamp = now;
-            cache_v6_.detection_in_progress = false;
-            save_cached("ipv6", result);
-            return result;
+        if (refresh_requested_ || elapsed.count() >= kCacheTTLSeconds) {
+            refresh_requested_ = false;
+            if (!cache_v6_.detection_in_progress) {
+                cache_v6_.detection_in_progress = true;
+            } else {
+                if (cache_v6_.result.success) {
+                    cache_v6_.result.stale = true;
+                }
+                return cache_v6_.result;
+            }
+        } else {
+            if (elapsed.count() >= kStaleThresholdSeconds && cache_v6_.result.success) {
+                cache_v6_.result.stale = true;
+            }
+            return cache_v6_.result;
         }
     }
 
-    if (elapsed.count() >= kStaleThresholdSeconds && cache_v6_.result.success) {
-        cache_v6_.result.stale = true;
+    auto result = detect_with_fallback(true);
+
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        cache_v6_.result = result;
+        cache_v6_.timestamp = std::chrono::steady_clock::now();
+        cache_v6_.detection_in_progress = false;
     }
-    return cache_v6_.result;
+    save_cached("ipv6", result);
+    return result;
 }
 
 void NetworkService::detect_now() {
@@ -313,11 +328,18 @@ IpDetectionResult NetworkService::detect_from_external_dns(bool ipv6) {
     IpDetectionResult result;
     result.detected_at = timestamp_now();
 
-    // Initialize c-ares and query myip.opendns.com
+    // Use OpenDNS resolver which returns the caller's public IP when queried
+    // for myip.opendns.com. Must query via OpenDNS nameservers directly,
+    // not through system DNS (which may forward to another resolver).
+    const char* hostname = "myip.opendns.com";
+    const char* dns_servers[] = {"208.67.222.222", "208.67.220.220"};
+    const size_t num_servers = 2;
+
+    // Initialize c-ares channel (no servers — will set via ares_set_servers)
     ares_channel_t* channel = nullptr;
     struct ares_options opts;
     memset(&opts, 0, sizeof(opts));
-    opts.timeout = 3000;  // 3 second timeout per query
+    opts.timeout = 3000;
     opts.tries = 1;
 
     int status = ares_init_options(&channel, &opts, ARES_OPT_TIMEOUTMS | ARES_OPT_TRIES);
@@ -326,113 +348,76 @@ IpDetectionResult NetworkService::detect_from_external_dns(bool ipv6) {
         return result;
     }
 
-    // Point to a DNS resolver that returns the caller's IP
-    // resolver1.opendns.com = 208.67.222.222
-    struct ares_addr_node* servers = nullptr;
-    // We need to set custom nameservers. For now, rely on system DNS.
-    // myip.opendns.com resolves via system resolver and returns caller's IP.
+    // Set OpenDNS resolvers explicitly (query myip.opendns.com via OpenDNS
+    // returns the caller's public IP, unlike querying via system resolver)
+    ares_addr_node head, second;
+    memset(&head, 0, sizeof(head));
+    head.family = AF_INET;
+    inet_pton(AF_INET, dns_servers[0], &head.addr.addr4);
+    head.next = &second;
 
-    const char* hostname = "myip.opendns.com";
+    memset(&second, 0, sizeof(second));
+    second.family = AF_INET;
+    inet_pton(AF_INET, dns_servers[1], &second.addr.addr4);
+    second.next = nullptr;
+
+    ares_set_servers(channel, &head);
+
     ares_dns_rec_type_t rectype = ipv6 ? ARES_REC_TYPE_AAAA : ARES_REC_TYPE_A;
-
     std::string detected_ip;
     bool query_done = false;
     std::mutex mtx;
 
-    auto callback = [](void* arg, ares_status_t astatus, size_t timeouts,
-                       const ares_dns_record_t* dnsrec) noexcept {
-        (void)timeouts;
-        auto* ip_out = static_cast<std::string*>(arg);
-        if (astatus != ARES_SUCCESS || !dnsrec) return;
+    struct CbWrap {
+        std::string* ip;
+        std::mutex* m;
+        bool* done;
+    };
+    CbWrap wrap{&detected_ip, &mtx, &query_done};
 
+    auto c_callback = [](void* arg, ares_status_t astatus, size_t,
+                          const ares_dns_record_t* dnsrec) noexcept {
+        auto* w = static_cast<CbWrap*>(arg);
+        std::lock_guard<std::mutex> lock(*w->m);
+        if (astatus != ARES_SUCCESS || !dnsrec) { *w->done = true; return; }
         size_t cnt = ares_dns_record_rr_cnt(dnsrec, ARES_SECTION_ANSWER);
         for (size_t i = 0; i < cnt; ++i) {
             auto* rr = ares_dns_record_rr_get_const(dnsrec, ARES_SECTION_ANSWER, i);
             if (!rr) continue;
-            auto rtype = ares_dns_rr_get_type(rr);
-            if (rtype == ARES_REC_TYPE_A) {
-                const struct in_addr* addr = ares_dns_rr_get_addr(rr, ARES_RR_A_ADDR);
-                if (addr) {
-                    char buf[INET_ADDRSTRLEN];
-                    inet_ntop(AF_INET, addr, buf, sizeof(buf));
-                    *ip_out = buf;
-                }
-            } else if (rtype == ARES_REC_TYPE_AAAA) {
-                const struct ares_in6_addr* a6 = ares_dns_rr_get_addr6(rr, ARES_RR_AAAA_ADDR);
-                if (a6) {
-                    char buf[INET6_ADDRSTRLEN];
-                    inet_ntop(AF_INET6, reinterpret_cast<const struct in6_addr*>(a6), buf, sizeof(buf));
-                    *ip_out = buf;
-                }
-            }
-        }
-    };
-
-    // Wrap callback for c-areas C API
-    struct CallbackWrapper {
-        std::string* ip_out;
-        std::mutex* mtx;
-        bool* done;
-    };
-    CallbackWrapper wrapper{&detected_ip, &mtx, &query_done};
-
-    auto c_callback = [](void* arg, ares_status_t status, size_t timeouts,
-                          const ares_dns_record_t* dnsrec) noexcept {
-        auto* w = static_cast<CallbackWrapper*>(arg);
-        std::lock_guard<std::mutex> lock(*w->mtx);
-        if (status == ARES_SUCCESS && dnsrec) {
-            size_t cnt = ares_dns_record_rr_cnt(dnsrec, ARES_SECTION_ANSWER);
-            for (size_t i = 0; i < cnt; ++i) {
-                auto* rr = ares_dns_record_rr_get_const(dnsrec, ARES_SECTION_ANSWER, i);
-                if (!rr) continue;
-                auto rtype = ares_dns_rr_get_type(rr);
-                if (rtype == ARES_REC_TYPE_A) {
-                    const struct in_addr* addr = ares_dns_rr_get_addr(rr, ARES_RR_A_ADDR);
-                    if (addr) {
-                        char buf[INET_ADDRSTRLEN];
-                        inet_ntop(AF_INET, addr, buf, sizeof(buf));
-                        *w->ip_out = buf;
-                    }
-                } else if (rtype == ARES_REC_TYPE_AAAA) {
-                    const struct ares_in6_addr* a6 = ares_dns_rr_get_addr6(rr, ARES_RR_AAAA_ADDR);
-                    if (a6) {
-                        char buf[INET6_ADDRSTRLEN];
-                        inet_ntop(AF_INET6, reinterpret_cast<const struct in6_addr*>(a6), buf, sizeof(buf));
-                        *w->ip_out = buf;
-                    }
-                }
+            auto rt = ares_dns_rr_get_type(rr);
+            if (rt == ARES_REC_TYPE_A) {
+                auto* a = ares_dns_rr_get_addr(rr, ARES_RR_A_ADDR);
+                if (a) { char b[INET_ADDRSTRLEN]; inet_ntop(AF_INET, a, b, sizeof(b)); *w->ip = b; }
+            } else if (rt == ARES_REC_TYPE_AAAA) {
+                auto* a6 = ares_dns_rr_get_addr6(rr, ARES_RR_AAAA_ADDR);
+                if (a6) { char b[INET6_ADDRSTRLEN]; inet_ntop(AF_INET6, (const in6_addr*)a6, b, sizeof(b)); *w->ip = b; }
             }
         }
         *w->done = true;
     };
 
     ares_status_t qstatus = ares_query_dnsrec(channel, hostname, ARES_CLASS_IN,
-                                                 rectype, c_callback, &wrapper, nullptr);
+                                                 rectype, c_callback, &wrap, nullptr);
     if (qstatus != ARES_SUCCESS) {
         ares_destroy(channel);
-        result.error = "Query failed";
+        result.error = "OpenDNS query failed to start";
         return result;
     }
 
-    // Event loop
     while (!query_done) {
-        int nfds = 0;
-        fd_set read_fds, write_fds;
-        FD_ZERO(&read_fds);
-        FD_ZERO(&write_fds);
-        struct timeval tv, *tv_out;
-        tv_out = ares_timeout(channel, nullptr, &tv);
-        nfds = ares_fds(channel, &read_fds, &write_fds);
-        if (nfds == 0) break;
-        int sel_ret = select(nfds, &read_fds, &write_fds, nullptr, tv_out);
-        if (sel_ret < 0) break;
-        ares_process(channel, &read_fds, &write_fds);
+        fd_set rfds, wfds;
+        FD_ZERO(&rfds); FD_ZERO(&wfds);
+        struct timeval tv, *tvp = ares_timeout(channel, nullptr, &tv);
+        int n = ares_fds(channel, &rfds, &wfds);
+        if (n == 0) break;
+        select(n, &rfds, &wfds, nullptr, tvp);
+        ares_process(channel, &rfds, &wfds);
     }
 
     ares_destroy(channel);
 
     if (detected_ip.empty()) {
-        result.error = "No IP returned by external DNS";
+        result.error = "No IP returned by OpenDNS";
         return result;
     }
 
