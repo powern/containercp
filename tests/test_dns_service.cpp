@@ -53,6 +53,56 @@ TEST_CASE("DnsCheckService domain format validation") {
     CHECK_FALSE(DnsCheckService::validate_domain(long_label + ".com"));
 }
 
+TEST_CASE("DnsCheckService validate_dns_name — allows underscore for service records") {
+    // validate_domain rejects these, validate_dns_name allows them
+    CHECK(DnsCheckService::validate_dns_name("_dmarc.example.com"));
+    CHECK(DnsCheckService::validate_dns_name("dkim._domainkey.example.com"));
+    CHECK(DnsCheckService::validate_dns_name("_smtp._tls.example.com"));
+    CHECK(DnsCheckService::validate_dns_name("_mta-sts.example.com"));
+    CHECK(DnsCheckService::validate_dns_name("_autodiscover._tcp.example.com"));
+
+    // Normal domains also work
+    CHECK(DnsCheckService::validate_dns_name("example.com"));
+    CHECK(DnsCheckService::validate_dns_name("sub.domain.co.uk"));
+
+    // Still rejects invalid names
+    CHECK_FALSE(DnsCheckService::validate_dns_name(""));
+    CHECK_FALSE(DnsCheckService::validate_dns_name(".example.com"));
+    CHECK_FALSE(DnsCheckService::validate_dns_name("bad..example.com"));
+    CHECK_FALSE(DnsCheckService::validate_dns_name("bad name.com"));
+
+    // Rejects shell chars
+    CHECK_FALSE(DnsCheckService::validate_dns_name("example.com; id"));
+    CHECK_FALSE(DnsCheckService::validate_dns_name("example.com|ls"));
+    CHECK_FALSE(DnsCheckService::validate_dns_name("example.com/evil"));
+    CHECK_FALSE(DnsCheckService::validate_dns_name("example.com?query"));
+
+    // Rejects IP addresses (no alpha chars)
+    CHECK_FALSE(DnsCheckService::validate_dns_name("192.168.1.1"));
+
+    // Label too long
+    std::string long_label(65, 'a');
+    CHECK_FALSE(DnsCheckService::validate_dns_name(long_label + ".com"));
+
+    // Overall too long
+    std::string long_name(300, 'a');
+    CHECK_FALSE(DnsCheckService::validate_dns_name(long_name));
+
+    // Label starts/ends with hyphen (still allowed for underscore names)
+    CHECK_FALSE(DnsCheckService::validate_dns_name("-bad.example.com"));
+    CHECK_FALSE(DnsCheckService::validate_dns_name("bad-.example.com"));
+}
+
+TEST_CASE("DnsCheckService validate_domain still rejects underscore") {
+    // Verify validate_domain still rejects underscore names
+    CHECK_FALSE(DnsCheckService::validate_domain("_dmarc.example.com"));
+    CHECK_FALSE(DnsCheckService::validate_domain("dkim._domainkey.example.com"));
+
+    // Normal domains still pass
+    CHECK(DnsCheckService::validate_domain("example.com"));
+    CHECK(DnsCheckService::validate_domain("sub.domain.co.uk"));
+}
+
 TEST_CASE("DnsCheckService type validation") {
     CHECK(DnsCheckService::validate_type("A"));
     CHECK(DnsCheckService::validate_type("AAAA"));

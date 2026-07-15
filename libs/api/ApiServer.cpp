@@ -381,7 +381,10 @@ bool ApiServer::start() {
             domain.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
         }
 
-        if (!dns::DnsCheckService::validate_domain(domain)) {
+        // Use validate_dns_name() — allows underscore for service records
+        // (_dmarc, _domainkey, _mta-sts, etc.) while still rejecting
+        // shell chars, spaces, path separators, and invalid DNS labels.
+        if (!dns::DnsCheckService::validate_dns_name(domain)) {
             r.status_code = 400;
             r.body = "{\"success\":false,\"error\":\"Invalid domain format\"}";
             return r;

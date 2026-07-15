@@ -270,6 +270,53 @@ bool DnsCheckService::validate_domain(const std::string& domain) {
     return true;
 }
 
+bool DnsCheckService::validate_dns_name(const std::string& name) {
+    // More permissive than validate_domain(): allows underscore for DNS service
+    // records like _dmarc, _domainkey, _mta-sts, _smtp._tls, etc.
+    // Still protects against shell injection, spaces, and invalid DNS names.
+    if (name.empty() || name.size() > 253) return false;
+    if (name.front() == '.' || name.back() == '.') return false;
+
+    bool has_alpha = false;
+
+    // Check for shell/control characters, spaces, and path separators
+    for (char c : name) {
+        if (c <= 32 || c >= 127) return false;  // non-printable or DEL
+        if (c == '/' || c == '\\' || c == '?' || c == '#' || c == '%'
+            || c == ';' || c == '|' || c == '`' || c == '~' || c == '&'
+            || c == '{' || c == '}' || c == '(' || c == ')' || c == '$'
+            || c == '!' || c == '@' || c == '^' || c == '*' || c == '+'
+            || c == '=' || c == '[' || c == ']' || c == ':' || c == '"'
+            || c == '\'') return false;
+        // Allow: alphanumeric, dots, hyphens, underscores
+        if (std::isalpha(static_cast<unsigned char>(c))) has_alpha = true;
+        else if (std::isdigit(static_cast<unsigned char>(c))) continue;
+        else if (c == '.') continue;
+        else if (c == '-') continue;
+        else if (c == '_') continue;
+        else return false;
+    }
+
+    // Reject pure numeric (IP addresses)
+    if (!has_alpha) return false;
+
+    // Check each label
+    size_t start = 0;
+    while (start < name.size()) {
+        auto end = name.find('.', start);
+        if (end == std::string::npos) end = name.size();
+        size_t label_len = end - start;
+        if (label_len == 0) return false;   // empty label (bad..example)
+        if (label_len > 63) return false;   // label too long
+        // Reject leading/trailing hyphen in labels
+        if (name[start] == '-') return false;
+        if (name[end - 1] == '-') return false;
+        start = end + 1;
+    }
+
+    return true;
+}
+
 bool DnsCheckService::validate_type(const std::string& type) {
     return ares_type_from_string(type) != ARES_REC_TYPE_ANY;
 }
@@ -325,7 +372,10 @@ DnsCheckResult DnsCheckService::check(const std::string& domain,
         normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
     }
 
-    if (!validate_domain(normalized)) {
+    // Use validate_dns_name() — allows underscore for service records
+    // (_dmarc, _domainkey, _mta-sts, etc.) while still rejecting
+    // shell chars, spaces, path separators, and invalid DNS labels.
+    if (!validate_dns_name(normalized)) {
         DnsCheckResult r;
         r.success = false;
         r.error = "Invalid domain format";

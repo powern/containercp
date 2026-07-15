@@ -190,6 +190,31 @@ TEST_CASE("DnsCheck API: soa fields empty when not queried") {
     CHECK(r.soa.serial == 0);
 }
 
+TEST_CASE("DnsCheck API: underscore names pass validation") {
+    // validate_dns_name allows underscore, so the API should accept these
+    CHECK(DnsCheckService::validate_dns_name("_dmarc.example.com"));
+    CHECK(DnsCheckService::validate_dns_name("dkim._domainkey.example.com"));
+    CHECK(DnsCheckService::validate_dns_name("_smtp._tls.example.com"));
+
+    // These would have been rejected by the old validate_domain
+    CHECK_FALSE(DnsCheckService::validate_domain("_dmarc.example.com"));
+    CHECK_FALSE(DnsCheckService::validate_domain("dkim._domainkey.example.com"));
+}
+
+TEST_CASE("DnsCheck API: underscore DNS names resolve correctly") {
+    DnsCheckService svc;
+
+    // Test _dmarc lookup on a major domain (has DMARC record)
+    auto r = svc.check("_dmarc.gmail.com", {"TXT"});
+    // Should not fail with INVALID — underscore should be allowed
+    CHECK(r.error.find("Invalid domain") == std::string::npos);
+    CHECK(r.error.find("Unsupported DNS record type") == std::string::npos);
+
+    // _dmarc.gmail.com should have per_type with a status
+    bool has_valid_status = (r.per_type.size() == 1 && !r.per_type[0].status_code.empty());
+    CHECK(has_valid_status);
+}
+
 // --- Routing tests ---
 
 TEST_CASE("DnsCheck API routing: exact match /api/domains is not blocked") {

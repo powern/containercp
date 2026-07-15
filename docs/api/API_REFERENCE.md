@@ -607,6 +607,18 @@ Fields:
 
 Performs live DNS resolution using the **c-ares** library (no shell commands, no dig). Returns structured results with per-type status, all found records, and SOA data.
 
+**Path parameter:** The `<domain>` parameter is a DNS owner name (FQDN), which may include
+underscore labels used in service records. Examples of valid values:
+- `example.com` — apex domain
+- `_dmarc.example.com` — DMARC report record
+- `dkim._domainkey.example.com` — DKIM public key record
+- `_mta-sts.example.com` — MTA-STS policy record
+- `_smtp._tls.example.com` — TLS reporting record
+
+The endpoint uses `validate_dns_name()` which allows underscore but still rejects shell
+characters, spaces, path separators, and invalid DNS labels. This is separate from
+`validate_domain()` which is stricter (used for ContainerCP Domain resources).
+
 **Query parameters:**
 
 | Parameter | Type | Default | Description |

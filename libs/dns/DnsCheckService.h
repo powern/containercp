@@ -54,6 +54,7 @@ public:
 
     // Public for testing (format/type validation/computation, no DNS lookup)
     static bool validate_domain(const std::string& domain);
+    static bool validate_dns_name(const std::string& name);
     static bool validate_type(const std::string& type);
     static std::string compute_overall_status(const std::vector<PerTypeResult>& per_type,
                                                 bool& success_out,

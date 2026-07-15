@@ -45,3 +45,4 @@ containercp_tests
 *.swp
 *~
 .github/
+*.demo.html
