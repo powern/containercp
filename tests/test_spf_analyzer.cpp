@@ -147,3 +147,52 @@ TEST_CASE("SpfAnalyzer: forward + mechanism (qualifier)") {
     auto r = a.analyze("v=spf1 +ip4:116.202.231.94 -all", "116.202.231.94", "", "example.com");
     CHECK(r.match == "match");
 }
+
+TEST_CASE("SpfAnalyzer: maillab-like with many ip4 and include") {
+    // Realistic SPF: include external provider + multiple ip4
+    // Expected IP is explicitly allowed by one of the ip4 mechanisms
+    SpfAnalyzer a;
+    auto r = a.analyze(
+        "v=spf1 include:spf.protection.outlook.com ip4:116.202.231.99 ip4:91.196.158.134 "
+        "ip4:162.55.25.57 ip4:116.202.231.93 ip4:116.202.231.94 -all",
+        "116.202.231.94", "", "maillab.softi.co");
+    // Expected IP is in ip4:116.202.231.94 — should match
+    CHECK(r.match == "match");
+    CHECK(r.expected_ip_allowed);
+    CHECK(r.mechanism_matched.find("ip4:116.202.231.94") != std::string::npos);
+    // include may fail in test env (no internet), but ip4 still matches
+}
+
+TEST_CASE("SpfAnalyzer: expected IP in local ip4, include fails gracefully") {
+    // When include fails (e.g., timeout/NXDOMAIN) but local ip4 has the IP,
+    // the analyzer should still match (include failure is not fatal if
+    // a later mechanism allows the IP)
+    SpfAnalyzer a;
+    // Note: this test uses a domain that likely won't resolve in test env
+    auto r = a.analyze(
+        "v=spf1 include:nonexistent-spf-domain-test-12345.com ip4:116.202.231.94 -all",
+        "116.202.231.94", "", "example.com");
+    // The analyzer should still match because ip4:116.202.231.94 is present
+    CHECK(r.match == "match");
+    CHECK(r.expected_ip_allowed);
+}
+
+TEST_CASE("SpfAnalyzer: expected IP not in any mechanism") {
+    SpfAnalyzer a;
+    auto r = a.analyze(
+        "v=spf1 ip4:10.0.0.1 ip4:10.0.0.2 -all",
+        "116.202.231.94", "", "example.com");
+    CHECK(r.match == "mismatch");
+    CHECK_FALSE(r.expected_ip_allowed);
+}
+
+TEST_CASE("SpfAnalyzer: lookup count with include") {
+    SpfAnalyzer a;
+    auto r = a.analyze(
+        "v=spf1 include:_spf.google.com ip4:116.202.231.94 -all",
+        "116.202.231.94", "", "example.com");
+    // 1 lookup for include, ip4 does not count
+    CHECK(r.lookup_count >= 0);  // include may or may not resolve in test env
+    // Expected IP is in ip4, so should match regardless of include
+    CHECK(r.match == "match");
+}

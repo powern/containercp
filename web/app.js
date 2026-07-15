@@ -1437,7 +1437,7 @@ async function loadDomainDnsRecords() {
     const recs = getRecs(rootDns, 'MX');
     const configured = expectedMx || '';
     const r = window.compareMxRecords(recs, configured);
-    const publishedStr = recs.map(r => (r.priority ? r.priority + ' ' : '') + (r.value || '')).join(', ');
+    const publishedStr = window.formatMxPublished(recs);
     rows += `<tr>
       <td>${statusBadge(r.status, r.cls)}</td>
       <td>MX</td>
@@ -1666,7 +1666,7 @@ async function loadDomainMail() {
 
   // === Required Records ===
   const mxPubRecs = window.getDnsRecs(rootMx, 'MX');
-  const mxPublished = mxPubRecs.map(r => (r.priority ? r.priority + ' ' : '') + (r.value || '')).join(', ');
+  const mxPublished = window.formatMxPublished(mxPubRecs);
   const mxNorm = window.normalizeHostname(expectedMx);
   const mxMatch = mxPubRecs.some(r => window.normalizeHostname(r.value) === mxNorm);
   const mxStatus = window.computeRecordStatus(expectedMx, mxPublished, () => mxMatch);

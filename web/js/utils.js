@@ -95,6 +95,23 @@ window.normalizeDnsValue = function(v) {
   return v.replace(/\s+/g, '');
 };
 
+// Format MX records for display: returns array of {target, priority, ttl}
+// Used by Overview, DNS Records, and Mail tabs for consistent display.
+window.formatMxRecords = function(mxRecords) {
+  if (!Array.isArray(mxRecords) || mxRecords.length === 0) return [];
+  return mxRecords.map(r => ({
+    target: r.value || '',
+    priority: r.priority || 0,
+    ttl: r.ttl || 0
+  }));
+};
+
+// Format MX records for Published column: target with priority below
+window.formatMxPublished = function(records) {
+  const fmtd = window.formatMxRecords(records);
+  return fmtd.map(r => (r.priority ? r.target + ' (priority ' + r.priority + ')' : r.target)).join(', ');
+};
+
 // Build a full DNS record string (for Copy Full Record)
 window.buildFullDnsRecord = function(fqdn, ttl, type, value, priority) {
   const name = fqdn.endsWith('.') ? fqdn : fqdn + '.';
