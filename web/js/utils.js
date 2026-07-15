@@ -165,6 +165,55 @@ window.computeRecordStatus = function(configuredVal, publishedVal, matchFn) {
   return {status: 'N/A', cls: 'badge-info'};
 };
 
+// ==== Shared DNS type comparison functions ====
+// All return {status, cls} consistent across all tabs.
+
+// A/AAAA: exact IP match across all records
+window.compareIpRecords = function(records, expectedIp) {
+  const publishedIps = records.map(r => r.value).filter(Boolean);
+  const hasExpected = !!expectedIp;
+  const hasPublished = publishedIps.length > 0;
+  if (hasExpected && hasPublished) {
+    const match = publishedIps.some(ip => ip === expectedIp);
+    return match ? {status:'Match', cls:'badge-ok'} : {status:'Mismatch', cls:'badge-warn'};
+  }
+  if (hasExpected && !hasPublished) return {status:'Not Published', cls:'badge-err'};
+  if (!hasExpected && hasPublished) return {status:'Unexpected', cls:'badge-warn'};
+  return {status:'N/A', cls:'badge-info'};
+};
+
+// MX: exact hostname match among MX records (normalized, no substring)
+window.compareMxRecords = function(mxRecords, expectedHostname) {
+  const hasExpected = !!expectedHostname;
+  const hasPublished = mxRecords.length > 0;
+  if (hasExpected && hasPublished) {
+    const normExp = window.normalizeHostname(expectedHostname);
+    const match = mxRecords.some(r => window.normalizeHostname(r.value) === normExp);
+    return match ? {status:'Match', cls:'badge-ok'} : {status:'Mismatch', cls:'badge-warn'};
+  }
+  if (hasExpected && !hasPublished) return {status:'Not Published', cls:'badge-err'};
+  if (!hasExpected && hasPublished) return {status:'Unexpected', cls:'badge-warn'};
+  return {status:'N/A', cls:'badge-info'};
+};
+
+// SPF: normalized DNS value comparison (placeholder until SpfAnalyzer)
+window.compareSpfRecords = function(recommended, published) {
+  return window.computeRecordStatus(recommended, published,
+    (a,b) => window.normalizeDnsValue(a) === window.normalizeDnsValue(b));
+};
+
+// DKIM: normalized DNS value comparison
+window.compareDkimRecords = function(configuredKey, publishedKey) {
+  return window.computeRecordStatus(configuredKey, publishedKey,
+    (a,b) => window.normalizeDnsValue(a) === window.normalizeDnsValue(b));
+};
+
+// DMARC: DMARC-semantic normalization
+window.compareDmarcRecords = function(recommended, published) {
+  return window.computeRecordStatus(recommended, published,
+    (a,b) => window.normalizeDmarcValue(a) === window.normalizeDmarcValue(b));
+};
+
 // Context-aware Health Score (frontend-calculated for v1).
 // TODO: Move to backend as single source of truth.
 //       Frontend should only display API-provided health_score field.

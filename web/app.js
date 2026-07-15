@@ -1187,36 +1187,30 @@ async function loadDomainOverview() {
     const displayVal = configured ? fmtVal(configured) : '—';
     const displayPub = published || '—';
 
-    if (hasExpected && published) {
-      if (type === 'DKIM') {
-        const pubVal = recs[0] && recs[0].value || '';
-        const pubNorm = pubVal.replace(/\s+/g, '');
-        const cfgNorm = configured.replace(/\s+/g, '');
-        statusLabel = (pubNorm === cfgNorm) ? 'Match' : 'Mismatch';
-        statusCls = (pubNorm === cfgNorm) ? 'badge-ok' : 'badge-warn';
-      } else if (type === 'MX' && expectedMx) {
-        const mxNormExp = window.normalizeHostname(expectedMx);
-        const mxMatch = recs.some(r => window.normalizeHostname(r.value) === mxNormExp);
-        statusLabel = mxMatch ? 'Match' : 'Mismatch';
-        statusCls = mxMatch ? 'badge-ok' : 'badge-warn';
+    if (hasExpected && published || hasExpected && !published || !hasExpected && published) {
+      if (type === 'A') {
+        const r = window.compareIpRecords(recs, configured);
+        statusLabel = r.status; statusCls = r.cls;
+      } else if (type === 'AAAA') {
+        const r = window.compareIpRecords(recs, configured);
+        statusLabel = r.status; statusCls = r.cls;
+      } else if (type === 'MX') {
+        const r = window.compareMxRecords(recs, expectedMx);
+        statusLabel = r.status; statusCls = r.cls;
+      } else if (type === 'SPF') {
+        const r = window.compareSpfRecords(configured, published);
+        statusLabel = r.status; statusCls = r.cls;
+      } else if (type === 'DKIM') {
+        const pubVal = recs.length > 0 ? recs[0].value : '';
+        const r = window.compareDkimRecords(configured, pubVal);
+        statusLabel = r.status; statusCls = r.cls;
       } else if (type === 'DMARC') {
-        // DMARC: use normalizeDmarcValue (trailing semicolon, whitespace, order)
-        const dmarcNorm = window.normalizeDmarcValue(configured);
-        const pubNorm = window.normalizeDmarcValue(recs[0] && recs[0].value || '');
-        statusLabel = (dmarcNorm === pubNorm) ? 'Match' : 'Mismatch';
-        statusCls = (dmarcNorm === pubNorm) ? 'badge-ok' : 'badge-warn';
-      } else if (type === 'A' || type === 'AAAA') {
-        // Expected IP vs published IP — exact match
-        const pubVal = recs[0] && recs[0].value || '';
-        statusLabel = (pubVal === configured) ? 'Match' : 'Mismatch';
-        statusCls = (pubVal === configured) ? 'badge-ok' : 'badge-warn';
+        const pubVal = recs.length > 0 ? recs[0].value : '';
+        const r = window.compareDmarcRecords(configured, pubVal);
+        statusLabel = r.status; statusCls = r.cls;
       } else {
-        statusLabel = 'Match'; statusCls = 'badge-ok';
+        statusLabel = published ? 'Match' : 'N/A'; statusCls = published ? 'badge-ok' : 'badge-info';
       }
-    } else if (hasExpected && !published) {
-      statusLabel = 'Not Published'; statusCls = 'badge-err';
-    } else if (!hasExpected && published) {
-      statusLabel = 'Unexpected'; statusCls = 'badge-warn';
     }
 
     // Build column header: show "Recommended" for SPF/DMARC, "Configured" for others
@@ -1404,19 +1398,11 @@ async function loadDomainDnsRecords() {
     const expected = rootDns && rootDns.expected_ipv4 || '';
     const publishedIps = recs.map(r => r.value).filter(Boolean);
     const published = publishedIps.join(', ');
-    const hasExpected = !!expected;
-    const hasPublished = publishedIps.length > 0;
-    let status, cls;
-    if (hasExpected && hasPublished) {
-      if (publishedIps.some(ip => ip === expected)) { status = 'Match'; cls = 'badge-ok'; }
-      else { status = 'Mismatch'; cls = 'badge-warn'; }
-    } else if (hasExpected && !hasPublished) { status = 'Not Published'; cls = 'badge-err'; }
-    else if (!hasExpected && hasPublished) { status = 'Unexpected'; cls = 'badge-warn'; }
-    else { status = 'N/A'; cls = 'badge-info'; }
+    const aR = window.compareIpRecords(recs, expected);
     const ttl = recs.length > 0 ? recs[0].ttl : 0;
     const valToCopy = publishedIps[0] || expected;
     rows += `<tr>
-      <td>${statusBadge(status, cls)}</td>
+      <td>${statusBadge(aR.status, aR.cls)}</td>
       <td>A</td>
       <td style="font-family:monospace;">@</td>
       <td style="font-family:monospace;">${fmtVal(expected)}</td>
@@ -1429,21 +1415,14 @@ async function loadDomainDnsRecords() {
   // 2. AAAA
   {
     const recs = getRecs(rootDns, 'AAAA');
-    const hasExpected = rootDns && rootDns.expected_ipv6 && rootDns.expected_ipv6.length > 0;
-    const expected = hasExpected ? rootDns.expected_ipv6 : '';
+    const expected = rootDns && typeof rootDns.expected_ipv6 === 'string' ? rootDns.expected_ipv6 : '';
+    const aaaaR = window.compareIpRecords(recs, expected);
     const publishedIps = recs.map(r => r.value).filter(Boolean);
     const published = publishedIps.join(', ');
-    let status, cls;
-    if (!hasExpected && !publishedIps.length) { status = 'N/A'; cls = 'badge-info'; }
-    else if (hasExpected && publishedIps.length) {
-      if (publishedIps.some(ip => ip === expected)) { status = 'Match'; cls = 'badge-ok'; }
-      else { status = 'Mismatch'; cls = 'badge-warn'; }
-    } else if (hasExpected && !publishedIps.length) { status = 'Not Published'; cls = 'badge-err'; }
-    else { status = 'Unexpected'; cls = 'badge-warn'; }
     const ttl = recs.length > 0 ? recs[0].ttl : 0;
     const valToCopy = publishedIps[0] || expected;
     rows += `<tr>
-      <td>${statusBadge(status, cls)}</td>
+      <td>${statusBadge(aaaaR.status, aaaaR.cls)}</td>
       <td>AAAA</td>
       <td style="font-family:monospace;">@</td>
       <td style="font-family:monospace;">${fmtVal(expected)}</td>
@@ -1456,20 +1435,11 @@ async function loadDomainDnsRecords() {
   // 3. MX
   {
     const recs = getRecs(rootDns, 'MX');
-    const configured = expectedMx ? expectedMx : '';
-    const hasPublished = recs.length > 0;
-    let status, cls;
-    if (configured && hasPublished) {
-      const normExpected = normalizeHostname(configured);
-      const mxMatch = recs.some(r => normalizeHostname(r.value) === normExpected);
-      status = mxMatch ? 'Match' : 'Mismatch';
-      cls = mxMatch ? 'badge-ok' : 'badge-warn';
-    } else if (configured && !hasPublished) { status = 'Not Published'; cls = 'badge-err'; }
-    else if (!configured && hasPublished) { status = 'Unexpected'; cls = 'badge-warn'; }
-    else { status = 'N/A'; cls = 'badge-info'; }
+    const configured = expectedMx || '';
+    const r = window.compareMxRecords(recs, configured);
     const publishedStr = recs.map(r => (r.priority ? r.priority + ' ' : '') + (r.value || '')).join(', ');
     rows += `<tr>
-      <td>${statusBadge(status, cls)}</td>
+      <td>${statusBadge(r.status, r.cls)}</td>
       <td>MX</td>
       <td style="font-family:monospace;">@</td>
       <td style="font-family:monospace;">${fmtVal(configured)}</td>
@@ -1483,23 +1453,15 @@ async function loadDomainDnsRecords() {
   {
     const recs = getRecs(rootDns, 'TXT').filter(r => typeof r.value === 'string' && r.value.startsWith('v=spf1'));
     const recommended = mailDomain ? 'v=spf1 mx ~all' : '';
-    const published = recs.length > 0 ? recs[0].value : '';
-    let status, cls;
-    if (recommended && published) {
-      const pn = published.replace(/\s+/g, '');
-      const rn = recommended.replace(/\s+/g, '');
-      status = pn === rn ? 'Match' : 'Mismatch';
-      cls = pn === rn ? 'badge-ok' : 'badge-warn';
-    } else if (recommended && !published) { status = 'Not Published'; cls = 'badge-err'; }
-    else if (!recommended && published) { status = 'Unexpected'; cls = 'badge-warn'; }
-    else { status = 'N/A'; cls = 'badge-info'; }
-    const val = published || recommended;
+    const publishedVal = recs.length > 0 ? recs[0].value : '';
+    const r = window.compareSpfRecords(recommended, publishedVal);
+    const val = publishedVal || recommended;
     rows += `<tr>
-      <td>${statusBadge(status, cls)}</td>
+      <td>${statusBadge(r.status, r.cls)}</td>
       <td>SPF</td>
       <td style="font-family:monospace;">@</td>
       <td style="font-family:monospace;">${recommended ? esc(recommended) : '—'}</td>
-      <td style="font-family:monospace;">${fmtVal(published)}</td>
+      <td style="font-family:monospace;">${fmtVal(publishedVal)}</td>
       <td>${recs.length > 0 ? recs[0].ttl : '—'}</td>
       <td>${val ? copyRowButtons({host:'@', type:'TXT', value:val, ttl:recs.length > 0 ? recs[0].ttl : 3600, domainName:domain}) : '—'}</td>
     </tr>`;
@@ -1511,23 +1473,16 @@ async function loadDomainDnsRecords() {
     const selector = mailDomain ? mailDomain.dkim_selector || 'dkim' : 'dkim';
     const host = selector + '._domainkey.' + domain;
     const pubKey = mailDomain ? mailDomain.dkim_public_key_dns || '' : '';
-    const published = recs.length > 0 ? recs[0].value : '';
-    let status, cls;
-    if (pubKey && published) {
-      const pn = published.replace(/\s+/g, '');
-      const cn = pubKey.replace(/\s+/g, '');
-      status = pn === cn ? 'Match' : 'Mismatch';
-      cls = pn === cn ? 'badge-ok' : 'badge-warn';
-    } else if (pubKey && !published) { status = 'Not Published'; cls = 'badge-err'; }
-    else { status = 'N/A'; cls = 'badge-info'; }
+    const publishedVal = recs.length > 0 ? recs[0].value : '';
+    const dkimR = window.compareDkimRecords(pubKey, publishedVal);
     const ttl = recs.length > 0 ? recs[0].ttl : 0;
-    const val = published || pubKey;
+    const val = publishedVal || pubKey;
     rows += `<tr>
-      <td>${statusBadge(status, cls)}</td>
+      <td>${statusBadge(dkimR.status, dkimR.cls)}</td>
       <td>DKIM</td>
       <td style="font-family:monospace;">${esc(host)}</td>
       <td style="font-family:monospace;">${pubKey ? fmtVal(pubKey, 60) : '—'}</td>
-      <td style="font-family:monospace;">${published ? fmtVal(published, 60) : '—'}</td>
+      <td style="font-family:monospace;">${publishedVal ? fmtVal(publishedVal, 60) : '—'}</td>
       <td>${ttl || '—'}</td>
       <td>${val ? copyRowButtons({host, type:'TXT', value:val, ttl: ttl || 3600, domainName:domain}) : '—'}</td>
     </tr>`;
@@ -1538,24 +1493,18 @@ async function loadDomainDnsRecords() {
     const recs = getRecs(dmarcDns, 'TXT');
     const recommended = 'v=DMARC1; p=none;';
     const host = '_dmarc.' + domain;
-    const published = recs.length > 0 ? recs[0].value : '';
-    let status, cls;
-    if (recommended && published) {
-      const pn = published.replace(/\s+/g, '');
-      const rn = recommended.replace(/\s+/g, '');
-      status = pn === rn ? 'Match' : 'Mismatch';
-      cls = pn === rn ? 'badge-ok' : 'badge-warn';
-    } else if (recommended && !published) { status = 'Not Published'; cls = 'badge-err'; }
-    else { status = 'N/A'; cls = 'badge-info'; }
+    const publishedVal = recs.length > 0 ? recs[0].value : '';
+    const dmarcR = window.compareDmarcRecords(recommended, publishedVal);
     const val = published || recommended;
+    const dmarcVal = publishedVal || recommended;
     rows += `<tr>
-      <td>${statusBadge(status, cls)}</td>
+      <td>${statusBadge(dmarcR.status, dmarcR.cls)}</td>
       <td>DMARC</td>
       <td style="font-family:monospace;">${esc(host)}</td>
       <td style="font-family:monospace;">${esc(recommended)}</td>
-      <td style="font-family:monospace;">${fmtVal(published)}</td>
+      <td style="font-family:monospace;">${fmtVal(publishedVal)}</td>
       <td>${recs.length > 0 ? recs[0].ttl : '—'}</td>
-      <td>${val ? copyRowButtons({host, type:'TXT', value:val, ttl: recs.length > 0 ? recs[0].ttl : 3600, domainName:domain}) : '—'}</td>
+      <td>${dmarcVal ? copyRowButtons({host, type:'TXT', value:dmarcVal, ttl: recs.length > 0 ? recs[0].ttl : 3600, domainName:domain}) : '—'}</td>
     </tr>`;
   }
 
