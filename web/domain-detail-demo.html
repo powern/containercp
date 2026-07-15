@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ContainerCP - Domain Detail Demo</title>
+<link rel="stylesheet" href="/opt/containercp/web/style.css">
+<style>
+  body { padding: 24px; background: var(--bg2); }
+  .demo-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 20px; }
+  .demo-card h2 { font-size: 14px; color: var(--text2); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  pre { background: var(--bg3); padding: 12px; border-radius: 6px; font-size: 12px; overflow-x: auto; }
+</style>
+</head>
+<body>
+
+<h1 style="margin-bottom:24px;">ARCH-007 Domain Detail — UI Preview (Phase 4)</h1>
+
+<!-- ===== 1. Overview with MailDomain ===== -->
+<div class="demo-card">
+  <h2>1. Domain Detail → Overview (with MailDomain)</h2>
+  <div class="page-header">
+    <h1><a href="#" style="color:var(--text2);text-decoration:none;">&larr;</a> example.com</h1>
+    <div class="page-actions">
+      <span style="margin-right:8px;font-size:13px;">Health: <span class="badge badge-ok">100%</span></span>
+      <button class="btn btn-sm">Open</button>
+      <button class="btn btn-sm">Copy</button>
+      <button class="btn btn-sm btn-danger">Remove</button>
+    </div>
+  </div>
+  <div class="tabs">
+    <div class="tab active" style="color:var(--primary);border-bottom-color:var(--primary);">Overview</div>
+    <div class="tab">DNS Records</div>
+    <div class="tab">Mail</div>
+    <div class="tab">Security</div>
+    <div class="tab">Health</div>
+  </div>
+
+  <div style="margin-top:16px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <h3 style="font-size:14px;">DNS Check</h3>
+      <button class="btn btn-sm">Check Again</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Type</th><th>Configured</th><th>Published</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>A</td><td style="font-family:monospace;font-size:12px;">—</td><td style="font-family:monospace;font-size:12px;">192.168.1.10</td><td><span class="badge badge-ok">Found</span></td></tr>
+          <tr><td>AAAA</td><td style="font-family:monospace;font-size:12px;">—</td><td style="font-family:monospace;font-size:12px;">Not found</td><td><span class="badge badge-info">—</span></td></tr>
+          <tr><td>MX</td><td style="font-family:monospace;font-size:12px;">—</td><td style="font-family:monospace;font-size:12px;">mail.example.com (10)</td><td><span class="badge badge-ok">Found</span></td></tr>
+          <tr><td>SPF</td><td style="font-family:monospace;font-size:12px;">v=spf1 mx ~all</td><td style="font-family:monospace;font-size:12px;">v=spf1 mx ~all</td><td><span class="badge badge-ok">Found</span></td></tr>
+          <tr><td>DKIM</td><td style="font-family:monospace;font-size:12px;">v=DKIM1; k=rsa; p=MIGf...</td><td style="font-family:monospace;font-size:12px;">Not found</td><td><span class="badge badge-err">Not Published</span></td></tr>
+          <tr><td>DMARC</td><td style="font-family:monospace;font-size:12px;">(Recommended)</td><td style="font-family:monospace;font-size:12px;">v=DMARC1; p=quarantine...</td><td><span class="badge badge-ok">Found</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-top:16px;">
+    <div class="card" style="cursor:pointer;">
+      <h3>Mail</h3>
+      <div style="margin-top:8px;font-size:13px;">
+        <div>Domain: <strong>example.com</strong></div>
+        <div>Mode: <span class="badge badge-info">local-primary</span></div>
+        <div>DKIM: <span class="badge badge-ok">Generated</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>SSL</h3>
+      <div style="margin-top:8px;font-size:13px;">
+        <div>Status: <span class="badge badge-ok">active</span></div>
+        <div>HTTPS: ✅ Enabled</div>
+        <div>Redirect: ✅ Enabled</div>
+        <div>Expires: Oct 7, 2026</div>
+      </div>
+    </div>
+    <div class="card" style="cursor:pointer;">
+      <h3>Site</h3>
+      <div style="margin-top:8px;font-size:13px;">
+        <div>Name: <strong>MySite</strong></div>
+        <div>Domain: example.com</div>
+        <div>Runtime: <span class="badge badge-ok">Running</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 2. Overview without MailDomain ===== -->
+<div class="demo-card">
+  <h2>2. Domain Detail → Overview (without MailDomain)</h2>
+  <div class="page-header">
+    <h1><a href="#" style="color:var(--text2);text-decoration:none;">&larr;</a> test.org</h1>
+    <div class="page-actions">
+      <span style="margin-right:8px;font-size:13px;">Health: <span class="badge badge-ok">100%</span></span>
+      <button class="btn btn-sm">Open</button>
+      <button class="btn btn-sm">Copy</button>
+      <button class="btn btn-sm btn-danger">Remove</button>
+    </div>
+  </div>
+  <div class="tabs">
+    <div class="tab active" style="color:var(--primary);border-bottom-color:var(--primary);">Overview</div>
+    <div class="tab">DNS Records</div>
+    <div class="tab">Mail</div>
+    <div class="tab">Security</div>
+    <div class="tab">Health</div>
+  </div>
+  <div style="margin-top:16px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <h3 style="font-size:14px;">DNS Check</h3>
+      <button class="btn btn-sm">Check Again</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Type</th><th>Configured</th><th>Published</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>A</td><td style="font-family:monospace;font-size:12px;">—</td><td style="font-family:monospace;font-size:12px;">10.0.0.5</td><td><span class="badge badge-ok">Found</span></td></tr>
+          <tr><td>AAAA</td><td style="font-family:monospace;font-size:12px;">—</td><td style="font-family:monospace;font-size:12px;">Not found</td><td><span class="badge badge-info">—</span></td></tr>
+          <tr><td>MX</td><td style="font-family:monospace;font-size:12px;">—</td><td style="font-family:monospace;font-size:12px;">—</td><td><span class="badge badge-info">—</span></td></tr>
+          <tr><td>SPF</td><td style="font-family:monospace;font-size:12px;">—</td><td style="font-family:monospace;font-size:12px;">—</td><td><span class="badge badge-info">—</span></td></tr>
+          <tr><td>DKIM</td><td style="font-family:monospace;font-size:12px;">—</td><td style="font-family:monospace;font-size:12px;">—</td><td><span class="badge badge-info">—</span></td></tr>
+          <tr><td>DMARC</td><td style="font-family:monospace;font-size:12px;">—</td><td style="font-family:monospace;font-size:12px;">—</td><td><span class="badge badge-info">—</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-top:16px;">
+    <div class="card">
+      <h3>Mail</h3>
+      <div style="margin-top:8px;font-size:13px;color:var(--text3);">Not configured</div>
+    </div>
+    <div class="card">
+      <h3>SSL</h3>
+      <div style="margin-top:8px;font-size:13px;">
+        <div>Status: <span class="badge badge-err">HTTP_ONLY</span></div>
+        <div>HTTPS: ❌ Disabled</div>
+      </div>
+    </div>
+    <div class="card" style="cursor:pointer;">
+      <h3>Site</h3>
+      <div style="margin-top:8px;font-size:13px;">
+        <div>Name: <strong>TestSite</strong></div>
+        <div>Domain: test.org</div>
+        <div>Runtime: <span class="badge badge-ok">Running</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 3. Loading state ===== -->
+<div class="demo-card">
+  <h2>3. Loading State</h2>
+  <div class="page-header">
+    <h1><a href="#" style="color:var(--text2);text-decoration:none;">&larr;</a> loading.example.com</h1>
+  </div>
+  <div class="empty-state">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <circle cx="12" cy="12" r="10"/><path d="M8 12h8"/>
+    </svg><br>
+    Checking DNS...
+  </div>
+</div>
+
+<!-- ===== 4. Error state ===== -->
+<div class="demo-card">
+  <h2>4. Error State</h2>
+  <div class="empty-state">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <circle cx="12" cy="12" r="10"/><path d="M8 12h8"/>
+    </svg><br>
+    Failed to load domain
+  </div>
+</div>
+
+<!-- ===== 5. Domain List with new columns ===== -->
+<div class="demo-card">
+  <h2>5. Domain List (Enhanced with DNS/Mail/Runtime/Health)</h2>
+  <div class="table-toolbar">
+    <div style="font-weight:600;font-size:14px;">All Domains</div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Domain</th><th>Type</th><th>Site</th><th>Target</th><th>DNS</th><th>Mail</th><th>Runtime</th><th>SSL</th><th>Health</th><th>Actions</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><a href="#" style="color:var(--primary);text-decoration:none;font-weight:500;">example.com</a></td>
+          <td><span class="badge badge-ok">primary</span></td>
+          <td>MySite</td>
+          <td><span style="word-break:break-all;">example.com</span></td>
+          <td><span class="badge badge-ok">complete</span></td>
+          <td><span class="badge badge-ok">Active</span></td>
+          <td><span class="badge badge-ok">Running</span></td>
+          <td><span class="badge badge-ok">Active</span></td>
+          <td><span class="badge badge-ok">100%</span></td>
+          <td>
+            <button class="btn-icon" title="View details">&#128065;</button>
+            <button class="btn-icon" title="Open in browser">&#8599;</button>
+            <button class="btn-icon" style="color:var(--red)" title="Remove domain">&#10005;</button>
+          </td>
+        </tr>
+        <tr>
+          <td><a href="#" style="color:var(--primary);text-decoration:none;font-weight:500;">test.org</a></td>
+          <td><span class="badge badge-info">alias</span></td>
+          <td>TestSite</td>
+          <td><span style="word-break:break-all;">—</span></td>
+          <td><span class="badge badge-warn">partial</span></td>
+          <td><span class="badge badge-info">—</span></td>
+          <td><span class="badge badge-err">Stopped</span></td>
+          <td><span class="badge badge-err">Disabled</span></td>
+          <td><span class="badge badge-warn">62%</span></td>
+          <td>
+            <button class="btn-icon" title="View details">&#128065;</button>
+            <button class="btn-icon" title="Open in browser">&#8599;</button>
+            <button class="btn-icon" style="color:var(--red)" title="Remove domain">&#10005;</button>
+          </td>
+        </tr>
+        <tr>
+          <td><a href="#" style="color:var(--primary);text-decoration:none;font-weight:500;">old.net</a></td>
+          <td><span class="badge badge-info">wildcard</span></td>
+          <td><span class="badge badge-info">Unlinked</span></td>
+          <td><span style="word-break:break-all;">old-site.net</span></td>
+          <td><span class="badge badge-err">failed</span></td>
+          <td><span class="badge badge-info">—</span></td>
+          <td><span class="badge badge-info">N/A</span></td>
+          <td><span class="badge badge-err">Error</span></td>
+          <td><span class="badge badge-err">20%</span></td>
+          <td>
+            <button class="btn-icon" title="View details">&#128065;</button>
+            <button class="btn-icon" title="Open in browser">&#8599;</button>
+            <button class="btn-icon" style="color:var(--red)" title="Remove domain">&#10005;</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+</body>
+</html>

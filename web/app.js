@@ -969,23 +969,27 @@ async function loadDomainDetail(p, domainId) {
     if (!domainRow) { p.innerHTML = '<div class="empty-state">Domain not found</div>'; return; }
     _currentDomain = domainRow;
 
-    // Fetch mail domain and SSL data
+    // Fetch mail domain data
     let mailDomain = null;
     try {
       const mdRes = await api('/api/mail/domains');
       mailDomain = (mdRes.data || []).find(m => m.domain === domainRow.domain || m.domain_id == domainId) || null;
-    } catch(e) {}
-    let sslData = null;
-    try {
-      const sslRes = await api('/api/ssl/' + encodeURIComponent(domainRow.domain));
-      if (sslRes.success) sslData = sslRes.data;
-    } catch(e) {}
+    } catch(e) {
+      console.error('Failed to load mail domain', e);
+    }
+
+    // SSL data from enriched GET /api/domains (ssl_status, ssl_enabled)
+    // No extra SSL API call — use domainRow fields directly.
+    // ssl_status values: Active, Disabled, Expired, Expiring, Error, Issuing
+
     let runtimeData = null;
     if (domainRow.site_id > 0) {
       try {
         const rtRes = await api('/api/runtime/' + domainRow.site_id);
         if (rtRes.success) runtimeData = rtRes.data;
-      } catch(e) {}
+      } catch(e) {
+        console.error('Failed to load runtime data for site ' + domainRow.site_id, e);
+      }
     }
 
     // Compute health score
@@ -1012,8 +1016,8 @@ async function loadDomainDetail(p, domainId) {
       </div>
       <div id="domain-tab-content"></div>`;
 
-    // Store data for tab access
-    window._domainDetailData = {domainRow, mailDomain, sslData, runtimeData};
+    // Store data for tab access (sslData removed — use domainRow.ssl_status directly)
+    window._domainDetailData = {domainRow, mailDomain, runtimeData};
 
     // Load first tab
     loadDomainOverview();
@@ -1040,7 +1044,7 @@ async function loadDomainOverview() {
   if (!content) return;
   const dd = window._domainDetailData;
   if (!dd) { content.innerHTML = '<div class="empty-state">No data</div>'; return; }
-  const {domainRow, mailDomain, sslData, runtimeData} = dd;
+  const {domainRow, mailDomain, runtimeData} = dd;
 
   content.innerHTML = '<div class="empty-state">Checking DNS...</div>';
 
@@ -1050,11 +1054,28 @@ async function loadDomainOverview() {
     try {
       DnsCache.setLoading(domainRow.domain);
       const res = await api('/api/domains/' + encodeURIComponent(domainRow.domain) + '/dns-check?types=A,AAAA,MX,TXT');
-      if (res.success) {
+      if (res && res.success) {
         DnsCache.set(domainRow.domain, res.data);
         dnsData = res.data;
       }
-    } catch(e) {}
+    } catch(e) {
+      console.error('Failed to fetch DNS check for ' + domainRow.domain, e);
+    }
+  }
+
+  // Helper: get records for a specific DNS type from per_type array
+  function getRecordsForType(perType, typeName, filterFn) {
+    if (!Array.isArray(perType)) return [];
+    const pt = perType.find(x => x && x.type === typeName);
+    if (!pt || !Array.isArray(pt.records)) return [];
+    if (filterFn) return pt.records.filter(filterFn);
+    return pt.records;
+  }
+
+  // Helper: format a record value for display (truncate if too long)
+  function fmtVal(v) {
+    if (!v || typeof v !== 'string') return '—';
+    return v.length > 40 ? v.substr(0, 40) + '...' : v;
   }
 
   // Build DNS check summary table
@@ -1065,38 +1086,32 @@ async function loadDomainOverview() {
     expectedTypes.push('DMARC');
   }
 
+  const perType = dnsData ? dnsData.per_type : null;
+
   let dnsRows = '';
   for (const type of expectedTypes) {
     let configured = '—';
     let published = '—';
-    let status = {code:'NOT_CONFIGURED', label:'—', cls:'badge-info'};
     let statusCls = 'badge-info';
+    let statusLabel = '—';
 
-    if (dnsData && dnsData.per_type) {
-      // Find matching records
-      let matchingRecords = [];
-      if (type === 'A') matchingRecords = dnsData.per_type.filter(pt => pt.type === 'A');
-      else if (type === 'AAAA') matchingRecords = dnsData.per_type.filter(pt => pt.type === 'AAAA');
-      else if (type === 'MX') matchingRecords = dnsData.per_type.filter(pt => pt.type === 'MX');
-      else if (type === 'SPF') {
-        // SPF is a TXT record starting with "v=spf1"
-        const txtPt = dnsData.per_type.find(pt => pt.type === 'TXT');
-        if (txtPt) {
-          matchingRecords = txtPt.records.filter(r => r.value.startsWith('v=spf1'));
-        }
+    if (perType) {
+      let recs = [];
+      if (type === 'A') {
+        recs = getRecordsForType(perType, 'A');
+      } else if (type === 'AAAA') {
+        recs = getRecordsForType(perType, 'AAAA');
+      } else if (type === 'MX') {
+        recs = getRecordsForType(perType, 'MX');
+      } else if (type === 'SPF') {
+        recs = getRecordsForType(perType, 'TXT', r => typeof r.value === 'string' && r.value.startsWith('v=spf1'));
       } else if (type === 'DKIM') {
-        const txtPt = dnsData.per_type.find(pt => pt.type === 'TXT');
-        if (txtPt) {
-          matchingRecords = txtPt.records.filter(r => r.name.includes('_domainkey'));
-        }
+        recs = getRecordsForType(perType, 'TXT', r => typeof r.name === 'string' && r.name.includes('_domainkey'));
       } else if (type === 'DMARC') {
-        const txtPt = dnsData.per_type.find(pt => pt.type === 'TXT');
-        if (txtPt) {
-          matchingRecords = txtPt.records.filter(r => r.name.includes('_dmarc'));
-        }
+        recs = getRecordsForType(perType, 'TXT', r => typeof r.name === 'string' && r.name.includes('_dmarc'));
       }
-      if (matchingRecords.length > 0) {
-        published = matchingRecords.map(r => r.value.length > 40 ? r.value.substr(0, 40) + '...' : r.value).join(', ');
+      if (recs.length > 0) {
+        published = recs.map(r => fmtVal(r.value)).join(', ');
       }
     }
 
@@ -1104,7 +1119,7 @@ async function loadDomainOverview() {
     if (type === 'SPF' && mailDomain) {
       configured = 'v=spf1 mx ~all';
     } else if (type === 'DKIM' && mailDomain && mailDomain.dkim_public_key_dns) {
-      configured = mailDomain.dkim_public_key_dns.substr(0, 40) + '...';
+      configured = fmtVal(mailDomain.dkim_public_key_dns);
     } else if (type === 'DMARC' && mailDomain) {
       configured = '(Recommended)';
     } else if (type !== 'A' && type !== 'AAAA' && type !== 'MX') {
@@ -1112,17 +1127,15 @@ async function loadDomainOverview() {
     }
 
     // Status
-    if (configured === '—' && published !== '—') {
-      status = {code:'FOUND', label:'Found', cls:'badge-ok'};
+    if (configured !== '—' && published !== '—') {
+      statusLabel = 'Found'; statusCls = 'badge-ok';
     } else if (configured !== '—' && published === '—') {
-      status = {code:'NOT_PUBLISHED', label:'Not Published', cls:'badge-err'};
-    } else if (configured !== '—' && published !== '—') {
-      status = {code:'FOUND', label:'Found', cls:'badge-ok'};
-    } else {
-      status = {code:'N_A', label:'—', cls:'badge-info'};
+      statusLabel = 'Not Published'; statusCls = 'badge-err';
+    } else if (configured === '—' && published !== '—') {
+      statusLabel = 'Found'; statusCls = 'badge-ok';
     }
 
-    dnsRows += `<tr><td>${esc(type)}</td><td style="font-family:monospace;font-size:12px;">${esc(configured)}</td><td style="font-family:monospace;font-size:12px;">${esc(published)}</td><td><span class="badge ${status.cls}">${esc(status.label)}</span></td></tr>`;
+    dnsRows += `<tr><td>${esc(type)}</td><td style="font-family:monospace;font-size:12px;">${esc(configured)}</td><td style="font-family:monospace;font-size:12px;">${esc(published)}</td><td><span class="badge ${statusCls}">${esc(statusLabel)}</span></td></tr>`;
   }
 
   // Build info cards
@@ -1140,19 +1153,14 @@ async function loadDomainOverview() {
       <div style="margin-top:8px;font-size:13px;color:var(--text3);">Not configured</div>
     </div>`;
 
-  const sslCard = sslData ? `
+  const sslBadgeCls = {'active':'badge-ok','http_only':'badge-info','disabled':'badge-info','expiring':'badge-warn','expired':'badge-err','error':'badge-err','issuing':'badge-warn'};
+  const sslCard = `
     <div class="card">
       <h3>SSL</h3>
       <div style="margin-top:8px;font-size:13px;">
-        <div>Status: <span class="badge ${sslData.status === 'active' ? 'badge-ok' : 'badge-err'}">${esc(sslData.status)}</span></div>
-        <div>HTTPS: ${sslData.https_enabled ? '✅ Enabled' : '❌ Disabled'}</div>
-        <div>Redirect: ${sslData.redirect_enabled ? '✅ Enabled' : '❌ Disabled'}</div>
-        <div>Expires: ${esc(sslData.expires_at || '—')}</div>
+        <div>Status: <span class="badge ${sslBadgeCls[domainRow.ssl_status ? domainRow.ssl_status.toLowerCase() : ''] || 'badge-info'}">${esc(domainRow.ssl_status || 'Unknown')}</span></div>
+        <div>HTTPS: ${domainRow.ssl_enabled ? '✅ Enabled' : '❌ Disabled'}</div>
       </div>
-    </div>` : `
-    <div class="card">
-      <h3>SSL</h3>
-      <div style="margin-top:8px;font-size:13px;color:var(--text3);">${domainRow.ssl_status || 'Unknown'}</div>
     </div>`;
 
   const siteCard = domainRow.site_name ? `
