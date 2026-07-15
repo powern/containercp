@@ -1695,9 +1695,11 @@ async function loadDomainMail() {
   } catch(e) { console.error('Failed to load aliases', e); }
 
   // Fetch DNS data for Required and Recommended records
-  const rootTxt = await fetchDnsForFqdn(domain, 'TXT');
+  // Query A+TXT together to get both TXT records and expected_ipv4 from NetworkService
+  const rootDns = await fetchDnsForFqdn(domain, 'A,TXT');
   const rootMx = await fetchDnsForFqdn(domain, 'MX');
   const rootCaa = await fetchDnsForFqdn(domain, 'CAA');
+  const expectedIpv4 = rootDns && typeof rootDns.expected_ipv4 === 'string' ? rootDns.expected_ipv4 : '';
 
   let dkimDns = null, dmarcDns = null, mtaStsDns = null, tlsRptDns = null, autoDiscoverDns = null;
   if (mailDomain.dkim_public_key_dns) {
@@ -1723,7 +1725,7 @@ async function loadDomainMail() {
   const mxMatch = mxPubRecs.some(r => window.normalizeHostname(r.value) === mxNorm);
   const mxStatus = window.computeRecordStatus(expectedMx, mxPublished, () => mxMatch);
 
-  const spfRecs = window.getDnsRecs(rootTxt, 'TXT').filter(r => typeof r.value === 'string' && r.value.startsWith('v=spf1'));
+  const spfRecs = window.getDnsRecs(rootDns, 'TXT').filter(r => typeof r.value === 'string' && r.value.startsWith('v=spf1'));
   const spfRecommended = 'v=spf1 mx ~all';
   const spfPublished = spfRecs.length > 0 ? spfRecs[0].value : '';
   const spfStatus = window.computeRecordStatus(spfRecommended, spfPublished, (a,b) => window.normalizeDnsValue(a) === window.normalizeDnsValue(b));
@@ -1751,9 +1753,8 @@ async function loadDomainMail() {
     const normExp = window.normalizeHostname(serverHostname);
     autoMatchFn = () => normPub === normExp;
   } else if (autoARecs.length > 0) {
-    autoPublished = 'A ' + autoARecs[0].value;
-    const expIp = rootDns && rootDns.expected_ipv4 || '';
-    autoMatchFn = () => expIp && autoARecs[0].value === expIp;
+    autoPublished = autoARecs.map(r => r.value).join(', ');
+    autoMatchFn = () => expectedIpv4 && autoARecs.some(r => r.value === expectedIpv4);
   }
   autoStatus = window.computeRecordStatus(autoRecommended, autoPublished, autoMatchFn);
   if (!serverHostname) autoStatus = {status: 'N/A', cls: 'badge-info'};
