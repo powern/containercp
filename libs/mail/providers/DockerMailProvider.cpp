@@ -449,6 +449,21 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
     std::string dkim_path = conf_dir + "/dkim_signing.conf";
     std::ofstream dkim_out(dkim_path);
     if (!dkim_out.is_open()) return {false, "Failed to write " + dkim_path};
+    // Detect containercp-mail network subnet for sign_networks
+    // (messages from PHP containers on this network need DKIM signing)
+    std::string mail_subnet;
+    auto subnet_check = executor_.run({
+        "docker", "network", "inspect", "containercp-mail",
+        "--format", "{{(index .IPAM.Config 0).Subnet}}"
+    });
+    if (subnet_check.exit_code == 0) {
+        mail_subnet = subnet_check.out;
+        // Trim trailing whitespace/newline
+        while (!mail_subnet.empty() && (mail_subnet.back() == '\n' || mail_subnet.back() == '\r' || mail_subnet.back() == ' ')) {
+            mail_subnet.pop_back();
+        }
+    }
+
     dkim_out << "# ContainerCP generated Rspamd DKIM signing configuration\n"
              << "# Do not edit manually — changes will be overwritten.\n\n"
              << "sign_authenticated = true;\n"
@@ -459,8 +474,13 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
              << "try_fallback = false;\n"
              << "use_esld = false;\n"
              << "selector = \"dkim\";\n"
-             << "path = \"/etc/rspamd/keys/\";\n\n"
-             << "domain {\n";
+             << "path = \"/etc/rspamd/keys/\";\n";
+
+    if (!mail_subnet.empty()) {
+        dkim_out << "sign_networks = [\"" << mail_subnet << "\"];\n";
+    }
+
+    dkim_out << "\ndomain {\n";
 
     for (const auto& d : domains) {
         if (!d.enabled || d.mode == MailDomainMode::Disabled) continue;
