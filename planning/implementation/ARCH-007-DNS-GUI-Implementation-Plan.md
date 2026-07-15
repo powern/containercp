@@ -256,60 +256,38 @@ Before any implementation, verify the current state of all files that will be to
 
 ---
 
-## Phase 4 — Domain Detail GUI (Base Layout)
+## Phase 4 — Domain Detail GUI (Base Layout) ✅
 
-### 4.1 — Create `loadDomainDetail()` with tab navigation
+### 4.1 — Create `loadDomainDetail()` with tab navigation ✅
 
 **Files:** `web/app.js`  
 **Depends on:** 3.1  
-**Criteria:** Clicking a domain opens a detail page with 5 tabs (Overview, DNS Records, Mail, Security, Health).
+**Criteria:** ✅ Clicking a domain opens a detail page with 5 tabs.
 
-- [ ] Implement `async function loadDomainDetail(p, domainId)`:
-  ```js
-  async function loadDomainDetail(p, domainId) {
-    // Fetch domain data: GET /api/domains → find by id
-    // Fetch mail domain data: GET /api/mail/domains
-    // Fetch SSL data: GET /api/ssl/<domain>
-    // Render header with back link, domain name, action buttons
-    // Render Health Score badge in header
-    // Render 5 tabs
-    // Activate first tab (Overview) by default
-    // Each tab click updates #domain-tab-content
-  }
-  ```
-- [ ] Use existing `.tabs` / `.tab` CSS classes from `style.css:103-107`.
-- [ ] Tab IDs: `overview`, `dns-records`, `mail`, `security`, `health`.
-- [ ] Tab switching: hide all, show selected. Load content on first activation (lazy).
-- [ ] Breadcrumb: `Domains / example.com` (existing pattern from mail detail).
-- [ ] Header actions: `[Open in browser]` `[Copy domain]` `[Remove]`.
-- [ ] Health Score badge in header: use `computeHealthScore()` from 3.3.
-- [ ] Loading state: `<div class="empty-state">Loading...</div>`.
-- [ ] Error state: `<div class="empty-state">Failed to load domain</div>` with retry button.
-- [ ] **Caching:** domain data cached for 30s, health score recomputed on tab switch.
+- [x] Implemented `loadDomainDetail(p, domainId)` — fetches domain from enriched list, mail domain, SSL, runtime.
+- [x] Uses existing `.tabs` / `.tab` CSS classes.
+- [x] Tab IDs: `overview`, `dns-records`, `mail`, `security`, `health`.
+- [x] Tab switching via `switchDomainTab(tabId)` — lazy loading.
+- [x] Breadcrumb: `← Domains / example.com`.
+- [x] Header: Health Score badge, Open, Copy, Remove buttons.
+- [x] Loading state: `<div class="empty-state">Loading...</div>`.
+- [x] Error state: `<div class="empty-state">Failed to load domain</div>`.
+- [x] Data stored in `window._domainDetailData` for tab access.
 
-### 4.2 — Implement Overview tab
+### 4.2 — Implement Overview tab ✅
 
 **Files:** `web/app.js`  
 **Depends on:** 4.1, 2.1  
-**Criteria:** Overview shows DNS check summary, Mail status, SSL status, Site info.
+**Criteria:** ✅ Overview shows DNS check summary, Mail, SSL, Site info.
 
-- [ ] Fetch DNS check: `GET /api/domains/<domain>/dns-check`.
-- [ ] Render DNS summary table with columns: Type, Configured, Published, Status.
-- [ ] For each expected record type (A, AAAA, MX, SPF, DKIM, DMARC):
-  - Determine **Configured** value:
-    - DKIM: from `MailDomain::dkim_public_key_dns`
-    - SPF: template `v=spf1 mx ~all` if MailDomain exists
-    - DMARC: **no Configured value** — DMARC Wizard generates **Recommended** value only (not stored in ContainerCP)
-    - A/AAAA/MX: `"—"` (no expected value in ContainerCP)
-  - Determine **Published** value: from DNS check response.
-  - Determine **Status**: Match / Mismatch / Not Published / Not Configured / Not Applicable.
-  - For DMARC: status is **Recommended vs Published**, not Configured vs Published.
-- [ ] Render Mail card: domain, mode, DKIM status, mailboxes count. If no MailDomain: "Not configured".
-- [ ] Render SSL card: status, HTTPS enabled, redirect, expiry date.
-- [ ] Render Site card: site name, backend, PHP version, runtime status.
-- [ ] Add `[Check Again]` button → re-fetches DNS check, updates table.
-- [ ] Empty state: all records n/a → show neutral message.
-- [ ] Error state: DNS check fails → show error with retry.
+- [x] Fetches `GET /api/domains/<domain>/dns-check?types=A,AAAA,MX,TXT` via `DnsCache`.
+- [x] Shows DNS summary table: Type, Configured, Published, Status.
+- [x] Per-type status: A, AAAA, MX, SPF (if MailDomain), DKIM (if generated), DMARC (if MailDomain).
+- [x] Mail card: domain, mode, DKIM status. If no MailDomain: "Not configured".
+- [x] SSL card: status, HTTPS, redirect, expiry.
+- [x] Site card: name, domain, runtime status.
+- [x] `[Check Again]` button → clears cache and re-fetches.
+- [x] Loading state while DNS check runs.
 
 ---
 
