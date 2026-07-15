@@ -2,6 +2,7 @@
 #define CONTAINERCP_DNS_DNS_CHECK_SERVICE_H
 
 #include <cstdint>
+#include <ctime>
 #include <map>
 #include <mutex>
 #include <string>
@@ -50,9 +51,12 @@ public:
     void clear_cache(const std::string& domain);
     bool has_cached(const std::string& domain) const;
 
-    // Public for testing (format/type validation, no DNS lookup)
+    // Public for testing (format/type validation/computation, no DNS lookup)
     static bool validate_domain(const std::string& domain);
     static bool validate_type(const std::string& type);
+    static std::string compute_overall_status(const std::vector<PerTypeResult>& per_type,
+                                                bool& success_out,
+                                                std::string& error_out);
 
 private:
     struct CacheEntry {

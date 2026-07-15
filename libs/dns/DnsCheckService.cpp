@@ -425,50 +425,50 @@ DnsCheckResult DnsCheckService::do_check(const std::string& domain,
 
     ares_destroy(channel);
 
-    // Collect records and compute overall status
-    std::vector<DnsRecord> all_records;
-    size_t ok_count = 0, fail_count = 0, nodata_count = 0;
-
+    // Extract SOA fields from per_type results
     for (const auto& pt : result.per_type) {
-        for (const auto& rec : pt.records) {
-            all_records.push_back(rec);
-        }
-        if (pt.status_code == "NOERROR") {
-            ok_count++;
-        } else if (pt.status_code == "NODATA") {
-            nodata_count++;
-        } else {
-            fail_count++;
-        }
-
-        // Extract SOA fields
         if (pt.type == "SOA") {
             extract_soa_fields(pt.records, result.soa.mname,
                                result.soa.rname, result.soa.serial);
         }
     }
 
-    if (fail_count == 0) {
-        result.overall_status = "complete";
-        result.success = true;
-    } else if (ok_count > 0 || nodata_count > 0) {
-        result.overall_status = "partial";
-        result.success = true;
-        result.error = "Some queries failed";
-    } else {
-        result.overall_status = "failed";
-        result.success = false;
-        // Use the first non-empty error
-        for (const auto& pt : result.per_type) {
-            if (!pt.error.empty()) {
-                result.error = pt.error;
-                break;
+    result.overall_status = compute_overall_status(result.per_type, result.success, result.error);
+    return result;
+}
+
+std::string DnsCheckService::compute_overall_status(
+    const std::vector<PerTypeResult>& per_type,
+    bool& success_out, std::string& error_out) {
+    size_t ok_count = 0, fail_count = 0, nodata_count = 0;
+    std::string first_error;
+
+    for (const auto& pt : per_type) {
+        if (pt.status_code == "NOERROR") {
+            ok_count++;
+        } else if (pt.status_code == "NODATA") {
+            nodata_count++;
+        } else {
+            fail_count++;
+            if (first_error.empty() && !pt.error.empty()) {
+                first_error = pt.error;
             }
         }
-        if (result.error.empty()) result.error = "All queries failed";
     }
 
-    return result;
+    if (fail_count == 0) {
+        success_out = true;
+        error_out.clear();
+        return "complete";
+    } else if (ok_count > 0 || nodata_count > 0) {
+        success_out = true;
+        error_out = first_error.empty() ? std::string("Some queries failed") : first_error;
+        return "partial";
+    } else {
+        success_out = false;
+        error_out = first_error.empty() ? std::string("All queries failed") : first_error;
+        return "failed";
+    }
 }
 
 } // namespace containercp::dns
