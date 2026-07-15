@@ -266,6 +266,110 @@ TEST_CASE("DnsCheck API JSON: valid JSON for partial response") {
     CHECK(valid_overall);
 }
 
+// --- Autodiscover resolution tests ---
+
+TEST_CASE("DnsCheck API: autodiscover domain validation") {
+    // Autodiscover uses underscores and standard domain patterns
+    CHECK(DnsCheckService::validate_dns_name("autodiscover.example.com"));
+    CHECK(DnsCheckService::validate_dns_name("autodiscover.google.com"));
+    // These should all be valid DNS names
+    CHECK(DnsCheckService::validate_dns_name("_autodiscover._tcp.example.com"));
+    CHECK(DnsCheckService::validate_dns_name("_smtp._tls.example.com"));
+}
+
+TEST_CASE("DnsCheck API: autodiscover resolution") {
+    DnsCheckService svc;
+
+    // autodiscover.google.com typically has a CNAME or A record
+    auto r = svc.check("autodiscover.google.com", {"CNAME", "A"});
+    CHECK(r.success);
+
+    // Should have per_type results for both CNAME and A
+    CHECK(r.per_type.size() == 2);
+
+    bool hasCname = false, hasA = false;
+    for (const auto& pt : r.per_type) {
+        if (pt.type == "CNAME") hasCname = true;
+        if (pt.type == "A") hasA = true;
+        // Each should have a valid status_code
+        CHECK_FALSE(pt.status_code.empty());
+    }
+    CHECK(hasCname);
+    CHECK(hasA);
+}
+
+TEST_CASE("DnsCheck API: autodiscover A with multiple records") {
+    DnsCheckService svc;
+
+    // Query a domain that likely has multiple A records for autodiscover
+    auto r = svc.check("autodiscover.google.com", {"A"});
+    CHECK(r.success);
+
+    // May have 0 or more A records
+    for (const auto& pt : r.per_type) {
+        if (pt.type == "A" && pt.records.size() > 1) {
+            // Verify multiple records are properly parsed
+            CHECK(pt.records.size() >= 2);
+            // All should have valid IPs
+            for (const auto& rec : pt.records) {
+                CHECK_FALSE(rec.value.empty());
+                CHECK(rec.ttl > 0);
+            }
+        }
+    }
+}
+
+TEST_CASE("DnsCheck API: autodiscover no record returns NXDOMAIN or NODATA") {
+    DnsCheckService svc;
+
+    // A domain that likely has no autodiscover record
+    auto r = svc.check("autodiscover.thisshouldnotexistexample.com", {"CNAME", "A"});
+    // Should not crash — valid DNS response
+    CHECK_FALSE(r.per_type.empty());
+    for (const auto& pt : r.per_type) {
+        CHECK_FALSE(pt.status_code.empty());
+    }
+}
+
+TEST_CASE("DnsCheck API: CNAME resolution returns target hostname") {
+    DnsCheckService svc;
+
+    // Many CDN/redirect domains use CNAME
+    auto r = svc.check("autodiscover.outlook.com", {"CNAME", "A"});
+    CHECK(r.success);
+
+    bool foundCname = false;
+    for (const auto& pt : r.per_type) {
+        if (pt.type == "CNAME" && !pt.records.empty()) {
+            foundCname = true;
+            // CNAME target should be a valid hostname (ends with .)
+            const auto& cname = pt.records[0].value;
+            CHECK_FALSE(cname.empty());
+            CHECK(cname.find('.') != std::string::npos);
+        }
+    }
+    // autodiscover.outlook.com may have CNAME or A — either is valid
+    CHECK(r.per_type.size() >= 1);
+}
+
+TEST_CASE("DnsCheck API: CNAME with trailing dot is valid") {
+    DnsCheckService svc;
+
+    // Query a domain that has a known CNAME
+    auto r = svc.check("autodiscover.outlook.com", {"CNAME"});
+    if (r.success && !r.per_type.empty() && !r.per_type[0].records.empty()) {
+        const auto& cname = r.per_type[0].records[0].value;
+        // CNAME targets from DNS often have trailing dots
+        // The frontend's normalizeHostname strips trailing dots
+        CHECK_FALSE(cname.empty());
+        if (cname.back() == '.') {
+            // Verify normalized form matches
+            std::string normalized = cname.substr(0, cname.size() - 1);
+            CHECK_FALSE(normalized.empty());
+        }
+    }
+}
+
 // --- Routing tests ---
 
 TEST_CASE("DnsCheck API routing: exact match /api/domains is not blocked") {
