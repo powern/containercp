@@ -1153,13 +1153,18 @@ async function loadDomainOverview() {
       <div style="margin-top:8px;font-size:13px;color:var(--text3);">Not configured</div>
     </div>`;
 
+  // SSL display uses ssl_status as the single source of truth.
+  // ssl_enabled is now derived from CertificateStore metadata (consistent with ssl_status).
+  // When ssl_status is "Active" or "Expiring", the certificate exists and HTTPS is configured.
+  const sslStatusDisplay = domainRow.ssl_status || 'Unknown';
   const sslBadgeCls = {'active':'badge-ok','http_only':'badge-info','disabled':'badge-info','expiring':'badge-warn','expired':'badge-err','error':'badge-err','issuing':'badge-warn'};
+  const sslHttpsActive = sslStatusDisplay === 'Active' || sslStatusDisplay === 'Expiring';
   const sslCard = `
     <div class="card">
-      <h3>SSL</h3>
+      <h3>SSL Certificate</h3>
       <div style="margin-top:8px;font-size:13px;">
-        <div>Status: <span class="badge ${sslBadgeCls[domainRow.ssl_status ? domainRow.ssl_status.toLowerCase() : ''] || 'badge-info'}">${esc(domainRow.ssl_status || 'Unknown')}</span></div>
-        <div>HTTPS: ${domainRow.ssl_enabled ? '✅ Enabled' : '❌ Disabled'}</div>
+        <div>Status: <span class="badge ${sslBadgeCls[sslStatusDisplay.toLowerCase()] || 'badge-info'}">${esc(sslStatusDisplay)}</span></div>
+        <div>HTTPS: ${domainRow.ssl_enabled ? '✅ Active' : sslHttpsActive ? '✅ Active' : '❌ Inactive'}</div>
       </div>
     </div>`;
 

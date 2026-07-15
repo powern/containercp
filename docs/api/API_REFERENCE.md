@@ -185,8 +185,19 @@ Fields: `version`, `server_hostname`.
 
 **GET /api/domains** — returns per-domain: `id`, `domain`, `type`
 (`primary`|`alias`|`redirect`|`wildcard`), `site_id`, `site_name`,
-`site_domain`, `target`, `ssl_enabled`, `ssl_status` (from
-`CertificateStore::https_display_status`), `enabled`.
+`site_domain`, `target`, `ssl_enabled`, `ssl_status`, `enabled`.
+
+**SSL field semantics:**
+- `ssl_status`: Display-friendly certificate status from `CertificateStore::https_display_status()`.
+  Possible values: `Active`, `Expiring`, `Expired`, `Error`, `Issuing`, `Disabled`, `HTTP_ONLY`.
+  This is the **single source of truth** for the certificate state.
+- `ssl_enabled`: Boolean derived from `CertificateStore` metadata (`https_enabled` field).
+  Previously derived from `Domain::ssl_enabled` (legacy field that could be out of sync).
+  Now consistent with `ssl_status`: `true` when a valid certificate has HTTPS enabled.
+  
+  **Note:** When `ssl_status` is `"Active"` or `"Expiring"`, both `ssl_enabled` and `ssl_status`
+  indicate a working HTTPS configuration. The two fields are always consistent — both
+  sourced from `CertificateStore` metadata.
 
 **New fields (v0.6):** `mail_domain_id` (0 if no mail domain),
 `mail_domain_mode` (e.g. `"local-primary"` or empty), `dkim_generated`

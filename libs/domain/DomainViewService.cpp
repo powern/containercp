@@ -30,10 +30,15 @@ void DomainViewService::write_enriched(std::ostringstream& json,
     }
 
     // SSL status from CertificateStore (single source of truth)
+    // Both ssl_status and ssl_enabled are derived from CertificateStore metadata,
+    // NOT from Domain::ssl_enabled (which is a legacy field that may not reflect
+    // the actual certificate state). This ensures consistency between the two fields.
     std::string ssl_status = "Disabled";
+    bool ssl_enabled_actual = false;
     auto ssl_meta = cert_store_.load_metadata(d.site_id);
     if (ssl_meta.success) {
         ssl_status = cert_store_.https_display_status(ssl_meta.metadata);
+        ssl_enabled_actual = ssl_meta.metadata.https_enabled;
     }
 
     // Mail domain info from MailDomainManager
@@ -59,7 +64,7 @@ void DomainViewService::write_enriched(std::ostringstream& json,
          << ",\"site_name\":\"" << api::JsonFormatter::escape(site_name)
          << "\",\"site_domain\":\"" << api::JsonFormatter::escape(site_domain)
          << "\",\"target\":\"" << api::JsonFormatter::escape(d.target)
-         << "\",\"ssl_enabled\":" << (d.ssl_enabled ? "true" : "false")
+         << "\",\"ssl_enabled\":" << (ssl_enabled_actual ? "true" : "false")
          << ",\"ssl_status\":\"" << api::JsonFormatter::escape(ssl_status)
          << "\",\"enabled\":" << (d.enabled ? "true" : "false")
          << ",\"mail_domain_id\":" << mail_domain_id
