@@ -81,13 +81,12 @@ bool SpfAnalyzer::validate_syntax(const std::string& record,
         error_out = "Empty SPF record";
         return false;
     }
-    // Must start with "v=spf1"
-    if (record.size() < 7 || record.substr(0, 7) != "v=spf1") {
+    // Must start with "v=spf1" (6 characters: v, =, s, p, f, 1)
+    if (record.size() < 6 || record.substr(0, 6) != "v=spf1") {
         error_out = "SPF record must start with v=spf1";
         return false;
     }
-    // Check the space/tab after v=spf1 or end of string
-    if (record.size() > 7 && record[7] != ' ' && record[7] != '\t') {
+    if (record.size() > 6 && record[6] != ' ' && record[6] != '\t') {
         error_out = "Invalid v=spf1 format";
         return false;
     }
@@ -100,8 +99,8 @@ SpfAnalyzer::parse_mechanisms(const std::string& spf_record,
     std::vector<SpfMechanism> result;
     if (!validate_syntax(spf_record, error_out)) return result;
 
-    // Skip "v=spf1"
-    size_t pos = 7;
+    // Skip "v=spf1" (6 chars) + whitespace
+    size_t pos = 6;
     while (pos < spf_record.size() && (spf_record[pos] == ' ' || spf_record[pos] == '\t'))
         pos++;
 
@@ -157,11 +156,17 @@ bool SpfAnalyzer::evaluate_mechanisms(
     }
 
     for (const auto& mech : mechs) {
-        result.lookup_count++;
-
-        if (result.lookup_count > 10) {
-            result.errors.push_back("SPF DNS lookup count exceeded 10");
-            return false;
+        // DNS lookup count (RFC 7208): only a, mx, include, exists, redirect
+        // consume lookups. ip4, ip6, and all do NOT count.
+        bool consumes_lookup = (mech.mechanism == "a" || mech.mechanism == "mx"
+                                || mech.mechanism == "include" || mech.mechanism == "exists"
+                                || mech.mechanism == "redirect");
+        if (consumes_lookup) {
+            result.lookup_count++;
+            if (result.lookup_count > 10) {
+                result.errors.push_back("SPF DNS lookup count exceeded 10");
+                return false;
+            }
         }
 
         bool matched = false;
@@ -243,7 +248,7 @@ bool SpfAnalyzer::evaluate_mechanisms(
                     for (const auto& pt : txt_result.per_type) {
                         if (pt.type == "TXT") {
                             for (const auto& rec : pt.records) {
-                                if (rec.value.substr(0, 7) == "v=spf1") {
+                                if (rec.value.size() >= 6 && rec.value.substr(0, 6) == "v=spf1") {
                                     auto inner_mechs = parse_mechanisms(rec.value, result.errors.emplace_back());
                                     if (evaluate_mechanisms(inner_mechs, expected_ipv4,
                                         expected_ipv6, mech.domain, result, depth + 1, visited_includes)) {
@@ -265,7 +270,7 @@ bool SpfAnalyzer::evaluate_mechanisms(
                     for (const auto& pt : txt_result.per_type) {
                         if (pt.type == "TXT") {
                             for (const auto& rec : pt.records) {
-                                if (rec.value.substr(0, 7) == "v=spf1") {
+                                if (rec.value.size() >= 6 && rec.value.substr(0, 6) == "v=spf1") {
                                     auto redirect_mechs = parse_mechanisms(rec.value, result.errors.emplace_back());
                                     if (evaluate_mechanisms(redirect_mechs, expected_ipv4,
                                         expected_ipv6, mech.domain, result, depth + 1, visited_includes)) {
@@ -291,11 +296,15 @@ bool SpfAnalyzer::evaluate_mechanisms(
             check.status = "ok";
             check.reason = "Expected IP is allowed by " + matched_by;
             result.checks.push_back(check);
-            return true;  // Early match
+        }
+
+        // Always check for all qualifier (even after match) for warnings
+        if (mech.mechanism == "all") {
+            result.all_qualifier = mech.qualifier;
         }
     }
 
-    return false;
+    return result.expected_ip_allowed;
 }
 
 SpfAnalysis SpfAnalyzer::analyze(const std::string& spf_record,

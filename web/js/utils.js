@@ -196,8 +196,16 @@ window.compareMxRecords = function(mxRecords, expectedHostname) {
   return {status:'N/A', cls:'badge-info'};
 };
 
-// SPF: normalized DNS value comparison (placeholder until SpfAnalyzer)
-window.compareSpfRecords = function(recommended, published) {
+// SPF: read from spf_analysis (backend), fallback to normalized comparison (legacy)
+window.compareSpfRecords = function(recommended, published, spfAnalysis) {
+  if (spfAnalysis && spfAnalysis.match && spfAnalysis.match !== 'not_published') {
+    return {status: spfAnalysis.match === 'match' ? 'Match' : 'Mismatch',
+            cls: spfAnalysis.match === 'match' ? 'badge-ok' : 'badge-warn'};
+  }
+  if (spfAnalysis && spfAnalysis.match === 'not_published') {
+    return {status:'Not Published', cls:'badge-err'};
+  }
+  // Legacy fallback: normalized string comparison
   return window.computeRecordStatus(recommended, published,
     (a,b) => window.normalizeDnsValue(a) === window.normalizeDnsValue(b));
 };

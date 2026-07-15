@@ -1198,7 +1198,7 @@ async function loadDomainOverview() {
         const r = window.compareMxRecords(recs, expectedMx);
         statusLabel = r.status; statusCls = r.cls;
       } else if (type === 'SPF') {
-        const r = window.compareSpfRecords(configured, published);
+        const r = window.compareSpfRecords(configured, published, rootDns && rootDns.spf_analysis);
         statusLabel = r.status; statusCls = r.cls;
       } else if (type === 'DKIM') {
         const pubVal = recs.length > 0 ? recs[0].value : '';
@@ -1454,7 +1454,7 @@ async function loadDomainDnsRecords() {
     const recs = getRecs(rootDns, 'TXT').filter(r => typeof r.value === 'string' && r.value.startsWith('v=spf1'));
     const recommended = mailDomain ? 'v=spf1 mx ~all' : '';
     const publishedVal = recs.length > 0 ? recs[0].value : '';
-    const r = window.compareSpfRecords(recommended, publishedVal);
+    const r = window.compareSpfRecords(recommended, publishedVal, rootDns && rootDns.spf_analysis);
     const val = publishedVal || recommended;
     rows += `<tr>
       <td>${statusBadge(r.status, r.cls)}</td>
@@ -1674,7 +1674,7 @@ async function loadDomainMail() {
   const spfRecs = window.getDnsRecs(rootDns, 'TXT').filter(r => typeof r.value === 'string' && r.value.startsWith('v=spf1'));
   const spfRecommended = 'v=spf1 mx ~all';
   const spfPublished = spfRecs.length > 0 ? spfRecs[0].value : '';
-  const spfStatus = window.computeRecordStatus(spfRecommended, spfPublished, (a,b) => window.normalizeDnsValue(a) === window.normalizeDnsValue(b));
+  const spfStatus = window.compareSpfRecords(spfRecommended, spfPublished, rootDns && rootDns.spf_analysis);
 
   const dkimRecs = dkimDns ? window.getDnsRecs(dkimDns, 'TXT') : [];
   const dkimKey = mailDomain.dkim_public_key_dns || '';

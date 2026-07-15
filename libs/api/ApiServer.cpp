@@ -468,21 +468,36 @@ bool ApiServer::start() {
         // SPF analysis (semantic, not string comparison)
         {
             dns::SpfAnalyzer spf;
-            // Find the first TXT record that looks like SPF
+            // Find ALL TXT records that look like SPF (for duplicate detection)
             std::string spf_record;
+            int spf_count = 0;
             for (const auto& pt : result.per_type) {
                 if (pt.type == "TXT") {
                     for (const auto& rec : pt.records) {
-                        if (rec.value.size() >= 7 && rec.value.substr(0, 7) == "v=spf1") {
+                        if (rec.value.size() >= 6 && rec.value.substr(0, 6) == "v=spf1") {
                             spf_record = rec.value;
-                            break;
+                            spf_count++;
+                            if (spf_count > 1) break;  // found duplicate
                         }
                     }
                 }
-                if (!spf_record.empty()) break;
+                if (spf_count > 1) break;
             }
-            result.spf_analysis = spf.analyze(spf_record, result.expected_ipv4,
-                                                result.expected_ipv6, domain);
+            if (spf_count > 1) {
+                // Duplicate SPF: populate error analysis manually
+                result.spf_analysis.status = "error";
+                result.spf_analysis.match = "error";
+                result.spf_analysis.record = spf_record;
+                result.spf_analysis.errors.push_back("Multiple SPF records found (" + std::to_string(spf_count) + ")");
+                dns::SpfCheck spf_check;
+                spf_check.code = "spf_syntax";
+                spf_check.status = "error";
+                spf_check.reason = "Duplicate SPF records: " + std::to_string(spf_count) + " TXT records start with v=spf1";
+                result.spf_analysis.checks.push_back(spf_check);
+            } else {
+                result.spf_analysis = spf.analyze(spf_record, result.expected_ipv4,
+                                                    result.expected_ipv6, domain);
+            }
         }
 
         // Build JSON response
