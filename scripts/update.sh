@@ -42,11 +42,13 @@ cmake -S "$INSTALL_DIR" -B "$INSTALL_DIR/build-release" -DCMAKE_BUILD_TYPE=Relea
 echo "[SYSTEM] Building..."
 cmake --build "$INSTALL_DIR/build-release"
 
-# --- 4. Build Docker images if Dockerfiles changed ---
-# PHP image
+# --- 4. Build ContainerCP PHP image if available ---
 PHP_IMAGE="ghcr.io/powern/containercp-php:8.4"
 if [ -f "$INSTALL_DIR/docker/php/Dockerfile" ]; then
     echo "[SYSTEM] Building ContainerCP PHP image..."
+    if docker image inspect "$PHP_IMAGE" >/dev/null 2>&1; then
+        echo "[SYSTEM] PHP image $PHP_IMAGE already exists, rebuilding..."
+    fi
     docker build \
         -t "$PHP_IMAGE" \
         --build-arg PHP_VERSION=8.4 \
@@ -55,33 +57,22 @@ if [ -f "$INSTALL_DIR/docker/php/Dockerfile" ]; then
     echo "[SYSTEM] PHP image built: $PHP_IMAGE"
 fi
 
-# Mail stack images
-for df in "$INSTALL_DIR/docker/mail/Dockerfile".*; do
-    img_name=$(basename "$df" | sed 's/Dockerfile\./ghcr.io\/containercp\/mail-/')
-    img_tag="$img_name:latest"
-    if [ -f "$df" ]; then
-        echo "[SYSTEM] Building $img_tag..."
-        docker build -t "$img_tag" -f "$df" "$INSTALL_DIR" 2>&1 | tail -3
-        echo "[SYSTEM] $img_tag built"
-    fi
-done
-
 # --- 5. Stop service before installing ---
 echo "[SYSTEM] Stopping containercpd..."
 systemctl stop "$SERVICE" 2>/dev/null || true
 
-# --- 6. Install binaries ---
+# --- 5. Install binaries ---
 echo "[SYSTEM] Installing updated binaries..."
 cp "$INSTALL_DIR/build-release/containercpd" "$BIN_DIR/containercpd"
 cp "$INSTALL_DIR/build-release/containercp" "$BIN_DIR/containercp"
 chmod 755 "$BIN_DIR/containercpd" "$BIN_DIR/containercp"
 
-# --- 7. Start service ---
+# --- 6. Start service ---
 echo "[SYSTEM] Starting containercpd..."
 systemctl daemon-reload
 systemctl start "$SERVICE"
 
-# --- 8. Wait for daemon and verify health ---
+# --- 7. Wait for daemon and verify health ---
 echo "[SYSTEM] Waiting for daemon to become ready..."
 for i in $(seq 1 10); do
     sleep 1
@@ -95,7 +86,7 @@ for i in $(seq 1 10); do
     fi
 done
 
-# --- 9. Show status ---
+# --- 8. Show status ---
 if systemctl is-active --quiet "$SERVICE"; then
     echo "[SYSTEM] Update complete. containercpd is running."
     systemctl status "$SERVICE" --no-pager 2>&1 | head -20
