@@ -1994,12 +1994,14 @@ bool ApiServer::start() {
             r.body = "{\"success\":false,\"error\":\"Only mail-status is available via GET\"}";
             return r;
         }
-        auto status = s.mail_orchestrator().get_status(parsed.site_id, parsed.site->domain);
+        auto status = s.mail_orchestrator().get_status(
+            parsed.site_id, parsed.site->domain, parsed.site->php_mail_enabled);
+        auto* md = s.mail().find_by_domain(parsed.site->domain);
         r.body = "{\"success\":true,\"data\":{"
             "\"site_id\":" + std::to_string(parsed.site_id) + ","
             "\"domain\":\"" + JsonFormatter::escape(parsed.site->domain) + "\","
             "\"enabled\":" + (status.enabled ? "true" : "false") + ","
-            "\"mail_domain\":" + (status.domain_id > 0 ? "true" : "false") + ","
+            "\"mail_domain\":" + (md ? "true" : "false") + ","
             "\"credential_exists\":" + (status.credential_exists ? "true" : "false") + ","
             "\"msmtprc\":" + (status.msmtprc_exists ? "true" : "false") + ","
             "\"network\":" + (status.network_connected ? "true" : "false") + "}}";
@@ -2069,10 +2071,10 @@ bool ApiServer::start() {
             return {true, ""};
         };
 
-        // Rollback helper for enable-mail failures: fully cleans up to Disabled state
+        // Rollback helper for enable-mail failures
         auto rollback_enable_mail = [&](uint64_t sid, const std::string& dm) {
-            s.mail().disable_for_site(sid);
-            s.mail_orchestrator().disable_mail(sid);
+            site->php_mail_enabled = false;
+            s.mail_orchestrator().disable_mail(sid, dm);
             auto comp = regenerate_compose(false);
             if (!comp.success) {
                 s.logger().warning("MAIL", "Rollback compose regeneration failed: " + comp.message);
@@ -2081,10 +2083,16 @@ bool ApiServer::start() {
         };
 
         if (action == "enable-mail") {
-            // 1. Ensure MailDomain in correct state
-            s.mail().enable_for_site(site_id, site->domain);
+            // 1. MailDomain must exist (created separately via Mail → Domains)
+            auto* md = s.mail().find_by_domain(site->domain);
+            if (!md || !md->enabled) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"mail_domain_missing\","
+                    "\"message\":\"Mail Domain not found. Create one via Mail → Domains first.\"}";
+                return r;
+            }
 
-            // 2. Regenerate compose with mail_active=true (validates with compose config)
+            // 2. Regenerate compose with mail_active=true
             auto comp = regenerate_compose(true);
             if (!comp.success) {
                 rollback_enable_mail(site_id, site->domain);
@@ -2093,7 +2101,7 @@ bool ApiServer::start() {
                 return r;
             }
 
-            // 3. Create credentials, msmtprc, connect network, sync Postfix/Dovecot
+            // 3. Create credentials, msmtprc, connect network, sync
             auto result = s.mail_orchestrator().enable_mail(site_id, site->domain);
             if (!result.success) {
                 rollback_enable_mail(site_id, site->domain);
@@ -2103,7 +2111,6 @@ bool ApiServer::start() {
             }
 
             // 4. Pull latest PHP image and recreate container
-            //    (applies msmtprc volume mount, new image with msmtp, mail network)
             {
                 runtime::CommandExecutor exec;
                 exec.run({
@@ -2125,6 +2132,7 @@ bool ApiServer::start() {
                 }
             }
 
+            site->php_mail_enabled = true;
             s.save();
             r.body = "{\"success\":true,\"data\":{\"message\":\"Mail enabled for site " + site->domain + "\"}}";
             return r;
@@ -2132,20 +2140,20 @@ bool ApiServer::start() {
 
         if (action == "disable-mail") {
             // 1. Remove credentials, msmtprc, disconnect network FIRST
-            //    (compose unchanged — if removal fails, compose is still valid)
-            auto result = s.mail_orchestrator().disable_mail(site_id);
+            auto result = s.mail_orchestrator().disable_mail(site_id, site->domain);
             if (!result.success) {
                 r.status_code = 500;
                 r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
                 return r;
             }
 
-            // 2. Regenerate compose without mail (removes msmtprc volume, mail network)
+            // 2. Regenerate compose without mail
             auto comp = regenerate_compose(false);
             if (!comp.success) {
-                // Non-fatal: credentials are removed, compose still has mail config
                 s.logger().warning("MAIL", "Compose regeneration after disable failed: " + comp.message);
             }
+
+            site->php_mail_enabled = false;
 
             s.save();
             r.body = "{\"success\":true,\"data\":{\"message\":\"Mail disabled for site " + site->domain + "\"}}";

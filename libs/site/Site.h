@@ -16,6 +16,7 @@ struct Site : core::Resource {
     std::string db_user;
     std::string db_password;
     std::string web_server = "apache";
+    bool php_mail_enabled = false;
 };
 
 } // namespace containercp::site

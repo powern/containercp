@@ -24,7 +24,7 @@ ServiceRegistry::ServiceRegistry()
     , renewal_scheduler_(logger_, cert_store_, jobs_, job_executor_, cert_providers_)
     , auth_(*this)
     , runtime_(logger_, config_.sites_dir())
-    , mail_orchestrator_(mail_, mail_credentials_, runtime_, filesystem_, config_)
+    , mail_orchestrator_(mail_credentials_, runtime_, filesystem_, config_)
     , runtime_action_executor_(logger_)
     , site_runtime_(logger_, config_.sites_dir(), runtime_action_executor_)
     , proxy_view_(logger_, reverse_proxies_, sites_, cert_store_, proxy_provider_, site_runtime_)
@@ -466,24 +466,15 @@ void ServiceRegistry::start() {
     sync_all_https_configs();
 
     // Mail configuration recovery: regenerate config and ensure connectivity
-    if (!mail_.list().empty()) {
-        // Regenerate mail server config (Postfix main.cf, Dovecot, Rspamd) from
-        // canonical code. This applies any code-level changes (e.g., milter protocol
-        // version) to the running mail stack.
+    // for sites that have PHP Mail enabled.
+    {
         auto sync_result = runtime_sync_.sync("mail");
         if (!sync_result.success) {
             logger_.warning("MAIL", "Mail config regeneration at startup: " + sync_result.message);
         }
 
         for (const auto& site : sites_.list()) {
-            bool has_mail = false;
-            for (const auto& md : mail_.list()) {
-                if (md.site_id == site.id && md.enabled) {
-                    has_mail = true;
-                    break;
-                }
-            }
-            if (has_mail) {
+            if (site.php_mail_enabled) {
                 runtime_.connect_mail_network(site.id, site.domain);
             }
         }

@@ -600,6 +600,7 @@ function renderPhpMailCard(siteId, domain, mailStatus) {
   const credExists = s.credential_exists;
   const msmtprc = s.msmtprc;
   const network = s.network;
+  const hasMailDomain = s.mail_domain;
   const allOk = enabled && credExists && msmtprc && network;
 
   let statusText, statusColor;
@@ -631,7 +632,8 @@ function renderPhpMailCard(siteId, domain, mailStatus) {
           <span style="font-size:12px;font-weight:600;color:${statusColor};">● ${statusText}</span>
         </div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px;margin-bottom:8px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;font-size:12px;margin-bottom:8px;">
+        <div><span style="color:var(--text3)">Mail Domain:</span> ${hasMailDomain ? '✅' : '❌'}</div>
         <div><span style="color:var(--text3)">Credentials:</span> ${credExists ? '✅' : '❌'}</div>
         <div><span style="color:var(--text3)">msmtprc:</span> ${msmtprc ? '✅' : '❌'}</div>
         <div><span style="color:var(--text3)">Network:</span> ${network ? '✅' : '❌'}</div>
@@ -655,10 +657,32 @@ async function enablePhpMail(siteId, domain) {
   try {
     const r = await apiPost('/api/sites/' + siteId + '/enable-mail');
     if (r.success) {
-      // Refresh mail status
       const ms = await api('/api/sites/' + siteId + '/mail-status');
       renderPhpMailCard(siteId, domain, ms);
       if (el) el.innerHTML = '<span style="color:var(--green,#22c55e)">✅ PHP mail enabled</span>';
+    } else if (r.error === 'mail_domain_missing') {
+      // MailDomain does not exist — offer to create it
+      if (confirm('Mail Domain for ' + domain + ' does not exist.\n\nCreate it now and configure DKIM?')) {
+        if (el) el.innerHTML = '<span style="color:var(--text3)">Creating Mail Domain...</span>';
+        // Create MailDomain via existing API
+        const md = await apiPost('/api/mail/domains', {domain: domain, mode: 'local-primary'});
+        if (md.success) {
+          // Generate DKIM
+          await apiPost('/api/mail/domains/' + md.data.id + '/dkim/generate');
+          if (el) el.innerHTML = '<span style="color:var(--green,#22c55e)">✅ Mail Domain created. Open Mail → Domains to copy DKIM DNS record. Enabling PHP mail...</span>';
+          // Retry enable-mail
+          const retry = await apiPost('/api/sites/' + siteId + '/enable-mail');
+          if (retry.success) {
+            const ms = await api('/api/sites/' + siteId + '/mail-status');
+            renderPhpMailCard(siteId, domain, ms);
+            if (el) el.innerHTML = '<span style="color:var(--green,#22c55e)">✅ PHP mail enabled. For better deliverability, add DKIM DNS record in Mail → Domains.</span>';
+          } else {
+            if (el) el.innerHTML = '<span style="color:#ef4444">❌ ' + (retry.error||'Enable failed') + '</span>';
+          }
+        } else {
+          if (el) el.innerHTML = '<span style="color:#ef4444">❌ ' + (md.error||'Create Mail Domain failed') + '</span>';
+        }
+      }
     } else {
       if (el) el.innerHTML = '<span style="color:#ef4444">❌ ' + (r.error||'Failed') + '</span>';
     }

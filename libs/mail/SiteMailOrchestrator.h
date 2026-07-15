@@ -2,11 +2,11 @@
 #define CONTAINERCP_MAIL_SITE_MAIL_ORCHESTRATOR_H
 
 #include "core/OperationResult.h"
-#include "mail/MailDomainManager.h"
 #include "mail/SiteMailCredentials.h"
 #include "runtime/Runtime.h"
 #include "filesystem/Filesystem.h"
 #include "config/Config.h"
+#include "site/SiteManager.h"
 
 #include <cstdint>
 #include <string>
@@ -15,7 +15,6 @@ namespace containercp::mail {
 
 struct SiteMailStatus {
     bool enabled = false;
-    uint64_t domain_id = 0;
     std::string username;
     std::string envelope_sender;
     bool credential_exists = false;
@@ -25,23 +24,22 @@ struct SiteMailStatus {
 
 class SiteMailOrchestrator {
 public:
-    SiteMailOrchestrator(MailDomainManager& mail_domains,
-                         SiteMailCredentials& credentials,
+    SiteMailOrchestrator(SiteMailCredentials& credentials,
                          runtime::Runtime& rt,
                          filesystem::Filesystem& fs,
                          config::Config& cfg);
 
     core::OperationResult enable_mail(uint64_t site_id,
                                        const std::string& domain,
-                                       const std::string& envelope_sender = "",
-                                       MailDomainMode mode = MailDomainMode::LocalPrimary);
+                                       const std::string& envelope_sender = "");
 
-    core::OperationResult disable_mail(uint64_t site_id);
+    core::OperationResult disable_mail(uint64_t site_id,
+                                        const std::string& domain = "");
 
-    SiteMailStatus get_status(uint64_t site_id, const std::string& domain);
+    SiteMailStatus get_status(uint64_t site_id, const std::string& domain,
+                               bool enabled);
 
 private:
-    MailDomainManager& mail_domains_;
     SiteMailCredentials& credentials_;
     runtime::Runtime& rt_;
     filesystem::Filesystem& fs_;

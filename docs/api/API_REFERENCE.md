@@ -465,21 +465,24 @@ placeholder data.  This is a known limitation.
 **POST /api/sites/<id>/enable-mail**
 
 Creates per-site mail configuration:
-- `MailDomain` record linked to the site's primary domain
 - Dovecot SASL credentials in `/etc/dovecot/passwd-php` (separate from mailbox passwd)
 - `msmtprc` with fixed envelope sender (`wordpress@domain`, `allow_from_override off`)
-- Postfix `sender_login` exact-match entry (`site-{ID}@php.containercp.internal → wordpress@domain`)
+- Postfix `sender_login` exact-match entry (`wordpress@domain → site-{ID}@php.containercp.internal`)
 - Site's `docker-compose.yml` updated: adds `containercp-mail` to PHP service networks + top-level networks section
-- `docker compose up -d --no-recreate` applied to activate the network change
+- `docker compose up -d --force-recreate php` applied to activate volume mount + network
 - PHP container connected to `containercp-mail` Docker network (runtime)
 - Postfix + Dovecot reload to activate changes
+- Sets `site.php_mail_enabled = true`
+
+**Prerequisite:** A `MailDomain` must exist for the site's domain (created via `POST /api/mail/domains`).
+PHP Mail does NOT create a MailDomain automatically.
 
 After enable-mail, the `containercp-mail` network is persistent in compose. Any `docker compose up -d` or container recreate will automatically reconnect the PHP container to the mail network.
 
 Idempotent — safe to call multiple times. No site files (WordPress, DB, proxy, SSL) are modified.
 
 **Error responses:**
-- 400 — Invalid site ID (non-numeric)
+- 400 — `{"error":"mail_domain_missing","message":"Mail Domain not found. Create one via Mail → Domains first."}`
 - 404 — Site not found
 - 500 — Compose file update failed (malformed YAML, write error, docker compose up failure)
 
@@ -497,7 +500,10 @@ Removes per-site mail configuration:
 - Removes `containercp-mail` from site's `docker-compose.yml`
 - Applies `docker compose up -d` to deactivate the network
 - Disconnects PHP container from `containercp-mail` network (runtime)
-- Sets `MailDomain` mode to `Disabled` (preserves data for re-enable)
+- Sets `site.php_mail_enabled = false`
+
+**Does NOT modify:** MailDomain, DKIM, mailboxes, aliases, DNS config, SPF, DMARC.
+These are independent of PHP Mail.
 
 **Response:**
 ```json
@@ -544,7 +550,7 @@ Email content is written to a temp file and piped via `run_with_stdin_file`.
 
 **GET /api/sites/<id>/mail-status**
 
-Returns current mail state for a site.
+Returns current PHP Mail state for a site.
 
 **Response:**
 ```json
@@ -563,8 +569,8 @@ Returns current mail state for a site.
 ```
 
 Fields:
-- `enabled` — `MailDomain.mode != Disabled`
-- `mail_domain` — `MailDomain` record exists
+- `enabled` — `Site.php_mail_enabled` (independent of MailDomain)
+- `mail_domain` — `MailDomain` record exists for this domain (informational, created via Mail → Domains)
 - `credential_exists` — Dovecot `passwd-php` has entry for this site
 - `msmtprc` — `config/php/msmtprc` file exists on disk
 - `network` — PHP container is connected to `containercp-mail` network

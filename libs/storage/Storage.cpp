@@ -112,7 +112,8 @@ void Storage::save_sites(const std::vector<site::Site>& sites) {
     std::ofstream file(sites_file());
     for (const auto& s : sites) {
         file << s.id << "|" << s.domain << "|" << s.owner << "|"
-             << s.node_id << "|" << s.web_server << "\n";
+             << s.node_id << "|" << s.web_server << "|"
+             << (s.php_mail_enabled ? "1" : "0") << "\n";
     }
 }
 
@@ -133,6 +134,7 @@ std::vector<site::Site> Storage::load_sites() {
         if (std::getline(ss, token, '|')) s.owner = token;
         if (std::getline(ss, token, '|')) s.node_id = std::stoull(token);
         if (std::getline(ss, token, '|')) s.web_server = token.empty() ? "apache" : token;
+        if (std::getline(ss, token, '|')) s.php_mail_enabled = (token == "1");
         s.name = s.domain;
         sites.push_back(std::move(s));
     }
