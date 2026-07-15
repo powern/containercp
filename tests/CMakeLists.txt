@@ -9,6 +9,7 @@ add_executable(containercp_tests
     test_storage.cpp
     test_api.cpp
     test_daemon.cpp
+    test_dns_service.cpp
     test_template.cpp
     test_runtime.cpp
     test_runtime_sync.cpp
@@ -30,6 +31,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/domain/Domain.cpp
     ${CMAKE_SOURCE_DIR}/libs/domain/DomainManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/domain/DomainViewService.cpp
+    ${CMAKE_SOURCE_DIR}/libs/dns/DnsCheckService.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/DatabaseManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/Database.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/AccessUser.cpp
@@ -96,6 +98,7 @@ target_compile_options(containercp_tests PRIVATE
 )
 
 target_link_libraries(containercp_tests PRIVATE
+    cares
     curl
     ssl
     crypto

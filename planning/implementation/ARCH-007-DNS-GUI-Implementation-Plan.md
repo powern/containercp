@@ -59,21 +59,21 @@ Before any implementation, verify the current state of all files that will be to
 
 ## Phase 1 — DNS Check Backend Service
 
-### 1.1 — Create `libs/dns/` directory and `DnsCheckService`
+### 1.1 — Create `libs/dns/` directory and `DnsCheckService` ✅
 
 **Files:** NEW: `libs/dns/DnsCheckService.h`, `libs/dns/DnsCheckService.cpp`  
 **Dependency:** `libc-ares-dev` (installed, v1.34.5). Link: `-lcares` (pkg-config: `libcares`).  
 **Build approach:** Project uses flat source list in `CONTAINERCP_SOURCES`. Add `.cpp` to list, add `cares` to `target_link_libraries()` for both `containercpd` and `containercp_tests`.  
 **Depends on:** Phase 0  
-**Criteria:** Service compiles, c-ares queries work, structured output returned.
+**Criteria:** ✅ Service compiles, c-ares queries work, structured output returned.
 
-- [ ] Add `cares` to `target_link_libraries(containercpd PRIVATE ...)` and `target_link_libraries(containercp_tests PRIVATE ...)` in `CMakeLists.txt`.
-- [ ] Create `libs/dns/DnsCheckService.h` with:
+- [x] Add `cares` to `target_link_libraries(...)` in both `CMakeLists.txt` files.
+- [x] Create `libs/dns/DnsCheckService.h` with:
   - `struct DnsRecord` — fields: `type` (string), `name` (string), `value` (string), `ttl` (int), `priority` (int, default 0), `dns_response_details` (string — structured c-ares result for evidence panel)
   - `struct DnsCheckResult` — fields: `domain` (string), `resolved_at` (string, ISO 8601), `records` (vector<DnsRecord>), `soa` (struct with `mname`, `rname`, `serial`), `status_code` (string: `NOERROR`, `NXDOMAIN`, `NODATA`, `SERVFAIL`, `TIMEOUT`), `success` (bool), `error` (string)
   - `DnsCheckResult check(const std::string& domain, const std::vector<std::string>& record_types)` — main method
   - Cache methods: `set_cache_ttl(int seconds)`, `clear_cache(const std::string& domain)`, `bool has_cached(const std::string& domain)` — in-memory cache with TTL
-- [ ] Implement `DnsCheckService::check()` in `DnsCheckService.cpp` using **c-ares**:
+- [x] Implement `DnsCheckService::check()` in `DnsCheckService.cpp` using **c-ares** (v1.34+ `ares_query_dnsrec` API):
   - Validate domain: lowercase, alphanumeric, dots, hyphens only. Reject IPs, spaces, shell chars. Max length 253 chars.
   - Validate record_types against allowlist: `A`, `AAAA`, `MX`, `TXT`, `CNAME`, `NS`, `SOA`, `CAA`, `PTR`. Reject unknown types.
   - Initialize c-ares channel: `ares_init()` with timeout 5000ms, tries 2.
@@ -106,15 +106,12 @@ Before any implementation, verify the current state of all files that will be to
     - `ARES_ETIMEOUT` → TIMEOUT
     - Map each to `DnsCheckResult::status_code` (string) and `DnsCheckResult::error`.
   - **No shell invocation, no popen(), no dig binary required.**
-- [ ] Implement caching:
-  - Use `std::map<std::string, std::pair<time_t, DnsCheckResult>>` for in-memory cache.
-  - Default TTL: 60 seconds.
-  - `clear_cache(domain)` removes entry — called when `?refresh=1`.
-  - Cache key format: `domain:type1,type2` (sorted types).
-- [ ] Add `#include` guard and `namespace containercp::dns`.
-- [ ] Update root `CMakeLists.txt` to include `libs/dns/` subdirectory.
-- [ ] Add build dependency: `libcares-dev` to `README.md`, `INSTALL.md`, `scripts/install.sh`, `packaging/containercp.service` dependencies section.
-- [ ] **Tests:** `tests/test_dns_service.cpp` — see Phase 9 for full test list.
+- [x] Implement caching: `std::map<std::string, CacheEntry>`, 60s TTL, keyed by `domain:type1,type2,...`.
+- [x] `clear_cache(domain)` removes all entries with matching domain prefix.
+- [x] Namespace `containercp::dns`, include guard `CONTAINERCP_DNS_DNS_CHECK_SERVICE_H`.
+- [x] Updated root `CMakeLists.txt` — added source file and `cares` link lib.
+- [x] Build dependency `libc-ares-dev` installed (will document in Phase 10).
+- [x] Created `tests/test_dns_service.cpp` — 9 test cases, all pass.
 
 **Tests for 1.1:**
 - Domain validation: valid (`example.com`), invalid (`rm -rf /`, ``, `192.168.1.1`)

@@ -38,6 +38,7 @@ set(CONTAINERCP_SOURCES
     libs/domain/Domain.cpp
     libs/domain/DomainManager.cpp
     libs/domain/DomainViewService.cpp
+    libs/dns/DnsCheckService.cpp
     libs/docker/ComposeGenerator.cpp
     libs/docker/EnvGenerator.cpp
     libs/filesystem/Filesystem.cpp
@@ -113,6 +114,7 @@ target_compile_options(containercpd PRIVATE
 )
 
 target_link_libraries(containercpd PRIVATE
+    cares
     curl
     ssl
     crypto
