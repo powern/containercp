@@ -466,7 +466,6 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
 
     dkim_out << "# ContainerCP generated Rspamd DKIM signing configuration\n"
              << "# Do not edit manually — changes will be overwritten.\n\n"
-             << "enabled = true;\n"
              << "sign_authenticated = true;\n"
              << "sign_local = true;\n"
              << "allow_hdrfrom_mismatch = false;\n"
@@ -500,48 +499,24 @@ core::OperationResult DockerMailProvider::write_rspamd_config(
 
     dkim_out << "}\n";
 
-    // dkim_fixup.lua — ensure DKIM_CHECK is evaluated for auth/local users.
-    // Required because dkim_signing.lua registers a dependency on DKIM_CHECK,
-    // but the DKIM verification module skips it for authenticated/local users.
+    // settings.conf override: force DKIM_CHECK for authenticated users.
+    // Without this, dkim_signing.lua (which depends on DKIM_CHECK) never runs
+    // because the DKIM verification module skips authenticated/local users.
     {
         executor_.run({"mkdir", "-p", conf_dir});
-        std::string lua_fix = conf_dir + "/dkim_fixup.lua";
-        std::ofstream lua_out(lua_fix);
-        if (!lua_out.is_open()) return {false, "Failed to write " + lua_fix};
-        lua_out << "local function dkim_check_force_cb(task)\n"
-                << "  local auth = task:get_user()\n"
-                << "  local loc = task:has_flag('local')\n"
-                << "  if auth or loc then\n"
-                << "    task:insert_result('DKIM_CHECK', 0.0)\n"
-                << "  end\n"
-                << "end\n"
-                << "rspamd_config:register_symbol({\n"
-                << "  name = 'DKIM_CHECK',\n"
-                << "  callback = dkim_check_force_cb,\n"
-                << "  flags = 'empty',\n"
-                << "  score = 0.0,\n"
-                << "  group = 'dkim',\n"
-                << "})\n";
-
-        // rspamd_wrapper.lua — loads main rspamd.lua then our fixup
-        {
-            std::string wrap_path = conf_dir + "/rspamd_wrapper.lua";
-            std::ofstream wrap_out(wrap_path);
-            if (!wrap_out.is_open()) return {false, "Failed to write " + wrap_path};
-            wrap_out << "dofile(\"/usr/share/rspamd/rules/rspamd.lua\")\n"
-                     << "dofile(\"" << lua_fix << "\")\n";
-        }
-
-        // rspamd.conf.override — override lua at priority 10 (highest)
-        // NOTE: using override.d/ instead of local.d/ because Rspamd processes
-        // lua immediately when encountered; priority 10 forces override even
-        // if lua was already loaded from common.conf.
-        {
-            std::string rcl_path = conf_dir + "/rspamd.conf.override";
-            std::ofstream rcl_out(rcl_path);
-            if (!rcl_out.is_open()) return {false, "Failed to write " + rcl_path};
-            rcl_out << "lua = \"" << conf_dir << "/rspamd_wrapper.lua\";\n";
-        }
+        std::string settings_local = conf_dir + "/settings.conf";
+        std::ofstream settings_out(settings_local);
+        if (!settings_out.is_open()) return {false, "Failed to write " + settings_local};
+        settings_out << "# ContainerCP generated settings override\n"
+                     << "# Forces DKIM_CHECK for authenticated users so that\n"
+                     << "# dkim_signing (which depends on DKIM_CHECK) can run.\n\n"
+                     << "authenticated_mail {\n"
+                     << "  priority = high;\n"
+                     << "  authenticated = true;\n"
+                     << "  apply {\n"
+                     << "    symbols_enabled = [\"R_DKIM_ALLOW\", \"R_DKIM_NA\", \"DKIM_CHECK\"];\n"
+                     << "  }\n"
+                     << "}\n";
     }
 
     // logging.inc — log to stderr for Docker
@@ -695,12 +670,10 @@ core::OperationResult DockerMailProvider::write_docker_compose() {
         << "      - containercp-mail\n"
         << "    volumes:\n"
         << "      - " << config_dir() << "/generated/rspamd/dkim_signing.conf:/etc/rspamd/local.d/dkim_signing.conf:ro\n"
-        << "      - " << config_dir() << "/generated/rspamd/worker-normal.inc:/etc/rspamd/local.d/worker-normal.inc:ro\n"
-        << "      - " << config_dir() << "/generated/rspamd/worker-proxy.inc:/etc/rspamd/local.d/worker-proxy.inc:ro\n"
-        << "      - " << config_dir() << "/generated/rspamd/logging.inc:/etc/rspamd/local.d/logging.inc:ro\n"
-        << "      - " << config_dir() << "/generated/rspamd/dkim_fixup.lua:/etc/rspamd/local.d/dkim_fixup.lua:ro\n"
-       << "      - " << config_dir() << "/generated/rspamd/rspamd_wrapper.lua:/etc/rspamd/local.d/rspamd_wrapper.lua:ro\n"
-       << "      - " << config_dir() << "/generated/rspamd/rspamd.conf.override:/etc/rspamd/override.d/rspamd.conf.override:ro\n"
+       << "      - " << config_dir() << "/generated/rspamd/settings.conf:/etc/rspamd/local.d/settings.conf:ro\n"
+       << "      - " << config_dir() << "/generated/rspamd/worker-normal.inc:/etc/rspamd/local.d/worker-normal.inc:ro\n"
+       << "      - " << config_dir() << "/generated/rspamd/worker-proxy.inc:/etc/rspamd/local.d/worker-proxy.inc:ro\n"
+       << "      - " << config_dir() << "/generated/rspamd/logging.inc:/etc/rspamd/local.d/logging.inc:ro\n"
        << "      - " << config_dir() << "/state/dkim/:/etc/rspamd/keys/:ro\n"
         << "  redis:\n"
         << "    image: redis:7-alpine\n"
