@@ -1827,6 +1827,9 @@ async function refreshMailTab() {
 // ===== SECURITY TAB =====
 let _dmarcSelection = '';
 
+// Track open evidence panels (accordion: only one at a time)
+let _openEvidencePanel = null;
+
 // Reason codes for Evidence panels
 function getEvidenceReason(recordType, configured, published, domain) {
   const reasons = {
@@ -2010,6 +2013,12 @@ function loadDomainSecurity() {
 
 window.selectDmarcPolicy = function(policy, value) {
   _dmarcSelection = value;
+  // Close any open evidence panel when changing policy
+  if (_openEvidencePanel) {
+    const oldPanel = document.getElementById(_openEvidencePanel);
+    if (oldPanel) oldPanel.remove();
+    _openEvidencePanel = null;
+  }
   loadDomainSecurity();
 };
 
@@ -2018,11 +2027,26 @@ window.showMtaStsEvidence = function() {
   if (!dd) return;
   const content = document.getElementById('security-tab-content');
   if (!content) return;
+
+  // Accordion: close any open panel
+  if (_openEvidencePanel) {
+    const oldPanel = document.getElementById(_openEvidencePanel);
+    if (oldPanel) oldPanel.remove();
+    _openEvidencePanel = null;
+  }
+
+  // Generate unique ID for this evidence panel
+  const panelId = 'evidence-mta-sts';
   const evidence = buildEvidenceHtml('MTA_STS_NOT_FOUND', 'v=STSv1; id=1', '(not checked)', dd.domainRow.domain, '', 'v=STSv1; id=1');
+  const container = document.createElement('div');
+  container.id = panelId;
+  container.innerHTML = evidence;
+
   // Insert after the MTA-STS card
   const mtaCard = content.querySelector('.card h3');
   if (mtaCard && mtaCard.textContent === 'MTA-STS') {
-    mtaCard.closest('.card').insertAdjacentHTML('afterend', evidence);
+    mtaCard.closest('.card').after(container);
+    _openEvidencePanel = panelId;
   }
 };
 function loadDomainHealth() {
