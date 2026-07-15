@@ -1947,7 +1947,7 @@ bool ApiServer::start() {
         return r;
     });
 
-    // PATCH /api/mail/domains/<id> — update a mail domain (transactional)
+    // PATCH /api/mail/domains/<id> — update a mail domain (transactional, no partial mutation)
     router_.add_prefix("PATCH", "/api/mail/domains/", [&s, &mail_domain_json](const Request& req) {
         Response r;
         std::string id_str = req.path.substr(std::string("/api/mail/domains/").size());
@@ -1966,21 +1966,19 @@ bool ApiServer::start() {
             return r;
         }
 
-        // Snapshot old state for rollback
-        auto old_mode = m->mode;
-        bool old_enabled = m->enabled;
-        std::string old_relay = m->relay_host;
+        // Validate all input into temporary variables — NO mutation of m yet
+        auto new_mode = m->mode;
+        bool new_enabled = m->enabled;
+        std::string new_relay = m->relay_host;
 
-        // Validate and apply changes
         std::string mode_str = json_extract(req.body, "mode");
-        bool mode_changed = !mode_str.empty();
-        if (mode_changed) {
+        if (!mode_str.empty()) {
             if (!mail::is_valid_mail_domain_mode(mode_str)) {
                 r.status_code = 400;
                 r.body = "{\"success\":false,\"error\":\"Invalid mode. Valid: disabled, local-primary, external-relay, split-m365\"}";
                 return r;
             }
-            m->mode = mail::mail_domain_mode_from_string(mode_str);
+            new_mode = mail::mail_domain_mode_from_string(mode_str);
         }
 
         std::string enabled_str = json_extract(req.body, "enabled");
@@ -1990,47 +1988,54 @@ bool ApiServer::start() {
                 r.body = "{\"success\":false,\"error\":\"enabled must be boolean true or false\"}";
                 return r;
             }
-            m->enabled = (enabled_str == "true");
+            new_enabled = (enabled_str == "true");
         }
 
         std::string relay_host = json_extract(req.body, "relay_host");
-        if (!relay_host.empty() && relay_host != "null") {
-            bool valid = true;
-            for (char c : relay_host) {
-                if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '-' && c != ':') {
-                    valid = false; break;
+        if (!relay_host.empty()) {
+            if (relay_host == "null") {
+                new_relay.clear();
+            } else {
+                bool valid = true;
+                for (char c : relay_host) {
+                    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '-' && c != ':') {
+                        valid = false; break;
+                    }
                 }
+                if (!valid) {
+                    r.status_code = 400;
+                    r.body = "{\"success\":false,\"error\":\"Invalid relay_host format\"}";
+                    return r;
+                }
+                new_relay = relay_host;
             }
-            if (!valid) {
-                r.status_code = 400;
-                r.body = "{\"success\":false,\"error\":\"Invalid relay_host format\"}";
-                return r;
-            }
-            m->relay_host = relay_host;
         }
 
-        // Validate final mode+relay combination
-        std::string vr = mail::MailDomainManager::validate_mode_relay(m->mode, m->relay_host);
+        // Validate final mode+relay combination (against new_* values, NOT m)
+        std::string vr = mail::MailDomainManager::validate_mode_relay(new_mode, new_relay);
         if (!vr.empty()) {
-            // Rollback in-memory changes
-            m->mode = old_mode;
-            m->enabled = old_enabled;
-            m->relay_host = old_relay;
             r.status_code = 400;
             r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(vr) + "\"}";
             return r;
         }
 
+        // All validation passed — snapshot old state for sync-rollback, then mutate m
+        auto old_mode = m->mode;
+        bool old_enabled = m->enabled;
+        std::string old_relay = m->relay_host;
+
+        m->mode = new_mode;
+        m->enabled = new_enabled;
+        m->relay_host = new_relay;
+
         // Persist + sync with rollback on failure
         s.save();
         auto sync_result = s.runtime_sync().sync("mail");
         if (!sync_result.success) {
-            // Rollback: restore old state
             m->mode = old_mode;
             m->enabled = old_enabled;
             m->relay_host = old_relay;
             s.save();
-            // Attempt to restore previous config
             (void)s.runtime_sync().sync("mail");
             r.status_code = 500;
             r.body = "{\"success\":false,\"error\":\"Update failed, previous state restored: "
