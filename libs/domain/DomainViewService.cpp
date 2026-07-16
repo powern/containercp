@@ -9,12 +9,14 @@ DomainViewService::DomainViewService(logger::Logger& logger,
                                       DomainManager& domains,
                                       site::SiteManager& sites,
                                       ssl::CertificateStore& cert_store,
-                                      mail::MailDomainManager& mail_domains)
+                                      mail::MailDomainManager& mail_domains,
+                                      const std::string& server_hostname)
     : logger_(logger)
     , domains_(domains)
     , sites_(sites)
     , cert_store_(cert_store)
     , mail_domains_(mail_domains)
+    , server_hostname_(server_hostname)
 {
 }
 
@@ -77,12 +79,39 @@ void DomainViewService::write_enriched(std::ostringstream& json,
 
 std::string DomainViewService::build_enriched_json() const {
     auto all_domains = domains_.list();
+
+    // Check if server hostname is already a managed domain
+    bool has_hostname = false;
+    if (!server_hostname_.empty()) {
+        for (const auto& d : all_domains) {
+            if (d.fqdn == server_hostname_) {
+                has_hostname = true;
+                break;
+            }
+        }
+    }
+
     logger_.info("DOMAIN_VIEW", "Building enriched JSON for "
-                 + std::to_string(all_domains.size()) + " domains");
+                 + std::to_string(all_domains.size()) + " domains"
+                 + (has_hostname ? "" : " + admin panel"));
 
     std::ostringstream json;
     json << "[";
     bool first = true;
+
+    // If server hostname is not a managed domain, include it as the admin panel
+    // (site_id=0). This ensures the admin panel appears in the Domains list
+    // even without a Domain record in the database.
+    if (!has_hostname && !server_hostname_.empty()) {
+        Domain admin;
+        admin.fqdn = server_hostname_;
+        admin.site_id = 0;
+        admin.id = 0;
+        admin.enabled = true;
+        write_enriched(json, admin);
+        first = false;
+    }
+
     for (const auto& d : all_domains) {
         if (!first) json << ",";
         first = false;
@@ -93,11 +122,22 @@ std::string DomainViewService::build_enriched_json() const {
 }
 
 std::string DomainViewService::build_enriched_json(uint64_t domain_id) const {
+    // Allow lookup by id=0 (admin panel)
+    if (domain_id == 0 && !server_hostname_.empty()) {
+        Domain admin;
+        admin.fqdn = server_hostname_;
+        admin.site_id = 0;
+        admin.id = 0;
+        admin.enabled = true;
+        std::ostringstream json;
+        write_enriched(json, admin);
+        return json.str();
+    }
+
     auto* d = domains_.find(domain_id);
     if (!d) return "null";
     std::ostringstream json;
     write_enriched(json, *d);
     return json.str();
 }
-
 } // namespace containercp::domain

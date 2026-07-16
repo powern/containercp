@@ -220,6 +220,105 @@ TEST_CASE("DomainViewService enriched JSON includes mail fields") {
     std::system(rm_cmd.c_str());
 }
 
+TEST_CASE("DomainViewService includes admin panel (site_id=0) when server_hostname set") {
+    using namespace containercp;
+
+    char tmp[] = "/tmp/containercp_test_admin_domain_XXXXXX";
+    char* ssl_root = mkdtemp(tmp);
+    REQUIRE(ssl_root != nullptr);
+    std::string ssl_root_str(ssl_root);
+
+    domain::DomainManager domains;
+    site::SiteManager sites;
+    ssl::CertificateStore cert_store(logger::Logger::instance(), ssl_root_str);
+
+    // SSL metadata for site_id=0 so admin panel SSL is "Active"
+    {
+        std::string dir = ssl_root_str + "/0/current";
+        ::mkdir((ssl_root_str + "/0").c_str(), 0755);
+        ::mkdir(dir.c_str(), 0755);
+        std::ofstream f(dir + "/metadata.json");
+        f << R"({"site_id":"0","status":"active","https_enabled":true,"expires_at":"2030-01-01T00:00:00Z"})";
+        f.close();
+    }
+
+    // Create a managed domain — admin panel should appear before it
+    domains.create("example.com", 1, 1, "primary", "");
+    domains.create("other.com", 1, 2, "primary", "");
+
+    mail::MailDomainManager md_mgr;
+
+    // Without server_hostname: only managed domains, no admin panel
+    {
+        domain::DomainViewService view(logger::Logger::instance(),
+            domains, sites, cert_store, md_mgr);
+        std::string json = view.build_enriched_json();
+        CHECK(json.find("\"domain\":\"example.com\"") != std::string::npos);
+        CHECK(json.find("\"domain\":\"other.com\"") != std::string::npos);
+        // No admin panel because server_hostname is empty
+        bool has_site0 = json.find("\"site_id\":0,\"site_name\"") != std::string::npos;
+        CHECK_FALSE(has_site0);
+    }
+
+    // With server_hostname: admin panel appears first with site_id=0
+    {
+        std::string hostname = "admin.example.com";
+        domain::DomainViewService view(logger::Logger::instance(),
+            domains, sites, cert_store, md_mgr, hostname);
+        std::string json = view.build_enriched_json();
+
+        // Admin panel domain is included
+        CHECK(json.find("\"domain\":\"admin.example.com\"") != std::string::npos);
+        CHECK(json.find("\"site_id\":0") != std::string::npos);
+        CHECK(json.find("\"ssl_status\":\"Active\"") != std::string::npos);
+
+        // Managed domains still present
+        CHECK(json.find("\"domain\":\"example.com\"") != std::string::npos);
+        CHECK(json.find("\"domain\":\"other.com\"") != std::string::npos);
+
+        // Admin panel is first entry (before managed domains)
+        std::string::size_type admin_pos = json.find("\"domain\":\"admin.example.com\"");
+        std::string::size_type ex_pos = json.find("\"domain\":\"example.com\"");
+        CHECK(admin_pos < ex_pos);
+    }
+
+    // With server_hostname matching an existing domain: no duplicate
+    {
+        std::string hostname = "example.com";
+        domain::DomainViewService view(logger::Logger::instance(),
+            domains, sites, cert_store, md_mgr, hostname);
+        std::string json = view.build_enriched_json();
+
+        // Only one occurrence of example.com
+        std::string::size_type first = json.find("\"domain\":\"example.com\"");
+        std::string::size_type second = json.find("\"domain\":\"example.com\"", first + 1);
+        CHECK(first != std::string::npos);
+        CHECK(second == std::string::npos);
+    }
+
+    // Lookup by id=0 returns admin panel
+    {
+        std::string hostname = "admin.example.com";
+        domain::DomainViewService view(logger::Logger::instance(),
+            domains, sites, cert_store, md_mgr, hostname);
+        std::string json = view.build_enriched_json(0);
+        CHECK(json.find("\"domain\":\"admin.example.com\"") != std::string::npos);
+        CHECK(json.find("\"site_id\":0") != std::string::npos);
+    }
+
+    // Lookup by nonexistent id returns null
+    {
+        std::string hostname = "admin.example.com";
+        domain::DomainViewService view(logger::Logger::instance(),
+            domains, sites, cert_store, md_mgr, hostname);
+        std::string json = view.build_enriched_json(999);
+        CHECK(json == "null");
+    }
+
+    std::string rm_cmd = "rm -rf " + ssl_root_str;
+    std::system(rm_cmd.c_str());
+}
+
 #include "mail/MailDomainManager.h"
 
 TEST_CASE("MailDomainManager create/find/list/remove") {

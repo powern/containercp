@@ -1,6 +1,7 @@
 #include "core/Application.h"
 #include "core/StartupManager.h"
 #include "api/ApiServer.h"
+#include "config/Config.h"
 #include "api/WebServer.h"
 #include "daemon/DaemonApp.h"
 #include "daemon/CommandProtocol.h"
@@ -98,12 +99,13 @@ int main(int argc, char* argv[]) {
     }
 
     // === Normal Mode ===
+    // Load server_hostname BEFORE ServiceRegistry so DomainViewService
+    // can include the admin panel (site_id=0) in its enriched output.
+    containercp::config::Config::instance().load_server_hostname();
+
     containercp::core::Application::instance();
     auto& services = containercp::core::Application::instance().services();
     auto& log = services.logger();
-
-    // Load persisted settings (server_hostname from env or file)
-    services.config().load_server_hostname();
     log.info("SYSTEM", "Server hostname: '" + services.config().server_hostname() + "'");
 
     // Ensure database directory exists

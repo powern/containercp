@@ -24,7 +24,8 @@ public:
                       DomainManager& domains,
                       site::SiteManager& sites,
                       ssl::CertificateStore& cert_store,
-                      mail::MailDomainManager& mail_domains);
+                      mail::MailDomainManager& mail_domains,
+                      const std::string& server_hostname = "");
 
     // Build enriched JSON array for all domains.
     std::string build_enriched_json() const;
@@ -40,6 +41,7 @@ private:
     site::SiteManager& sites_;
     ssl::CertificateStore& cert_store_;
     mail::MailDomainManager& mail_domains_;
+    std::string server_hostname_;
 };
 
 } // namespace containercp::domain
