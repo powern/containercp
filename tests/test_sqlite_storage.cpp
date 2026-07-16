@@ -80,8 +80,8 @@ TEST_CASE("TransactionGuard explicit commit persists") {
     tclean(dir);
 }
 
-TEST_CASE("TransactionGuard suppress_commit rolls back") {
-    auto dir = tdir("tg_suppress");
+TEST_CASE("TransactionGuard rollback by default") {
+    auto dir = tdir("tg_rollback2");
     tclean(dir); fs::create_directories(dir);
     {
         containercp::storage::ConnectionPool pool;
@@ -91,7 +91,7 @@ TEST_CASE("TransactionGuard suppress_commit rolls back") {
             containercp::storage::TransactionGuard txn(pool);
             REQUIRE(txn.is_active());
             REQUIRE(pool.write_connection().exec("INSERT INTO mail_config VALUES ('k1', 'v1')"));
-            txn.suppress_commit();
+            // No commit → destructor rolls back
         }
 
         containercp::storage::ReadLease rl(pool);
@@ -325,6 +325,118 @@ TEST_CASE("Storage default mode does not create containercp.db") {
     {
         containercp::storage::Storage s(dir);  // default TXT mode
         CHECK_FALSE(fs::exists(dir + "containercp.db"));
+    }
+    tclean(dir);
+}
+
+// ============================================================
+// Safe write-access tests
+// ============================================================
+
+TEST_CASE("TransactionGuard on uninitialized pool does not crash") {
+    containercp::storage::ConnectionPool pool;  // never initialized
+    containercp::storage::TransactionGuard txn(pool);
+    CHECK_FALSE(txn.is_active());
+    // Mutex should be released (not locked after failed activation)
+}
+
+TEST_CASE("TransactionGuard on shut-down pool does not crash") {
+    auto dir = tdir("tg_shutdown_pool");
+    tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::ConnectionPool pool;
+        init_pool(pool, dir);
+        pool.shutdown();  // destroys write connection
+        containercp::storage::TransactionGuard txn(pool);
+        CHECK_FALSE(txn.is_active());
+        // Mutex released — subsequent valid pool should work
+    }
+    tclean(dir);
+}
+
+TEST_CASE("TransactionGuard on shut-down pool then valid pool works") {
+    auto dir = tdir("tg_recover");
+    tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::ConnectionPool pool;
+        init_pool(pool, dir);
+        pool.shutdown();
+
+        // TransactionGuard on shut-down pool — inactive
+        {
+            containercp::storage::TransactionGuard txn(pool);
+            CHECK_FALSE(txn.is_active());
+        }
+
+        // Reinitialize — now TransactionGuard should work
+        REQUIRE(pool.initialize(dir + "test.db"));
+        {
+            containercp::storage::TransactionGuard txn(pool);
+            CHECK(txn.is_active());
+            REQUIRE(txn.commit());
+        }
+    }
+    tclean(dir);
+}
+
+// ============================================================
+// Fail-closed explicit SQLite mode tests
+// ============================================================
+
+TEST_CASE("Explicit SQLite mode with failed init does not write to TXT") {
+    auto dir = tdir("ss_fail_closed");
+    tclean(dir); fs::create_directories(dir);
+    {
+        // Write a non-SQLite file at the path where containercp.db
+        // will be created.  SQLite's open() succeeds, but PRAGMA
+        // execution will fail because the file is not a valid
+        // SQLite database.
+        std::string db_file = dir + "containercp.db";
+        {
+            std::ofstream f(db_file);
+            f << "not-a-valid-sqlite-database-file";
+        }
+
+        containercp::storage::StorageOptions opts;
+        opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+
+        // Storage will try to open the existing file as a SQLite
+        // database.  The file is not valid, so apply_pragmas or
+        // schema migration will fail.
+        containercp::storage::Storage s(dir, opts);
+        CHECK_FALSE(s.sqlite_ready());
+
+        // TXT files for core resources should NOT be created
+        // in unavailable explicit mode
+        CHECK_FALSE(fs::exists(dir + "nodes.db"));
+
+        // Saving core resources should be no-ops (no crash)
+        containercp::node::Node n;
+        n.id = 1; n.name = "n"; n.type = "local";
+        s.save_nodes({n});  // no-op, no crash
+    }
+    tclean(dir);
+}
+
+TEST_CASE("Explicit SQLite mode sqlite_ready reflects init status") {
+    auto dir = tdir("ss_ready");
+    tclean(dir); fs::create_directories(dir);
+    // Default mode — not ready
+    {
+        containercp::storage::Storage s(dir);
+        CHECK_FALSE(s.sqlite_ready());
+    }
+    tclean(dir);
+}
+
+TEST_CASE("sqlite_ready true when explicit mode init succeeds") {
+    auto dir = tdir("ss_ready_ok");
+    tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::StorageOptions opts;
+        opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        containercp::storage::Storage s(dir, opts);
+        CHECK(s.sqlite_ready());
     }
     tclean(dir);
 }

@@ -41,10 +41,6 @@ public:
     // is active.  No writes should proceed if this returns false.
     bool is_active() const;
 
-    // Mark the transaction for rollback on destruction (call when
-    // a write operation fails and you need to abort).
-    void suppress_commit();
-
     // Commit explicitly.  Returns true on success.
     // On failure, marks for rollback and returns false.
     // Safe to call multiple times (idempotent after success).

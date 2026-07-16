@@ -41,6 +41,10 @@ bool Storage::use_sqlite() const {
     return options_.core_backend == CoreStorageBackend::SqlitePhase5 && sqlite_ready_;
 }
 
+bool Storage::sqlite_ready() const {
+    return sqlite_ready_;
+}
+
 std::string Storage::nodes_file() const {
     return db_path_ + "nodes.db";
 }
@@ -114,6 +118,9 @@ void Storage::save_nodes(const std::vector<node::Node>& nodes) {
         sqlite_.save_nodes(nodes);
         return;
     }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return;  // explicit mode but SQLite unavailable — no-op, no TXT fallback
+    }
     std::ofstream file(nodes_file());
     for (const auto& n : nodes) {
         file << n.id << "|" << n.name << "|" << n.type << "\n";
@@ -123,6 +130,9 @@ void Storage::save_nodes(const std::vector<node::Node>& nodes) {
 std::vector<node::Node> Storage::load_nodes() {
     if (use_sqlite()) {
         return sqlite_.load_nodes();
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return {};  // explicit mode but SQLite unavailable — return empty
     }
     std::vector<node::Node> nodes;
     std::ifstream file(nodes_file());
@@ -254,6 +264,9 @@ void Storage::save_php_versions(const std::vector<php::PhpVersion>& versions) {
         sqlite_.save_php_versions(versions);
         return;
     }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return;
+    }
     std::ofstream file(php_versions_file());
     for (const auto& pv : versions) {
         file << pv.id << "|" << pv.version << "|" << pv.image << "|"
@@ -264,6 +277,9 @@ void Storage::save_php_versions(const std::vector<php::PhpVersion>& versions) {
 std::vector<php::PhpVersion> Storage::load_php_versions() {
     if (use_sqlite()) {
         return sqlite_.load_php_versions();
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return {};
     }
     std::vector<php::PhpVersion> versions;
     std::ifstream file(php_versions_file());
@@ -764,6 +780,9 @@ void Storage::save_profiles(const std::vector<profile::Profile>& profiles) {
         sqlite_.save_profiles(profiles);
         return;
     }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return;
+    }
     std::ofstream file(profiles_file());
     for (const auto& p : profiles) {
         file << p.id << "|" << p.profile_name << "|"
@@ -777,6 +796,9 @@ void Storage::save_profiles(const std::vector<profile::Profile>& profiles) {
 std::vector<profile::Profile> Storage::load_profiles() {
     if (use_sqlite()) {
         return sqlite_.load_profiles();
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return {};
     }
     std::vector<profile::Profile> profiles;
     std::ifstream file(profiles_file());

@@ -107,6 +107,12 @@ public:
     // === Write connection (use via WriteGuard) ===
     SQLiteDB& write_connection();
 
+    // Safe write-connection access.  Returns nullptr if the pool was
+    // never initialized, initialization failed, or the pool was shut
+    // down.  Prefer this over write_connection() when the pool
+    // lifecycle is not guaranteed.
+    SQLiteDB* try_write_connection();
+
     // === Read connections ===
     SQLiteDB* lease_read();
     void return_read(SQLiteDB* db);

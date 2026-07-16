@@ -68,6 +68,11 @@ SQLiteDB& ConnectionPool::write_connection() {
     return *write_conn_;
 }
 
+SQLiteDB* ConnectionPool::try_write_connection() {
+    if (write_conn_) return write_conn_.get();
+    return nullptr;
+}
+
 void ConnectionPool::lock_write() {
     write_mutex_.lock();
 }

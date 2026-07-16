@@ -104,6 +104,12 @@ public:
     void save_auth_users(const std::vector<auth::AuthUser>& users);
     std::vector<auth::AuthUser> load_auth_users();
 
+    // Returns true if explicit SQLite mode is active and the SQLite
+    // backend is initialized and ready.  In default TXT mode or when
+    // explicit mode initialization failed, returns false and core
+    // resource operations are no-ops (no silent TXT fallback).
+    bool sqlite_ready() const;
+
     // Transaction support (forward-looking — TXT backend returns false)
     bool begin_transaction();
     bool commit_transaction();

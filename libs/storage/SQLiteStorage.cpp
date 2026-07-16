@@ -12,20 +12,8 @@ namespace containercp::storage {
 TransactionGuard::TransactionGuard(ConnectionPool& pool)
     : pool_(pool) {
     pool_.lock_write();
-    // Access the write connection directly through pool internals via
-    // the write connection reference.  If the pool has been shut down,
-    // write_connection() may crash — catch via is_open() check.
-    active_ = false;
-    // write_connection() returns a reference; we can check is_open()
-    // safely as long as write_conn_ is not null.
-    // We use a try-catch for the case where write_conn_ is null.
-    try {
-        if (pool_.write_connection().is_open()) {
-            active_ = pool_.write_connection().exec("BEGIN IMMEDIATE");
-        }
-    } catch (...) {
-        active_ = false;
-    }
+    SQLiteDB* db = pool_.try_write_connection();
+    active_ = (db != nullptr && db->is_open() && db->exec("BEGIN IMMEDIATE"));
     if (!active_) {
         pool_.unlock_write();
     }
@@ -34,7 +22,7 @@ TransactionGuard::TransactionGuard(ConnectionPool& pool)
 TransactionGuard::~TransactionGuard() {
     if (!active_) return;  // never activated — lock already released
     if (!committed_) {
-        pool_.write_connection().exec("ROLLBACK");
+        pool_.try_write_connection()->exec("ROLLBACK");
     }
     pool_.unlock_write();
 }
@@ -43,15 +31,9 @@ bool TransactionGuard::is_active() const {
     return active_;
 }
 
-void TransactionGuard::suppress_commit() {
-    // No-op: destructor always rolls back unless commit() was called.
-    // Kept for API compatibility with callers that call suppress_commit
-    // after a write failure (harmless).
-}
-
 bool TransactionGuard::commit() {
     if (!active_ || committed_) return committed_;
-    if (pool_.write_connection().exec("COMMIT")) {
+    if (pool_.try_write_connection()->exec("COMMIT")) {
         committed_ = true;
         return true;
     }
@@ -75,13 +57,14 @@ static bool replace_all(
     TransactionGuard txn(pool);
     if (!txn.is_active()) return false;
 
-    auto& db = pool.write_connection();
-    if (!db.exec(delete_sql)) { txn.suppress_commit(); return false; }
+    // Obtain write connection through the guard's locked scope.
+    // try_write_connection is safe here because the guard holds the lock.
+    SQLiteDB* db = pool.try_write_connection();
+    if (!db) return false;
 
-    // The caller's bind_each lambda calls prepare + bind + step for
-    // each record.  It returns false on any failure, which triggers
-    // rollback.
-    if (!bind_each(db)) { txn.suppress_commit(); return false; }
+    if (!db->exec(delete_sql)) return false;
+
+    if (!bind_each(*db)) return false;
 
     return txn.commit();
 }
