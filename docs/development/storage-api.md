@@ -351,30 +351,48 @@ pool.return_read(conn);
 
 ### Shutdown behavior
 
-1. The pool is marked as shut down; new `lease_read()` calls return
-   `nullptr`.
-2. The pool waits **indefinitely** for all outstanding leases to be
-   returned. Connections are never destroyed while a lease is active.
-3. After all leases are returned, write and read connections are closed.
-4. Double shutdown is safe.
-5. Deterministic shutdown is more important than fast shutdown.
+1. Set `shutdown_` flag — prevents new WriteGuard, TransactionGuard,
+   backup, and read leases.
+2. Wait indefinitely for all outstanding read leases to be returned.
+3. Notify test observer (if configured) for deterministic test
+   coordination.
+4. Acquire write mutex — waits for any active WriteGuard,
+   TransactionGuard, or backup to complete.
+5. Close and reset the write connection. Only done while holding
+   write mutex, guaranteeing no guard can be using it.
+6. Release write mutex.
+7. Close and reset read connections.
+8. Double shutdown is safe.
 
 ### WriteGuard (RAII write lock)
 
-`WriteGuard` is a move-only RAII wrapper that locks the write mutex
-on construction and unlocks it on destruction.
+`WriteGuard` locks the write mutex on construction and unlocks on
+destruction. After shutdown has started, `is_valid()` returns false
+and `db()` must not be used.
 
 ```cpp
 class WriteGuard {
 public:
     explicit WriteGuard(ConnectionPool& pool);
     ~WriteGuard();
-    SQLiteDB& db();   // access the write connection
+
+    bool is_valid() const;  // false if shutdown started before lock
+    SQLiteDB& db();          // valid only when is_valid() returns true
 };
 ```
 
-The guard ensures the mutex is released even if the enclosing scope
-is exited via early return or exception.
+**Lifecycle:**
+1. Lock write mutex.
+2. Check shutdown flag. If set: release mutex, `is_valid()` = false.
+3. Attempt `try_write_connection()`. If null (uninitialized): release,
+   `is_valid()` = false.
+4. Otherwise: `is_valid()` = true, `db()` returns the write connection.
+
+The connection is stable for the guard's lifetime — `shutdown()` cannot
+acquire the write mutex until the guard releases it, so the connection
+cannot be destroyed mid-use.
+
+Non-copyable, non-movable.
 
 ### Public API
 

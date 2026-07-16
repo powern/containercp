@@ -9,52 +9,61 @@ in the default runtime Storage backend.
 | Mode | Backend for core resources | Activation |
 |------|---------------------------|------------|
 | Default (`CoreStorageBackend::Txt`) | TXT for all resources | Default — no action needed |
-| Explicit (`CoreStorageBackend::SqlitePhase5`) | nodes, php_versions, profiles via SQLite | Pass `StorageOptions{ .core_backend = CoreStorageBackend::SqlitePhase5 }` to Storage |
+| Explicit (`CoreStorageBackend::SqlitePhase5`) | nodes, php_versions, profiles via SQLite | Pass `StorageOptions{ .core_backend = CoreStorageBackend::SqlitePhase5 }` to `Storage` |
 
 **Default runtime behavior:** All resources, including nodes, PHP versions,
 and profiles, are TXT-backed. Existing TXT data remains visible.
 
-**Explicit SQLite mode:** For testing and development. Creates
-`containercp.db`, runs the schema migration, and delegates the three
-Phase 5 resources to SQLiteStorage. Other resources remain TXT-backed.
+**Explicit SQLite mode:** Creates `containercp.db`, runs the schema
+migration, and delegates the three Phase 5 resources to SQLiteStorage.
+Other resources remain TXT-backed. If initialization or migration fails,
+`sqlite_ready()` returns false and core resource operations are no-ops
+(no silent TXT fallback).
 
 ---
 
-## SQLiteStorage
+## WriteGuard
 
-### Responsibility
+RAII write guard. Locks write mutex on construction, unlocks on destruction.
 
-`containercp::storage::SQLiteStorage` provides SQLite persistence for
-a fixed subset of resource types. Used internally by `Storage` when
-explicit SQLite mode is active.
+```cpp
+class WriteGuard {
+public:
+    explicit WriteGuard(ConnectionPool& pool);
+    ~WriteGuard();
 
-### Initialization and ownership
+    bool is_valid() const;   // false if shutdown started before lock acquired
+    SQLiteDB& db();          // valid only when is_valid() returns true
+};
+```
 
-`SQLiteStorage` receives a `ConnectionPool&` owned by `Storage`.
-The pool is initialized and the schema is migrated only when
-`SqlitePhase5` mode is selected.
+### Lifecycle
 
-If initialization or migration fails, `use_sqlite()` returns false
-and all resources remain TXT-backed.
+1. **Construction:** Lock write mutex. Check `shutdown_` flag.
+   - If shutdown has not started: `is_valid()` = true, connection accessible.
+   - If shutdown has started: release mutex, `is_valid()` = false.
+2. **Active:** Use `db()` for writes. Valid only while `is_valid()` is true.
+3. **Destruction:** Unlock write mutex.
+
+### Rules
+
+- Always check `is_valid()` before calling `db()`.
+- `db()` returns a reference to the write connection, which is stable for
+  the guard's lifetime because `shutdown()` cannot destroy the connection
+  while the guard holds the write mutex.
+- Non-copyable, non-movable.
+
+---
+
+## ReadLease
+
+Scoped RAII read lease. See `docs/development/storage-api.md`.
 
 ---
 
 ## TransactionGuard
 
-### Lifecycle
-
-```
-TransactionGuard(pool)
-  ├── BEGIN IMMEDIATE succeeds → is_active() = true
-  │     ├── perform writes
-  │     ├── commit() → persists, guard becomes inactive
-  │     ├── suppress_commit() + ~guard → ROLLBACK
-  │     └── ~guard (no commit) → ROLLBACK (default)
-  └── BEGIN IMMEDIATE fails → is_active() = false
-        └── ~guard → only releases write lock
-```
-
-### API
+RAII transaction guard with fail-closed semantics.
 
 ```cpp
 class TransactionGuard {
@@ -62,25 +71,119 @@ public:
     explicit TransactionGuard(ConnectionPool& pool);
     ~TransactionGuard();
 
-    bool is_active() const;       // false if BEGIN failed
-    void suppress_commit();       // mark for rollback on destruction
-    bool commit();                // explicit commit; false on failure
+    bool is_active() const;
+    bool commit();
+    SQLiteDB& db() const;    // stable connection; valid only when active
 };
+```
+
+### Lifecycle
+
+```
+Construction:
+  lock write mutex
+  check shutdown flag — if set: unlock, is_active() = false
+  try_write_connection() — if null: unlock, is_active() = false
+  BEGIN IMMEDIATE — if fails: unlock, is_active() = false
+  → is_active() = true, db_ stored
+
+Active:
+  use db() for writes
+  every bind/prepare/step must check return value
+
+commit():
+  COMMIT
+  success → committed, true
+  failure → false (destructor will ROLLBACK)
+
+Destruction:
+  if active and not committed → ROLLBACK
+  unlock write mutex
 ```
 
 ### Rules
 
-1. **Rollback by default.** If `commit()` is never called, the
-   destructor rolls back. No auto-commit.
-2. **Check `is_active()`** before any write. If `BEGIN IMMEDIATE`
-   failed, no writes should proceed.
-3. **Check every bind/prepare/step return.** On any failure, call
-   `suppress_commit()` to ensure rollback.
-4. **Explicit `commit()` required** for data to persist.
-5. **After `commit()` succeeds**, the guard is inactive — destructor
-   does nothing.
-6. **Write lock** is acquired on construction and released on
-   destruction (or immediately if `BEGIN` fails).
+1. **Rollback by default.** Destructor rolls back if `commit()` was not
+   called. No auto-commit.
+2. **Check `is_active()`** before any write operation.
+3. **Stable `db_` pointer.** The connection pointer is captured once
+   during construction and used for all operations within the transaction.
+   `shutdown()` cannot destroy the connection while the guard holds the
+   write mutex.
+4. **Explicit `commit()` required** for persistence.
+5. **Failed `COMMIT`** leaves the transaction eligible for rollback on
+   destruction.
+6. **Failed `BEGIN`** leaves the guard inactive — no lock held, no
+   transaction started.
+
+---
+
+## ConnectionPool write lifecycle
+
+### Shutdown sequence
+
+```
+shutdown():
+  1. Set shutdown_ flag (atomic)
+     → prevents new WriteGuard, TransactionGuard, backup, and read leases
+  2. Wait for outstanding read leases (all returned)
+  3. Notify test observer (if configured)
+  4. Acquire write_mutex_
+     → waits for any active WriteGuard, TransactionGuard, or backup
+  5. Close and reset write_conn_
+  6. Release write_mutex_
+  7. Close and reset read connections
+```
+
+### Lock order
+
+1. `shutdown_` flag (atomic, no mutex)
+2. Read lease counter (atomic, drain before write mutex)
+3. `write_mutex_` (std::mutex, acquired by WriteGuard, TransactionGuard,
+   and backup)
+
+This ordering guarantees:
+- No new write guard can acquire the mutex after shutdown_ is set.
+- Any guard that already holds the mutex keeps the connection alive until
+  it releases.
+- shutdown() waits for the last guard to release before destroying the
+  write connection.
+- No dangling pointer or use-after-free is possible.
+
+### Write connection lifecycle
+
+- Created during `initialize()`.
+- Destroyed during `shutdown()` while holding `write_mutex_`.
+- Guards (WriteGuard, TransactionGuard, backup) hold `write_mutex_`
+  for their entire lifetime.
+- `try_write_connection()` is private — only friends (WriteGuard,
+  TransactionGuard) can call it. It returns a raw pointer valid only
+  while the caller owns `write_mutex_`.
+
+### Backup synchronization
+
+`backup()` uses `WriteGuard` internally:
+
+```cpp
+bool ConnectionPool::backup(const std::string& dest_path) {
+    WriteGuard wg(*this);
+    if (!wg.is_valid()) return false;
+    // ... backup using wg.db() ...
+}
+```
+
+This means:
+- backup acquires the write mutex during the entire operation.
+- shutdown() waits for backup to complete (via write_mutex_).
+- backup cannot begin after shutdown() has started (WriteGuard checks
+  shutdown_ flag).
+- The write connection remains alive for the complete backup.
+
+### Reinitialization
+
+After `shutdown()`, the pool may be reinitialized with another call to
+`initialize()`. This creates new connections and resets all state.
+Subsequent guards operate on the new connections.
 
 ---
 
@@ -88,23 +191,19 @@ public:
 
 ### Complete-vector replacement
 
-Every `save_*` method performs atomic replacement via `replace_all()`:
+Every `save_*` method uses `replace_all()`:
 
-1. `BEGIN IMMEDIATE`
+1. `TransactionGuard` → BEGIN IMMEDIATE
 2. `DELETE FROM <table>` (all rows)
-3. `INSERT` every record (bound parameters)
+3. `INSERT` every record (bound parameters, every return checked)
 4. `COMMIT`
-5. On any error: `ROLLBACK`, no partial state
-
-Every bind/prepare/step return value is checked. On failure, the
-transaction is marked for rollback and the method returns without
-persisting any change.
+5. On any error: rollback, no partial state
 
 ---
 
 ## Dual-backend boundary
 
-After Phase 5, with explicit SQLite mode:
+With explicit SQLite mode:
 
 | Backend | Resources |
 |---------|-----------|
@@ -119,20 +218,9 @@ Without explicit SQLite mode (default):
 
 ---
 
-## Extension notes
-
-To add another resource type to SQLiteStorage:
-1. Add `save_<type>` / `load_<type>` to `SQLiteStorage`.
-2. Delegate from `Storage` within the `use_sqlite()` check.
-3. The table must exist in the schema (add a migration if needed).
-4. Add tests.
-5. Update this document.
-
----
-
 ## Non-goals
 
 - SQLite is NOT active in production runtime by default.
-- No automatic TXT→SQLite data import in Phase 5.
+- No automatic TXT→SQLite data import.
 - No startup migration gate.
 - No TXT file deletion.

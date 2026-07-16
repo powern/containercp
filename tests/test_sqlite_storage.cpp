@@ -3,8 +3,11 @@
 #include "storage/SchemaMigrations.h"
 
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <future>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -445,6 +448,7 @@ TEST_CASE("sqlite_ready true when explicit mode init succeeds") {
 
 // ============================================================
 // Shutdown/write synchronization tests
+// Uses ConnectionPool::TestObserver for deterministic coordination.
 // ============================================================
 
 TEST_CASE("WriteGuard prevents shutdown completion") {
@@ -453,20 +457,41 @@ TEST_CASE("WriteGuard prevents shutdown completion") {
     containercp::storage::ConnectionPool pool;
     init_pool(pool, dir);
 
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool shutdown_awaiting = false;
+
+    // Set up observer to signal when shutdown is about to acquire
+    // the write mutex.
+    pool.test_obs_.on_shutdown_awaiting_write_mutex = [&] {
+        std::lock_guard<std::mutex> lk(mtx);
+        shutdown_awaiting = true;
+        cv.notify_one();
+    };
+
     std::thread shutdown_thread;
 
-    // Scope limits WriteGuard lifetime so it is released before join
     {
         containercp::storage::WriteGuard wg(pool);
         REQUIRE(wg.is_valid());
 
         shutdown_thread = std::thread([&] { pool.shutdown(); });
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
+        // Wait until shutdown is blocked on write_mutex_
+        {
+            std::unique_lock<std::mutex> lk(mtx);
+            cv.wait(lk, [&] { return shutdown_awaiting; });
+        }
+
+        // Verify the connection is still usable while shutdown waits
         CHECK(wg.db().exec("SELECT 1"));
     }  // wg destroyed → mutex released → shutdown proceeds
 
     shutdown_thread.join();
+    CHECK(pool.is_shutdown());
+
+    // Cleanup observer
+    pool.test_obs_.on_shutdown_awaiting_write_mutex = nullptr;
     tclean(dir);
 }
 
@@ -479,7 +504,6 @@ TEST_CASE("WriteGuard cannot activate after shutdown starts") {
 
         pool.shutdown();
 
-        // After shutdown, WriteGuard should be invalid
         containercp::storage::WriteGuard wg(pool);
         CHECK_FALSE(wg.is_valid());
     }
@@ -492,6 +516,16 @@ TEST_CASE("TransactionGuard prevents shutdown completion") {
     containercp::storage::ConnectionPool pool;
     init_pool(pool, dir);
 
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool shutdown_awaiting = false;
+
+    pool.test_obs_.on_shutdown_awaiting_write_mutex = [&] {
+        std::lock_guard<std::mutex> lk(mtx);
+        shutdown_awaiting = true;
+        cv.notify_one();
+    };
+
     std::thread shutdown_thread;
 
     {
@@ -499,13 +533,19 @@ TEST_CASE("TransactionGuard prevents shutdown completion") {
         REQUIRE(txn.is_active());
 
         shutdown_thread = std::thread([&] { pool.shutdown(); });
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        {
+            std::unique_lock<std::mutex> lk(mtx);
+            cv.wait(lk, [&] { return shutdown_awaiting; });
+        }
 
         CHECK(txn.db().exec("SELECT 1"));
         CHECK(txn.commit());
-    }  // txn destroyed → mutex released → shutdown proceeds
+    }
 
     shutdown_thread.join();
+    CHECK(pool.is_shutdown());
+    pool.test_obs_.on_shutdown_awaiting_write_mutex = nullptr;
     tclean(dir);
 }
 
@@ -546,17 +586,23 @@ TEST_CASE("Backup and shutdown do not race") {
     containercp::storage::ConnectionPool pool;
     init_pool(pool, dir);
 
+    // Use a promise to know when backup has started
+    std::promise<void> backup_started;
+    std::future<void> backup_started_future = backup_started.get_future();
+
     std::string backup_path = dir + "backup.db";
-    std::thread backup_thread([&] { pool.backup(backup_path); });
+    std::thread backup_thread([&] {
+        backup_started.set_value();
+        pool.backup(backup_path);
+    });
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    // Wait for backup to start
+    backup_started_future.wait();
 
-    // shutdown will block until backup's WriteGuard completes
-    // (backup holds WriteGuard → lock_write → shutdown waits)
-    // Then backup's WriteGuard releases → shutdown acquires lock →
-    // destroys write_conn_ → backup's WriteGuard was already
-    // destroyed so the DB handle is gone after shutdown.
-    // This test verifies no crash or deadlock.
+    // Give backup a moment to acquire WriteGuard
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    // shutdown will block until backup's internal WriteGuard completes
     pool.shutdown();
     backup_thread.join();
     tclean(dir);

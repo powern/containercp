@@ -5,6 +5,8 @@
 
 #include <array>
 #include <atomic>
+#include <condition_variable>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -113,6 +115,13 @@ public:
     bool is_shutdown() const;
 
     bool backup(const std::string& dest_path);
+
+    // Test-only observer for shutdown synchronization.
+    // In production all callbacks are empty — no overhead.
+    struct TestObserver {
+        std::function<void()> on_shutdown_awaiting_write_mutex;
+    };
+    TestObserver test_obs_;
 
 private:
     friend class WriteGuard;

@@ -189,7 +189,12 @@ void ConnectionPool::shutdown() {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    // 3. Acquire write mutex — waits for any active WriteGuard,
+    // 3. Notify test observer before acquiring write mutex.
+    if (test_obs_.on_shutdown_awaiting_write_mutex) {
+        test_obs_.on_shutdown_awaiting_write_mutex();
+    }
+
+    // 4. Acquire write mutex — waits for any active WriteGuard,
     //    TransactionGuard, or backup operation to finish.
     //    After acquiring, no write guard is active, so it is safe
     //    to close the write connection.
@@ -202,7 +207,7 @@ void ConnectionPool::shutdown() {
 
     unlock_write();
 
-    // 4. Close read connections (all leases returned).
+    // 5. Close read connections (all leases returned).
     for (int i = 0; i < kReadPoolSize; ++i) {
         if (read_conns_[i]) {
             read_conns_[i]->close();
