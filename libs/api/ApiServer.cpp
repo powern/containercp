@@ -366,8 +366,21 @@ bool ApiServer::start() {
         std::string hostname = s.config().server_hostname();
         if (!hostname.empty()) {
             std::string proxy_upstream;
+            std::string proxy_status = "Not verified";
             auto* rp = s.reverse_proxies().find_by_domain(hostname);
-            if (rp) proxy_upstream = rp->upstream;
+            if (rp) {
+                proxy_upstream = rp->upstream;
+                proxy_status = rp->enabled ? "Active" : "Disabled";
+            }
+
+            // SSL status from site_id=0
+            std::string ssl_status = "Disabled";
+            std::string ssl_https = "Inactive";
+            auto ssl_meta = s.cert_store().load_metadata(0);
+            if (ssl_meta.success) {
+                ssl_status = s.cert_store().https_display_status(ssl_meta.metadata);
+                if (ssl_meta.metadata.https_enabled) ssl_https = "Active";
+            }
 
             json << "{\"id\":0"
                  << ",\"name\":\"ContainerCP Admin\""
@@ -375,15 +388,26 @@ bool ApiServer::start() {
                  << ",\"type\":\"system\""
                  << ",\"system_role\":\"admin-panel\""
                  << ",\"proxy_upstream\":\"" << JsonFormatter::escape(proxy_upstream) << "\""
+                 << ",\"proxy_status\":\"" << JsonFormatter::escape(proxy_status) << "\""
+                 << ",\"ssl_status\":\"" << JsonFormatter::escape(ssl_status) << "\""
+                 << ",\"ssl_https\":\"" << JsonFormatter::escape(ssl_https) << "\""
                  << ",\"web_server\":\"nginx\""
                  << ",\"node_id\":0"
                  << ",\"owner\":\"system\""
                  << ",\"site_id\":0"
                  << ",\"enabled\":true"
+                 << ",\"web_status\":\"Active\""
+                 << ",\"php_status\":\"N/A\""
+                 << ",\"https_status\":\"" << JsonFormatter::escape(ssl_https) << "\""
                  << ",\"can_delete\":false"
                  << ",\"can_manage_runtime\":false"
+                 << ",\"can_manage_php\":false"
+                 << ",\"can_manage_php_mail\":false"
                  << ",\"can_manage_ssl\":true"
                  << ",\"can_manage_proxy\":true"
+                 << ",\"can_manage_databases\":false"
+                 << ",\"can_manage_backups\":false"
+                 << ",\"can_manage_domains\":true"
                  << "}";
             first = false;
         }

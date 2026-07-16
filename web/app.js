@@ -379,24 +379,25 @@ async function loadSites(p) {
       const tbl = $('sites-table');
       if (!tbl) return;
       const filtered = (data.data||[]).filter(r => !searchTerm || r.domain.includes(searchTerm) || r.owner.includes(searchTerm));
+      const badgeCls = {'Active':'badge-ok','Running':'badge-ok','Running':'badge-ok','N/A':'badge-info'};
+      const rtM = {'Running':'badge-ok','Active':'badge-ok','Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn','Expiring':'badge-warn','Error':'badge-err','Expired':'badge-err','Disabled':'badge-info','Issuing':'badge-warn','Unknown':'badge-info','N/A':'badge-info'};
       tbl.innerHTML = buildTable([
         {label:'Domain',html:r=>`<a href="#" onclick="navigate('site-detail',${r.id});return false" style="color:var(--primary);text-decoration:none;">${esc(r.domain)}</a>`},
-        {label:'Web',html:r=>`<span data-rt-id="${r.id}" data-rt-service="web" class="badge badge-info">...</span>`},
-        {label:'PHP',html:r=>`<span data-rt-id="${r.id}" data-rt-service="php" class="badge badge-info">...</span>`},
-        {label:'HTTPS',html:r=>`<span data-rt-id="${r.id}" data-rt-service="https" class="badge badge-info">...</span>`},
+        {label:'Web',html:r=>r.web_status?`<span class="badge ${rtM[r.web_status]||'badge-info'}">${esc(r.web_status)}</span>`:`<span data-rt-id="${r.id}" data-rt-service="web" class="badge badge-info">...</span>`},
+        {label:'PHP',html:r=>r.php_status?`<span class="badge ${rtM[r.php_status]||'badge-info'}">${esc(r.php_status)}</span>`:`<span data-rt-id="${r.id}" data-rt-service="php" class="badge badge-info">...</span>`},
+        {label:'HTTPS',html:r=>r.https_status?`<span class="badge ${rtM[r.https_status]||'badge-info'}">${esc(r.https_status)}</span>`:`<span data-rt-id="${r.id}" data-rt-service="https" class="badge badge-info">...</span>`},
         {label:'Owner',html:r=>esc(r.owner)},
         {label:'Backend',html:r=>r.web_server==='nginx'?'<span class="badge badge-info">Nginx</span>':'<span class="badge badge-ok">Apache2</span>'},
         {label:'Actions',html:r=>`<button class="btn-icon" onclick="navigate('site-detail',${r.id})" title="View">&#128065;</button>${r.can_delete!==false?`<button class="btn-icon" style="color:var(--red)" title="Remove" onclick="removeSite('${esc(r.domain)}')">&#10005;</button>`:''}`}
       ], filtered, 'No sites');
-      // Fetch runtime + HTTPS status for each site (skip admin panel)
+      // Fetch runtime + HTTPS status for each site
       filtered.forEach(site => {
-        if (site.id === 0) return;
+        if (site.web_status || site.php_status || site.https_status) return; // already has explicit status
         api('/api/runtime/' + site.id).then(rt => {
           if (!rt.success) return;
-          const m={'Running':'badge-ok','Active':'badge-ok','Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn','Expiring':'badge-warn','Error':'badge-err','Expired':'badge-err','Disabled':'badge-info','Issuing':'badge-warn','Unknown':'badge-info'};
           const update = (srv, val) => {
             const el = tbl.querySelector(`span[data-rt-id="${site.id}"][data-rt-service="${srv}"]`);
-            if (el) { el.className = 'badge ' + (m[val]||'badge-info'); el.textContent = val; }
+            if (el) { el.className = 'badge ' + (rtM[val]||'badge-info'); el.textContent = val; }
           };
           update('web', rt.data.web);
           update('php', rt.data.php);
@@ -535,6 +536,9 @@ async function loadSiteDetail(p, siteId) {
     const data = await api('/api/sites');
     const site = (data.data||[]).find(s => s.id == siteId);
     if (!site) { p.innerHTML = '<div class="empty-state">Site not found</div>'; return; }
+
+    var isSystem = site.system_role === 'admin-panel' || site.can_delete === false;
+
     p.innerHTML = `
       <div class="page-header">
         <h1><a href="#" onclick="navigate('sites');return false" style="color:var(--text2);text-decoration:none;">&larr;</a> ${esc(site.domain)}</h1>
@@ -543,22 +547,38 @@ async function loadSiteDetail(p, siteId) {
       <div class="details-panel" style="margin-bottom:16px;">
         <div class="details-grid">
           <div class="details-field"><div class="details-label">Domain</div><div class="details-value">${esc(site.domain)}</div></div>
+          ${isSystem ? `
+          <div class="details-field"><div class="details-label">Role</div><div class="details-value"><span class="badge badge-admin">${esc(site.system_role||'system')}</span></div></div>
+          <div class="details-field"><div class="details-label">Proxy Upstream</div><div class="details-value"><code>${esc(site.proxy_upstream||'—')}</code></div></div>` : `
           <div class="details-field"><div class="details-label">Owner</div><div class="details-value">${esc(site.owner)}</div></div>
           <div class="details-field"><div class="details-label">Web Server</div><div class="details-value">${site.web_server==='nginx'?'Nginx':'Apache2'}</div></div>
-          <div class="details-field"><div class="details-label">Node ID</div><div class="details-value">${site.node_id}</div></div>
+          <div class="details-field"><div class="details-label">Node ID</div><div class="details-value">${site.node_id}</div></div>`}
         </div>
       </div>
+      ${isSystem ? `
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;">
+        <div class="card"><h3>Web Service</h3><div style="margin-top:8px;font-size:13px;"><div>Status: <span class="badge badge-ok">${esc(site.web_status||'Active')}</span></div></div></div>
+        <div class="card"><h3>PHP</h3><div style="margin-top:8px;font-size:13px;"><div>Status: <span class="badge badge-info">N/A</span></div></div></div>
+        <div class="card"><h3>Databases</h3><div style="margin-top:8px;font-size:13px;"><div>Not applicable</div></div></div>
+        <div class="card"><h3>Backups</h3><div style="margin-top:8px;font-size:13px;"><div>Not applicable</div></div></div>
+      </div>
+      <div style="margin-top:12px;">
+        <a href="#" onclick="navigate('domain-detail',0);return false" class="btn btn-sm">View Domain Configuration</a>
+        <a href="#" onclick="navigate('ssl',0);return false" class="btn btn-sm" style="margin-left:4px;">View SSL</a>
+      </div>` : `
       <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin-bottom:12px;">
         <div id="rt-card" class="card"></div>
         <div id="site-cols-left" style="display:grid;gap:12px;align-content:start;"></div>
         <div id="site-cols-right" style="display:grid;gap:12px;align-content:start;"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;" id="site-cols-bottom"></div>
-      <div style="margin-top:12px;" id="site-php-mail"></div>`;
+      <div style="margin-top:12px;" id="site-php-mail"></div>`}`;
+
+    if (isSystem) return;
+
     const [domains, databases, ssl, proxy, backups] = await Promise.all([
       api('/api/domains'), api('/api/databases'), api('/api/ssl'), api('/api/proxy'), api('/api/backups')
     ]);
-    // Existing cards: Domains + SSL in left column, Databases in right column
     const colLeft = $('site-cols-left');
     const colRight = $('site-cols-right');
     const colBottom = $('site-cols-bottom');
@@ -573,10 +593,8 @@ async function loadSiteDetail(p, siteId) {
     colBottom.innerHTML =
       makeCard('Proxy', (proxy.data||[]).filter(p=>p.site_id==site.id).map(p=>p.status), '#06b6d4') +
       makeCard('Backups', (backups.data||[]).filter(b=>b.site_id==site.id).map(b=>b.filename), '#f97316');
-    // PHP Mail section (loaded separately — failure does NOT break the page)
     loadPhpMailCard(site.id, site.domain);
-    // Load runtime card (skip for admin panel — runtime N/A)
-    if (site.id !== 0) loadRuntimeCard(site.id, site.domain, site.web_server);
+    loadRuntimeCard(site.id, site.domain, site.web_server);
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load site</div>'; }
 }
 
