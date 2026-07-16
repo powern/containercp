@@ -407,20 +407,30 @@ Phase 5 introduced `SQLiteStorage` for nodes, PHP versions, and
 profiles. See `docs/development/sqlite-storage-api.md` for the
 complete contract.
 
-### Dual-backend architecture
+### Backend activation
+
+SQLiteStorage is **not active by default**. The default runtime mode
+(`CoreStorageBackend::Txt`) keeps all resources TXT-backed. SQLite
+mode must be explicitly requested via `StorageOptions`.
+
+| Mode | nodes, php_versions, profiles | All other resources |
+|------|------------------------------|-------------------|
+| Default (`Txt`) | TXT | TXT |
+| Explicit (`SqlitePhase5`) | SQLite | TXT |
+
+### Dual-backend architecture (explicit mode)
 
 ```
 Storage
   ├── TXT: sites, users, domains, databases, backups, SSL,
-  │         mail, access, proxies, profiles (Phase 5: migrated),
-  │         auth users, mail config
+  │         mail, access, proxies, auth users, mail config
   └── SQLiteStorage (via ConnectionPool):
         └── nodes, php_versions, profiles
 ```
 
-The `Storage` constructor initializes `ConnectionPool` and runs the
-schema migration. The public API is unchanged — callers use the same
-`Storage` methods regardless of backend.
+The `Storage` constructor accepts `StorageOptions` to opt into SQLite
+mode. The public API is unchanged — callers use the same `Storage`
+methods regardless of backend.
 
 ---
 

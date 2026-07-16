@@ -34,16 +34,13 @@ static std::string copy_fixtures_to_temp(const std::string& subdir) {
 
 TEST_CASE("Fixture loader: normal nodes") {
     auto tmp = copy_fixtures_to_temp("normal");
-    // Nodes are now SQLite-backed. The TXT fixture exists for legacy
-    // migration testing. Verify the TXT file is parseable (legacy format).
-    std::ifstream f(tmp + "/nodes.db");
-    REQUIRE(f.is_open());
-    std::string line;
-    bool has_data = false;
-    while (std::getline(f, line)) {
-        if (!line.empty()) { has_data = true; break; }
+    containercp::storage::Storage st(tmp + "/");
+    auto nodes = st.load_nodes();
+    CHECK(nodes.size() == 1);
+    if (!nodes.empty()) {
+        CHECK(nodes[0].name == "local");
+        CHECK(nodes[0].type == "local");
     }
-    CHECK(has_data);
     fs::remove_all(tmp);
 }
 
@@ -92,13 +89,14 @@ TEST_CASE("Fixture loader: normal domains") {
 
 TEST_CASE("Fixture loader: normal php_versions") {
     auto tmp = copy_fixtures_to_temp("normal");
-    // PHP versions are now SQLite-backed. Verify TXT fixture exists.
-    std::ifstream f(tmp + "/php_versions.db");
-    REQUIRE(f.is_open());
-    int lines = 0;
-    std::string line;
-    while (std::getline(f, line)) { if (!line.empty()) ++lines; }
-    CHECK(lines >= 3);
+    containercp::storage::Storage st(tmp + "/");
+    auto versions = st.load_php_versions();
+    CHECK(versions.size() == 3);
+    if (versions.size() >= 3) {
+        CHECK(versions[0].version == "8.2");
+        CHECK(versions[2].version == "8.4");
+        CHECK(versions[2].default_version == true);
+    }
     fs::remove_all(tmp);
 }
 
@@ -235,13 +233,13 @@ TEST_CASE("Fixture loader: normal reverse_proxies") {
 
 TEST_CASE("Fixture loader: normal profiles") {
     auto tmp = copy_fixtures_to_temp("normal");
-    // Profiles are now SQLite-backed. Verify TXT fixture exists.
-    std::ifstream f(tmp + "/profiles.db");
-    REQUIRE(f.is_open());
-    int lines = 0;
-    std::string line;
-    while (std::getline(f, line)) { if (!line.empty()) ++lines; }
-    CHECK(lines >= 2);
+    containercp::storage::Storage st(tmp + "/");
+    auto profiles = st.load_profiles();
+    CHECK(profiles.size() == 2);
+    if (!profiles.empty()) {
+        CHECK(profiles[0].profile_name == "apache-php-default");
+        CHECK(profiles[0].default_profile == true);
+    }
     fs::remove_all(tmp);
 }
 
@@ -473,18 +471,9 @@ TEST_CASE("Production-derived fixture loads successfully") {
     auto tmp = copy_fixtures_to_temp("production_derived");
     containercp::storage::Storage st(tmp + "/");
 
-    // Nodes, PHP versions, and Profiles are SQLite-backed.
-    // The TXT fixture files exist for legacy migration testing
-    // but Storage now reads from SQLite (empty until Phase 8 import).
-    // Verify TXT files exist for legacy format coverage.
-    std::vector<std::string> sqlite_backed = {"nodes", "php_versions", "profiles"};
-    for (auto& name : sqlite_backed) {
-        std::ifstream f(tmp + "/" + name + ".db");
-        INFO("Checking TXT fixture exists for SQLite-backed resource: " << name);
-        CHECK(f.is_open());
-    }
+    auto nodes = st.load_nodes();
+    CHECK(nodes.size() == 1);
 
-    // TXT-backed resources load from TXT as before
     auto sites = st.load_sites();
     CHECK(sites.size() == 8);  // non-contiguous IDs: 1,2,3,4,8,9,10,11
 
@@ -493,6 +482,9 @@ TEST_CASE("Production-derived fixture loads successfully") {
 
     auto domains = st.load_domains();
     CHECK(domains.size() == 8);
+
+    auto pv = st.load_php_versions();
+    CHECK(pv.size() == 3);
 
     auto dbs = st.load_databases();
     CHECK(dbs.size() == 8);
@@ -535,6 +527,9 @@ TEST_CASE("Production-derived fixture loads successfully") {
 
     auto proxies = st.load_reverse_proxies();
     CHECK(proxies.size() == 9);
+
+    auto profs = st.load_profiles();
+    CHECK(profs.size() == 5);
 
     auto auths = st.load_auth_users();
     CHECK(auths.size() == 1);

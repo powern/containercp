@@ -25,9 +25,21 @@
 
 namespace containercp::storage {
 
+// Backend selection for core resources (nodes, php_versions, profiles).
+// Default is Txt — SQLite is not used until the migration gate.
+enum class CoreStorageBackend {
+    Txt,           // Default runtime: TXT for all resources
+    SqlitePhase5   // Explicit test/dev mode: nodes, php_versions, profiles via SQLite
+};
+
+struct StorageOptions {
+    CoreStorageBackend core_backend = CoreStorageBackend::Txt;
+};
+
 class Storage {
 public:
-    explicit Storage(const std::string& db_path);
+    explicit Storage(const std::string& db_path,
+                     StorageOptions options = StorageOptions{});
 
     // Nodes — SQLite-backed
     void save_nodes(const std::vector<node::Node>& nodes);
@@ -120,9 +132,13 @@ private:
     std::string auth_users_file() const;
     std::string sqlite_db_path() const;
 
+    bool use_sqlite() const;
+
     std::string db_path_;
+    StorageOptions options_;
     ConnectionPool pool_;
     SQLiteStorage sqlite_;
+    bool sqlite_ready_ = false;
 };
 
 } // namespace containercp::storage

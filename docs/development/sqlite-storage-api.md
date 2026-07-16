@@ -2,11 +2,21 @@
 
 ## Phase 5 status
 
-Phase 5 introduces SQLite persistence for a low-risk subset of
-resource types while keeping all other resources on the TXT backend.
+Phase 5 introduces the `SQLiteStorage` implementation and makes it
+available through an **explicit opt-in mode**. SQLite is NOT active
+in the default runtime Storage backend.
 
-**SQLite-backed:** nodes, php_versions, profiles
-**TXT-backed (unchanged):** all other resource types
+| Mode | Backend for core resources | Activation |
+|------|---------------------------|------------|
+| Default (`CoreStorageBackend::Txt`) | TXT for all resources | Default — no action needed |
+| Explicit (`CoreStorageBackend::SqlitePhase5`) | nodes, php_versions, profiles via SQLite | Pass `StorageOptions{ .core_backend = CoreStorageBackend::SqlitePhase5 }` to Storage |
+
+**Default runtime behavior:** All resources, including nodes, PHP versions,
+and profiles, are TXT-backed. Existing TXT data remains visible.
+
+**Explicit SQLite mode:** For testing and development. Creates
+`containercp.db`, runs the schema migration, and delegates the three
+Phase 5 resources to SQLiteStorage. Other resources remain TXT-backed.
 
 ---
 
@@ -15,191 +25,114 @@ resource types while keeping all other resources on the TXT backend.
 ### Responsibility
 
 `containercp::storage::SQLiteStorage` provides SQLite persistence for
-a fixed subset of resource types. It is used internally by `Storage`
-to delegate the three Phase 5 resources. It is not used directly by
-managers, API handlers, or providers.
+a fixed subset of resource types. Used internally by `Storage` when
+explicit SQLite mode is active.
 
 ### Initialization and ownership
 
-`SQLiteStorage` receives a reference to `ConnectionPool` which is
-owned by `Storage`. The `ConnectionPool` is initialized in the
-`Storage` constructor, which also runs the schema migration
-(MigrationEngine) if needed.
+`SQLiteStorage` receives a `ConnectionPool&` owned by `Storage`.
+The pool is initialized and the schema is migrated only when
+`SqlitePhase5` mode is selected.
 
-```cpp
-class SQLiteStorage {
-public:
-    explicit SQLiteStorage(ConnectionPool& pool);
-    // ...
-};
-```
-
-### ConnectionPool usage
-
-- **Writes:** Use `WriteGuard` + `TransactionGuard` via the write
-  connection. All mutating operations are serialized.
-- **Reads:** Use `ReadLease` from the read connection pool.
-- **No direct SQLite C API calls.** All SQL goes through
-  `SQLiteDB::exec()`, `prepare()`, `bind_*()`, `step()`.
+If initialization or migration fails, `use_sqlite()` returns false
+and all resources remain TXT-backed.
 
 ---
 
 ## TransactionGuard
 
-RAII transaction guard that prevents dangling transactions.
+### Lifecycle
 
-```cpp
-{
-    TransactionGuard txn(pool);
-    // ... writes ...
-    txn.commit();   // optional — auto-commits on destruction
-}
+```
+TransactionGuard(pool)
+  ├── BEGIN IMMEDIATE succeeds → is_active() = true
+  │     ├── perform writes
+  │     ├── commit() → persists, guard becomes inactive
+  │     ├── suppress_commit() + ~guard → ROLLBACK
+  │     └── ~guard (no commit) → ROLLBACK (default)
+  └── BEGIN IMMEDIATE fails → is_active() = false
+        └── ~guard → only releases write lock
 ```
 
-On normal destruction without error: **COMMIT**.
-On destruction after `suppress_commit()`: **ROLLBACK**.
-On explicit `commit()`: commits immediately; safe to call multiple times.
+### API
 
-The guard acquires the write lock (`WriteGuard`-like semantics) on
-construction and releases it on destruction. No manual lock/unlock
-needed.
+```cpp
+class TransactionGuard {
+public:
+    explicit TransactionGuard(ConnectionPool& pool);
+    ~TransactionGuard();
+
+    bool is_active() const;       // false if BEGIN failed
+    void suppress_commit();       // mark for rollback on destruction
+    bool commit();                // explicit commit; false on failure
+};
+```
+
+### Rules
+
+1. **Rollback by default.** If `commit()` is never called, the
+   destructor rolls back. No auto-commit.
+2. **Check `is_active()`** before any write. If `BEGIN IMMEDIATE`
+   failed, no writes should proceed.
+3. **Check every bind/prepare/step return.** On any failure, call
+   `suppress_commit()` to ensure rollback.
+4. **Explicit `commit()` required** for data to persist.
+5. **After `commit()` succeeds**, the guard is inactive — destructor
+   does nothing.
+6. **Write lock** is acquired on construction and released on
+   destruction (or immediately if `BEGIN` fails).
 
 ---
 
 ## Save/load semantics
 
-### save_* (complete-vector replacement)
+### Complete-vector replacement
 
-Every `save_*` method performs **complete-vector replacement**:
+Every `save_*` method performs atomic replacement via `replace_all()`:
 
 1. `BEGIN IMMEDIATE`
 2. `DELETE FROM <table>` (all rows)
-3. `INSERT` every record from the supplied vector
+3. `INSERT` every record (bound parameters)
 4. `COMMIT`
-5. On any error: `ROLLBACK`, no state change, return without throwing
+5. On any error: `ROLLBACK`, no partial state
 
-This matches the existing TXT behavior where `save_*` opens a file,
-truncates it, writes all records, and closes. No caller may observe
-a partially saved state.
-
-### load_*
-
-Every `load_*` method:
-
-1. Acquire a `ReadLease`
-2. `SELECT ... ORDER BY id`
-3. Return complete vector (empty if table is empty or on error)
-
----
-
-## Resource mappings
-
-### Nodes → `nodes` table
-
-| Field | Column | Notes |
-|-------|--------|-------|
-| `id` | `id` | Preserved exactly |
-| `name` | `name` | From `core::Resource` |
-| `type` | `type` | |
-
-### PHP versions → `php_versions` table
-
-| Field | Column | Notes |
-|-------|--------|-------|
-| `id` | `id` | Preserved exactly |
-| `version` | `version` | |
-| `image` | `image` | |
-| `enabled` | `enabled` | |
-| `default_version` | `default_version` | |
-| `name` | — | Set from `version` on load (same as TXT) |
-
-### Profiles → `profiles` table
-
-| Field | Column | Notes |
-|-------|--------|-------|
-| `id` | `id` | Preserved exactly |
-| `profile_name` | `profile_name` | |
-| `type` | `type` | Serialized via `profile_type_to_string` / `profile_type_from_string` |
-| `web_server` | `web_server` | |
-| `runtime` | `runtime` | |
-| `template_path` | `template_path` | Supports special characters |
-| `description` | `description` | Supports special characters |
-| `enabled` | `enabled` | |
-| `default_profile` | `default_profile` | |
-| `name` | — | Set from `profile_name` on load (same as TXT) |
-
----
-
-## ID preservation
-
-- Explicit IDs are preserved exactly through save/load round trips.
-- Non-contiguous IDs remain valid.
-- Deleting a record (via complete-vector replacement) does not
-  renumber remaining records.
-- New IDs generated by managers must not collide with existing IDs.
-- SQLite `INTEGER PRIMARY KEY` (without `AUTOINCREMENT`) is used,
-  matching the TXT behavior where IDs are application-managed.
-
----
-
-## Ordering
-
-All `load_*` methods return records sorted by `id ASC`, matching
-the TXT behavior where records appear in file line order (which is
-typically insertion order / id order).
-
----
-
-## Error behavior
-
-- On SQL error during save: rollback, return without throwing,
-  no partial state.
-- On SQL error during load: return empty vector.
-- Diagnostic available through `SQLiteDB::error_message()` on the
-  connection (internal — not exposed through the Storage API).
-- No sensitive record content is logged.
+Every bind/prepare/step return value is checked. On failure, the
+transaction is marked for rollback and the method returns without
+persisting any change.
 
 ---
 
 ## Dual-backend boundary
 
-After Phase 5:
+After Phase 5, with explicit SQLite mode:
 
 | Backend | Resources |
 |---------|-----------|
 | SQLite | nodes, php_versions, profiles |
-| TXT | sites, users, domains, databases, backups, ssl_certificates, mail_domains, mail_mailboxes, mail_aliases, access_users, access_grants, reverse_proxies, auth_users, mail_state, mail_smarthost |
+| TXT | all other resources |
 
-**Key rules:**
-- TXT files for SQLite-backed resources are no longer written or read.
-- TXT files for SQLite-backed resources are NOT deleted (future
-  cleanup happens in Phase 13).
-- Saving a SQLite-backed resource does not create or modify any TXT
-  file for that resource.
-- Saving a TXT-backed resource does not modify any SQLite table.
-- The public Storage API is unchanged — callers do not know which
-  backend a resource uses.
+Without explicit SQLite mode (default):
+
+| Backend | Resources |
+|---------|-----------|
+| TXT | ALL resources |
 
 ---
 
-## Extension procedure
+## Extension notes
 
-To add another resource type to SQLite:
-
-1. Add `save_<type>` / `load_<type>` methods to `SQLiteStorage`.
-2. Delegate from `Storage` (replace the TXT implementation).
-3. The table must already exist in the schema (Phase 4) or be added
-  via a new schema migration.
-4. Add focused tests following the patterns in `test_sqlite_storage.cpp`.
+To add another resource type to SQLiteStorage:
+1. Add `save_<type>` / `load_<type>` to `SQLiteStorage`.
+2. Delegate from `Storage` within the `use_sqlite()` check.
+3. The table must exist in the schema (add a migration if needed).
+4. Add tests.
 5. Update this document.
 
 ---
 
 ## Non-goals
 
-- No automatic TXT→SQLite data import (Phase 8-11).
-- No connection pool management outside Storage.
-- No direct SQLiteStorage access by managers or API handlers.
-- No startup migration gate (Phase 11).
-- No backup/restore integration for SQLite (Phase 12).
-- No removal of TXT implementations for migrated resources (Phase 13).
+- SQLite is NOT active in production runtime by default.
+- No automatic TXT→SQLite data import in Phase 5.
+- No startup migration gate.
+- No TXT file deletion.
