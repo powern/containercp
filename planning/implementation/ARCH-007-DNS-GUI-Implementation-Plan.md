@@ -892,7 +892,13 @@ no sleep. Runs as part of the standard deterministic test suite.
 #### LOADING / ERROR / EDGE CASES
 - [x] **Loading states show spinners or "..." placeholders** — DNS column: `...` badge (app.js:874). Runtime: `...` (app.js:882). Health: coarse sync then async update (app.js:887-891). Tab content: "Checking DNS..." / "Loading..." / "Computing health score...". *Code review*
 - [x] **Error states show error message with retry button** — Each tab has independent try/catch. Security: per-resource (app.js:1972-1995). Health: "Failed to load Health tab" (app.js:2237-2240). DNS/Runtime: fallback to `...`. "Check Again" serves as retry. *Code review*
-- [x] **Site with site_id=0 (admin panel): SSL checks active, Runtime N/A** — Runtime N/A at app.js:879. SSL active (no site_id filter at app.js:885). Scoring: runtime skipped (utils.js:492), SSL included. *Code review*
+- [x] **Site with site_id=0 (admin panel): SSL checks active, Runtime N/A** — **Detailed verification:**
+  - **Admin panel identity:** Server hostname is `mail-test.local`. The admin panel runs as a system-level proxy (nginx config at `/srv/containercp/proxy/sites/mail-test.local.conf`), NOT as a Domain resource. SSL certificate exists at `/srv/containercp/ssl/0/` (fullchain.pem + privkey.pem). There is NO Domain record in `domains.db` for the admin panel — `site_id=0` applies conceptually to any Domain whose `site_id` field defaults to 0.
+  - **SSL checks applicable:** `HealthCache._doLoad` (cache.js:259-276) fetches SSL metadata for ALL domains regardless of `site_id`. The SSL column in domain list (app.js:885) has no `site_id` filter. `computeDomainHealthScore` (utils.js:419-432) includes SSL check (weight 20) unconditionally. ✅ Verified
+  - **Runtime NOT applicable:** Runtime column (app.js:879): `if (r.site_id === 0) return '<span class="badge badge-info">N/A</span>'`. Progressive batch loader (app.js:945): `rows.filter(r => r.site_id > 0)` — Runtime API is NEVER called for `site_id=0`. ✅ Verified
+  - **Health Score not penalised:** `computeDomainHealthScore` (utils.js:492): runtime check only added if `row.site_id > 0`. When absent, `applicableWeight` excludes runtime entirely, so score is unaffected. ✅ Verified
+  - **No false Runtime error:** Grey `N/A` badge, not red. No error text. ✅ Verified
+  - *Code review (2026-07-16). This environment has no Domain record with site_id=0 in the database. The production inspection (Phase 0) confirmed the same: admin panel has no Domain record. SSL metadata at /srv/containercp/ssl/0/ IS present and populated.*
 
 ---
 
