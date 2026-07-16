@@ -320,6 +320,40 @@ TEST_CASE("Fixture loader: legacy mail_domains 10-field") {
 }
 
 // ============================================================
+// Migration-only fixture verification
+// ============================================================
+
+TEST_CASE("Fixture loader: legacy template_profiles 8-field") {
+    auto tmp = copy_fixtures_to_temp("legacy");
+    // migrate_template_profiles() reads from "template_profiles.db" in the
+    // storage directory. It is NOT a standard load_*() path — it uses a
+    // dedicated file and returns Profile objects with hardcoded type=WEB_SERVER.
+    // After successful migration, the caller (ServiceRegistry) deletes
+    // template_profiles.db from disk. This test verifies the parse only.
+    containercp::storage::Storage st(tmp + "/");
+
+    // Verify file exists in the temp directory after copy
+    auto tp_path = fs::path(tmp) / "template_profiles.db";
+    REQUIRE(fs::exists(tp_path));
+
+    auto profiles = st.migrate_template_profiles();
+    REQUIRE(profiles.size() == 2);
+    CHECK(profiles[0].profile_name == "apache-php-default");
+    CHECK(profiles[0].type == containercp::profile::ProfileType::WEB_SERVER);
+    CHECK(profiles[0].web_server == "apache");
+    CHECK(profiles[0].default_profile == true);
+    CHECK(profiles[1].profile_name == "nginx-php-default");
+    CHECK(profiles[1].web_server == "nginx");
+    CHECK(profiles[1].default_profile == false);
+
+    // Verify migrate_template_profiles() does NOT delete the source file.
+    // The caller (ServiceRegistry) is responsible for deletion.
+    CHECK(fs::exists(tp_path));
+
+    fs::remove_all(tmp);
+}
+
+// ============================================================
 // Sentinel fixture verification
 // ============================================================
 
@@ -560,18 +594,29 @@ TEST_CASE("Fixture loader: malformed truncated_record") {
     fs::remove_all(tmp);
 }
 
-TEST_CASE("Fixture loader: malformed invalid_delimiter") {
+TEST_CASE("Fixture loader: malformed delimiter_collision") {
     auto tmp = copy_fixtures_to_temp("malformed");
-    if (fs::exists(fs::path(tmp) / "invalid_delimiter.db")) {
-        fs::rename(fs::path(tmp) / "invalid_delimiter.db",
+    if (fs::exists(fs::path(tmp) / "delimiter_collision.db")) {
+        fs::rename(fs::path(tmp) / "delimiter_collision.db",
                    fs::path(tmp) / "sites.db");
     }
     containercp::storage::Storage st(tmp + "/");
-    // Tilde in value should not break pipe-delimited parsing
+    // Record 2 has an unescaped pipe in the intended domain "pipe-inside|value".
+    // The parser treats | as field delimiter, producing 8 fields instead of 6.
+    // Extra fields are silently ignored. Shifted values produce incorrect data.
     auto sites = st.load_sites();
-    CHECK(sites.size() == 1);
-    if (!sites.empty()) {
-        CHECK(sites[0].domain == "site-with~tilde");
+    CHECK(sites.size() == 2);
+    if (sites.size() >= 2) {
+        CHECK(sites[0].domain == "valid-site");
+        // Domain was "pipe-inside|value" but pipe split it:
+        // domain="pipe-inside" (correct split), owner="value" (shifted),
+        // node_id=1 (coincidentally valid), web_server="admin" (shifted),
+        // php_mail_enabled=true (shifted from "1").
+        CHECK(sites[1].domain == "pipe-inside");
+        CHECK(sites[1].owner == "value");    // shifted from domain
+        CHECK(sites[1].node_id == 1);        // coincidental match
+        CHECK(sites[1].web_server == "admin"); // shifted from owner
+        CHECK(sites[1].php_mail_enabled == true); // shifted from web_server "1"
     }
     fs::remove_all(tmp);
 }
