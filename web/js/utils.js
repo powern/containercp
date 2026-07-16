@@ -267,8 +267,15 @@ window.computeDomainHealthScore = function(ctx) {
     hasMail = true;
   }
 
-  var dnsLoaded = ctx.allDnsLoaded;
-  var mailDnsLoaded = ctx.allMailDnsLoaded;
+  var fetchStates = ctx.fetchStates || {};
+  function stateIs(type) { var s = fetchStates[type]; return s && s.state; }
+  function isSuccess(type) { return stateIs(type) === 'success'; }
+  function isError(type) { return stateIs(type) === 'error'; }
+  function isPending(type) { return stateIs(type) === 'pending'; }
+
+  var dnsLoaded = isSuccess('rootDns');
+  var dnsError = isError('rootDns');
+  var mailDnsLoaded = isSuccess('dkim') || isSuccess('dmarc') || isSuccess('mtaSts');
   var rtLoaded = ctx.runtimeLoaded;
 
   function getRecs(typeName) {
@@ -447,7 +454,9 @@ window.computeDomainHealthScore = function(ctx) {
 
   // 8. Runtime Status (required, 15) — site_id > 0 only
   if (row.site_id > 0) {
-    checks.push(makeCheck('runtime', 'Runtime Status', 'req', 15, rt || 'Pending', '—', rt || '', !!rtLoaded));
+    var rtEvaluated = !!rtLoaded;
+    var rtStatus = rtEvaluated ? (rt || 'Error') : 'Pending';
+    checks.push(makeCheck('runtime', 'Runtime Status', 'req', 15, rtStatus, '—', rt || '', rtEvaluated));
   }
 
   // 9. CAA (recommended, 2)

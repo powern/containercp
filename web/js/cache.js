@@ -93,9 +93,12 @@ window.RuntimeCache = {
 // Used by Domain List, Domain Detail header, and Health tab.
 // TTL: 60 seconds. Force refresh clears cache and re-loads.
 // Concurrent loads: deduplicated via pending promises.
+// Stale loader protection: generation counter prevents old loaders from
+// overwriting results from newer force-refreshes.
 window.HealthCache = {
   _store: {},
   _loaders: {},
+  _generation: {},
   TTL_MS: 60000,
 
   get(domain) {
@@ -112,6 +115,8 @@ window.HealthCache = {
   invalidate(domain) {
     delete this._store[domain];
     delete this._loaders[domain];
+    if (this._generation[domain] === undefined) this._generation[domain] = 0;
+    this._generation[domain]++;
   },
 
   // Load full health result for a domain. Called by Domain List, Header, Health tab.
@@ -129,8 +134,21 @@ window.HealthCache = {
       if (cached && cached !== 'loading') return Promise.resolve(cached);
     }
 
-    // Dedup concurrent loaders
+    // Ensure generation counter exists
+    if (this._generation[domain] === undefined) this._generation[domain] = 0;
+
+    // Increment generation on force refresh (invalidates old loaders)
+    if (options.force) {
+      this._generation[domain]++;
+      // Also invalidate store so get() returns null
+      delete this._store[domain];
+      delete this._loaders[domain];
+    }
+
+    // Dedup concurrent loaders (only within same generation)
     if (this._loaders[domain]) return this._loaders[domain];
+
+    var gen = this._generation[domain];
 
     // Mark loading
     this._store[domain] = {result: null, timestamp: Date.now(), loading: true};
@@ -138,14 +156,23 @@ window.HealthCache = {
     // Async loader
     this._loaders[domain] = this._doLoad(domain, domainRow, mailDomain, serverHostname)
       .then(function(result) {
-        // Store result
-        window.HealthCache._store[domain] = {result: result, timestamp: Date.now(), loading: false};
+        // Stale loader protection: only store if generation matches
+        if (window.HealthCache._generation[domain] === gen) {
+          window.HealthCache._store[domain] = {result: result, timestamp: Date.now(), loading: false};
+        } else {
+          // Stale loader — discard result silently
+          if (window.HealthCache._store[domain] && window.HealthCache._store[domain].loading) {
+            delete window.HealthCache._store[domain];
+          }
+        }
         delete window.HealthCache._loaders[domain];
         return result;
       })
       .catch(function(err) {
         console.error('HealthCache.load failed for ' + domain, err);
-        delete window.HealthCache._store[domain];
+        if (window.HealthCache._generation[domain] === gen) {
+          delete window.HealthCache._store[domain];
+        }
         delete window.HealthCache._loaders[domain];
         return null;
       });
@@ -157,64 +184,105 @@ window.HealthCache = {
   _doLoad: async function(domain, domainRow, mailDomain, serverHostname) {
     if (!domain) return null;
 
+    // Per-resource fetch states: "pending" | "success" | "error"
+    function makeState(promiseOrValue) {
+      return {state: 'success', data: promiseOrValue};
+    }
+
     var ctx = {
       domainRow: domainRow || {},
       mailDomain: mailDomain || null,
       serverHostname: serverHostname || '',
+      // Fetch states for each resource — used by scoring engine
+      fetchStates: {},
     };
 
-    // Fetch root DNS (A, AAAA, MX, TXT, NS, CAA)
-    try {
-      ctx.rootDns = await fetchDnsForFqdn(domain, 'A,AAAA,MX,TXT,NS,CAA');
-    } catch(e) { console.error('Health root DNS failed', e); }
+    // Helper: attempt fetch, return {state, data} or {state:'error', error:...}
+    async function tryFetch(label, fn) {
+      ctx.fetchStates[label] = {state: 'pending', data: null, error: null};
+      try {
+        var data = await fn();
+        ctx.fetchStates[label] = {state: 'success', data: data, error: null};
+        return data;
+      } catch (e) {
+        console.error('Health ' + label + ' fetch failed for ' + domain, e);
+        ctx.fetchStates[label] = {state: 'error', data: null, error: e.message || String(e)};
+        return null;
+      }
+    }
 
-    // Fetch mail DNS
+    // 1. Root DNS
+    ctx.rootDns = await tryFetch('rootDns', function() {
+      return fetchDnsForFqdn(domain, 'A,AAAA,MX,TXT,NS,CAA');
+    });
+
+    // 2. MailDomain data (fresh via API if not provided)
     var mail = mailDomain;
     if (!mail && domainRow && domainRow.mail_domain_id && domainRow.mail_domain_id > 0) {
-      try {
+      await tryFetch('mailDomains', async function() {
         var mdRes = await api('/api/mail/domains');
         if (mdRes && mdRes.data) {
           mail = mdRes.data.find(function(m) { return m.domain === domain || m.domain_id === domainRow.id; }) || null;
         }
-      } catch(e) {}
+        return mail;
+      });
     }
 
+    // 3. Mail DNS sub-requests
     if (mail && mail.mode && mail.mode !== 'disabled') {
       ctx.mailDomain = mail;
       if (mail.dkim_public_key_dns) {
         var sel = mail.dkim_selector || 'dkim';
-        try { ctx.dkimDns = await fetchDnsForFqdn(sel + '._domainkey.' + domain, 'TXT'); }
-        catch(e) { console.error('DKIM fetch failed', e); }
+        ctx.dkimDns = await tryFetch('dkim', function() {
+          return fetchDnsForFqdn(sel + '._domainkey.' + domain, 'TXT');
+        });
       }
-      try { ctx.dmarcDns = await fetchDnsForFqdn('_dmarc.' + domain, 'TXT'); }
-      catch(e) { console.error('DMARC fetch failed', e); }
+      ctx.dmarcDns = await tryFetch('dmarc', function() {
+        return fetchDnsForFqdn('_dmarc.' + domain, 'TXT');
+      });
       if (mail.mode === 'local-primary') {
-        try { ctx.mtaStsDns = await fetchDnsForFqdn('_mta-sts.' + domain, 'TXT'); }
-        catch(e) { console.error('MTA-STS fetch failed', e); }
+        ctx.mtaStsDns = await tryFetch('mtaSts', function() {
+          return fetchDnsForFqdn('_mta-sts.' + domain, 'TXT');
+        });
         if (serverHostname) {
-          try { ctx.autoDns = await fetchDnsForFqdn('autodiscover.' + domain, 'CNAME,A'); }
-          catch(e) { console.error('Autodiscover fetch failed', e); }
+          ctx.autoDns = await tryFetch('autodiscover', function() {
+            return fetchDnsForFqdn('autodiscover.' + domain, 'CNAME,A');
+          });
         }
       }
     } else if (domainRow && domainRow.mail_domain_id && domainRow.mail_domain_id > 0) {
-      // mail exists but fetch failed — use basic data from domainRow
-      ctx.mailDomain = {domain: domain, mode: domainRow.mail_domain_mode || 'local-primary', dkim_public_key_dns: domainRow.dkim_public_key_dns || ''};
+      // MailDomain exists but fetch failed — mark as error, don't fabricate data
+      ctx.fetchStates['mailDomainFallback'] = {state: 'error', data: null, error: 'MailDomain fetch failed'};
     }
 
-    // Mark DNS as attempted regardless of success
-    ctx.allDnsLoaded = true;
-    ctx.allMailDnsLoaded = true;
+    // 4. SSL — refresh via fresh GET /api/domains on force reload
+    await tryFetch('ssl', async function() {
+      var domRes = await api('/api/domains');
+      if (domRes && domRes.data) {
+        var fresh = domRes.data.find(function(d) { return d.domain === domain || d.id === (domainRow && domainRow.id); });
+        if (fresh) {
+          ctx.sslStatus = fresh.ssl_status;
+          // Update _domainDetailData if viewing this domain
+          if (window._domainDetailData && window._domainDetailData.domainRow) {
+            window._domainDetailData.domainRow.ssl_status = fresh.ssl_status;
+          }
+          return fresh.ssl_status;
+        }
+      }
+      // Fallback to original
+      ctx.sslStatus = domainRow ? domainRow.ssl_status : null;
+      return ctx.sslStatus;
+    });
 
-    // SSL
-    ctx.sslStatus = domainRow ? domainRow.ssl_status : null;
-
-    // Runtime
+    // 5. Runtime — site_id > 0 only
     if (domainRow && domainRow.site_id > 0) {
-      try {
+      ctx.runtimeStatus = await tryFetch('runtime', async function() {
         var rtRes = await api('/api/runtime/' + domainRow.site_id);
-        if (rtRes && rtRes.data) ctx.runtimeStatus = rtRes.data.web;
-      } catch(e) { console.error('Runtime fetch failed for site ' + domainRow.site_id, e); }
-      ctx.runtimeLoaded = true;
+        var status = (rtRes && rtRes.data) ? rtRes.data.web : null;
+        ctx.runtimeLoaded = true;
+        return status;
+      });
+      if (!ctx.runtimeStatus) ctx.runtimeLoaded = false;
     }
 
     // Compute score

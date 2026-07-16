@@ -932,7 +932,7 @@ async function loadDomains(p) {
       cells[4].innerHTML = window.dnsStatusBadge(dnsData ? dnsData.overall_status : null);
       // Health score uses HealthCache.load (full context) or shows '...'
       window.HealthCache.load(r.domain, r, null, null).then(function(healthResult) {
-        if (!healthResult || !healthResult.score == null) return;
+        if (!healthResult || healthResult.score == null) return;
         var hRow = document.querySelector(`#domains-table table tbody tr:nth-child(${idx+1})`);
         if (!hRow) return;
         var hCells = hRow.querySelectorAll('td');
@@ -1048,7 +1048,7 @@ async function loadDomainDetail(p, domainId) {
       if (!healthResult || healthResult.score == null) return;
       var badgeSpan = p.querySelector('.page-actions .health-badge');
       if (!badgeSpan) return;
-      badgeSpan.innerHTML = window.healthGradeBadge(healthResult.score, healthResult.grade);
+      badgeSpan.innerHTML = 'Health: ' + window.healthGradeBadge(healthResult.score, healthResult.grade);
     });
 
     // Load first tab
