@@ -141,6 +141,7 @@
 | **ARCH-004**: Docker Network Multi-Site | ✅ | Multiple files (see CHANGELOG) |
 | Default backend → Apache2 | ✅ | `libs/core/ServiceRegistry.cpp` |
 | Web UI backend selector (Apache2/Nginx) | ✅ | `web/app.js` |
+| **ARCH-007**: DNS Diagnostic Center | ✅ | See summary below |
 
 ### Bugs Fixed
 
@@ -204,26 +205,30 @@
 
 ---
 
-## SSL/HTTPS Management Epic — ARCH-005
+## DNS Diagnostic Center — ARCH-007
 
-| Task | Status | Notes |
-|------|--------|-------|
-| ARCH-005: Architecture Proposal | ✅ | Approved |
-| SSL-001: CertificateProvider abstraction | ✅ | |
-| SSL-002: CertificateStore | ✅ | |
-| SSL-003: REST API endpoints | ✅ | |
-| SSL-004: AcmeClient + LetsEncryptProvider | ✅ | |
-| SSL-005: Proxy integration | ✅ | |
-| SSL-006: RenewalScheduler | ✅ | |
-| SSL-007: Web UI SSL page | ✅ | Minimal |
-| SSL-008: Real ACME HTTP-01 staging | ✅ | |
-| SSL-009: Server validation + bug fixes | ✅ | |
-| SSL-010: Comprehensive SSL/Proxy cleanup | ✅ | |
-| SSL-011: Production-ready finalization | ✅ | |
-| SSL-012: Admin Panel HTTPS | ✅ | |
-| SSL-013: Bootstrap/Normal mode | ✅ | |
+**Status:** COMPLETED (2026-07-16)
 
-**Status:** Implemented
+**Summary:** Read-only DNS diagnostic center for the ContainerCP admin panel.
+Provides live DNS resolution, Configured vs Published comparison, health
+scoring, and security recommendations. Does NOT manage DNS zones.
+
+**Components:**
+
+| Component | Description |
+|-----------|-------------|
+| **DnsCheckService** | Backend DNS resolution using c-ares library (`libs/dns/DnsCheckService.h/.cpp`). Supports A, AAAA, MX, TXT, CNAME, NS, SOA, CAA record types with 60s in-memory cache |
+| **SpfAnalyzer** | RFC 7208 SPF analysis (`libs/dns/SpfAnalyzer.h/.cpp`). Evaluates ip4, ip6, a, mx, include, redirect, all mechanisms using c-ares |
+| **DNS Check API** | `GET /api/domains/<domain>/dns-check` with type filtering and cache bypass |
+| **Domain List** | Progressive DNS/Health/Runtime columns with loading → badge → status |
+| **Domain Detail** | 5-tab layout (Overview, DNS Records, Mail, Security, Health) |
+| **Configured vs Published** | DNS record comparison for A, MX, SPF, DKIM, DMARC, MTA-STS, Autodiscover |
+| **Evidence/Why** | Per-record evidence panel showing expected vs published, reason, fix steps |
+| **Mail Tab** | Conditional MailDomain display with MX/SPF/DKIM/DMARC checks |
+| **Security Tab** | DMARC Wizard (Monitor/Quarantine/Reject), CAA, MTA-STS, TLS-RPT, Autodiscover recommendations |
+| **Health Engine** | Context-aware weighted scoring with grade boundaries. Handles mail/no-mail, site_id=0, SSL states |
+| **Admin Panel (site_id=0)** | Synthetic system-domain representation in Domains and Sites. Virtual system Site with capability fields. Protected from deletion |
+| **SitesViewService** | Extracted handler for enriched sites JSON including virtual admin-panel site |
 
 ---
 

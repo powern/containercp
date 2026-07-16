@@ -6,6 +6,46 @@ Format: date | commit | summary
 
 ---
 
+## ARCH-007 — DNS Diagnostic Center (2026-07-16)
+
+**Epic status:** COMPLETED
+
+**Commits:** `8f7a249..72a2333` (16 commits)
+
+**Summary:** Read-only DNS diagnostic center providing live DNS resolution,
+Configured vs Published comparison, health scoring, and security recommendations.
+
+**Major milestones:**
+
+| Phase | Description |
+|-------|-------------|
+| Phase 0 | Existing code verification, production inspection |
+| Phase 1 | DnsCheckService with c-ares backend, record parsing, caching |
+| Phase 2 | REST API endpoint, DomainViewService mail fields |
+| Phase 3 | Domain list with DNS/Mail/Runtime/Health columns |
+| Phase 4 | Domain detail with 5-tab layout (Overview, DNS Records, Mail, Security, Health) |
+| Phase 5 | Configured vs Published comparison + copy buttons |
+| Phase 6 | Mail tab with conditional MailDomain display |
+| Phase 7 | Security tab, DMARC Wizard, evidence/why panels |
+| Phase 8 | Health scoring engine (9 check types, weighted, context-aware) |
+| Phase 9 | Unit tests, API handler tests, frontend verification |
+
+**Key components:**
+- `libs/dns/DnsCheckService.h/.cpp` — c-ares DNS resolution
+- `libs/dns/SpfAnalyzer.h/.cpp` — RFC 7208 SPF analysis
+- `libs/dns/DnsCheckHandler.h/.cpp` — production API handler
+- `libs/api/SitesViewService.h/.cpp` — enriched sites with admin panel
+- `libs/domain/DomainViewService.h/.cpp` — enriched domains with admin panel
+- `libs/network/NetworkService.h/.cpp` — public IP detection
+- `web/app.js` — full GUI (domain list, detail, tabs, evidence panels)
+- `web/js/utils.js` — health scoring, formatters, comparison helpers
+- `web/js/cache.js` — DNS/Health caching with TTL
+
+**Admin panel (site_id=0):** Virtual system domain and site synthesized at the
+view layer. Protected from deletion. Runtime N/A. SSL applicable.
+
+---
+
 ## 2026-07-15 | `db07c1a` | Fix DKIM signing for PHP Mail — username mismatch
 
 **Root cause:** Rspamd's `dkim_signing` module defaults to `allow_username_mismatch=false`.

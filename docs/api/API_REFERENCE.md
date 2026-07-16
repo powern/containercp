@@ -55,11 +55,16 @@ JSON response ← Response struct with status code
 | POST | `/api/sites/create` | Create a new site | `SiteCreateOperation` (via HostingProvider) |
 | POST | `/api/sites/remove` | Remove a site by domain | `SiteRemoveOperation` |
 
-**GET /api/sites** — returns `{"success":true,"data":[{"id":N,"domain":"...","owner":"...","web_server":"apache|nginx",...}]}`
+**GET /api/sites** — returns enriched site list. The admin-panel (site_id=0)
+is synthesized as a virtual system site when `server_hostname` is configured.
+Admin site fields: `system_role: "admin-panel"`, `proxy_upstream`, `web_status`,
+`php_status: "N/A"`, `ssl_status`, `can_delete: false`, `can_manage_runtime: false`.
+Normal sites are returned unchanged by `JsonFormatter::site()`.
 
 **POST /api/sites/create** — body: `{"owner":"...","domain":"...","profile":"..."}`
 
-**POST /api/sites/remove** — body: `{"domain":"..."}`
+**POST /api/sites/remove** — body: `{"domain":"..."}`. Returns 403 if domain equals
+`server_hostname` (admin-panel system site cannot be removed).
 
 ### 2.3 Runtime
 
@@ -184,8 +189,14 @@ Fields: `version`, `server_hostname`.
 | POST | `/api/domains/remove` | Remove a domain record | `DomainManager` |
 
 **GET /api/domains** — returns per-domain: `id`, `domain`, `type`
-(`primary`|`alias`|`redirect`|`wildcard`), `site_id`, `site_name`,
+(`primary`|`alias`|`redirect`|`wildcard`|`system`), `site_id`, `site_name`,
 `site_domain`, `target`, `ssl_enabled`, `ssl_status`, `enabled`.
+
+**System domain (site_id=0):** The admin-panel domain (`server_hostname`) is
+synthesized by `DomainViewService` when no Domain record exists for the server
+hostname. Additional fields: `system_role` (`"admin-panel"`), `proxy_upstream`,
+`can_delete`, `can_manage_runtime`, `can_manage_ssl`, `can_manage_proxy`.
+Normal domains receive `can_delete: true`, `can_manage_runtime: true`.
 
 **SSL field semantics:**
 - `ssl_status`: Display-friendly certificate status from `CertificateStore::https_display_status()`.
