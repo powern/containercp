@@ -4,10 +4,9 @@
 > **Version:** v0.6.0
 > **Status:** Analysis document for next phase planning
 >
-> **Critical self-review conducted:** The original ARCH-008 proposal
-> ("Production Security & Access Layer") was reviewed against the
-> codebase and found to be too broad. This document now records the
-> revised, narrower epic sequence. See section 9 for the rationale.
+> **Product-owner decision (2026-07-16):** REST API Authentication
+> is deferred. SQLite Storage Foundation is ARCH-008. See sections 7–9
+> for the rationale and revised epic sequence.
 
 ---
 
@@ -227,21 +226,21 @@
 - Audit log (немає append-only storage)
 - Backup scheduling metadata
 - Будь-який багатокористувацький доступ
+- SSL auto-renewal reliability (jobs губляться при restart daemon)
 
-**Рекомендація:** Окремий епік або частина ARCH-008.
+**Рекомендація:** ARCH-008 — перший епік після v0.6.0.
 
 ### Authentication (AllowAll middleware)
 
-**Поточний стан:** `libs/api/AuthMiddleware.cpp` — `return true;`. REST API на порту 8080 не має автентифікації. Web UI на 8081 має session auth через `WebServer::require_session()`.
+**Поточний стан:** `libs/api/AuthMiddleware.cpp` — `return true;`. REST API на порту 8080 не має автентифікації. Web UI на 8081 має session auth через `WebServer::require_session()`. API server binds to `127.0.0.1` (localhost only).
 
 **Блокує:**
-- Production deployment (будь-хто з доступом до порту 8080 може керувати всім)
 - API Tokens
-- Role-based access
-- Audit log (хто зробив дію?)
+- Audit log attribution
 - Multi-admin
+- Remote API access (multi-node, external automation)
 
-**Рекомендація:** Ключова частина ARCH-008.
+**Рекомендація:** Deferred. Не блокує поточний single-node, localhost-only deployment. Буде реалізовано, коли з'явиться потреба в remote API access, multi-node, або multi-admin.
 
 ### Job Persistence
 
@@ -295,163 +294,122 @@
 
 ---
 
-## 7. Revised Epic Roadmap
+## 7. Revised Epic Roadmap — Product-Owner Decision
 
-The original ARCH-008 proposal (sections 9–10 of the previous version)
-was reviewed critically against the actual codebase. The following
-revised sequence reflects the findings of that review.
+The following epic order reflects the product-owner's final decision
+after the critical self-review. REST API Authentication is deferred;
+SQLite Storage Foundation is ARCH-008.
 
 ---
 
-### ARCH-008: REST API Authentication
+### ARCH-008: SQLite Storage Foundation
 
 | Aspect | Value |
 |--------|-------|
 | **Target Version** | v0.7.0 |
-| **Scope** | Medium |
-| **Product Value** | High |
-
-#### What
-
-Replace the `AllowAllAuth` middleware with real token-based authentication,
-persist sessions to disk, and add API tokens for automation.
-
-#### Scope (narrow — 3 workstreams only)
-
-1. **AuthMiddleware** — real implementation replacing `AllowAllAuth`. Token
-   validation on every REST API request. Session tokens from Web UI login.
-   API tokens from CLI/automation clients.
-
-2. **Session Persistence** — save active sessions to disk (using existing
-   pipe-delimited storage — sufficient for single-admin). Restore on daemon
-   restart. Eliminates re-login after restart.
-
-3. **API Tokens** — long-lived tokens for automation (Ansible, Terraform,
-   CI/CD). Token hash stored in Storage. CLI commands for
-   `token create` / `token revoke` / `token list`.
-
-#### Explicitly excluded from ARCH-008
-
-| Feature | Reason for exclusion |
-|---------|---------------------|
-| Role-based access control (RBAC) | Only one admin user exists. Multi-admin is v2.0 scope per Product Vision. |
-| Real SFTP Provider | Separate concern (system users, chroot, SSH). No architectural dependency on auth. |
-| Audit Log | Depends on identity (auth) + scalable storage (SQLite). Deferred to ARCH-011. |
-| Event System | Scope creep for this epic. Basic audit can log directly in handlers without events. |
-
-#### Why ARCH-008 first
-
-1. **Security principle.** AllowAll on localhost:8080 is not a critical
-   external threat (port is 127.0.0.1-only), but fixing it is the right
-   foundation. Every subsequent epic benefits from having real identity.
-
-2. **Session persistence.** Eliminates "login after every daemon restart" —
-   the most visible UX complaint.
-
-3. **API tokens.** Enables automation and integration before the platform
-   gains more features. Token auth is the prerequisite for any scripted
-   or tool-based management.
-
-4. **Smallest scope, fastest delivery.** Auth alone (no SFTP, no RBAC,
-   no audit) is ~2–3 weeks.
-
-#### Dependencies
-
-- `AuthService` (exists, 248 lines) — session auth, password hashing
-- `AuthMiddleware` interface (exists) — abstract class for auth plugins
-- `WebServer::require_session()` (exists) — Web UI session validation
-- `Storage` (exists) — pipe-delimited is sufficient for auth tokens
-- `web/app.js` (exists) — login page, session management
-
-#### Risks
-
-- **Backward compatibility.** Existing scripts calling `curl localhost:8080`
-  without auth headers will break. Mitigation: document migration, support
-  a grace period where both AllowAll and token auth are accepted.
-- **Token security.** Token hash, rotation, and revocation must be correct.
-- **Scope creep.** Resist pressure to add RBAC, SFTP, or audit to this epic.
-
-#### Acceptance Direction
-
-- Deterministic tests for auth middleware (valid token, expired, missing)
-- API integration tests (login, token create/revoke, authenticated requests)
-- Browser validation (login → session persists across restart)
-- CLI validation (token create → use token → curl API endpoints)
-- Web UI regression (existing pages still load after auth is enabled)
-
----
-
-### ARCH-009: Storage Foundation
-
-| Aspect | Value |
-|--------|-------|
-| **Target Version** | v0.7.0 (immediately after ARCH-008) |
 | **Scope** | Medium-Large |
-| **Product Value** | High (technical) |
+| **Product Value** | Critical (technical foundation) |
 
 #### What
 
-Replace pipe-delimited text storage with SQLite, persist jobs, add pagination
-across all list endpoints.
+Replace the current pipe-delimited text database files with SQLite,
+preserving the existing manager and storage abstractions where possible.
+Provide atomic writes, transactions, and a schema migration mechanism.
+Migrate all existing resource data safely from v0.6.0 text databases.
+Support rollback and recovery. Prepare the storage foundation for
+persistent jobs, scheduling, audit logs, pagination, metrics history,
+and future multi-node functionality.
 
 #### Scope
 
-1. **SQLite migration** — replace `libs/storage/Storage.cpp` (788 lines of
-   pipe-delimited text) with SQLite backed storage. Each resource type keeps
-   its own table. Provides: atomic writes, concurrent access, indices,
-   transactions.
+1. **SQLite storage backend** — replace `libs/storage/Storage.cpp`
+   (788 lines of pipe-delimited text I/O) with SQLite. Each resource
+   type gets its own table but the `Storage` public API (save, load,
+   load_all, remove) remains unchanged so existing managers work
+   without modification.
 
-2. **Job Persistence** — jobs survive daemon restart. Uses SQLite for
-   durable job queue. Enables reliable SSL auto-renewal (resume interrupted
-   renewal after restart) and future backup scheduling.
+2. **Atomic writes and transactions** — eliminate the "rewrite entire
+   file on every save" pattern. Use SQLite transactions for atomic
+   multi-table updates. Enable concurrent reads without corruption.
 
-3. **Pagination** — `?offset=N&limit=M` parameters for every list endpoint.
-   Requires SQLite for efficient LIMIT/OFFSET queries.
+3. **Schema migration mechanism** — versioned schema in SQLite.
+   On daemon startup, auto-detect schema version and apply migrations
+   sequentially. Rollback support (snapshot-based or version downgrade).
 
-#### Explicitly excluded
+4. **Data migration** — on first startup after upgrade, read existing
+   `.db` pipe-delimited files, convert each record to SQLite rows,
+   and verify integrity. Preserve original `.db` files as backup for
+   rollback. Log migration success/failure per resource type.
 
-- Rate limiting — deferred to post-v1.0 (not blocking any production workflow)
+5. **Indices** — add indices on commonly queried fields: `id` (primary),
+   `name`, `site_id` (foreign key), `node_id` (future multi-node).
+   Enable efficient pagination queries (LIMIT/OFFSET).
 
-#### Why ARCH-008 before ARCH-009
+#### Why ARCH-008 is first
 
-- Auth does not need SQLite. Pipe-delimited storage is sufficient for
-  storing session tokens and API tokens (small datasets, single admin).
-- ARCH-008 builds foundational identity that ARCH-009 can use for
-  operation attribution (e.g., "who scheduled this job").
-- If storage migration hits issues, auth is already deployed and working.
+1. **Biggest technical debt.** Pipe-delimited storage is 788 lines of
+   hand-rolled text I/O with no atomicity, no indices, no concurrent
+   access. Every module depends on it.
 
-#### Why ARCH-009 follows immediately
+2. **Blocks everything downstream.** Without reliable storage:
+   - Job persistence is impossible (SSL renewal lost on restart)
+   - Audit log is O(n) per write (rewrite entire file)
+   - Pagination is O(n) per query (scan entire file)
+   - Backup scheduling has no durable metadata store
+   - Multi-node synchronization has no transactional foundation
 
-- Pipe-delimited storage is the single biggest technical debt in the
-  codebase. Every module uses it. It has no atomicity, no indices, no
-  concurrent access.
-- Blocks: job persistence (needed for SSL renewal reliability),
-  pagination (needed before v1.0 with real data), scalable audit log.
-- Without SQLite, ARCH-011 (Audit Log) would be O(n) per write.
+3. **Lowest risk, highest leverage.** The Storage API is simple
+   (save/load/load_all/remove). Wrapping SQLite behind the same
+   interface means no changes to managers or API handlers. The
+   migration is contained in one module.
+
+4. **Prerequisite for v0.7+ epics.** ARCH-010 (Backup Scheduling)
+   needs job persistence → needs SQLite. ARCH-012 (Monitoring)
+   needs pagination → needs SQLite. ARCH-011 (Audit Log) needs
+   append-only storage → needs SQLite.
+
+#### Expected direction
+
+- Replace the `Storage` implementation, not its interface
+- Managers call `storage.save(resource)` — unchanged
+- Internally: SQLite `INSERT OR REPLACE` instead of file rewrite
+- `load_all()` uses `SELECT * FROM <type>` with optional pagination
+- Schema version stored in a `_meta` table
+- Migration: `_schema_version` → apply pending migrations → verify
+- Backup original `.db` files before migration for rollback
+- If migration fails: log error, keep original files, daemon may
+  start in degraded mode or abort
 
 #### Dependencies
 
-- `Storage` (exists, 788 lines) — to be replaced, not extended
-- `JobManager` (exists, in-memory) — to be backed by SQLite
-- All list API endpoints — to be extended with pagination params
+- `libs/storage/Storage.h` — interface to preserve
+- `libs/storage/Storage.cpp` — implementation to replace
+- SQLite3 — new dependency (C++ API, not CLI)
+- CMakeLists.txt — add SQLite3 find_package
 
 #### Risks
 
-- **Migration.** Existing `.db` files must be converted to SQLite on
-  daemon startup. Conversion script needed. Rollback plan required.
-- **Testing.** Every existing test that mocks Storage may need updates.
-- **Performance.** SQLite is fast for single-writer, but concurrent reads
-  must be verified under load.
+- **Migration failure.** If a `.db` file is corrupted, migration
+  may fail. Mitigation: validate each record before insert, keep
+  original files, support manual recovery.
+- **Performance regression.** SQLite has overhead per query.
+  Mitigation: benchmark load_all() vs current implementation,
+  use prepared statements, verify with production-scale data.
+- **SQLite version compatibility.** Must work on Debian 13 (Trixie)
+  with the system SQLite3 package.
+- **Thread safety.** SQLite in WAL mode supports concurrent reads
+  but single writer. Mitigation: use a database connection pool or
+  a single connection with WAL mode.
 
 #### Size: Medium-Large (3–4 weeks)
 
 ---
 
-### ARCH-010: Real SFTP Provider
+### ARCH-009: Real SFTP Provider
 
 | Aspect | Value |
 |--------|-------|
-| **Target Version** | v0.7.0 or v0.8.0 |
+| **Target Version** | v0.7.0 |
 | **Scope** | Medium |
 | **Product Value** | High |
 
@@ -462,19 +420,25 @@ using system users, chroot jails, and SSH key authentication.
 
 #### Scope
 
-1. **System user creation** — `useradd` / `userdel` for each access user,
-   matching the site's directory ownership.
-2. **chroot jail** — restricted shell, locked to the site's directory.
-3. **SSH key management** — store public keys, generate `authorized_keys`.
+1. **System user creation** — `useradd` / `userdel` for each access
+   user, matching the site's directory ownership.
+
+2. **chroot jail** — restricted shell, locked to the site's directory
+   with minimal required binaries.
+
+3. **SSH key management** — store public keys, generate `authorized_keys`,
+   support add/remove/list via CLI and API.
+
 4. **User lifecycle** — create on site creation, remove on site removal.
+   Integration with `AccessUserManager` and `AccessGrantManager`.
 
-#### Why not part of ARCH-008
+#### Why ARCH-009 after ARCH-008
 
-- System administration (useradd, chroot, SSH config) is a completely
-  different concern from HTTP auth middleware (tokens, sessions).
-- No architectural dependency on auth: SFTP users are separate OS-level
-  accounts, not API tokens.
-- Can be developed independently and in parallel with ARCH-009.
+- No architectural dependency on SQLite. SFTP uses system calls
+  (useradd, chroot, SSH), not storage.
+- Can proceed independently or in parallel with ARCH-008.
+- Real SFTP fixes the most visible core workflow gap: "create site →
+  cannot upload files."
 
 #### Dependencies
 
@@ -486,9 +450,52 @@ using system users, chroot jails, and SSH key authentication.
 #### Risks
 
 - **System user conflicts** when sites are renamed or removed.
-- **chroot complexity** — SSH chroot requires specific directory structure
-  and binaries inside the jail.
+- **chroot complexity** — SSH chroot requires specific directory
+  structure and binaries inside the jail.
 - **Cleanup** — removing a site must also remove the system user.
+- **Race conditions** if multiple sites created concurrently.
+
+#### Size: Medium (2–3 weeks)
+
+---
+
+### ARCH-010: Backup Scheduling and Persistent Jobs
+
+| Aspect | Value |
+|--------|-------|
+| **Target Version** | v0.8.0 |
+| **Scope** | Medium |
+| **Product Value** | High |
+
+#### What
+
+Leverage the new SQLite storage to persist jobs across daemon restarts.
+Add scheduled backup creation with retention policies and rotation.
+
+#### Scope
+
+1. **Job persistence** — `JobManager` stores jobs in SQLite. Jobs with
+   `status=running` are recovered on daemon restart. Enables reliable
+   SSL auto-renewal (interrupted renewal resumes after restart).
+
+2. **Backup scheduling** — periodic backup creation via `JobExecutor`
+   with configurable cron-like schedules (daily, weekly, monthly).
+
+3. **Retention policies** — configurable keep counts per schedule tier.
+   Automatic cleanup of expired backups.
+
+4. **Backup rotation** — remove oldest backups when retention limit is
+   exceeded, before creating new ones.
+
+#### Dependencies
+
+- ARCH-008 (SQLite for job persistence)
+
+#### Why ARCH-010 after ARCH-008
+
+- Job persistence requires atomic storage (needs SQLite).
+- Backup scheduling requires job persistence (schedules must survive
+  daemon restart).
 
 #### Size: Medium (2–3 weeks)
 
@@ -504,62 +511,42 @@ using system users, chroot jails, and SSH key authentication.
 
 #### What
 
-Centralized audit logging of all mutating operations with user identity,
-timestamp, action, and detail. Basic event system for pre/post hooks.
+Centralized audit logging of all mutating operations. Basic event
+system for pre/post hooks.
 
 #### Scope
 
-1. **Audit Log** — log every mutating API operation: who, what, when,
-   details. Stored in SQLite (depends on ARCH-009).
-2. **Audit API** — `GET /api/audit` with filtering by user, action, date.
-3. **Audit Web UI** — audit log viewer page.
-4. **Event System** — lightweight pre/post hooks for audit and future
-   extensions (webhooks, plugin system).
+1. **Audit log storage** — append-only log table in SQLite. Each
+   mutation records: timestamp, user agent (CLI/API/Web UI), action,
+   resource type, resource id, before/after state (JSON diff).
+
+2. **Audit API** — `GET /api/audit` with filtering by user, action,
+   resource type, date range. Paginated (depends on ARCH-008).
+
+3. **Audit Web UI** — audit log viewer page with search and filters.
+
+4. **Event system** — lightweight pre/post hooks for audit
+   registration. Designed for future extension to webhooks, plugin
+   system, and notification channels.
 
 #### Dependencies
 
-- ARCH-008 (user identity for "who" field in audit records)
-- ARCH-009 (SQLite for scalable append-only storage)
+- ARCH-008 (SQLite for scalable append-only audit storage)
+- Identity attribution (user agent from request context) — uses
+  existing session auth, no new auth middleware needed
 
-#### Why not in ARCH-008
+#### Why ARCH-011 after ARCH-008
 
 - Audit log without SQLite would be O(n) per write (pipe-delimited
-  rewrite entire file). ARCH-009 must come first.
-- Event system is an architectural decision that deserves its own design.
-  Adding it to the auth epic would cause scope creep.
+  rewrites entire file). Must wait for SQLite.
+- Event system without audit use-case is speculative. Build it when
+  audit needs it.
 
 #### Size: Medium (2–3 weeks)
 
 ---
 
-### ARCH-012: Backup Scheduling and Disaster Recovery
-
-| Aspect | Value |
-|--------|-------|
-| **Target Version** | v0.8.0 or v0.9.0 |
-| **Scope** | Medium |
-| **Product Value** | High |
-
-#### What
-
-Automated backup creation on a schedule, retention policies, rotation.
-
-#### Scope
-
-1. **Backup scheduling** — periodic backup creation via `JobExecutor`.
-2. **Retention policies** — daily/weekly/monthly with configurable counts.
-3. **Backup rotation** — automatic removal of expired backups.
-4. **Backup encryption** — optional encryption (deferred stretch goal).
-
-#### Dependencies
-
-- ARCH-009 (job persistence — schedules must survive daemon restart)
-
-#### Size: Medium (2 weeks)
-
----
-
-### ARCH-013: Monitoring and Observability
+### ARCH-012: Monitoring and Observability
 
 | Aspect | Value |
 |--------|-------|
@@ -569,59 +556,43 @@ Automated backup creation on a schedule, retention policies, rotation.
 
 #### What
 
-System metrics, site-level resource usage, real log viewer (replace mocks),
-health check dashboard.
+System metrics collection, site-level resource usage dashboard,
+real log viewer (replace mock data), health check dashboard.
 
 #### Scope
 
-1. **System metrics** — CPU, RAM, disk, network per-server.
-2. **Site metrics** — per-site container resource usage via Docker stats.
-3. **Real log viewer** — replace mock data in `GET /api/logs`.
-4. **Health dashboard** — consolidated view of all health checks.
+1. **System metrics** — CPU, RAM, disk, network per-server. Collected
+   periodically via a background job (needs ARCH-010 job persistence).
+
+2. **Site metrics** — per-site container resource usage via Docker
+   stats API. Stored in SQLite time-series (needs ARCH-008).
+
+3. **Real log viewer** — replace mock data in `GET /api/logs` with
+   real daemon log parsing. Paginated (needs ARCH-008 pagination).
+
+4. **Health dashboard** — consolidated view of all subsystem health
+   checks (core, mail, DNS, SSL, proxy, runtime).
 
 #### Dependencies
 
-- ARCH-009 (pagination for log viewer)
+- ARCH-008 (SQLite for time-series metrics storage, pagination)
+- ARCH-010 (job persistence for periodic metric collection)
 
 #### Size: Medium (2–3 weeks)
 
 ---
 
-### ARCH-014: Authoritative DNS Zone Management
+### Post-v0.9.0 Epics
 
-| Aspect | Value |
-|--------|-------|
-| **Target Version** | v1.0+ (deferred) |
-| **Scope** | Medium |
-| **Product Value** | Medium |
-
-#### What
-
-DNS zone CRUD, DNS provider interface, DNS record management, DNSSEC.
-
-#### Why deferred
-
-- Read-only DNS diagnostics already exist (ARCH-007).
-- Users can use Cloudflare, Route53, DigitalOcean for production DNS.
-- Authoritative DNS is a separate product (DNS server), not a core
-  hosting control panel requirement.
-
-#### Dependencies
-
-- Storage, Provider pattern (both exist)
-
-#### Size: Medium
-
----
-
-### Post v1.0 Epics
-
-- Role-based Access Control (multi-admin, reseller hosting)
-- Multi-node / Cluster Management
-- High Availability
-- Plugin System / Marketplace
-- Application Catalog (one-click installers)
-- Commercial Edition features
+| Epic | Trigger / Prerequisites |
+|------|-----------------------|
+| REST API Authentication | When remote API access, multi-node, external automation, or multi-admin is required |
+| Authoritative DNS Zone Mgmt | Users need built-in DNS hosting (deferred — Cloudflare/Route53 suffice for most) |
+| Role-based Access Control | Multi-admin users exist (post-v1.0 scope per Product Vision) |
+| Multi-node / Cluster | REST API Auth + SQLite Storage + NodeManager |
+| High Availability | Multi-node foundation |
+| Plugin System / Marketplace | Event System + REST API Auth |
+| Resource Limits / Quotas | Multi-node or reseller hosting need |
 
 ---
 
@@ -629,271 +600,225 @@ DNS zone CRUD, DNS provider interface, DNS record management, DNSSEC.
 
 | Epic | Product Value | Technical Value | Complexity | Risk | Dependencies | Recommended Order |
 | ---- | ------------- | --------------- | ---------- | ---- | ------------ | ----------------- |
-| **ARCH-008: REST API Auth** | **High** | **High** | Medium | Low | AuthService exists | **1** |
-| ARCH-009: Storage Foundation | High | **Critical** | Medium-Large | **High** (migration) | — | **2** |
-| ARCH-010: Real SFTP Provider | **High** | Medium | Medium | Medium | AccessUser exists | **3 (parallel with 2)** |
-| ARCH-011: Audit Log + Events | High | Medium | Medium | Low | ARCH-008 + ARCH-009 | 4 |
-| ARCH-012: Backup Scheduling | High | Medium | Medium | Low | ARCH-009 | 5 |
-| ARCH-013: Monitoring | Medium | Medium | Medium | Low | ARCH-009 | 6 |
-| ARCH-014: Authoritative DNS | Medium | Low | Medium | Low | — | 7 (deferred) |
-| RBAC / Multi-admin | Medium | Medium | Large | Medium | ARCH-008 | Post-1.0 |
-| Multi-node | Medium | High | Extra Large | Very High | ARCH-008, 009 | Post-1.0 |
-| Plugin System | Low | Medium | Extra Large | High | ARCH-008, 011 | Post-1.0 |
+| **ARCH-008: SQLite Storage** | **Critical** | **Critical** | Medium-Large | **High** (migration) | Storage.h interface | **1** |
+| ARCH-009: Real SFTP Provider | **High** | Medium | Medium | Medium | AccessUser exists | **2 (parallel)** |
+| ARCH-010: Backup + Persistent Jobs | **High** | **High** | Medium | Low | ARCH-008 | 3 |
+| ARCH-011: Audit Log + Events | High | Medium | Medium | Low | ARCH-008 | 4 |
+| ARCH-012: Monitoring | Medium | Medium | Medium | Low | ARCH-008, 010 | 5 |
+| REST API Authentication | Medium | Medium | Medium | Low | — | Deferred |
+| Authoritative DNS | Medium | Low | Medium | Low | — | Deferred |
+| RBAC / Multi-admin | Medium | Medium | Large | Medium | Auth (deferred) | Post-v1.0 |
+| Multi-node | Medium | High | Extra Large | Very High | Auth + Storage | Post-v1.0 |
+| Plugin System | Low | Medium | Extra Large | High | Events + Auth | Post-v1.0 |
 
 ---
 
-## 9. Critical Self-Review and Revised Recommendation
+## 9. Rationale — Why SQLite Is ARCH-008
 
-### Background
+### The critical self-review validated the wrong recommendation
 
-The original ARCH-008 proposal ("Production Security & Access Layer")
-was a Large-scope epic bundling 7 workstreams: auth middleware, session
-persistence, API tokens, RBAC, SFTP provider, audit log, and event
-system. A critical self-review was conducted against the actual codebase
-to challenge this scope.
+The critical self-review correctly identified that:
+1. AllowAll is Medium severity (localhost-only, not external)
+2. The original ARCH-008 scope (7 workstreams) was too large
+3. RBAC is premature (single admin)
+4. SFTP and auth are independent concerns
+5. Storage Foundation is the #1 technical debt
 
-### Key findings from the review
+However, the self-review then recommended REST API Authentication as
+ARCH-008, with Storage Foundation as ARCH-009. The product owner
+overruled this for the following reasons.
 
-#### 1. AllowAll security gap is overblown
+### Why REST API Authentication was deferred
 
-The proposal claimed "anyone with network access to port 8080 can control
-everything." In reality:
+1. **No external attack surface.** The API server binds to `127.0.0.1`
+   (localhost only). An external attacker cannot reach port 8080. The
+   external Web UI port (8081) already has session auth. Someone with
+   SSH access can already run `containercp` CLI commands directly.
 
-- `ApiServer` binds to `127.0.0.1` (localhost only) — `ApiServer.cpp:263`
-- The external Web UI port (8081) already has session auth via
-  `WebServer::require_session()`
-- CLI access goes through a UNIX socket with file permission protection
+2. **No current consumer need.** There is no remote API access, no
+   multi-node communication, no external automation tooling (Ansible,
+   Terraform), and no multi-admin setup. Adding API tokens before
+   anyone needs them is speculative engineering.
 
-Someone with SSH access can already run `containercp` commands directly.
-External attackers cannot reach port 8080 at all.
+3. **Session persistence is cosmetic.** The UX complaint "login after
+   every daemon restart" is real but minor compared to the technical
+   debt of the storage layer.
 
-**Severity: Medium, not Critical.**
+4. **Auth would need to be reimplemented on SQLite anyway.** Session
+   persistence built on pipe-delimited storage would need to be
+   rewritten when ARCH-008 (SQLite) ships. Better to build it once
+   on the correct foundation.
 
-#### 2. The original ARCH-008 scope was too large
+5. **Timing.** Auth will be needed when the platform gains remote API
+   consumers, multi-node, or multi-admin. Those are post-v1.0 features.
+   Building auth now means it sits unused for multiple release cycles.
 
-Seven workstreams bundled as one epic is an anti-pattern:
+### Why SQLite Storage Foundation is ARCH-008
 
-| Workstream | Domain | Can be separate? |
-|-----------|--------|-----------------|
-| AuthMiddleware | HTTP middleware | Core of ARCH-008 |
-| Session Persistence | Auth infra | Part of ARCH-008 |
-| API Tokens | Auth infra | Part of ARCH-008 |
-| RBAC | Authorization | Premature (1 admin user exists) |
-| Real SFTP | System administration | Independent (useradd, chroot, SSH) |
-| Audit Log | Compliance | Depends on ARCH-008 (identity) + ARCH-009 (SQLite) |
-| Event System | Architecture | Scope creep for auth epic |
+1. **Biggest technical debt, highest leverage.** The 788-line
+   pipe-delimited storage implementation is the foundation of every
+   subsystem. Fixing it improves everything.
 
-#### 3. RBAC is premature
+2. **Blocks all subsequent epics.** Without atomic storage:
+   - Job persistence is impossible (SSL renewal lost on restart)
+   - Audit log is O(n) per write (rewrite entire file)
+   - Pagination is O(n) per query (scan entire file)
+   - Backup scheduling has no durable metadata
+   - Multi-node synchronization has no transactional foundation
 
-There is exactly one admin user. The Product Vision explicitly lists
-multi-admin as a v2.0 concern. Implementing roles before the platform
-has multiple user types is speculative engineering.
+3. **Cleanest migration boundary.** The `Storage` interface is small
+   and stable: `save()`, `load()`, `load_all()`, `remove()`. Replacing
+   the implementation behind this interface touches exactly one module.
+   Managers and API handlers need zero changes.
 
-#### 4. Storage Foundation is more critical than acknowledged
+4. **Build once, use everywhere.** Every downstream epic (backup
+   scheduling, audit log, monitoring, pagination, metrics history)
+   benefits from SQLite without re-architecting storage again.
 
-Pipe-delimited storage (`libs/storage/Storage.cpp`, 788 lines) blocks:
-- Job persistence (no atomic save → SSL renewal breaks on restart)
-- Pagination (no indices → O(n) on every list)
-- Audit log (O(n) per write — rewrite entire file on every mutation)
-- Concurrent access (not thread-safe during write)
+5. **Prerequisite for v0.7+ roadmap.** ARCH-010 (Backup Scheduling)
+   needs job persistence → needs SQLite. ARCH-012 (Monitoring) needs
+   pagination → needs SQLite. ARCH-011 (Audit Log) needs append-only
+   storage → needs SQLite.
 
-ARCH-009 (Storage Foundation) should follow ARCH-008 immediately, not
-be deferred to a later version.
+### What REST API Authentication depends on
 
-#### 5. SFTP and auth are independent concerns
+When auth is eventually needed (remote API access, multi-node,
+multi-admin, external automation), it will depend on:
+- ARCH-008 (SQLite — for session and token persistence)
+- Existing `AuthService`, `AuthMiddleware` interface, `WebServer::require_session()`
 
-HTTP auth middleware (tokens, sessions) has zero architectural overlap
-with SFTP (system users, chroot, SSH keys). Combining them means SFTP
-delays auth and vice versa.
-
-### Revised recommendation
-
-**ARCH-008 should be "REST API Authentication" — a Medium epic with
-3 focused workstreams:**
-
-1. AuthMiddleware (replace AllowAll)
-2. Session Persistence
-3. API Tokens
-
-**Explicitly excluded from ARCH-008:**
-- RBAC (deferred to post-v1.0 multi-admin)
-- Real SFTP Provider (separate epic — ARCH-010)
-- Audit Log (separate epic — ARCH-011, needs SQLite first)
-- Event System (separate epic — ARCH-011)
+These components already exist. Auth can be implemented as a focused
+Medium epic at any future point without architectural changes.
 
 ### Revised epic sequence
 
 ```
-ARCH-008: REST API Authentication     ← v0.7.0, Medium
-    ↓ (foundation for identity)
-ARCH-009: Storage Foundation           ← v0.7.0, Medium-Large
-    ↓ (foundation for scalability)
-┌─── ARCH-010: Real SFTP Provider     ← v0.7.0–v0.8.0, Medium
-│   (independent of ARCH-009)
-├─── ARCH-011: Audit Log + Events     ← v0.8.0, Medium
-│   (depends on ARCH-008 + ARCH-009)
-├─── ARCH-012: Backup Scheduling      ← v0.8.0–v0.9.0, Medium
-│   (depends on ARCH-009)
-├─── ARCH-013: Monitoring             ← v0.9.0, Medium
-│   (depends on ARCH-009)
-└─── ARCH-014: Authoritative DNS      ← v1.0+, Medium
-    (deferred — users can use Cloudflare/Route53)
-```
+v0.7.0
+  ARCH-008  ████████████████████  SQLite Storage Foundation
+  ARCH-009  ░░░░████████████████  Real SFTP Provider (parallel)
 
-### Why ARCH-008 should be first (revised justification)
+v0.8.0
+  ARCH-010  ████████████████████  Backup Scheduling + Persistent Jobs
+  ARCH-011  ░░░░████████████████  Audit Log + Event System
 
-1. **Security principle, not critical urgency.** AllowAll is Medium
-   severity, but fixing it is the right thing to do before adding more
-   features to the platform. Every new endpoint becomes authenticated
-   from day one.
+v0.9.0
+  ARCH-012  ████████████████████  Monitoring and Observability
 
-2. **Session persistence.** The most visible UX issue: "login after every
-   daemon restart." Fixing this is a quick win.
-
-3. **API tokens.** Enables automation (Ansible, Terraform, CI/CD) before
-   the platform accumulates more features that would need retrofitting.
-
-4. **Smallest scope, fastest delivery.** By excluding RBAC, SFTP, audit,
-   and events, ARCH-008 becomes a focused 2–3 week epic instead of a
-   2+ month megaproject.
-
-5. **Foundation for subsequent epics.** ARCH-009 (Storage Foundation)
-   needs identity to attribute jobs to users. ARCH-011 (Audit Log) needs
-   identity for the "who" field. ARCH-010 (SFTP) is independent and can
-   proceed in parallel.
-
-### Why ARCH-009 follows immediately after ARCH-008
-
-- Auth does not need SQLite. Pipe-delimited storage is adequate for
-  session and API token storage (small datasets, single admin).
-- But ARCH-009 is the #1 technical debt. Every module uses storage.
-- ARCH-009 unblocks: job persistence (SSL renewal reliability),
-  pagination (needed before production deployment with real data),
-  and scalable audit logging.
-- Performance: pipe-delimited audit log would be O(n) per write — 
-  unacceptable for any production hosting provider.
-
-### What ARCH-008 does NOT solve
-
-- **SFTP.** The no-op `LocalSftpProvider` remains a placeholder. Users
-  still cannot upload files. This is a real core workflow gap and is
-  tracked as ARCH-010.
-- **Audit.** No compliance logging until ARCH-011.
-- **Scalability.** No pagination, no job persistence — these are ARCH-009.
-
-### Risks of the revised plan
-
-- **Perception.** "You shipped v0.6.0 without auth" — the gap will remain
-  until ARCH-008 is implemented.
-- **Backward compatibility.** Existing scripts using `curl localhost:8080`
-  without tokens will break. Grace period required.
-- **SFTP delay.** The core workflow gap ("create site → upload files")
-  remains until ARCH-010. Mitigation: document workarounds (docker cp,
-  volume mount).
-
----
-
-## 10. Proposed Planning Sequence
-
-### Phase 0: Critical review completed ✅
-
-The original ARCH-008 scope has been reviewed, challenged, and split.
-This document records the revised sequence.
-
-### Phase 1: ARCH-008 — REST API Authentication
-
-1. **Architecture Proposal** — `planning/proposals/ARCH-008-REST-API-Authentication.md`
-   - Problem: AllowAllAuth on localhost:8080
-   - Proposed: Token-based AuthMiddleware, session persistence, API tokens
-   - Explicit out-of-scope: RBAC, SFTP, Audit, Events
-   - Migration strategy: grace period allowing both AllowAll and token auth
-   - Rejected alternatives, risks, validation plan
-
-2. **ADR** (if needed):
-   - Token storage strategy (hash + salt vs encrypted)
-   - Token revocation model (blacklist vs short expiry + refresh)
-
-3. **Implementation phases**:
-   - Phase 1a: AuthMiddleware real implementation
-   - Phase 1b: Session persistence (disk-backed sessions)
-   - Phase 1c: API tokens (create, revoke, list, authenticate)
-   - Phase 1d: Web UI adaptations (login flow, token management page)
-   - Phase 1e: CLI commands (token create, revoke, list)
-   - Phase 1f: Tests (unit, integration, security)
-   - Phase 1g: Validation VM deployment + acceptance testing
-
-4. **Release target** — v0.7.0-alpha
-
-### Phase 2: ARCH-009 — Storage Foundation
-
-1. **Architecture Proposal** — `planning/proposals/ARCH-009-Storage-Foundation.md`
-   - SQLite schema design for all existing resource types
-   - Migration script for existing .db files
-   - Job persistence design (SQLite-backed job queue)
-   - Pagination API contract
-
-2. **Implementation phases**:
-   - Phase 2a: SQLite storage backend (parallel to existing pipe-delimited)
-   - Phase 2b: Data migration on daemon startup
-   - Phase 2c: Job persistence (JobManager → SQLite)
-   - Phase 2d: Pagination for all list endpoints
-   - Phase 2e: Remove pipe-delimited storage
-   - Phase 2f: Tests + validation
-
-3. **Release target** — v0.7.0-beta (may ship in same version as ARCH-008)
-
-### Phase 3: ARCH-010 — Real SFTP Provider
-
-1. **Architecture Proposal** — `planning/proposals/ARCH-010-Real-SFTP-Provider.md`
-   - System user lifecycle (useradd/userdel)
-   - chroot directory structure
-   - SSH key management
-   - Integration with existing AccessUser/AccessGrant
-
-2. **Note:** Can start in parallel with ARCH-009 — no storage dependency.
-
-### Phase 4: ARCH-011 through ARCH-014
-
-Each epic follows the same pattern:
-1. Architecture Proposal
-2. Implementation
-3. Tests
-4. Validation
-
-### Summary timeline
-
-```
-v0.7.0 ──────────────────────────────────────────────
-  ARCH-008  ████████████████░░░░  (auth)
-  ARCH-009  ░░░░████████████████  (storage)
-  ARCH-010  ░░░░████████████░░░░  (sftp, parallel)
-                                                   
-v0.8.0 ──────────────────────────────────────────────
-  ARCH-011  ████████████████░░░░  (audit)
-  ARCH-012  ░░░░████████████████  (backup sched)
-  ARCH-013  ░░░░░░░░░░░░░░░░░░░░  (monitoring)
-                                                   
-v1.0+ ──────────────────────────────────────────────
-  ARCH-014  ████████████████████  (dns zone mgmt)
-  RBAC      ░░░░░░░░░░░░░░░░░░░░  (multi-admin)
-  Multi-node░░░░░░░░░░░░░░░░░░░░  (cluster)
+Post-v0.9.0 / v1.0+
+  REST API Auth (when remote access is needed)
+  Authoritative DNS (deferred — Cloudflare/Route53 suffice)
+  RBAC / Multi-admin (when multiple admin users exist)
+  Multi-node / Cluster (needs auth + storage)
 ```
 
 ### Key dependency graph
 
 ```
-ARCH-008 (auth) ──────┐
-                       ├──> ARCH-011 (audit) ──> Post-v1.0
-ARCH-009 (storage) ────┘
-    │
-    ├──> ARCH-012 (backup scheduling)
-    │
-    └──> ARCH-013 (monitoring)
+ARCH-008 (SQLite) ────┬──> ARCH-010 (backup + jobs)
+                       ├──> ARCH-011 (audit log)
+                       └──> ARCH-012 (monitoring, pagination)
 
-ARCH-010 (sftp) ──> independent, no dependencies on ARCH-008 or ARCH-009
+ARCH-009 (SFTP) ─────── independent, no storage dependency
+
+REST API Auth ───────── deferred; depends on ARCH-008 when needed
+```
+
+---
+
+## 10. Proposed Planning Sequence
+
+### Phase 0: Product-owner decision ✅
+
+REST API Authentication is deferred. SQLite Storage Foundation is
+ARCH-008. This document records the final epic sequence.
+
+### Phase 1: ARCH-008 — SQLite Storage Foundation
+
+1. **Architecture Proposal** — `planning/proposals/ARCH-008-SQLite-Storage-Foundation.md`
+   - Problem analysis: pipe-delimited storage limitations
+   - Proposed: SQLite backend preserving Storage interface
+   - Schema design: table-per-resource-type, `_meta` for schema version
+   - Migration strategy: read `.db` → validate → insert into SQLite → verify
+   - Rollback: keep original `.db` files, version flag to revert
+   - Rejected alternatives (keep pipe-delimited, use LMDB, etc.)
+   - Risks and validation plan
+
+2. **ADR** (if needed):
+   - SQLite schema design (table-per-type vs single table with type column)
+   - WAL mode vs journal mode for concurrent access
+   - Migration reliability (transactional migration vs incremental)
+
+3. **Implementation phases**:
+   - Phase 1a: SQLiteStorage implementation behind Storage interface
+   - Phase 1b: Schema versioning and migration engine
+   - Phase 1c: Data migration on daemon startup (`.db` → SQLite)
+   - Phase 1d: Rollback and recovery (keep originals, version downgrade)
+   - Phase 1e: Indices and pagination foundation
+   - Phase 1f: Test suite (unit: SQLiteStorage, integration: migration)
+   - Phase 1g: Validation VM deployment + acceptance testing
+
+4. **Release target** — v0.7.0-alpha
+
+### Phase 2: ARCH-009 — Real SFTP Provider
+
+1. **Architecture Proposal** — `planning/proposals/ARCH-009-Real-SFTP-Provider.md`
+   - System user lifecycle (useradd/userdel)
+   - chroot directory structure and required binaries
+   - SSH key management
+   - Integration with existing AccessUser/AccessGrant
+
+2. **Note:** Can start in parallel with ARCH-008 — no storage dependency.
+
+### Phase 3: ARCH-010 — Backup Scheduling and Persistent Jobs
+
+1. **Architecture Proposal** — `planning/proposals/ARCH-010-Backup-Scheduling.md`
+   - Job persistence design using SQLite
+   - Scheduled job engine (cron-like expressions)
+   - Retention policies and rotation algorithm
+   - Integration with existing TarBackupProvider
+
+### Phase 4: ARCH-011 — Audit Log and Event System
+
+1. **Architecture Proposal** — `planning/proposals/ARCH-011-Audit-Log.md`
+   - Append-only audit log in SQLite
+   - Pre/post hook registration for events
+   - Audit API contract
+   - Web UI audit viewer
+
+### Phase 5: ARCH-012 — Monitoring and Observability
+
+1. **Architecture Proposal** — `planning/proposals/ARCH-012-Monitoring.md`
+   - System metrics collection (periodic job)
+   - Time-series storage in SQLite
+   - Real log viewer (replace mock data)
+   - Health dashboard
+
+### Summary timeline
+
+```
+v0.7.0 ──────────────────────────────────────────────
+  ARCH-008  ████████████████████  SQLite Storage Foundation
+  ARCH-009  ░░░░████████████████  Real SFTP Provider (parallel)
+
+v0.8.0 ──────────────────────────────────────────────
+  ARCH-010  ████████████████████  Backup Scheduling + Persistent Jobs
+  ARCH-011  ░░░░████████████████  Audit Log + Event System
+
+v0.9.0 ──────────────────────────────────────────────
+  ARCH-012  ████████████████████  Monitoring and Observability
+```
+
+### Key dependency graph
+
+```
+ARCH-008 (SQLite) ────┬──> ARCH-010 (backup + jobs)
+                       ├──> ARCH-011 (audit log)
+                       └──> ARCH-012 (monitoring, pagination)
+
+ARCH-009 (SFTP) ─────── independent, no storage dependency
 ```
 
 ---
 
 *Документ підготовлено на основі аналізу репозиторію ContainerCP (коміт `4eceaf7`, v0.6.0).*
-*Section 7–10 revised 2026-07-16 after critical self-review of the original ARCH-008 scope.*
+*Sections 7–10 revised 2026-07-16: product-owner decision — REST API Authentication deferred, SQLite Storage Foundation is ARCH-008.*
