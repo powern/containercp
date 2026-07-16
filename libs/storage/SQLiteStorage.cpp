@@ -882,7 +882,7 @@ void SQLiteStorage::save_mail_module_state(const std::string& state) {
     if (!txn.db().prepare(sql)) return;
     if (!txn.db().bind_text(1, state)) return;
     if (txn.db().step() == false && txn.db().error_code() != 0) return;
-    txn.commit();  // commit() returns false if COMMIT fails — rollback is default
+    if (!txn.commit()) return;  // checked commit — rollback on failure
 }
 
 std::string SQLiteStorage::load_mail_module_state() {
@@ -904,7 +904,7 @@ void SQLiteStorage::save_mail_smarthost(const std::string& config) {
     if (!txn.db().prepare(sql)) return;
     if (!txn.db().bind_text(1, config)) return;
     if (txn.db().step() == false && txn.db().error_code() != 0) return;
-    txn.commit();
+    if (!txn.commit()) return;
 }
 
 std::string SQLiteStorage::load_mail_smarthost() {

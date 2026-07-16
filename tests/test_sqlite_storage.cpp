@@ -1866,6 +1866,9 @@ TEST_CASE("SQLiteStorage mail_domains round trip and sentinels") {
     m.enabled = true;
     m.created_at = "2026-01-01T00:00:00Z";
     m.updated_at = "2026-06-15T12:00:00Z";
+    m.dkim_selector = "dkim2024";
+    m.dkim_private_key_path = "/srv/containercp/dkim/example.com/dkim.private";
+    m.dkim_public_key_dns = "v=DKIM1; k=rsa; p=TESTPUBLICKEY";
     ss.save_mail_domains({m});
     auto loaded = ss.load_mail_domains();
     REQUIRE(loaded.size() == 1);
@@ -1877,6 +1880,9 @@ TEST_CASE("SQLiteStorage mail_domains round trip and sentinels") {
     CHECK(loaded[0].enabled); CHECK(loaded[0].name == "example.com");
     CHECK(loaded[0].created_at == "2026-01-01T00:00:00Z");
     CHECK(loaded[0].updated_at == "2026-06-15T12:00:00Z");
+    CHECK(loaded[0].dkim_selector == "dkim2024");
+    CHECK(loaded[0].dkim_private_key_path == "/srv/containercp/dkim/example.com/dkim.private");
+    CHECK(loaded[0].dkim_public_key_dns == "v=DKIM1; k=rsa; p=TESTPUBLICKEY");
     // Update replaces timestamps
     m.created_at = "2026-02-01T00:00:00Z";
     m.updated_at = "2026-07-01T00:00:00Z";

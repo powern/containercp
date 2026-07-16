@@ -466,6 +466,8 @@ enforce existence.
 | `max_aliases` | `max_aliases` | |
 | `catch_all` | `catch_all` | |
 | `enabled` | `enabled` | |
+| `created_at` | `created_at` | Preserved exactly — model-supplied, not generated |
+| `updated_at` | `updated_at` | Preserved exactly — model-supplied, not generated |
 | `name` | — | Set from `domain_name` on load |
 
 Mail domains are referenced by mailboxes and aliases with FK RESTRICT.
@@ -486,8 +488,8 @@ Uses `sync_parent_rows` (UPSERT + prune) to preserve referenced domains.
 | `forward_to` | `forward_to` | |
 | `spam_enabled` | `spam_enabled` | |
 | `last_login` | `last_login` | |
-| `created_at` | `created_at` | |
-| `updated_at` | `updated_at` | |
+| `created_at` | `created_at` | Preserved exactly — model-supplied |
+| `updated_at` | `updated_at` | Preserved exactly — model-supplied |
 | `name` | — | Set from `local_part` on load |
 
 ### MailAlias → `mail_aliases`
@@ -499,13 +501,26 @@ Uses `sync_parent_rows` (UPSERT + prune) to preserve referenced domains.
 | `source_local_part` | `source_local_part` | |
 | `destination` | `destination` | Full email address |
 | `enabled` | `enabled` | |
-| `created_at` | `created_at` | |
-| `updated_at` | `updated_at` | |
+| `created_at` | `created_at` | Preserved exactly — model-supplied |
+| `updated_at` | `updated_at` | Preserved exactly — model-supplied |
 | `name` | — | Set from `source_local_part` on load |
+
+### SSL certificate note
+
+The `SslCertificate` C++ model has lifecycle timestamp fields
+(`issued_at`, `expires_at`, `renew_after`, `last_validation`). These are
+preserved exactly.
+
+The schema-level `created_at` and `updated_at` columns in
+`ssl_certificates` are **not** represented by the current C++ model.
+They are generated internally during INSERT and are not round-trip
+fields. This is a schema bookkeeping detail, not a model contract.
 
 ### Mail config (module state + smarthost)
 
-Both stored in `mail_config` key-value table with persistent keys:
+Both stored in `mail_config` key-value table with persistent keys.
+Each write uses `TransactionGuard` with checked commit — if `COMMIT`
+fails, the transaction rolls back and the change is not persisted.
 
 | Key | Value | Persistence method |
 |-----|-------|-------------------|
