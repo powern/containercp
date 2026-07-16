@@ -2182,40 +2182,49 @@ function loadDomainHealth() {
         || await fetchDnsForFqdn('_dmarc.' + domain, 'TXT');
       ctx.mtaStsDns = DnsCache.get('_mta-sts.' + domain, 'TXT')
         || await fetchDnsForFqdn('_mta-sts.' + domain, 'TXT');
+      if (dd.serverHostname) {
+        ctx.autoDns = DnsCache.get('autodiscover.' + domain, 'CNAME,A')
+          || await fetchDnsForFqdn('autodiscover.' + domain, 'CNAME,A');
+      }
     }
 
     // SSL status from domainRow
     ctx.sslStatus = dd.domainRow.ssl_status;
 
-    // Runtime status
+    // Runtime status — only for site_id > 0
     if (dd.domainRow.site_id > 0) {
       try {
         var rtRes = await api('/api/runtime/' + dd.domainRow.site_id);
         if (rtRes && rtRes.data) ctx.runtimeStatus = rtRes.data.web;
-      } catch(e) {}
+      } catch(e) {
+        console.error('Runtime health fetch failed for site ' + dd.domainRow.site_id, e);
+      }
     }
 
     var result = window.computeDomainHealthScore(ctx);
-    var ts = new Date().toLocaleTimeString();
+    var ts = result.computed_at ? new Date(result.computed_at).toLocaleTimeString() : new Date().toLocaleTimeString();
 
     if (result.score == null) {
       content.innerHTML = '<div class="empty-state">No checks applicable for this domain.</div>';
       return;
     }
 
-    // Build breakdown rows
+    // Build breakdown rows with Configured + Published columns
     var rows = '';
     for (var i = 0; i < result.breakdown.length; i++) {
       var c = result.breakdown[i];
       var clsLabel = c.cls === 'req' ? 'Required' : c.cls === 'rec' ? 'Recommended' : 'Informational';
       var clsBadge = c.cls === 'req' ? 'badge-err' : c.cls === 'rec' ? 'badge-warn' : 'badge-info';
-      var scoreStr = c.weight > 0 ? (c.ok ? c.weight : '0') + '/' + c.weight : '—';
+      var earned = c.earned !== null && c.earned !== undefined ? c.earned : '—';
+      var scoreStr = c.weight > 0 ? earned + '/' + c.weight : '—';
       rows += '<tr>'
         + '<td><span class="badge ' + clsBadge + '">' + clsLabel + '</span></td>'
         + '<td>' + esc(c.label) + '</td>'
-        + '<td>' + window.statusBadge(c.status || 'N/A', c.status === 'Match' || c.status === 'Active' || c.status === 'Running' ? 'badge-ok' : c.status === 'N/A' ? 'badge-info' : c.status === 'Unexpected' || c.status === 'Expiring' ? 'badge-warn' : 'badge-err') + '</td>'
+        + '<td>' + window.statusBadge(c.status || 'N/A', c.status === 'Match' || c.status === 'Active' || c.status === 'Running' ? 'badge-ok' : c.status === 'N/A' ? 'badge-info' : c.status === 'Unexpected' || c.status === 'Expiring' || c.status === 'Starting' ? 'badge-warn' : 'badge-err') + '</td>'
         + '<td>' + c.weight + '</td>'
-        + '<td>' + (c.ok ? c.weight : '0') + '</td>'
+        + '<td style="font-family:monospace;font-size:12px;">' + esc(typeof c.configured === 'string' ? c.configured.substring(0, 30) : '') + '</td>'
+        + '<td style="font-family:monospace;font-size:12px;">' + esc(typeof c.published === 'string' ? c.published.substring(0, 30) : '') + '</td>'
+        + '<td>' + earned + '</td>'
         + '<td>' + scoreStr + '</td>'
         + '</tr>';
     }
@@ -2236,7 +2245,7 @@ function loadDomainHealth() {
 
       + '<h3 style="font-size:13px;margin-bottom:8px;">Check Details</h3>'
       + '<div class="table-wrap">'
-      + '<table><thead><tr><th>Class</th><th>Check</th><th>Status</th><th>Weight</th><th>Earned</th><th>Score</th></tr></thead>'
+      + '<table><thead><tr><th>Class</th><th>Check</th><th>Status</th><th>Wt</th><th>Configured</th><th>Published</th><th>Got</th><th>Score</th></tr></thead>'
       + '<tbody>' + rows + '</tbody></table></div></div>';
 
     attachHealthDelegation();
@@ -2257,6 +2266,8 @@ function attachHealthDelegation() {
         DnsCache.clear(d);
         DnsCache.clear('_dmarc.' + d);
         DnsCache.clear('_mta-sts.' + d);
+        DnsCache.clear('_smtp._tls.' + d);
+        DnsCache.clear('autodiscover.' + d);
         if (dd.mailDomain && dd.mailDomain.dkim_public_key_dns) {
           var sel = dd.mailDomain.dkim_selector || 'dkim';
           DnsCache.clear(sel + '._domainkey.' + d);
