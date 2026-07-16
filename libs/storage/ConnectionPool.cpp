@@ -81,7 +81,6 @@ SQLiteDB* ConnectionPool::lease_read() {
 
     outstanding_leases_.fetch_add(1);
 
-    // Round-robin with compare-exchange
     for (int attempt = 0; attempt < kReadPoolSize * 2; ++attempt) {
         int idx = read_next_.fetch_add(1) % kReadPoolSize;
         bool expected = false;
@@ -91,7 +90,6 @@ SQLiteDB* ConnectionPool::lease_read() {
         std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
 
-    // Linear scan fallback
     for (int i = 0; i < kReadPoolSize * 50; ++i) {
         if (shutdown_.load()) {
             outstanding_leases_.fetch_sub(1);
@@ -124,24 +122,14 @@ void ConnectionPool::return_read(SQLiteDB* db) {
 void ConnectionPool::shutdown() {
     shutdown_.store(true);
 
-    // Wait for outstanding leases to be returned (with timeout)
-    auto deadline = std::chrono::steady_clock::now()
-        + std::chrono::milliseconds(kShutdownTimeoutMs);
+    // Wait for ALL outstanding leases to be returned.
+    // Never destroy connections while a caller holds a lease.
+    // Deterministic shutdown is more important than fast shutdown.
     while (outstanding_leases_.load() > 0) {
-        if (std::chrono::steady_clock::now() >= deadline) {
-            break;  // timeout — log warning, connections remain valid
-        }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    // At this point, no outstanding leases exist (or we timed out).
-    // The pool is marked shut down; any caller holding a lease past
-    // shutdown still has a valid pointer but the connection will be
-    // closed when they return it.
-    if (outstanding_leases_.load() > 0) {
-        // Log warning — leak possible but no dangling pointer
-    }
-
+    // All leases are returned. Safe to close connections now.
     if (write_conn_) {
         write_conn_->close();
         write_conn_.reset();
@@ -160,13 +148,12 @@ bool ConnectionPool::is_shutdown() const {
 }
 
 bool ConnectionPool::backup(const std::string& dest_path) {
-    lock_write();
-    SQLiteDB& src = *write_conn_;
+    WriteGuard wg(*this);
+    SQLiteDB& src = wg.db();
 
     sqlite3* dest_db = nullptr;
     int rc = sqlite3_open(dest_path.c_str(), &dest_db);
     if (rc != SQLITE_OK) {
-        unlock_write();
         return false;
     }
 
@@ -174,7 +161,6 @@ bool ConnectionPool::backup(const std::string& dest_path) {
                                                   src.handle(), "main");
     if (!backup) {
         sqlite3_close(dest_db);
-        unlock_write();
         return false;
     }
 
@@ -185,7 +171,6 @@ bool ConnectionPool::backup(const std::string& dest_path) {
     bool success = (rc == SQLITE_DONE);
     sqlite3_backup_finish(backup);
     sqlite3_close(dest_db);
-    unlock_write();
     return success;
 }
 

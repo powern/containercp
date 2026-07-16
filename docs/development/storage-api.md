@@ -299,16 +299,11 @@ pool.return_read(conn);
 
 1. The pool is marked as shut down; new `lease_read()` calls return
    `nullptr`.
-2. The pool waits up to `kShutdownTimeoutMs` (5000 ms) for all
-   outstanding leases to be returned.
-3. After all leases are returned (or timeout), write and read
-   connections are closed.
-4. Active pointers held by callers past shutdown remain valid until
-   `return_read()` is called — they are never invalidated by shutdown.
-5. If the timeout expires, outstanding leases are warned but the
-   connections remain open until returned. This avoids dangling
-   pointers at the cost of a potential leak.
-6. Double shutdown is safe.
+2. The pool waits **indefinitely** for all outstanding leases to be
+   returned. Connections are never destroyed while a lease is active.
+3. After all leases are returned, write and read connections are closed.
+4. Double shutdown is safe.
+5. Deterministic shutdown is more important than fast shutdown.
 
 ### WriteGuard (RAII write lock)
 
@@ -347,7 +342,7 @@ bool backup(const std::string& dest_path);
 ### Backup
 
 Uses the SQLite Online Backup API (`sqlite3_backup_init/step/finish`).
-The write mutex is held for the duration to ensure a consistent
+A `WriteGuard` is held for the duration to ensure a consistent
 snapshot.
 
 ---

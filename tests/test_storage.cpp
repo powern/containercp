@@ -353,6 +353,41 @@ TEST_CASE("ConnectionPool shutdown waits for leases") {
     cleanup(path);
 }
 
+TEST_CASE("ConnectionPool shutdown never destroys active leases") {
+    auto path = pool_path("containercp_test_nodangle.db");
+    cleanup(path);
+    {
+        containercp::storage::ConnectionPool pool;
+        REQUIRE(pool.initialize(path));
+
+        // Lease a connection
+        auto* c1 = pool.lease_read();
+        REQUIRE(c1);
+
+        // Verify the connection works
+        CHECK(c1->exec("SELECT 1"));
+
+        // Start shutdown in background (will block waiting for lease)
+        std::thread shutdown_thread([&] { pool.shutdown(); });
+
+        // Brief delay so shutdown starts waiting
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        // The leased connection must still be usable while shutdown waits
+        CHECK(c1->exec("SELECT 1"));
+        CHECK(c1->is_open());
+
+        // Return the lease — this unblocks shutdown
+        pool.return_read(c1);
+        shutdown_thread.join();
+
+        // Pool is shut down
+        CHECK(pool.is_shutdown());
+        CHECK(pool.lease_read() == nullptr);
+    }
+    cleanup(path);
+}
+
 TEST_CASE("ConnectionPool write guard RAII") {
     auto path = pool_path("containercp_test_raii.db");
     cleanup(path);

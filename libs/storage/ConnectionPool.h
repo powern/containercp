@@ -48,8 +48,8 @@ private:
 //
 // Lease lifetime:
 //   - A read lease is valid until return_read() is called.
-//   - shutdown() waits for all outstanding leases to be returned
-//     (with a timeout).  Active leases are never invalidated.
+//   - shutdown() waits indefinitely for all outstanding leases to
+//     be returned.  Connections are never destroyed while leased.
 //   - After shutdown(), lease_read() returns nullptr.
 //
 // Thread-safety:
@@ -61,7 +61,6 @@ private:
 class ConnectionPool {
 public:
     static constexpr int kReadPoolSize = 3;
-    static constexpr int kShutdownTimeoutMs = 5000;
 
     ConnectionPool() = default;
     ~ConnectionPool();
@@ -91,9 +90,9 @@ public:
 
     // === Lifecycle ===
 
-    // Close all connections.  Waits for outstanding leases up to
-    // kShutdownTimeoutMs.  Never invalidates active pointers.
-    // After shutdown, lease_read() returns nullptr.
+    // Close all connections.  Waits indefinitely for all outstanding
+    // leases to be returned.  Connections are never destroyed while
+    // a lease is active.  After shutdown, lease_read() returns nullptr.
     void shutdown();
 
     // Returns true if shutdown() has been called.
