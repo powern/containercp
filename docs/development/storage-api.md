@@ -205,3 +205,138 @@ sqlite3* handle() const;
 - External modules must **not** close, modify, or bypass the handle.
 - Managers, API handlers, providers, and UI code must never use this
   method.
+
+---
+
+## ConnectionPool — Connection and Transaction Infrastructure
+
+### Purpose and ownership
+
+`containercp::storage::ConnectionPool` owns one serialized write
+connection and exactly three bounded read connections to the SQLite
+database.
+
+It is:
+
+- owned by the Storage subsystem;
+- responsible for all SQLite connections in the process;
+- a bounded pool — no dynamic scaling;
+- designed for the current single-daemon architecture.
+
+### Header
+
+`libs/storage/ConnectionPool.h`
+
+### Connection architecture
+
+```
+ConnectionPool
+  ├── Write connection (serialized by std::mutex)
+  │     All save_*(), DDL, transactions
+  └── Read connections (3, round-robin lease)
+        All load_*(), SELECT, read-only PRAGMAs
+```
+
+### Write connection
+
+- One `SQLiteDB` instance, accessed under `std::mutex`.
+- All mutating operations (INSERT, UPDATE, DELETE, DDL) go through it.
+- Transaction primitives (`begin_immediate`, `commit`, `rollback`) use
+  this connection.
+- The write mutex ensures only one thread writes at a time.
+
+```cpp
+pool.lock_write();
+pool.write_connection().exec("INSERT ...");
+pool.unlock_write();
+```
+
+### Read connection pool
+
+- Exactly `kReadPoolSize = 3` read connections.
+- Leased via round-robin with compare-exchange for contention-free
+  acquisition.
+- If all connections are busy, the lease attempt spins briefly
+  (100µs–1ms) and retries.
+
+```cpp
+SQLiteDB* conn = pool.lease_read();
+// ... use conn ...
+pool.return_read(conn);
+```
+
+### Connection lifecycle
+
+- All connections are created during `initialize(db_path)`.
+- PRAGMAs are applied automatically by `SQLiteDB::open()`.
+- `shutdown()` closes all connections and marks read leases as
+  released.
+- `~ConnectionPool()` calls `shutdown()`.
+
+### Thread-safety guarantees
+
+- Write connection: serialized by `std::mutex`. Must lock/unlock
+  explicitly.
+- Read connections: concurrent access is safe. Multiple threads can
+  hold different read connections simultaneously.
+- A read may briefly block during a WAL checkpoint (handled by
+  `busy_timeout = 5000`).
+- No recursive mutex — do not nest `lock_write()` calls.
+
+### Transaction ownership
+
+- Transactions operate on the write connection.
+- `ConnectionPool` does not track transaction state.
+- Transaction begin/commit/rollback must be paired correctly by the
+  caller (Storage or MigrationEngine).
+- Nested transactions are not supported (SQLite limitation).
+
+### Shutdown behavior
+
+1. Read connections are force-released (outstanding leases lose their
+   connection).
+2. Write connection is closed.
+3. Read connections are closed.
+
+Double shutdown is safe.
+
+### Public API
+
+```cpp
+bool initialize(const std::string& db_path);
+
+SQLiteDB& write_connection();
+void lock_write();
+void unlock_write();
+
+SQLiteDB* lease_read();
+void return_read(SQLiteDB* db);
+
+void shutdown();
+
+bool backup(const std::string& dest_path);
+```
+
+### Backup
+
+Uses the SQLite Online Backup API (`sqlite3_backup_init/step/finish`).
+The write mutex is held for the duration to ensure a consistent
+snapshot.
+
+---
+
+## Storage — Transaction Stubs (TXT Backend)
+
+The `Storage` class declares transaction and backup methods for
+forward compatibility with the SQLite backend:
+
+```cpp
+bool begin_transaction();
+bool commit_transaction();
+bool rollback_transaction();
+bool backup(const std::string& dest_path);
+```
+
+With the current TXT backend, these all return `false`.
+They will delegate to `ConnectionPool` when Storage is switched
+to SQLite in Phase 5+.

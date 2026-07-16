@@ -1,5 +1,6 @@
 #include "storage/Storage.h"
 #include "storage/SQLiteWrapper.h"
+#include "storage/ConnectionPool.h"
 #include "auth/AuthUser.h"
 #include "auth/sha256.h"
 #include "user/User.h"
@@ -242,6 +243,183 @@ TEST_CASE("SQLiteWrapper error after misuse") {
     CHECK_FALSE(db.prepare("SELECT 1"));
     CHECK_FALSE(db.error_message().empty());
     CHECK(db.error_code() != 0);
+}
+
+// ============================================================
+// Connection pool tests
+// ============================================================
+
+static std::string pool_path(const std::string& name) {
+    return (std::filesystem::temp_directory_path() / name).string();
+}
+
+TEST_CASE("ConnectionPool initialize opens 1 write + 3 read") {
+    auto path = pool_path("containercp_test_pool.db");
+    cleanup(path);
+    {
+        containercp::storage::ConnectionPool pool;
+        CHECK(pool.initialize(path));
+
+        // Verify write connection works
+        pool.lock_write();
+        CHECK(pool.write_connection().exec("CREATE TABLE t (id INTEGER)"));
+        pool.unlock_write();
+
+        // Verify all 3 read connections work
+        for (int i = 0; i < 3; ++i) {
+            auto* conn = pool.lease_read();
+            REQUIRE(conn != nullptr);
+            CHECK(conn->is_open());
+            CHECK(conn->exec("SELECT 1"));
+            pool.return_read(conn);
+        }
+    }
+    cleanup(path);
+}
+
+TEST_CASE("ConnectionPool lease and return cycles") {
+    auto path = pool_path("containercp_test_lease.db");
+    cleanup(path);
+    {
+        containercp::storage::ConnectionPool pool;
+        REQUIRE(pool.initialize(path));
+
+        // Lease all 3
+        auto* c1 = pool.lease_read();
+        auto* c2 = pool.lease_read();
+        auto* c3 = pool.lease_read();
+        REQUIRE(c1);
+        REQUIRE(c2);
+        REQUIRE(c3);
+
+        // All 3 should be distinct
+        CHECK(c1 != c2);
+        CHECK(c1 != c3);
+        CHECK(c2 != c3);
+
+        // Return all 3
+        pool.return_read(c1);
+        pool.return_read(c2);
+        pool.return_read(c3);
+
+        // Can lease again
+        auto* c4 = pool.lease_read();
+        REQUIRE(c4 != nullptr);
+        pool.return_read(c4);
+    }
+    cleanup(path);
+}
+
+TEST_CASE("ConnectionPool shutdown is clean") {
+    auto path = pool_path("containercp_test_shutdown.db");
+    cleanup(path);
+    {
+        containercp::storage::ConnectionPool pool;
+        REQUIRE(pool.initialize(path));
+
+        // Lease some
+        auto* c1 = pool.lease_read();
+        REQUIRE(c1);
+
+        // Shutdown should handle outstanding leases gracefully
+        pool.shutdown();
+
+        // Pool is shut down — further operations should not crash
+        pool.shutdown();  // double shutdown
+    }
+    cleanup(path);
+}
+
+TEST_CASE("ConnectionPool write mutex serializes") {
+    auto path = pool_path("containercp_test_mutex.db");
+    cleanup(path);
+    {
+        containercp::storage::ConnectionPool pool;
+        REQUIRE(pool.initialize(path));
+
+        pool.lock_write();
+        CHECK(pool.write_connection().exec("CREATE TABLE t (id INTEGER)"));
+        CHECK(pool.write_connection().exec("INSERT INTO t VALUES (1)"));
+        pool.unlock_write();
+
+        // Read back via read connection
+        auto* r = pool.lease_read();
+        REQUIRE(r);
+        CHECK(r->prepare("SELECT id FROM t"));
+        CHECK(r->step());
+        CHECK(r->column_int(0) == 1);
+        pool.return_read(r);
+    }
+    cleanup(path);
+}
+
+TEST_CASE("ConnectionPool PRAGMAs on all connections") {
+    auto path = pool_path("containercp_test_pragmas.db");
+    cleanup(path);
+    {
+        containercp::storage::ConnectionPool pool;
+        REQUIRE(pool.initialize(path));
+
+        // Check write connection PRAGMAs
+        pool.lock_write();
+        CHECK(pool.write_connection().prepare("PRAGMA journal_mode"));
+        CHECK(pool.write_connection().step());
+        CHECK(pool.write_connection().column_text(0) == "wal");
+        pool.unlock_write();
+
+        // Check read connection PRAGMAs
+        for (int i = 0; i < 3; ++i) {
+            auto* r = pool.lease_read();
+            REQUIRE(r);
+            CHECK(r->prepare("PRAGMA foreign_keys"));
+            CHECK(r->step());
+            CHECK(r->column_int(0) == 1);
+            pool.return_read(r);
+        }
+    }
+    cleanup(path);
+}
+
+TEST_CASE("ConnectionPool backup creates valid snapshot") {
+    auto path = pool_path("containercp_test_backup.db");
+    auto backup_path = pool_path("containercp_test_backup_snapshot.db");
+    cleanup(path);
+    cleanup(backup_path);
+    {
+        containercp::storage::ConnectionPool pool;
+        REQUIRE(pool.initialize(path));
+
+        // Insert data
+        pool.lock_write();
+        CHECK(pool.write_connection().exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)"));
+        CHECK(pool.write_connection().exec("INSERT INTO t VALUES (1, 'data')"));
+        pool.unlock_write();
+
+        // Backup
+        CHECK(pool.backup(backup_path));
+
+        // Verify backup is valid
+        containercp::storage::SQLiteDB verify;
+        REQUIRE(verify.open(backup_path));
+        CHECK(verify.prepare("SELECT v FROM t WHERE id = 1"));
+        CHECK(verify.step());
+        CHECK(verify.column_text(0) == "data");
+    }
+    cleanup(path);
+    cleanup(backup_path);
+}
+
+TEST_CASE("Storage transaction API returns false for TXT backend") {
+    auto path = pool_path("containercp_test_txt_txn.db");
+    cleanup(path);
+    {
+        containercp::storage::Storage s(path);
+        CHECK_FALSE(s.begin_transaction());
+        CHECK_FALSE(s.commit_transaction());
+        CHECK_FALSE(s.rollback_transaction());
+        CHECK_FALSE(s.backup("/tmp/nonexistent"));
+    }
+    cleanup(path);
 }
 
 TEST_CASE("SQLiteWrapper stale error is cleared after success") {

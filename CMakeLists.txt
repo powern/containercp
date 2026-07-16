@@ -92,6 +92,7 @@ set(CONTAINERCP_SOURCES
     libs/ssl/HTTP01ChallengeProvider.cpp
     libs/storage/Storage.cpp
     libs/storage/SQLiteWrapper.cpp
+    libs/storage/ConnectionPool.cpp
     libs/template/TemplateEngine.cpp
     libs/profile/ProfileManager.cpp
     libs/user/User.cpp

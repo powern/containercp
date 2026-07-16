@@ -56,6 +56,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/ssl/HTTP01ChallengeProvider.cpp
     ${CMAKE_SOURCE_DIR}/libs/storage/Storage.cpp
     ${CMAKE_SOURCE_DIR}/libs/storage/SQLiteWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/libs/storage/ConnectionPool.cpp
     ${CMAKE_SOURCE_DIR}/libs/node/Node.cpp
     ${CMAKE_SOURCE_DIR}/libs/core/Resource.cpp
     ${CMAKE_SOURCE_DIR}/libs/api/Router.cpp

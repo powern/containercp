@@ -785,4 +785,21 @@ std::vector<profile::Profile> Storage::migrate_template_profiles() {
     return profiles;
 }
 
+bool Storage::begin_transaction() {
+    return false;  // TXT backend does not support transactions
+}
+
+bool Storage::commit_transaction() {
+    return false;  // TXT backend does not support transactions
+}
+
+bool Storage::rollback_transaction() {
+    return false;  // TXT backend does not support transactions
+}
+
+bool Storage::backup(const std::string& dest_path) {
+    (void)dest_path;
+    return false;  // TXT backend does not support backup
+}
+
 } // namespace containercp::storage

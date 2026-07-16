@@ -78,6 +78,15 @@ public:
     void save_auth_users(const std::vector<auth::AuthUser>& users);
     std::vector<auth::AuthUser> load_auth_users();
 
+    // Transaction support (for multi-resource operations).
+    // Uses BEGIN IMMEDIATE on the serialized write connection.
+    bool begin_transaction();
+    bool commit_transaction();
+    bool rollback_transaction();
+
+    // Create a consistent database snapshot using the Online Backup API.
+    bool backup(const std::string& dest_path);
+
 private:
     std::string nodes_file() const;
     std::string sites_file() const;
