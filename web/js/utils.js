@@ -365,17 +365,22 @@ window.computeDomainHealthScore = function(ctx) {
       addCheck('mx', 'MX', 'req', 12, 'Pending', '', '', false);
     }
 
+    // 4. SPF (required, 10) — depends on rootDns
     if (rootOk === 'success') {
       if (spf && spf.match) {
         var spfStatus = spf.match === 'match' ? 'Match' : spf.match === 'error' ? 'Error' : spf.match === 'not_published' ? 'Not Published' : 'Mismatch';
-        checks.push(makeCheck('spf', 'SPF', 'req', 10, spfStatus, 'v=spf1 mx ~all', spf.record || '', true));
-      } else if (rootOk === 'error') {
-        addCheck('spf', 'SPF', 'req', 10, 'Error', '', '', true);
+        addCheck('spf', 'SPF', 'req', 10, spfStatus, 'v=spf1 mx ~all', spf.record || '', true);
       } else {
-        addCheck('spf', 'SPF', 'req', 10, 'Pending', '', '', false);
+        var spfRecs = getRecs('TXT').filter(function(r) { return typeof r.value === 'string' && r.value.indexOf('v=spf1') === 0; });
+        addCheck('spf', 'SPF', 'req', 10, spfRecs.length > 0 ? 'Unexpected' : 'Not Published', 'v=spf1 mx ~all', spfRecs.length > 0 ? spfRecs[0].value : '', true);
       }
+    } else if (rootOk === 'error') {
+      addCheck('spf', 'SPF', 'req', 10, 'Error', '', '', true);
+    } else {
+      addCheck('spf', 'SPF', 'req', 10, 'Pending', '', '', false);
+    }
 
-    // 5. DKIM (required, 10 — only if generated) — depends on dkim fetch
+    // 5. DKIM (required, 10 — only if generated) — independent of rootDns
     var dkimKey = mail && mail.dkim_public_key_dns ? mail.dkim_public_key_dns : (row.dkim_public_key_dns || '');
     if (dkimKey) {
       var dkimState = fs('dkim').state;
@@ -406,8 +411,17 @@ window.computeDomainHealthScore = function(ctx) {
       }
       var dmarcValid = false;
       if (dmarcPub) {
-        var norm = window.normalizeDmarcValue(dmarcPub);
-        dmarcValid = norm.indexOf('v=dmarc1') === 0 && (norm.indexOf('p=none') >= 0 || norm.indexOf('p=quarantine') >= 0 || norm.indexOf('p=reject') >= 0);
+        // Parse DMARC tags into map: {v, p, sp, rua, ...}
+        var tags = {};
+        dmarcPub.split(';').forEach(function(t) {
+          var idx = t.indexOf('=');
+          if (idx > 0) {
+            var k = t.substring(0, idx).trim().toLowerCase();
+            var v = t.substring(idx + 1).trim();
+            if (k) tags[k] = v;
+          }
+        });
+        dmarcValid = tags.v && tags.v.toUpperCase() === 'DMARC1' && tags.p && ['none', 'quarantine', 'reject'].indexOf(tags.p.toLowerCase()) >= 0;
       }
       var dmarcStatus = dmarcValid ? 'Match' : (dmarcPub ? 'Error' : 'Not Published');
       addCheck('dmarc', 'DMARC', 'req', 8, dmarcStatus, 'v=DMARC1; p=none;', dmarcPub, true);
@@ -437,24 +451,22 @@ window.computeDomainHealthScore = function(ctx) {
       // Autodiscover (recommended, 3) — depends on autodiscover fetch + serverHost
       var autoState = fs('autodiscover').state;
       if (autoState === 'success' && serverHost) {
-        var autoRecs = [];
-        if (ctx.autoDns) {
-          var cpt = ctx.autoDns.per_type && ctx.autoDns.per_type.find(function(x) { return x && (x.type === 'CNAME' || x.type === 'A'); });
-          if (cpt && Array.isArray(cpt.records)) autoRecs = cpt.records;
+        var cnameRecs = [];
+        var aRecs = [];
+        if (ctx.autoDns && Array.isArray(ctx.autoDns.per_type)) {
+          ctx.autoDns.per_type.forEach(function(pt) {
+            if (pt.type === 'CNAME' && Array.isArray(pt.records)) cnameRecs = cnameRecs.concat(pt.records);
+            if (pt.type === 'A' && Array.isArray(pt.records)) aRecs = aRecs.concat(pt.records);
+          });
         }
-        var autoPub = '';
-        var autoMatch = false;
-        if (autoRecs.length > 0) {
-          var r0 = autoRecs[0];
-          if (r0.type === 'CNAME') {
-            autoPub = 'CNAME ' + r0.value;
-            autoMatch = window.normalizeHostname(r0.value) === window.normalizeHostname(serverHost);
-          } else if (r0.type === 'A') {
-            autoPub = 'A ' + r0.value;
-            autoMatch = expectedIpv4 && r0.value === expectedIpv4;
-          }
-        }
-        var autoStatus = autoMatch ? 'Match' : (autoRecs.length > 0 ? 'Mismatch' : 'Not Published');
+        var cnamePub = cnameRecs.map(function(r) { return r.value; }).join(', ');
+        var aPub = aRecs.map(function(r) { return r.value; }).join(', ');
+        var autoPub = cnamePub ? 'CNAME ' + cnamePub : (aPub ? 'A ' + aPub : '');
+        var cnameMatch = cnameRecs.some(function(r) { return window.normalizeHostname(r.value) === window.normalizeHostname(serverHost); });
+        var aMatch = aRecs.some(function(r) { return expectedIpv4 && r.value === expectedIpv4; });
+        var autoMatch = cnameMatch || aMatch;
+        var hasAny = cnameRecs.length > 0 || aRecs.length > 0;
+        var autoStatus = autoMatch ? 'Match' : (hasAny ? 'Mismatch' : 'Not Published');
         addCheck('autodiscover', 'Autodiscover', 'rec', 3, autoStatus, 'CNAME → ' + serverHost, autoPub, true);
       } else if (autoState === 'error') {
         addCheck('autodiscover', 'Autodiscover', 'rec', 3, 'Error', '', '', true);
