@@ -600,6 +600,9 @@ TEST_CASE("Backup and shutdown do not race") {
     bool shutdown_awaiting = false;
     std::atomic<bool> shutdown_completed{false};
     bool backup_released_by_timeout = false;
+    bool backup_guard_wait_succeeded = false;
+    bool shutdown_wait_succeeded = false;
+    bool shutdown_was_blocked = false;
     bool backup_result = false;
     std::string backup_path = dir + "backup.db";
     std::thread backup_thr;
@@ -629,11 +632,11 @@ TEST_CASE("Backup and shutdown do not race") {
     // Wait for backup guard
     {
         std::unique_lock<std::mutex> lk(mtx);
-        cv.wait_for(lk, std::chrono::seconds(5), [&] { return backup_guard_held; });
-        if (!backup_guard_held) { /* cleanup will handle */ }
+        backup_guard_wait_succeeded = cv.wait_for(lk, std::chrono::seconds(5),
+                                                   [&] { return backup_guard_held; });
     }
 
-    if (backup_guard_held) {
+    if (backup_guard_wait_succeeded) {
         shutdown_thr = std::thread([&] {
             pool.shutdown();
             shutdown_completed.store(true);
@@ -641,8 +644,12 @@ TEST_CASE("Backup and shutdown do not race") {
 
         {
             std::unique_lock<std::mutex> lk(mtx);
-            cv.wait_for(lk, std::chrono::seconds(5), [&] { return shutdown_awaiting; });
+            shutdown_wait_succeeded = cv.wait_for(lk, std::chrono::seconds(5),
+                                                   [&] { return shutdown_awaiting; });
         }
+
+        // Capture whether shutdown was blocked BEFORE releasing backup
+        shutdown_was_blocked = shutdown_wait_succeeded && !shutdown_completed.load();
     }
 
     // Always release backup
@@ -659,6 +666,9 @@ TEST_CASE("Backup and shutdown do not race") {
     pool.test_obs_.on_shutdown_awaiting_write_mutex = nullptr;
 
     // Verify
+    CHECK(backup_guard_wait_succeeded);
+    CHECK(shutdown_wait_succeeded);
+    CHECK(shutdown_was_blocked);  // shutdown was waiting, not completed
     CHECK_FALSE(backup_released_by_timeout);
     REQUIRE(backup_result);
     REQUIRE(fs::exists(backup_path));
