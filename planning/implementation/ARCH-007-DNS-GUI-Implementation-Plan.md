@@ -801,24 +801,46 @@ SpfAnalysis
 
 ### 9.2 — API integration tests
 
-**Files:** `tests/test_dns_api.cpp`  
-**Depends on:** 2.1, 2.2  
-**Criteria:** API endpoint responds correctly to all request variants through Router dispatch.
+**Architecture:** The production DNS handler was extracted from `ApiServer.cpp` into
+`libs/dns/DnsCheckHandler.h/.cpp` as `handleDnsCheck()`. Both `ApiServer` and the test
+suite call the same function. Tests use `FakeDnsCheckService` (virtual `check()` override)
+to return controlled results without live DNS.
 
-**Implemented (Router-level handler tests — real dispatch, JSON response parsing):**
+**Files:** `libs/dns/DnsCheckHandler.h` (NEW), `libs/dns/DnsCheckHandler.cpp` (NEW),
+`tests/test_dns_api.cpp` (rewritten with `FakeDnsCheckService`)
+**Depends on:** 2.1
+**Criteria:** All API handler variants verified through `handleDnsCheck()` via `Router::dispatch()`.
+
+**Implemented (via real production handler with fake DNS service):**
 - [x] `GET /api/domains/example.com/dns-check` → 200, success envelope, all JSON fields
 - [x] `GET /api/domains/example.com/dns-check?types=A,MX` → only 2 per_type entries
-- [x] `GET /api/domains/example.com/dns-check?refresh=1` → `cached:false` after cached `cached:true`
-- [x] `GET /api/domains/INVALID` → 400 with `Invalid domain format` error
-- [x] `GET /api/domains/example.com/dns-check?types=SPF` → 400, `Unsupported DNS record type: SPF`
-- [x] `GET /api/domains/example.com/dns-check?types=A,SPF,INVALID` → 400, first invalid (SPF) detected
+- [x] `GET /api/domains/example.com/dns-check?refresh=1` → `cached:false` after `cached:true`
+- [x] `GET /api/domains/example.com/dns-check?types=A,MX&refresh=1` → cache bypass via production handler
+- [x] Invalid domain `not a valid@domain!!` → 400, `Invalid domain format` error
+- [x] `?types=SPF` → 400, `Unsupported DNS record type: SPF`
+- [x] `?types=A,SPF,INVALID` → 400, first invalid (SPF) detected
+- [x] Unknown subpath → 404
 - [x] NXDOMAIN → 200 with valid structure
+- [x] SERVFAIL → 502 with error structure
+- [x] Empty `?types=` defaults to all 7 supported types
 
-**Deferred:**
-- [ ] Full HTTP server integration (requires starting `ApiServer`, sending HTTP requests,
-      parsing HTTP responses) — needs dedicated integration test runner.
-      Current tests exercise the same handler logic through `Router::dispatch()`
-      which covers request parsing, validation, service call, and JSON formatting.
+**Deterministic:** All of the above use `FakeDnsCheckService` — no live DNS, no network,
+no sleep. Runs as part of the standard deterministic test suite.
+
+**Deferred (not applicable):**
+- [ ] Full HTTP server integration test (TCP/HTTP request round-trip).
+      Current tests exercise the same C++ handler object (`handleDnsCheck`)
+      that `ApiServer` registers with `Router`. Only the HTTP framing and
+      socket I/O are untested — acceptable for Phase 9 scope.
+
+### Test suite commands
+
+| Suite | Command | Count | Notes |
+|-------|---------|-------|-------|
+| Deterministic (default) | `ctest` or `./containercp_tests` | 239 | All tests except `[integration]` suite |
+| Deterministic (explicit) | `./containercp_tests -tse="[integration]"` | 239 | Explicitly excludes live-DNS tests |
+| Integration only | `./containercp_tests -ts="[integration]"` | 15 | Only live-DNS tests |
+| Full | `./containercp_tests` | 254 | All tests including live-DNS |
 
 ### 9.3 — Frontend behaviour tests
 

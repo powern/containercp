@@ -55,8 +55,8 @@ class DnsCheckService {
 public:
     DnsCheckService();
 
-    DnsCheckResult check(const std::string& domain,
-                          const std::vector<std::string>& record_types);
+    virtual DnsCheckResult check(const std::string& domain,
+                                  const std::vector<std::string>& record_types);
 
     void set_cache_ttl(int seconds);
     void clear_cache(const std::string& domain);
