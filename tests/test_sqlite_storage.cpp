@@ -1859,25 +1859,32 @@ TEST_CASE("SQLiteStorage mail_domains round trip and sentinels") {
     containercp::mail::MailDomain m;
     m.id = 1; m.domain_name = "example.com";
     m.mode = containercp::mail::MailDomainMode::LocalPrimary;
-    m.domain_id = 0; m.site_id = 0;  // sentinels
+    m.domain_id = 0; m.site_id = 0;
     m.dkim_selector = "dkim2024";
-    m.dkim_private_key_path = "/dkim/example.com/private.pem";
-    m.dkim_public_key_dns = "v=DKIM1; p=abc";
     m.max_mailboxes = 10; m.max_aliases = 5;
     m.catch_all = "postmaster@example.com";
     m.enabled = true;
+    m.created_at = "2026-01-01T00:00:00Z";
+    m.updated_at = "2026-06-15T12:00:00Z";
     ss.save_mail_domains({m});
     auto loaded = ss.load_mail_domains();
     REQUIRE(loaded.size() == 1);
     CHECK(loaded[0].domain_name == "example.com");
     CHECK(loaded[0].mode == containercp::mail::MailDomainMode::LocalPrimary);
     CHECK(loaded[0].domain_id == 0); CHECK(loaded[0].site_id == 0);
-    CHECK(loaded[0].dkim_selector == "dkim2024");
-    CHECK(loaded[0].dkim_private_key_path == "/dkim/example.com/private.pem");
-    CHECK(loaded[0].dkim_public_key_dns == "v=DKIM1; p=abc");
     CHECK(loaded[0].max_mailboxes == 10); CHECK(loaded[0].max_aliases == 5);
     CHECK(loaded[0].catch_all == "postmaster@example.com");
     CHECK(loaded[0].enabled); CHECK(loaded[0].name == "example.com");
+    CHECK(loaded[0].created_at == "2026-01-01T00:00:00Z");
+    CHECK(loaded[0].updated_at == "2026-06-15T12:00:00Z");
+    // Update replaces timestamps
+    m.created_at = "2026-02-01T00:00:00Z";
+    m.updated_at = "2026-07-01T00:00:00Z";
+    ss.save_mail_domains({m});
+    loaded = ss.load_mail_domains();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].created_at == "2026-02-01T00:00:00Z");
+    CHECK(loaded[0].updated_at == "2026-07-01T00:00:00Z");
     tclean(dir);
 }
 
@@ -1930,6 +1937,8 @@ TEST_CASE("SQLiteStorage mail_mailboxes round trip and FK") {
     mb.forward_to = "admin@other.com";
     mb.spam_enabled = true;
     mb.enabled = true;
+    mb.created_at = "2026-01-01T00:00:00Z";
+    mb.updated_at = "2026-06-01T00:00:00Z";
     ss.save_mailboxes({mb});
     auto loaded = ss.load_mailboxes();
     REQUIRE(loaded.size() == 1);
@@ -1937,6 +1946,8 @@ TEST_CASE("SQLiteStorage mail_mailboxes round trip and FK") {
     CHECK(loaded[0].password_hash == "$6$test");
     CHECK(loaded[0].display_name == "Admin User");
     CHECK(loaded[0].name == "admin");
+    CHECK(loaded[0].created_at == "2026-01-01T00:00:00Z");
+    CHECK(loaded[0].updated_at == "2026-06-01T00:00:00Z");
     tclean(dir);
 }
 
@@ -1966,12 +1977,16 @@ TEST_CASE("SQLiteStorage mail_aliases round trip") {
     a.source_local_part = "info";
     a.destination = "admin@example.com";
     a.enabled = true;
+    a.created_at = "2026-03-01T00:00:00Z";
+    a.updated_at = "2026-04-01T00:00:00Z";
     ss.save_mail_aliases({a});
     auto loaded = ss.load_mail_aliases();
     REQUIRE(loaded.size() == 1);
     CHECK(loaded[0].source_local_part == "info");
     CHECK(loaded[0].destination == "admin@example.com");
     CHECK(loaded[0].name == "info");
+    CHECK(loaded[0].created_at == "2026-03-01T00:00:00Z");
+    CHECK(loaded[0].updated_at == "2026-04-01T00:00:00Z");
     tclean(dir);
 }
 

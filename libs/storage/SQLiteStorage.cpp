@@ -698,10 +698,7 @@ void SQLiteStorage::save_mail_domains(const std::vector<mail::MailDomain>& domai
                 "dkim_selector, dkim_private_key_path, dkim_public_key_dns, "
                 "max_mailboxes, max_aliases, catch_all, enabled, "
                 "created_at, updated_at) VALUES "
-                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "COALESCE((SELECT created_at FROM mail_domains WHERE id = ?), "
-                "strftime('%Y-%m-%dT%H:%M:%SZ','now')), "
-                "strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 "domain_id=excluded.domain_id, site_id=excluded.site_id, "
                 "domain_name=excluded.domain_name, mode=excluded.mode, "
@@ -712,7 +709,8 @@ void SQLiteStorage::save_mail_domains(const std::vector<mail::MailDomain>& domai
                 "max_mailboxes=excluded.max_mailboxes, "
                 "max_aliases=excluded.max_aliases, "
                 "catch_all=excluded.catch_all, enabled=excluded.enabled, "
-                "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')";
+                "created_at=excluded.created_at, "
+                "updated_at=excluded.updated_at";
             for (const auto& m : domains) {
                 if (!db.prepare(sql)) return false;
                 if (!db.bind_int(1, static_cast<int64_t>(m.id))) return false;
@@ -728,7 +726,8 @@ void SQLiteStorage::save_mail_domains(const std::vector<mail::MailDomain>& domai
                 if (!db.bind_int(11, static_cast<int64_t>(m.max_aliases))) return false;
                 if (!db.bind_text(12, m.catch_all)) return false;
                 if (!db.bind_int(13, m.enabled ? 1 : 0)) return false;
-                if (!db.bind_int(14, static_cast<int64_t>(m.id))) return false;
+                if (!db.bind_text(14, m.created_at)) return false;
+                if (!db.bind_text(15, m.updated_at)) return false;
                 if (db.step() == false && db.error_code() != 0) return false;
             }
             return true;
@@ -741,7 +740,8 @@ std::vector<mail::MailDomain> SQLiteStorage::load_mail_domains() {
     if (!rl.is_valid()) return domains;
     const char* sql = "SELECT id, domain_id, site_id, domain_name, mode, relay_host, "
         "dkim_selector, dkim_private_key_path, dkim_public_key_dns, "
-        "max_mailboxes, max_aliases, catch_all, enabled "
+        "max_mailboxes, max_aliases, catch_all, enabled, "
+        "created_at, updated_at "
         "FROM mail_domains ORDER BY id";
     if (!rl->prepare(sql)) return domains;
     while (rl->step()) {
@@ -759,6 +759,8 @@ std::vector<mail::MailDomain> SQLiteStorage::load_mail_domains() {
         m.max_aliases = static_cast<uint64_t>(rl->column_int(10));
         m.catch_all = rl->column_text(11);
         m.enabled = (rl->column_int(12) != 0);
+        m.created_at = rl->column_text(13);
+        m.updated_at = rl->column_text(14);
         m.name = m.domain_name;
         domains.push_back(std::move(m));
     }
@@ -774,8 +776,7 @@ void SQLiteStorage::save_mailboxes(const std::vector<mail::Mailbox>& mailboxes) 
                 "(id, domain_id, local_part, password_hash, quota_bytes, "
                 "quota_messages, enabled, display_name, forward_to, "
                 "spam_enabled, last_login, created_at, updated_at) VALUES "
-                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
             for (const auto& mb : mailboxes) {
                 if (!db.prepare(sql)) return false;
                 if (!db.bind_int(1, static_cast<int64_t>(mb.id))) return false;
@@ -790,6 +791,7 @@ void SQLiteStorage::save_mailboxes(const std::vector<mail::Mailbox>& mailboxes) 
                 if (!db.bind_int(10, mb.spam_enabled ? 1 : 0)) return false;
                 if (!db.bind_text(11, mb.last_login)) return false;
                 if (!db.bind_text(12, mb.created_at)) return false;
+                if (!db.bind_text(13, mb.updated_at)) return false;
                 if (db.step() == false && db.error_code() != 0) return false;
             }
             return true;
@@ -832,8 +834,7 @@ void SQLiteStorage::save_mail_aliases(const std::vector<mail::MailAlias>& aliase
         [&](SQLiteDB& db) -> bool {
             const char* sql = "INSERT INTO mail_aliases "
                 "(id, domain_id, source_local_part, destination, enabled, "
-                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, "
-                "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)";
             for (const auto& a : aliases) {
                 if (!db.prepare(sql)) return false;
                 if (!db.bind_int(1, static_cast<int64_t>(a.id))) return false;
@@ -842,6 +843,7 @@ void SQLiteStorage::save_mail_aliases(const std::vector<mail::MailAlias>& aliase
                 if (!db.bind_text(4, a.destination)) return false;
                 if (!db.bind_int(5, a.enabled ? 1 : 0)) return false;
                 if (!db.bind_text(6, a.created_at)) return false;
+                if (!db.bind_text(7, a.updated_at)) return false;
                 if (db.step() == false && db.error_code() != 0) return false;
             }
             return true;
@@ -880,7 +882,7 @@ void SQLiteStorage::save_mail_module_state(const std::string& state) {
     if (!txn.db().prepare(sql)) return;
     if (!txn.db().bind_text(1, state)) return;
     if (txn.db().step() == false && txn.db().error_code() != 0) return;
-    txn.commit();
+    txn.commit();  // commit() returns false if COMMIT fails — rollback is default
 }
 
 std::string SQLiteStorage::load_mail_module_state() {
