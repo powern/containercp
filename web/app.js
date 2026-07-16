@@ -1095,6 +1095,55 @@ async function fetchDnsForFqdn(fqdn, types) {
   }
 }
 
+// --- System domain action helper ---
+async function runSystemAction(btnId, actionFn, confirmMsg) {
+  var btn = document.getElementById(btnId);
+  if (!btn || btn.disabled) return;
+  if (confirmMsg && !confirm(confirmMsg)) return;
+  btn.disabled = true;
+  btn.textContent = 'Working...';
+  try {
+    var res = await actionFn();
+    if (res && res.success) {
+      toast(res.data && res.data.message ? res.data.message : 'Action completed', 'success');
+    } else {
+      toast('Error: ' + (res && res.error ? res.error : 'Unknown error'), 'error');
+    }
+  } catch(e) {
+    toast('Error: ' + (e.message || 'Request failed'), 'error');
+  }
+  btn.disabled = false;
+  btn.textContent = btnId === 'proxy-test-btn' ? 'Test Global Proxy Config' :
+                    btnId === 'proxy-reload-btn' ? 'Reload Global Proxy' :
+                    btnId === 'proxy-sync-btn' ? 'Sync All Proxy Configs' :
+                    btnId === 'ssl-renew-btn' ? 'Renew Certificate' :
+                    btnId === 'ssl-issue-btn' ? 'Issue New Certificate' : 'Action';
+}
+
+// Fetch SSL details and populate the SSL detail card
+async function loadSslDetails(domain) {
+  var infoEl = document.getElementById('ssl-detail-info');
+  if (!infoEl) return;
+  try {
+    var res = await api('/api/ssl/' + encodeURIComponent(domain));
+    if (res && res.success && res.data) {
+      var d = res.data;
+      infoEl.innerHTML = '';
+      if (d.issuer) infoEl.innerHTML += '<div>Issuer: ' + esc(d.issuer) + '</div>';
+      if (d.expires_at) infoEl.innerHTML += '<div>Expires: ' + esc(d.expires_at) + '</div>';
+      if (d.domains && d.domains.length) infoEl.innerHTML += '<div>Domains: ' + esc(d.domains.join(', ')) + '</div>';
+      if (d.status === 'active' && d.expires_at) {
+        var days = Math.round((new Date(d.expires_at) - new Date()) / 86400000);
+        if (days > 0) infoEl.innerHTML += '<div>Days remaining: ' + days + '</div>';
+      }
+    } else {
+      infoEl.textContent = 'Certificate details not available';
+    }
+  } catch(e) {
+    infoEl.textContent = 'Failed to load certificate details';
+  }
+}
+
 // --- Overview tab ---
 async function loadDomainOverview() {
   const content = document.getElementById('domain-tab-content');
@@ -1293,7 +1342,8 @@ async function loadDomainOverview() {
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;">
       ${mailCard}
       ${sslCard}
-      ${siteCard}${domainRow.system_role === 'admin-panel' ? `
+      ${siteCard}
+      ${domainRow.system_role === 'admin-panel' ? `
       <div class="card">
         <h3>System: Admin Panel</h3>
         <div style="margin-top:8px;font-size:13px;">
@@ -1304,30 +1354,70 @@ async function loadDomainOverview() {
           <div>SSL: <span class="badge ${sslBadgeCls[sslKey] || 'badge-info'}">${esc(sslBadgeMap[sslKey] || sslStatusDisplay)}</span></div>
           <div>Runtime: <span class="badge badge-info">N/A</span></div>
         </div>
-      </div>
+      </div>` : ''}
+      ${domainRow.can_manage_proxy ? `
       <div class="card">
-        <h3>Proxy Management</h3>
+        <h3>Proxy Configuration</h3>
         <div style="margin-top:8px;font-size:13px;">
-          <div>Status: <span class="badge badge-ok">Configured</span></div>
+          <div>Upstream: <code>${esc(domainRow.proxy_upstream || '—')}</code></div>
+          <div>Status: <span class="badge badge-info">${domainRow.proxy_upstream ? 'Available' : 'Not verified'}</span></div>
+          <div style="margin-top:8px;font-size:11px;color:var(--text3);">
+            These operations affect the central reverse proxy for ALL domains.
+            An invalid configuration may interrupt access to ContainerCP and other sites.
+          </div>
           <div style="margin-top:8px;">
-            <button class="btn btn-sm" onclick="apiPost('/api/proxy/test').then(r=>toast(r.success?'Config OK: '+r.data.message:'Error: '+r.error,r.success?'success':'error'))">Test Config</button>
-            <button class="btn btn-sm" onclick="apiPost('/api/proxy/reload').then(r=>toast(r.success?'Proxy reloaded':'Error: '+r.error,r.success?'success':'error'))" style="margin-left:4px;">Reload</button>
-            <button class="btn btn-sm" onclick="apiPost('/api/proxy/sync').then(r=>toast(r.success?'Proxy synced':'Error: '+r.error,r.success?'success':'error'))" style="margin-left:4px;">Sync</button>
+            <button class="btn btn-sm" id="proxy-test-btn">Test Global Proxy Config</button>
+            <button class="btn btn-sm" id="proxy-reload-btn" style="margin-left:4px;">Reload Global Proxy</button>
+            <button class="btn btn-sm" id="proxy-sync-btn" style="margin-left:4px;">Sync All Proxy Configs</button>
           </div>
         </div>
-      </div>
-      <div class="card">
+      </div>` : ''}
+      ${domainRow.can_manage_ssl ? `
+      <div class="card" id="ssl-detail-card">
         <h3>SSL Certificate</h3>
         <div style="margin-top:8px;font-size:13px;">
           <div>Status: <span class="badge ${sslBadgeCls[sslKey] || 'badge-info'}">${esc(sslBadgeMap[sslKey] || sslStatusDisplay)}</span></div>
           <div>HTTPS: <span class="badge ${httpsBadge}">${httpsLabel}</span></div>
+          <div style="margin-top:4px;font-size:11px;color:var(--text3);" id="ssl-detail-info">Loading details...</div>
+          <div style="margin-top:8px;font-size:11px;color:var(--text3);">
+            ACME rate limits apply. Temporary HTTPS interruption may occur during issuance.
+          </div>
           <div style="margin-top:8px;">
-            ${sslStatusDisplay === 'Active' ? `<button class="btn btn-sm" onclick="apiPost('/api/ssl/${esc(domainRow.domain)}/renew').then(r=>toast(r.success?'Renewal queued':'Error: '+r.error,r.success?'success':'error'))">Renew</button>` : ''}
-            ${sslStatusDisplay === 'Disabled' || sslStatusDisplay === 'Error' || sslStatusDisplay === '' || sslStatusDisplay === 'Issuing' ? `<button class="btn btn-sm" onclick="apiPost('/api/ssl/${esc(domainRow.domain)}/issue',{provider_id:'letsencrypt'}).then(r=>toast(r.success?'Issuance queued':'Error: '+r.error,r.success?'success':'error'))">Issue</button>` : ''}
+            <button class="btn btn-sm" id="ssl-renew-btn">Renew Certificate</button>
+            <button class="btn btn-sm" id="ssl-issue-btn" style="margin-left:4px;">Issue New Certificate</button>
           </div>
         </div>
       </div>` : ''}
     </div>`;
+
+  // Wire system-domain action buttons via event delegation on domain-tab-content
+  var tabContent = document.getElementById('domain-tab-content');
+  if (tabContent) {
+    tabContent.addEventListener('click', function(e) {
+      var target = e.target;
+      if (target.id === 'proxy-test-btn') {
+        runSystemAction('proxy-test-btn', function() { return apiPost('/api/proxy/test'); },
+          null);
+      } else if (target.id === 'proxy-reload-btn') {
+        runSystemAction('proxy-reload-btn', function() { return apiPost('/api/proxy/reload'); },
+          'Reload central reverse proxy?\n\nThis will restart nginx for ALL domains. An invalid configuration may interrupt access to ContainerCP and other sites.');
+      } else if (target.id === 'proxy-sync-btn') {
+        runSystemAction('proxy-sync-btn', function() { return apiPost('/api/proxy/sync'); },
+          'Synchronize all proxy configurations?\n\nThis regenerates HTTPS proxy configs for ALL domains.');
+      } else if (target.id === 'ssl-renew-btn') {
+        runSystemAction('ssl-renew-btn', function() { return apiPost('/api/ssl/' + encodeURIComponent(domainRow.domain) + '/renew'); },
+          'Renew SSL certificate for ' + domainRow.domain + '?\n\nACME rate limits apply. Temporary HTTPS interruption may occur.');
+      } else if (target.id === 'ssl-issue-btn') {
+        runSystemAction('ssl-issue-btn', function() { return apiPost('/api/ssl/' + encodeURIComponent(domainRow.domain) + '/issue', {provider_id:'letsencrypt'}); },
+          'Issue new SSL certificate for ' + domainRow.domain + '?\n\nACME rate limits apply. Temporary HTTPS interruption may occur.');
+      }
+    });
+  }
+
+  // Load SSL details for the admin panel
+  if (domainRow.can_manage_ssl && domainRow.system_role === 'admin-panel') {
+    loadSslDetails(domainRow.domain);
+  }
 }
 
 async function refreshDomainOverview() {

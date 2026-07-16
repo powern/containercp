@@ -1411,6 +1411,12 @@ bool ApiServer::start() {
         if (type == "domain") {
             auto* domain = s.domains().find(name);
             if (!domain) { r.body = "{\"success\":false,\"error\":\"Not found\"}"; return r; }
+            // Protect admin-panel domain (site_id=0) from being removed
+            if (domain->site_id == 0) {
+                r.status_code = 403;
+                r.body = "{\"success\":false,\"error\":\"System domain cannot be removed\"}";
+                return r;
+            }
             s.domains().remove(domain->id);
         } else if (type == "database") {
             auto* db = s.databases().find(name);

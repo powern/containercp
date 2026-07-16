@@ -226,6 +226,38 @@ TEST_CASE("DomainViewService enriched JSON includes mail fields") {
     std::system(rm_cmd.c_str());
 }
 
+// Minimal JSON field extractor for test validation.
+// Parses "key":"value" pairs from a JSON object substring.
+// Does NOT handle nested objects, arrays, or escaped quotes in values.
+static std::string json_extract_string(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\":\"";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) return "";
+    pos += search.size();
+    auto end = json.find("\"", pos);
+    if (end == std::string::npos) return "";
+    return json.substr(pos, end - pos);
+}
+
+static bool json_extract_bool(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\":";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) return false;
+    pos += search.size();
+    if (json.substr(pos, 4) == "true") return true;
+    if (json.substr(pos, 5) == "false") return false;
+    return false;
+}
+
+static uint64_t json_extract_uint(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\":";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) return 0;
+    pos += search.size();
+    char* end = nullptr;
+    return std::strtoull(json.c_str() + pos, &end, 10);
+}
+
 TEST_CASE("DomainViewService includes admin panel (site_id=0) when server_hostname set") {
     using namespace containercp;
 
@@ -303,6 +335,42 @@ TEST_CASE("DomainViewService includes admin panel (site_id=0) when server_hostna
         std::string::size_type admin_pos = json.find("\"domain\":\"admin.example.com\"");
         std::string::size_type ex_pos = json.find("\"domain\":\"example.com\"");
         CHECK(admin_pos < ex_pos);
+
+        // Parse JSON and validate extracted fields
+        {
+            auto admin_start = json.find("{\"id\":0");
+            CHECK(admin_start != std::string::npos);
+            auto admin_end = json.find("},\"id\"", admin_start);
+            if (admin_end == std::string::npos) admin_end = json.find("}]", admin_start);
+            std::string admin_obj = json.substr(admin_start, admin_end - admin_start);
+
+            CHECK(json_extract_uint(admin_obj, "id") == 0);
+            CHECK(json_extract_string(admin_obj, "domain") == "admin.example.com");
+            CHECK(json_extract_string(admin_obj, "type") == "system");
+            CHECK(json_extract_uint(admin_obj, "site_id") == 0);
+            CHECK(json_extract_string(admin_obj, "site_name") == "ContainerCP Admin");
+            CHECK(json_extract_string(admin_obj, "system_role") == "admin-panel");
+            CHECK(json_extract_string(admin_obj, "proxy_upstream") == "127.0.0.1:8081");
+            CHECK(json_extract_string(admin_obj, "target") == "127.0.0.1:8081");
+            CHECK(json_extract_bool(admin_obj, "can_delete") == false);
+            CHECK(json_extract_bool(admin_obj, "can_manage_runtime") == false);
+            CHECK(json_extract_bool(admin_obj, "can_manage_ssl") == true);
+            CHECK(json_extract_bool(admin_obj, "can_manage_proxy") == true);
+        }
+
+        // Validate a normal domain object
+        {
+            auto normal_start = json.find("{\"id\":1");
+            CHECK(normal_start != std::string::npos);
+            auto normal_end = json.find("},\"id\"", normal_start);
+            if (normal_end == std::string::npos) normal_end = json.find("}]", normal_start);
+            std::string normal_obj = json.substr(normal_start, normal_end - normal_start);
+
+            CHECK(json_extract_uint(normal_obj, "id") == 1);
+            CHECK(json_extract_string(normal_obj, "domain") == "example.com");
+            CHECK(json_extract_bool(normal_obj, "can_delete") == true);
+            CHECK(json_extract_bool(normal_obj, "can_manage_runtime") == true);
+        }
     }
 
     // With server_hostname matching an existing domain: no duplicate
