@@ -10,12 +10,14 @@ DomainViewService::DomainViewService(logger::Logger& logger,
                                       site::SiteManager& sites,
                                       ssl::CertificateStore& cert_store,
                                       mail::MailDomainManager& mail_domains,
+                                      proxy::ReverseProxyManager& reverse_proxies,
                                       const std::string& server_hostname)
     : logger_(logger)
     , domains_(domains)
     , sites_(sites)
     , cert_store_(cert_store)
     , mail_domains_(mail_domains)
+    , reverse_proxies_(reverse_proxies)
     , server_hostname_(server_hostname)
 {
 }
@@ -25,16 +27,28 @@ void DomainViewService::write_enriched(std::ostringstream& json,
     // Site info from SiteManager
     std::string site_name;
     std::string site_domain;
+    bool is_system = (d.site_id == 0);
+
     auto* site = sites_.find_by_id(d.site_id);
     if (site) {
         site_name = site->name;
         site_domain = site->domain;
+    } else if (is_system) {
+        site_name = "ContainerCP Admin";
+    }
+
+    // For system admin-panel domains, resolve target from ReverseProxy
+    std::string target = d.target;
+    std::string proxy_upstream;
+    if (is_system && !server_hostname_.empty()) {
+        auto* rp = reverse_proxies_.find_by_domain(server_hostname_);
+        if (rp) {
+            proxy_upstream = rp->upstream;
+            if (target.empty()) target = proxy_upstream;
+        }
     }
 
     // SSL status from CertificateStore (single source of truth)
-    // Both ssl_status and ssl_enabled are derived from CertificateStore metadata,
-    // NOT from Domain::ssl_enabled (which is a legacy field that may not reflect
-    // the actual certificate state). This ensures consistency between the two fields.
     std::string ssl_status = "Disabled";
     bool ssl_enabled_actual = false;
     auto ssl_meta = cert_store_.load_metadata(d.site_id);
@@ -65,7 +79,7 @@ void DomainViewService::write_enriched(std::ostringstream& json,
          << "\",\"site_id\":" << d.site_id
          << ",\"site_name\":\"" << api::JsonFormatter::escape(site_name)
          << "\",\"site_domain\":\"" << api::JsonFormatter::escape(site_domain)
-         << "\",\"target\":\"" << api::JsonFormatter::escape(d.target)
+         << "\",\"target\":\"" << api::JsonFormatter::escape(target)
          << "\",\"ssl_enabled\":" << (ssl_enabled_actual ? "true" : "false")
          << ",\"ssl_status\":\"" << api::JsonFormatter::escape(ssl_status)
          << "\",\"enabled\":" << (d.enabled ? "true" : "false")
@@ -73,8 +87,21 @@ void DomainViewService::write_enriched(std::ostringstream& json,
          << ",\"mail_domain_mode\":\"" << api::JsonFormatter::escape(mail_domain_mode)
          << "\",\"dkim_generated\":" << (dkim_generated ? "true" : "false")
          << ",\"dkim_selector\":\"" << api::JsonFormatter::escape(dkim_selector)
-         << "\",\"dkim_public_key_dns\":\"" << api::JsonFormatter::escape(dkim_public_key_dns)
-         << "\"}";
+         << "\",\"dkim_public_key_dns\":\"" << api::JsonFormatter::escape(dkim_public_key_dns);
+
+    if (is_system) {
+        json << ",\"system_role\":\"admin-panel\""
+             << ",\"can_delete\":false"
+             << ",\"can_manage_runtime\":false"
+             << ",\"can_manage_ssl\":true"
+             << ",\"can_manage_proxy\":true"
+             << ",\"proxy_upstream\":\"" << api::JsonFormatter::escape(proxy_upstream) << "\"";
+    } else {
+        json << ",\"can_delete\":true"
+             << ",\"can_manage_runtime\":true";
+    }
+
+    json << "}";
 }
 
 std::string DomainViewService::build_enriched_json() const {
@@ -108,6 +135,7 @@ std::string DomainViewService::build_enriched_json() const {
         admin.site_id = 0;
         admin.id = 0;
         admin.enabled = true;
+        admin.type = "system";
         write_enriched(json, admin);
         first = false;
     }
@@ -129,6 +157,7 @@ std::string DomainViewService::build_enriched_json(uint64_t domain_id) const {
         admin.site_id = 0;
         admin.id = 0;
         admin.enabled = true;
+        admin.type = "system";
         std::ostringstream json;
         write_enriched(json, admin);
         return json.str();

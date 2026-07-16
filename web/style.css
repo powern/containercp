@@ -120,6 +120,7 @@ tr:hover td { background:var(--bg3); }
 .badge-warn { background:#a1620720; color:var(--yellow); }
 .badge-err { background:#991b1b20; color:var(--red); }
 .badge-info { background:#3b82f620; color:var(--blue); }
+.badge-admin { background:#7c3aed20; color:#a78bfa; }
 
 /* ===== RESPONSIVE ===== */
 @media(max-width:768px) {

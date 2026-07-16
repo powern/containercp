@@ -825,7 +825,7 @@ function runRuntimeAction(siteId, domain, action) {
 
 /* ===== DOMAINS ===== */
 function domainTypeBadge(type) {
-  const m = {'primary':'badge-ok','alias':'badge-info','redirect':'badge-warn','wildcard':'badge-info','legacy':'badge-info'};
+  const m = {'primary':'badge-ok','alias':'badge-info','redirect':'badge-warn','wildcard':'badge-info','legacy':'badge-info','system':'badge-admin'};
   const label = type || 'legacy';
   return `<span class="badge ${m[label]||'badge-info'}">${esc(label)}</span>`;
 }
@@ -894,7 +894,9 @@ async function loadDomains(p) {
           let acts = `<button class="btn-icon" onclick="navigate('domain-detail',${r.id})" title="View details">&#128065;</button>`;
           acts += `<button class="btn-icon" onclick="window.open('http://${esc(r.domain)}','_blank')" title="Open in browser">&#8599;</button>`;
           acts += `<button class="btn-icon" onclick="copyText('${esc(r.domain)}')" title="Copy domain">&#128203;</button>`;
-          acts += `<button class="btn-icon" style="color:var(--red)" onclick="removeDomain('${esc(r.domain)}')" title="Remove domain">&#10005;</button>`;
+          if (r.can_delete !== false) {
+            acts += `<button class="btn-icon" style="color:var(--red)" onclick="removeDomain('${esc(r.domain)}')" title="Remove domain">&#10005;</button>`;
+          }
           return acts;
         }}
       ], rows, 'No domains');
@@ -1028,7 +1030,7 @@ async function loadDomainDetail(p, domainId) {
           <span class="health-badge" style="margin-right:8px;font-size:13px;">Health: ${hsBadge}</span>
           <button class="btn btn-sm" onclick="window.open('http://${esc(domainRow.domain)}','_blank')">Open</button>
           <button class="btn btn-sm" onclick="copyText('${esc(domainRow.domain)}')">Copy</button>
-          <button class="btn btn-sm btn-danger" onclick="removeDomain('${esc(domainRow.domain)}')">Remove</button>
+          ${domainRow.can_delete !== false ? `<button class="btn btn-sm btn-danger" onclick="removeDomain('${esc(domainRow.domain)}')">Remove</button>` : ''}
         </div>
       </div>
       <div class="tabs" id="domain-tabs">

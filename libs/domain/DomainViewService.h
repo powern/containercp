@@ -4,6 +4,7 @@
 #include "domain/DomainManager.h"
 #include "logger/Logger.h"
 #include "mail/MailDomainManager.h"
+#include "proxy/ReverseProxyManager.h"
 #include "ssl/CertificateStore.h"
 #include "site/SiteManager.h"
 
@@ -25,6 +26,7 @@ public:
                       site::SiteManager& sites,
                       ssl::CertificateStore& cert_store,
                       mail::MailDomainManager& mail_domains,
+                      proxy::ReverseProxyManager& reverse_proxies,
                       const std::string& server_hostname = "");
 
     // Build enriched JSON array for all domains.
@@ -41,6 +43,7 @@ private:
     site::SiteManager& sites_;
     ssl::CertificateStore& cert_store_;
     mail::MailDomainManager& mail_domains_;
+    proxy::ReverseProxyManager& reverse_proxies_;
     std::string server_hostname_;
 };
 

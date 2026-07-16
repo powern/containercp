@@ -103,6 +103,7 @@ TEST_CASE("SiteManager remove cleans state") {
 
 #include "domain/DomainManager.h"
 #include "domain/DomainViewService.h"
+#include "proxy/ReverseProxyManager.h"
 #include "ssl/CertificateStore.h"
 #include "logger/Logger.h"
 
@@ -146,13 +147,15 @@ TEST_CASE("DomainViewService produces valid JSON for various target values") {
 
     // Create the view service and generate enriched JSON
     mail::MailDomainManager md_mgr;
-    domain::DomainViewService view(logger::Logger::instance(), domains, sites, cert_store, md_mgr);
+    proxy::ReverseProxyManager rp_mgr;
+    domain::DomainViewService view(logger::Logger::instance(), domains, sites, cert_store, md_mgr, rp_mgr);
     std::string json_result = view.build_enriched_json();
 
     // Verify the JSON is syntactically valid by checking basic structure
     CHECK(json_result.size() > 0);
     CHECK(json_result.front() == '[');
     CHECK(json_result.back() == ']');
+
 
     // Verify each domain's JSON contains the expected patterns
     CHECK(json_result.find("\"domain\":\"empty-target.com\"") != std::string::npos);
@@ -170,6 +173,8 @@ TEST_CASE("DomainViewService produces valid JSON for various target values") {
 
     // Verify unlinked site has no site name
     CHECK(json_result.find("\"site_name\":\"\",\"site_domain\":\"\"") != std::string::npos);
+    // Verify system domain capabilities present for normal domains
+    CHECK(json_result.find("\"can_delete\":true") != std::string::npos);
 
     // Cleanup
     std::string rm_cmd = "rm -rf " + ssl_root_str;
@@ -202,8 +207,9 @@ TEST_CASE("DomainViewService enriched JSON includes mail fields") {
     md->dkim_selector = "default";
     md->dkim_public_key_dns = "v=DKIM1; p=MIGfMA0GCSqGSIb4...";
 
+    proxy::ReverseProxyManager rp_mgr2;
     domain::DomainViewService view(logger::Logger::instance(),
-        domains, sites, cert_store, md_mgr);
+        domains, sites, cert_store, md_mgr, rp_mgr2);
     std::string json_result = view.build_enriched_json();
 
     CHECK(json_result.find("\"domain\":\"with-mail.com\"") != std::string::npos);
@@ -247,11 +253,12 @@ TEST_CASE("DomainViewService includes admin panel (site_id=0) when server_hostna
     domains.create("other.com", 1, 2, "primary", "");
 
     mail::MailDomainManager md_mgr;
+    proxy::ReverseProxyManager rp_mgr;
 
     // Without server_hostname: only managed domains, no admin panel
     {
         domain::DomainViewService view(logger::Logger::instance(),
-            domains, sites, cert_store, md_mgr);
+            domains, sites, cert_store, md_mgr, rp_mgr);
         std::string json = view.build_enriched_json();
         CHECK(json.find("\"domain\":\"example.com\"") != std::string::npos);
         CHECK(json.find("\"domain\":\"other.com\"") != std::string::npos);
@@ -264,7 +271,7 @@ TEST_CASE("DomainViewService includes admin panel (site_id=0) when server_hostna
     {
         std::string hostname = "admin.example.com";
         domain::DomainViewService view(logger::Logger::instance(),
-            domains, sites, cert_store, md_mgr, hostname);
+            domains, sites, cert_store, md_mgr, rp_mgr, hostname);
         std::string json = view.build_enriched_json();
 
         // Admin panel domain is included
@@ -286,7 +293,7 @@ TEST_CASE("DomainViewService includes admin panel (site_id=0) when server_hostna
     {
         std::string hostname = "example.com";
         domain::DomainViewService view(logger::Logger::instance(),
-            domains, sites, cert_store, md_mgr, hostname);
+            domains, sites, cert_store, md_mgr, rp_mgr, hostname);
         std::string json = view.build_enriched_json();
 
         // Only one occurrence of example.com
@@ -300,7 +307,7 @@ TEST_CASE("DomainViewService includes admin panel (site_id=0) when server_hostna
     {
         std::string hostname = "admin.example.com";
         domain::DomainViewService view(logger::Logger::instance(),
-            domains, sites, cert_store, md_mgr, hostname);
+            domains, sites, cert_store, md_mgr, rp_mgr, hostname);
         std::string json = view.build_enriched_json(0);
         CHECK(json.find("\"domain\":\"admin.example.com\"") != std::string::npos);
         CHECK(json.find("\"site_id\":0") != std::string::npos);
@@ -310,7 +317,7 @@ TEST_CASE("DomainViewService includes admin panel (site_id=0) when server_hostna
     {
         std::string hostname = "admin.example.com";
         domain::DomainViewService view(logger::Logger::instance(),
-            domains, sites, cert_store, md_mgr, hostname);
+            domains, sites, cert_store, md_mgr, rp_mgr, hostname);
         std::string json = view.build_enriched_json(999);
         CHECK(json == "null");
     }
