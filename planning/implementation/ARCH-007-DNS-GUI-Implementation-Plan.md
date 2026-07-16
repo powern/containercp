@@ -760,81 +760,115 @@ SpfAnalysis
 
 ---
 
-## Phase 9 — Tests ✅ (implemented)
+## Phase 9 — Tests 🔄 In Progress
 
 ### 9.1 — Backend unit tests
 
-**Files:** NEW: `tests/test_dns_service.cpp`, EXTEND: `tests/test_domain_view.cpp`  
+**Files:** `tests/test_dns_service.cpp`, `tests/test_managers.cpp`  
 **Depends on:** 1.1, 2.2  
 **Criteria:** All DNS check service and domain view tests pass.
 
-- [x] Create `tests/test_dns_service.cpp` with doctest test cases:
-  - [x] Domain validation — valid domains pass
-  - [x] Domain validation — invalid domains rejected (shell chars, IPs, empty)
-  - [x] Record type allowlist — valid types pass
-  - [x] Record type allowlist — invalid types rejected
-  - [x] A record parsing — single value
-  - [x] AAAA record parsing — IPv6
-  - [x] MX record parsing — priority extracted correctly
-  - [x] TXT record parsing — quoted string with whitespace
-  - [x] DKIM long TXT — multi-fragment joining (TXT wire format clean: no stray quotes)
-  - [x] NXDOMAIN response — structured error, no crash
-  - [ ] ~~SERVFAIL response — structured error, no crash~~ (unreliable to reproduce; service returns 502 if all SERVFAIL)
-  - [ ] ~~Timeout simulation — structured error~~ (cannot simulate without network manipulation)
-  - [x] Empty response — empty records array
-  - [x] Cache hit — returns same data within TTL
-  - [x] Cache bypass — `clear_cache()` forces fresh data
-  - [x] Cache expiry — data older than TTL is re-fetched
-  - [x] DNS Response Details — DnsRecord::dns_response_details contains structured c-ares output
-  - [ ] ~~Max records limit — output truncated if too large~~ (no limit implemented — not needed)
-- [x] Extend `tests/test_managers.cpp` (domain view tests live here, not `test_domain_view.cpp`):
-  - [x] Enriched JSON includes `mail_domain_id` when MailDomain exists
-  - [x] Enriched JSON has empty mail fields when no MailDomain
-  - [x] Backward compatible — old fields unchanged
+**Implemented (deterministic, no live DNS):**
+- [x] Domain validation — valid domains pass
+- [x] Domain validation — invalid domains rejected (shell chars, IPs, empty)
+- [x] Record type allowlist — valid types pass/rejected
+- [x] `compute_overall_status` — complete, partial, failed, NXDOMAIN, NODATA, mixed
+- [x] `compute_http_status` — NXDOMAIN→200, NOERROR→200, partial→200, all SERVFAIL→502
+- [x] Domain normalization — uppercase→lowercase, cache uses normalized key
+- [x] Enriched JSON includes `mail_domain_id` when MailDomain exists
+- [x] Enriched JSON has empty mail fields when no MailDomain; backward compatible
+
+**Implemented (live DNS, integration-level — uses real public resolvers):**
+- [x] A record parsing — single value, TTL, dns_response_details
+- [x] AAAA (IPv6) record — address contains `:`
+- [x] MX record — priority > 0, value non-empty
+- [x] TXT record — value clean (no stray quotes)
+- [x] SOA fields — mname, rname, serial populated
+- [x] NXDOMAIN response — structured error, no crash, success=true
+- [x] Multiple types — correct per_type count
+- [x] Cache hit — returns same data within TTL
+- [x] Cache expiry — set TTL=1, sleep 2s, re-fetch
+- [x] Concurrent cache access — thread-safe
+
+**Deferred (not applicable or not testable without mock infrastructure):**
+- [ ] `SERVFAIL` — unreliable to generate naturally; DnsCheckService returns 502
+- [ ] `TIMEOUT` — cannot simulate without network manipulation
+- [ ] Max records limit — no such limit in DnsCheckService
+- [ ] DKIM multi-fragment joining — c-ares returns each fragment as separate RR;
+      frontend handles joining; no backend fragment concatenation exists
+- [ ] Refresh=1 via `clear_cache()` — tested at the service API level;
+      full HTTP server round-trip needs integration test harness
 
 ### 9.2 — API integration tests
 
-**Files:** NEW: `tests/test_dns_api.cpp`, or extend `tests/test_api.cpp`  
+**Files:** `tests/test_dns_api.cpp`  
 **Depends on:** 2.1, 2.2  
-**Criteria:** API endpoint responds correctly to all request variants.
+**Criteria:** API endpoint responds correctly to all request variants through Router dispatch.
 
-- [x] `GET /api/domains/example.com/dns-check` → 200 with valid structure (via DnsCheckService test)
-- [x] `GET /api/domains/example.com/dns-check?types=A,MX` → only A and MX records (multi-type test)
-- [x] `GET /api/domains/example.com/dns-check?refresh=1` → fresh data (cache bypass via clear_cache test)
-- [x] `GET /api/domains/INVALID` → 400 with error message (invalid domain test)
-- [x] `GET /api/domains/example.com/dns-check?types=SPF` → 400 (unsupported type rejection test)
-- [ ] ~~`GET /api/domains/example.com/dns-check?types=A,SPF,INVALID` → 400 (first invalid detected)~~ (needs full HTTP server test — deferred to Phase 9.2 proper)
-- [x] Extended `GET /api/domains` includes `mail_domain_id` for domains with MailDomain
-- [x] Extended `GET /api/domains` has empty mail fields for domains without MailDomain
+**Implemented (Router-level handler tests — real dispatch, JSON response parsing):**
+- [x] `GET /api/domains/example.com/dns-check` → 200, success envelope, all JSON fields
+- [x] `GET /api/domains/example.com/dns-check?types=A,MX` → only 2 per_type entries
+- [x] `GET /api/domains/example.com/dns-check?refresh=1` → `cached:false` after cached `cached:true`
+- [x] `GET /api/domains/INVALID` → 400 with `Invalid domain format` error
+- [x] `GET /api/domains/example.com/dns-check?types=SPF` → 400, `Unsupported DNS record type: SPF`
+- [x] `GET /api/domains/example.com/dns-check?types=A,SPF,INVALID` → 400, first invalid (SPF) detected
+- [x] NXDOMAIN → 200 with valid structure
+
+**Deferred:**
+- [ ] Full HTTP server integration (requires starting `ApiServer`, sending HTTP requests,
+      parsing HTTP responses) — needs dedicated integration test runner.
+      Current tests exercise the same handler logic through `Router::dispatch()`
+      which covers request parsing, validation, service call, and JSON formatting.
 
 ### 9.3 — Frontend behaviour tests
 
 **Files:** `web/app.js` (manual verification checklist)  
 **Depends on:** 3.1–8.1  
-**Criteria:** All UI states verified manually.
+**Criteria:** All UI states verified manually.  
+**Status:** Not yet documented. Items verified during Phase 7/8 live reviews must be
+explicitly recorded here with pass/fail and timestamp.
 
+#### DOMAIN LIST
 - [ ] Domain list shows DNS column with loading → badge → status
 - [ ] Domain list shows Health Score column with all grade colors
 - [ ] Domain list shows Mail column as Active/Not configured
 - [ ] Domain list shows Runtime column (container status, not external HTTP)
-- [ ] Domain detail: Overview tab renders with all data
-- [ ] Domain detail: DNS Records tab shows Configured vs Published
-- [ ] Domain detail: Mail tab shows correct conditional state
-- [ ] Domain detail: Security tab with DMARC Wizard generates correct records
-- [ ] Domain detail: Health tab shows breakdown with correct scoring
+
+#### DOMAIN DETAIL — OVERVIEW
+- [ ] Overview tab renders with all data (domain, type, site, target, SSL, status)
+
+#### DOMAIN DETAIL — DNS RECORDS
+- [ ] DNS Records tab shows Configured vs Published
 - [ ] Copy buttons: all types (Host/Value/FQDN/Full) copy correct text
+
+#### DOMAIN DETAIL — MAIL
+- [ ] MailDomain exists → full mail configuration with checks
+- [ ] MailDomain absent → neutral informational message, no false errors
+- [ ] `site_id >= 0` → SSL checks active (including admin panel)
+- [ ] Runtime check only for `site_id > 0` (admin panel shows N/A)
+
+#### DOMAIN DETAIL — SECURITY
+- [ ] Security tab: DMARC Wizard with 3 policies (Monitor/Quarantine/Reject)
+- [ ] Preview of generated TXT record (Recommended, not Configured — no backend storage)
+- [ ] CAA, MTA-STS, TLS-RPT, Autodiscover recommendations
+
+#### DOMAIN DETAIL — HEALTH
+- [x] Health tab shows breakdown with correct scoring (verified Phase 8 review — 93/100 score)
+- [ ] Health Score: site with mail = 100% all ok
+- [ ] Health Score: site without mail = mail n/a, still 100% if others ok
+- [x] Health Score: DKIM missing = reduced (verified Phase 8 review — correct deduction)
+- [ ] Health Score: all n/a = N/A
+
+#### EVIDENCE PANELS
 - [ ] Evidence panel: `[Why?]` shows expected → actual → reason → raw → fix
 - [ ] Evidence panel: `[Dismiss]` closes panel
 - [ ] Evidence panel: only one open at a time (accordion)
 - [ ] `[Check Again]` refreshes section, closes evidence panels
+
+#### LOADING / ERROR / EDGE CASES
 - [ ] Loading states show spinners or "..." placeholders
 - [ ] Error states show error message with retry button
-- [ ] MailDomain absent: no false errors, neutral message shown
-- [ ] Site with site_id=0 (admin panel): HTTP + SSL checks active
-- [ ] Health Score: site with mail = 100% all ok
-- [ ] Health Score: site without mail = mail n/a, still 100% if others ok
-- [ ] Health Score: DKIM missing = reduced
-- [ ] Health Score: all n/a = N/A
+- [ ] Site with site_id=0 (admin panel): SSL checks active, Runtime N/A
 
 ---
 

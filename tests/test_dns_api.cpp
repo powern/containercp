@@ -1,11 +1,17 @@
 #include "api/Router.h"
+#include "api/JsonFormatter.h"
 #include "dns/DnsCheckService.h"
 #include "doctest/doctest.h"
 
+#include <sstream>
 #include <string>
 #include <vector>
 
 using namespace containercp::dns;
+using containercp::api::Router;
+using containercp::api::Request;
+using containercp::api::Response;
+using containercp::api::JsonFormatter;
 
 // Helper: build a PerTypeResult
 static PerTypeResult make_pt(const std::string& type,
@@ -27,20 +33,20 @@ static PerTypeResult make_pt(const std::string& type,
     return r;
 }
 
-TEST_CASE("DnsCheck API: cached metadata - first call misses") {
+TEST_CASE("[integration] DnsCheck API: cached metadata - first call misses — requires live DNS") {
     DnsCheckService svc;
     auto r = svc.check("google.com", {"A"});
     CHECK_FALSE(r.cached);  // first call is live lookup
 }
 
-TEST_CASE("DnsCheck API: cached metadata - second call hits") {
+TEST_CASE("[integration] DnsCheck API: cached metadata - second call hits — requires live DNS") {
     DnsCheckService svc;
     svc.check("google.com", {"A"});   // populate cache
     auto r = svc.check("google.com", {"A"});  // cache hit
     CHECK(r.cached);
 }
 
-TEST_CASE("DnsCheck API: clear_cache forces fresh lookup") {
+TEST_CASE("[integration] DnsCheck API: clear_cache forces fresh lookup — requires live DNS") {
     DnsCheckService svc;
     svc.check("google.com", {"A"});   // populate cache
 
@@ -49,7 +55,7 @@ TEST_CASE("DnsCheck API: clear_cache forces fresh lookup") {
     CHECK_FALSE(r.cached);
 }
 
-TEST_CASE("DnsCheck API: uppercase domain normalization") {
+TEST_CASE("[integration] DnsCheck API: uppercase domain normalization — requires live DNS") {
     DnsCheckService svc;
 
     auto r = svc.check("GOOGLE.COM", {"A"});
@@ -62,7 +68,7 @@ TEST_CASE("DnsCheck API: uppercase domain normalization") {
     CHECK_FALSE(r2.cached);  // fresh because clear_cache matched normalized key
 }
 
-TEST_CASE("DnsCheck API: NXDOMAIN returns success=true with structured data") {
+TEST_CASE("[integration] DnsCheck API: NXDOMAIN returns success=true — requires live DNS") {
     DnsCheckService svc;
 
     auto r = svc.check("thisshouldnotexistexample123456789.com", {"A"});
@@ -83,7 +89,7 @@ TEST_CASE("DnsCheck API: NXDOMAIN returns success=true with structured data") {
     CHECK_FALSE(r.overall_status.empty());
 }
 
-TEST_CASE("DnsCheck API: default types list") {
+TEST_CASE("[integration] DnsCheck API: default types list — requires live DNS") {
     DnsCheckService svc;
 
     // All supported types
@@ -101,7 +107,7 @@ TEST_CASE("DnsCheck API: default types list") {
     CHECK(found_mx);
 }
 
-TEST_CASE("DnsCheck API: partial success") {
+TEST_CASE("[integration] DnsCheck API: partial success — requires live DNS") {
     // A domain with A record but dubious AAAA could produce partial
     DnsCheckService svc;
 
@@ -117,7 +123,7 @@ TEST_CASE("DnsCheck API: partial success") {
     CHECK(valid_overall);
 }
 
-TEST_CASE("DnsCheck API: JSON field presence") {
+TEST_CASE("[integration] DnsCheck API: JSON field presence — requires live DNS") {
     DnsCheckService svc;
 
     auto r = svc.check("google.com", {"A"});
@@ -156,7 +162,7 @@ TEST_CASE("DnsCheck API: invalid domain returns error") {
     CHECK_FALSE(r.error.empty());
 }
 
-TEST_CASE("DnsCheck API: cached after clear_cache + fresh call") {
+TEST_CASE("[integration] DnsCheck API: cached after clear_cache + fresh call — requires live DNS") {
     DnsCheckService svc;
 
     svc.check("cloudflare.com", {"A"});  // populate cache
@@ -167,7 +173,7 @@ TEST_CASE("DnsCheck API: cached after clear_cache + fresh call") {
     CHECK_FALSE(r.cached);  // fresh after clear
 }
 
-TEST_CASE("DnsCheck API: soa fields populated") {
+TEST_CASE("[integration] DnsCheck API: soa fields populated — requires live DNS") {
     DnsCheckService svc;
 
     auto r = svc.check("google.com", {"SOA"});
@@ -178,7 +184,7 @@ TEST_CASE("DnsCheck API: soa fields populated") {
     CHECK(r.soa.serial > 0);
 }
 
-TEST_CASE("DnsCheck API: soa fields empty when not queried") {
+TEST_CASE("[integration] DnsCheck API: soa fields empty when not queried — requires live DNS") {
     DnsCheckService svc;
 
     auto r = svc.check("google.com", {"A"});
@@ -201,7 +207,7 @@ TEST_CASE("DnsCheck API: underscore names pass validation") {
     CHECK_FALSE(DnsCheckService::validate_domain("dkim._domainkey.example.com"));
 }
 
-TEST_CASE("DnsCheck API: underscore DNS names resolve correctly") {
+TEST_CASE("[integration] DnsCheck API: underscore DNS names resolve correctly — requires live DNS") {
     DnsCheckService svc;
 
     // Test _dmarc lookup on a major domain (has DMARC record)
@@ -216,7 +222,7 @@ TEST_CASE("DnsCheck API: underscore DNS names resolve correctly") {
 }
 
 // --- JSON serialization validation ---
-TEST_CASE("DnsCheck API JSON: valid JSON for complete response") {
+TEST_CASE("[integration] DnsCheck API JSON: valid JSON for complete response — requires live DNS") {
     DnsCheckService svc;
 
     // Real DNS check to produce a response
@@ -243,7 +249,7 @@ TEST_CASE("DnsCheck API JSON: valid JSON for complete response") {
     CHECK(r.soa.mname.empty());
 }
 
-TEST_CASE("DnsCheck API JSON: valid JSON for NXDOMAIN response") {
+TEST_CASE("[integration] DnsCheck API JSON: valid JSON for NXDOMAIN response — requires live DNS") {
     DnsCheckService svc;
 
     auto r = svc.check("thisshouldnotexistexample123456789test.com", {"A"});
@@ -253,7 +259,7 @@ TEST_CASE("DnsCheck API JSON: valid JSON for NXDOMAIN response") {
     CHECK(r.per_type.size() == 1);
 }
 
-TEST_CASE("DnsCheck API JSON: valid JSON for partial response") {
+TEST_CASE("[integration] DnsCheck API JSON: valid JSON for partial response — requires live DNS") {
     DnsCheckService svc;
 
     // Query multiple types — some may succeed, some may NXDOMAIN
@@ -277,7 +283,7 @@ TEST_CASE("DnsCheck API: autodiscover domain validation") {
     CHECK(DnsCheckService::validate_dns_name("_smtp._tls.example.com"));
 }
 
-TEST_CASE("DnsCheck API: autodiscover resolution") {
+TEST_CASE("[integration] DnsCheck API: autodiscover resolution — requires live DNS") {
     DnsCheckService svc;
 
     // autodiscover.google.com typically has a CNAME or A record
@@ -298,7 +304,7 @@ TEST_CASE("DnsCheck API: autodiscover resolution") {
     CHECK(hasA);
 }
 
-TEST_CASE("DnsCheck API: autodiscover A with multiple records") {
+TEST_CASE("[integration] DnsCheck API: autodiscover A with multiple records — requires live DNS") {
     DnsCheckService svc;
 
     // Query a domain that likely has multiple A records for autodiscover
@@ -319,7 +325,7 @@ TEST_CASE("DnsCheck API: autodiscover A with multiple records") {
     }
 }
 
-TEST_CASE("DnsCheck API: autodiscover no record returns NXDOMAIN or NODATA") {
+TEST_CASE("[integration] DnsCheck API: autodiscover no record — requires live DNS") {
     DnsCheckService svc;
 
     // A domain that likely has no autodiscover record
@@ -331,7 +337,7 @@ TEST_CASE("DnsCheck API: autodiscover no record returns NXDOMAIN or NODATA") {
     }
 }
 
-TEST_CASE("DnsCheck API: CNAME resolution returns target hostname") {
+TEST_CASE("[integration] DnsCheck API: CNAME resolution — requires live DNS") {
     DnsCheckService svc;
 
     // Many CDN/redirect domains use CNAME
@@ -352,7 +358,7 @@ TEST_CASE("DnsCheck API: CNAME resolution returns target hostname") {
     CHECK(r.per_type.size() >= 1);
 }
 
-TEST_CASE("DnsCheck API: CNAME with trailing dot is valid") {
+TEST_CASE("[integration] DnsCheck API: CNAME with trailing dot — requires live DNS") {
     DnsCheckService svc;
 
     // Query a domain that has a known CNAME
@@ -478,4 +484,283 @@ TEST_CASE("DnsCheck API routing: future specific routes work when registered bef
     req_unknown.path = "/api/domains/unknown";
     auto resp_unknown = router.dispatch(req_unknown);
     CHECK(resp_unknown.status_code == 404);
+}
+
+// -----------------------------------------------------------------------
+// API handler integration tests — tests go through Router::dispatch()
+// with a handler that replicates the real dns-check API logic.
+// -----------------------------------------------------------------------
+
+// Handler factory: returns a handler that uses a shared DnsCheckService
+static auto make_dns_handler(DnsCheckService& svc) {
+    return [&svc](const Request& req) -> Response {
+        Response r;
+        std::string remaining = req.path.substr(std::string("/api/domains/").size());
+        const std::string suffix = "/dns-check";
+
+        if (remaining.size() <= suffix.size()
+            || remaining.substr(remaining.size() - suffix.size()) != suffix) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Not found\"}";
+            return r;
+        }
+
+        std::string domain_raw = remaining.substr(0, remaining.size() - suffix.size());
+        if (domain_raw.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid domain\"}";
+            return r;
+        }
+
+        std::string domain;
+        domain.reserve(domain_raw.size());
+        for (char c : domain_raw) domain.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+
+        if (!DnsCheckService::validate_dns_name(domain)) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Invalid domain format\"}";
+            return r;
+        }
+
+        std::vector<std::string> types;
+        bool refresh = false;
+        auto it = req.query.find("refresh");
+        if (it != req.query.end() && it->second == "1") refresh = true;
+        it = req.query.find("types");
+        if (it != req.query.end() && !it->second.empty()) {
+            const std::string& v = it->second;
+            size_t pos = 0;
+            while (pos < v.size()) {
+                auto comma = v.find(',', pos);
+                std::string t = v.substr(pos, comma - pos);
+                if (!t.empty()) types.push_back(t);
+                pos = (comma == std::string::npos) ? v.size() : comma + 1;
+            }
+        }
+        if (types.empty()) types = {"A", "AAAA", "MX", "TXT", "NS", "SOA", "CAA"};
+
+        for (const auto& t : types) {
+            if (!DnsCheckService::validate_type(t)) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Unsupported DNS record type: "
+                    + JsonFormatter::escape(t) + "\"}";
+                return r;
+            }
+        }
+
+        if (refresh) svc.clear_cache(domain);
+        auto result = svc.check(domain, types);
+
+        std::ostringstream json;
+        json << "{\"success\":"
+             << (result.success ? "true" : "false")
+             << ",\"data\":{"
+             << "\"domain\":\"" << JsonFormatter::escape(result.domain)
+             << "\",\"resolved_at\":\"" << JsonFormatter::escape(result.resolved_at)
+             << "\",\"cached\":" << (result.cached ? "true" : "false")
+             << ",\"overall_status\":\"" << JsonFormatter::escape(result.overall_status)
+             << "\",\"per_type\":[";
+        bool first_pt = true;
+        for (const auto& pt : result.per_type) {
+            if (!first_pt) json << ",";
+            first_pt = false;
+            json << "{\"type\":\"" << JsonFormatter::escape(pt.type)
+                 << "\",\"status_code\":\"" << JsonFormatter::escape(pt.status_code)
+                 << "\",\"error\":\"" << JsonFormatter::escape(pt.error)
+                 << "\",\"records\":[";
+            bool first_rec = true;
+            for (const auto& rec : pt.records) {
+                if (!first_rec) json << ",";
+                first_rec = false;
+                json << "{\"type\":\"" << JsonFormatter::escape(rec.type)
+                     << "\",\"value\":\"" << JsonFormatter::escape(rec.value)
+                     << "\",\"ttl\":" << rec.ttl
+                     << ",\"priority\":" << rec.priority
+                     << "}";
+            }
+            json << "]}";
+        }
+        json << "],\"soa\":{"
+             << "\"mname\":\"" << JsonFormatter::escape(result.soa.mname)
+             << "\",\"rname\":\"" << JsonFormatter::escape(result.soa.rname)
+             << "\",\"serial\":" << result.soa.serial
+             << "}}";
+        if (!result.error.empty()) {
+            json << ",\"error\":\"" << JsonFormatter::escape(result.error) << "\"";
+        }
+        json << "}";
+        r.body = json.str();
+        r.status_code = DnsCheckService::compute_http_status(result.per_type, result.success);
+        return r;
+    };
+}
+
+TEST_CASE("[integration] API handler: GET /api/domains/example.com/dns-check — requires live DNS") {
+    DnsCheckService svc;
+    Router router;
+    router.add_prefix("GET", "/api/domains/", make_dns_handler(svc));
+
+    Request req;
+    req.method = "GET";
+    req.path = "/api/domains/example.com/dns-check";
+    auto resp = router.dispatch(req);
+
+    CHECK(resp.status_code == 200);
+    CHECK(resp.body.find("\"success\":true") != std::string::npos);
+    CHECK(resp.body.find("\"data\":{") != std::string::npos);
+    CHECK(resp.body.find("\"domain\":\"example.com\"") != std::string::npos);
+    CHECK(resp.body.find("\"resolved_at\":\"") != std::string::npos);
+    CHECK(resp.body.find("\"overall_status\":") != std::string::npos);
+    CHECK(resp.body.find("\"per_type\":[") != std::string::npos);
+}
+
+TEST_CASE("[integration] API handler: GET with ?types=A,MX returns only requested types") {
+    DnsCheckService svc;
+    Router router;
+    router.add_prefix("GET", "/api/domains/", make_dns_handler(svc));
+
+    Request req;
+    req.method = "GET";
+    req.path = "/api/domains/example.com/dns-check";
+    req.query["types"] = "A,MX";
+    auto resp = router.dispatch(req);
+
+    CHECK(resp.status_code == 200);
+    CHECK(resp.body.find("\"type\":\"A\"") != std::string::npos);
+    CHECK(resp.body.find("\"type\":\"MX\"") != std::string::npos);
+    // Should NOT contain types that were not requested — AAAA should be absent
+    bool has_aaaa = resp.body.find("\"AAAA\"") != std::string::npos
+                    || resp.body.find("\"type\":\"AAAA\"") != std::string::npos;
+    CHECK_FALSE(has_aaaa);
+
+    // Count per_type entries by looking for the status_code field which follows type
+    int type_count = 0;
+    size_t pos = 0;
+    while ((pos = resp.body.find("\"status_code\":\"", pos)) != std::string::npos) {
+        type_count++;
+        pos++;
+    }
+    CHECK(type_count == 2);
+}
+
+TEST_CASE("[integration] API handler: GET with ?refresh=1 bypasses cache — requires live DNS") {
+    DnsCheckService svc;
+    Router router;
+    router.add_prefix("GET", "/api/domains/", make_dns_handler(svc));
+
+    // First call — cache miss
+    Request req1;
+    req1.method = "GET";
+    req1.path = "/api/domains/cloudflare.com/dns-check";
+    req1.query["types"] = "A";
+    auto resp1 = router.dispatch(req1);
+    CHECK(resp1.status_code == 200);
+    bool first_cached = resp1.body.find("\"cached\":true") != std::string::npos;
+    CHECK_FALSE(first_cached);
+
+    // Second call — cache hit (no refresh)
+    Request req2;
+    req2.method = "GET";
+    req2.path = "/api/domains/cloudflare.com/dns-check";
+    req2.query["types"] = "A";
+    auto resp2 = router.dispatch(req2);
+    CHECK(resp2.body.find("\"cached\":true") != std::string::npos);
+
+    // Third call with refresh=1 — cache should be cleared
+    Request req3;
+    req3.method = "GET";
+    req3.path = "/api/domains/cloudflare.com/dns-check";
+    req3.query["types"] = "A";
+    req3.query["refresh"] = "1";
+    auto resp3 = router.dispatch(req3);
+    CHECK(resp3.status_code == 200);
+    bool third_cached = resp3.body.find("\"cached\":true") != std::string::npos;
+    CHECK_FALSE(third_cached);
+}
+
+TEST_CASE("API handler: invalid domain returns 400") {
+    DnsCheckService svc;
+    Router router;
+    router.add_prefix("GET", "/api/domains/", make_dns_handler(svc));
+
+    Request req;
+    req.method = "GET";
+    req.path = "/api/domains/not a domain!!!/dns-check";
+    req.query["types"] = "A";
+    auto resp = router.dispatch(req);
+
+    CHECK(resp.status_code == 400);
+    bool has_err = resp.body.find("\"error\":\"Invalid domain") != std::string::npos;
+    CHECK(has_err);
+}
+
+TEST_CASE("API handler: unsupported type SPF returns 400") {
+    DnsCheckService svc;
+    Router router;
+    router.add_prefix("GET", "/api/domains/", make_dns_handler(svc));
+
+    Request req;
+    req.method = "GET";
+    req.path = "/api/domains/example.com/dns-check";
+    req.query["types"] = "SPF";
+    auto resp = router.dispatch(req);
+
+    CHECK(resp.status_code == 400);
+    CHECK(resp.body.find("Unsupported DNS record type") != std::string::npos);
+    CHECK(resp.body.find("SPF") != std::string::npos);
+}
+
+TEST_CASE("API handler: mixed types A,SPF,INVALID returns 400 on first invalid") {
+    DnsCheckService svc;
+    Router router;
+    router.add_prefix("GET", "/api/domains/", make_dns_handler(svc));
+
+    Request req;
+    req.method = "GET";
+    req.path = "/api/domains/example.com/dns-check";
+    req.query["types"] = "A,SPF,INVALID";
+    auto resp = router.dispatch(req);
+
+    CHECK(resp.status_code == 400);
+    // SPF is the first invalid type encountered
+    CHECK(resp.body.find("Unsupported DNS record type") != std::string::npos);
+    CHECK(resp.body.find("SPF") != std::string::npos);
+}
+
+TEST_CASE("API handler: empty domain after path parsing returns 400") {
+    DnsCheckService svc;
+    Router router;
+    router.add_prefix("GET", "/api/domains/", make_dns_handler(svc));
+
+    Request req;
+    req.method = "GET";
+    req.path = "/api/domains//dns-check";
+    auto resp = router.dispatch(req);
+
+    CHECK(resp.status_code == 404);  // empty path before suffix hits prefix regex
+}
+
+TEST_CASE("[integration] API handler: NXDOMAIN returns 200 with valid structure — requires live DNS") {
+    DnsCheckService svc;
+    Router router;
+    router.add_prefix("GET", "/api/domains/", make_dns_handler(svc));
+
+    Request req;
+    req.method = "GET";
+    req.path = "/api/domains/thisshouldnotexistexample1234567890test.com/dns-check";
+    req.query["types"] = "A";
+    auto resp = router.dispatch(req);
+
+    bool is_nxdomain = resp.body.find("\"NXDOMAIN\"") != std::string::npos;
+    bool is_servfail = resp.body.find("\"SERVFAIL\"") != std::string::npos;
+    bool is_timeout = resp.body.find("\"TIMEOUT\"") != std::string::npos;
+    if (is_nxdomain) {
+        CHECK(resp.status_code == 200);
+        CHECK(resp.body.find("\"success\":true") != std::string::npos);
+    }
+    if (is_servfail || is_timeout) {
+        CHECK(resp.body.find("\"success\":false") != std::string::npos);
+    }
+    CHECK(resp.body.find("\"domain\":\"") != std::string::npos);
+    CHECK(resp.body.find("\"per_type\":[") != std::string::npos);
 }

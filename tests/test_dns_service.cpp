@@ -296,7 +296,7 @@ TEST_CASE("DnsCheckService overall_status: empty list") {
     CHECK(error.empty());
 }
 
-TEST_CASE("DnsCheckService domain normalization") {
+TEST_CASE("[integration] DnsCheckService domain normalization — requires live DNS") {
     DnsCheckService svc;
 
     auto r = svc.check("GOOGLE.com", {"A"});
@@ -304,7 +304,7 @@ TEST_CASE("DnsCheckService domain normalization") {
     CHECK(r.domain == "google.com");
 }
 
-TEST_CASE("DnsCheckService caching") {
+TEST_CASE("[integration] DnsCheckService caching — requires live DNS") {
     DnsCheckService svc;
 
     auto r1 = svc.check("google.com", {"A"});
@@ -322,7 +322,7 @@ TEST_CASE("DnsCheckService caching") {
     svc.set_cache_ttl(60);
 }
 
-TEST_CASE("DnsCheckService concurrent cache access") {
+TEST_CASE("[integration] DnsCheckService concurrent cache access — requires live DNS") {
     DnsCheckService svc;
     std::vector<std::thread> threads;
     std::atomic<int> ok_count{0};
@@ -341,7 +341,7 @@ TEST_CASE("DnsCheckService concurrent cache access") {
     CHECK(ok_count > 0);
 }
 
-TEST_CASE("DnsCheckService real A record") {
+TEST_CASE("[integration] DnsCheckService real A record — requires live DNS") {
     DnsCheckService svc;
 
     auto r = svc.check("google.com", {"A"});
@@ -363,7 +363,7 @@ TEST_CASE("DnsCheckService real A record") {
     CHECK(found_a);
 }
 
-TEST_CASE("DnsCheckService MX resolution") {
+TEST_CASE("[integration] DnsCheckService MX resolution — requires live DNS") {
     DnsCheckService svc;
 
     auto r = svc.check("google.com", {"MX"});
@@ -382,7 +382,7 @@ TEST_CASE("DnsCheckService MX resolution") {
     CHECK(found_mx);
 }
 
-TEST_CASE("DnsCheckService TXT resolution and clean values") {
+TEST_CASE("[integration] DnsCheckService TXT resolution — requires live DNS") {
     DnsCheckService svc;
 
     auto r = svc.check("google.com", {"TXT"});
@@ -401,7 +401,7 @@ TEST_CASE("DnsCheckService TXT resolution and clean values") {
     CHECK(found_txt);
 }
 
-TEST_CASE("DnsCheckService SOA fields") {
+TEST_CASE("[integration] DnsCheckService SOA fields — requires live DNS") {
     DnsCheckService svc;
 
     auto r = svc.check("google.com", {"SOA"});
@@ -412,7 +412,7 @@ TEST_CASE("DnsCheckService SOA fields") {
     CHECK(r.soa.serial > 0);
 }
 
-TEST_CASE("DnsCheckService NXDOMAIN handling") {
+TEST_CASE("[integration] DnsCheckService NXDOMAIN handling — requires live DNS") {
     DnsCheckService svc;
 
     auto r = svc.check("thisshouldnotexistexample123456.com", {"A"});
@@ -430,7 +430,7 @@ TEST_CASE("DnsCheckService NXDOMAIN handling") {
     }
 }
 
-TEST_CASE("DnsCheckService multiple types") {
+TEST_CASE("[integration] DnsCheckService multiple types — requires live DNS") {
     DnsCheckService svc;
 
     auto r = svc.check("google.com", {"A", "AAAA", "MX", "TXT", "NS", "SOA"});
@@ -453,7 +453,7 @@ TEST_CASE("DnsCheckService empty type list") {
     CHECK(r.per_type.empty());
 }
 
-TEST_CASE("DnsCheckService AAAA (IPv6) record") {
+TEST_CASE("[integration] DnsCheckService AAAA (IPv6) record — requires live DNS") {
     DnsCheckService svc;
 
     auto r = svc.check("google.com", {"AAAA"});
@@ -474,7 +474,7 @@ TEST_CASE("DnsCheckService AAAA (IPv6) record") {
     CHECK(found_aaaa);
 }
 
-TEST_CASE("DnsCheckService cache TTL expiry") {
+TEST_CASE("[timing-sensitive] DnsCheckService cache TTL expiry — sleeps 2s") {
     DnsCheckService svc;
 
     svc.set_cache_ttl(1);
