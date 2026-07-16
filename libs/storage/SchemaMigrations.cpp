@@ -184,7 +184,7 @@ CREATE TABLE IF NOT EXISTS access_users (
 CREATE TABLE IF NOT EXISTS access_grants (
     id              INTEGER PRIMARY KEY,
     access_user_id  INTEGER NOT NULL REFERENCES access_users(id) ON DELETE RESTRICT,
-    site_id         INTEGER NOT NULL DEFAULT 0,
+    site_id         INTEGER NOT NULL REFERENCES sites(id) ON DELETE RESTRICT,
     permission      TEXT NOT NULL DEFAULT 'read_write',
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
