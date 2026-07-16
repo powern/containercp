@@ -930,11 +930,15 @@ async function loadDomains(p) {
       if (cells.length < 9) return;
       const dnsData = DnsCache.get(r.domain);
       cells[4].innerHTML = window.dnsStatusBadge(dnsData ? dnsData.overall_status : null);
-      var cachedH = window.HealthCache.get(r.domain);
-      var hs2 = cachedH && cachedH !== 'loading'
-        ? cachedH
-        : window.computeDomainHealthScore({domainRow: r, rootDns: dnsData});
-      cells[8].innerHTML = window.healthGradeBadge(hs2.score, hs2.grade);
+      // Health score uses HealthCache.load (full context) or shows '...'
+      window.HealthCache.load(r.domain, r, null, null).then(function(healthResult) {
+        if (!healthResult || !healthResult.score == null) return;
+        var hRow = document.querySelector(`#domains-table table tbody tr:nth-child(${idx+1})`);
+        if (!hRow) return;
+        var hCells = hRow.querySelectorAll('td');
+        if (hCells.length < 9) return;
+        hCells[8].innerHTML = window.healthGradeBadge(healthResult.score, healthResult.grade);
+      });
     });
 
     // Progressive Runtime loading (separate pass, concurrency=3)
@@ -1012,19 +1016,16 @@ async function loadDomainDetail(p, domainId) {
       }
     }
 
-    // Compute health score from HealthCache or basic DNS data
-    var cachedHealth = window.HealthCache.get(domainRow.domain);
-    const dnsCacheData = DnsCache.get(domainRow.domain, 'A,AAAA,MX') || DnsCache.get(domainRow.domain, 'A,AAAA,MX,TXT') || DnsCache.get(domainRow.domain, 'A,TXT');
-    const hs = cachedHealth && cachedHealth !== 'loading'
-      ? cachedHealth
-      : window.computeDomainHealthScore({domainRow: domainRow, rootDns: dnsCacheData, mailDomain: mailDomain});
-    const hsBadge = window.healthGradeBadge(hs.score, hs.grade);
+    // Health score via HealthCache.load (async — updates header in-place)
+    var hsInitial = window.HealthCache.get(domainRow.domain);
+    var hsDisplay = hsInitial && hsInitial !== 'loading' ? hsInitial : null;
+    var hsBadge = window.healthGradeBadge(hsDisplay ? hsDisplay.score : null, hsDisplay ? hsDisplay.grade : 'N/A');
 
     p.innerHTML = `
       <div class="page-header">
         <h1><a href="#" onclick="navigate('domains');return false" style="color:var(--text2);text-decoration:none;">&larr;</a> ${esc(domainRow.domain)}</h1>
         <div class="page-actions">
-          <span style="margin-right:8px;font-size:13px;">Health: ${hsBadge}</span>
+          <span class="health-badge" style="margin-right:8px;font-size:13px;">Health: ${hsBadge}</span>
           <button class="btn btn-sm" onclick="window.open('http://${esc(domainRow.domain)}','_blank')">Open</button>
           <button class="btn btn-sm" onclick="copyText('${esc(domainRow.domain)}')">Copy</button>
           <button class="btn btn-sm btn-danger" onclick="removeDomain('${esc(domainRow.domain)}')">Remove</button>
@@ -1041,6 +1042,14 @@ async function loadDomainDetail(p, domainId) {
 
     // Store data for tab access
     window._domainDetailData = {domainRow, mailDomain, runtimeData, serverHostname, serverDns};
+
+    // Async health score load — updates header badge when ready
+    window.HealthCache.load(domainRow.domain, domainRow, mailDomain, serverHostname).then(function(healthResult) {
+      if (!healthResult || healthResult.score == null) return;
+      var badgeSpan = p.querySelector('.page-actions .health-badge');
+      if (!badgeSpan) return;
+      badgeSpan.innerHTML = window.healthGradeBadge(healthResult.score, healthResult.grade);
+    });
 
     // Load first tab
     loadDomainOverview();
@@ -2168,56 +2177,15 @@ function loadDomainHealth() {
   content.innerHTML = '<div class="empty-state">Computing health score...</div>';
 
   var domain = dd.domainRow.domain;
-  var ctx = {
-    domainRow: dd.domainRow,
-    mailDomain: dd.mailDomain,
-    serverHostname: dd.serverHostname,
-  };
 
-  // Fetch DNS data if not already cached
-  (async function() {
-    ctx.rootDns = DnsCache.get(domain, 'A,AAAA,MX,TXT,NS,CAA')
-      || DnsCache.get(domain, 'A,AAAA,MX,TXT')
-      || await fetchDnsForFqdn(domain, 'A,AAAA,MX,TXT,NS,CAA');
+  void(dd);
+  var domain = dd.domainRow.domain;
+  window.HealthCache.load(domain, dd.domainRow, dd.mailDomain, dd.serverHostname, {force: true}).then(function(result) {
 
-    if (dd.mailDomain && dd.mailDomain.dkim_public_key_dns) {
-      var sel = dd.mailDomain.dkim_selector || 'dkim';
-      ctx.dkimDns = DnsCache.get(sel + '._domainkey.' + domain, 'TXT')
-        || await fetchDnsForFqdn(sel + '._domainkey.' + domain, 'TXT');
+    if (!result || result.score == null) {
+      content.innerHTML = '<div class="empty-state">No checks applicable for this domain.</div>';
+      return;
     }
-    if (dd.mailDomain) {
-      ctx.dmarcDns = DnsCache.get('_dmarc.' + domain, 'TXT')
-        || await fetchDnsForFqdn('_dmarc.' + domain, 'TXT');
-      ctx.mtaStsDns = DnsCache.get('_mta-sts.' + domain, 'TXT')
-        || await fetchDnsForFqdn('_mta-sts.' + domain, 'TXT');
-      if (dd.serverHostname) {
-        ctx.autoDns = DnsCache.get('autodiscover.' + domain, 'CNAME,A')
-          || await fetchDnsForFqdn('autodiscover.' + domain, 'CNAME,A');
-      }
-    }
-
-    // Mark DNS loaded flags
-    ctx.allDnsLoaded = true;
-    ctx.allMailDnsLoaded = true;
-
-    // SSL from domainRow
-    ctx.sslStatus = dd.domainRow.ssl_status;
-
-    // Runtime — site_id > 0 only
-    if (dd.domainRow.site_id > 0) {
-      try {
-        var rtRes = await api('/api/runtime/' + dd.domainRow.site_id);
-        if (rtRes && rtRes.data) ctx.runtimeStatus = rtRes.data.web;
-      } catch(e) {
-        console.error('Runtime health fetch failed for site ' + dd.domainRow.site_id, e);
-      }
-    }
-    ctx.runtimeLoaded = true;
-
-    var result = window.computeDomainHealthScore(ctx);
-
-    // Store in HealthCache for cross-view consistency (Header + Domain List)
-    window.HealthCache.set(domain, result);
 
     var ts = result.computed_at ? new Date(result.computed_at).toLocaleTimeString() : new Date().toLocaleTimeString();
 
@@ -2266,7 +2234,7 @@ function loadDomainHealth() {
       + '<tbody>' + rows + '</tbody></table></div></div>';
 
     attachHealthDelegation();
-  })().catch(function(err) {
+  }).catch(function(err) {
     console.error('Health tab failed', err);
     content.innerHTML = '<div class="empty-state">Failed to load Health tab</div>';
   });
@@ -2280,6 +2248,7 @@ function attachHealthDelegation() {
       var dd = window._domainDetailData;
       if (dd) {
         var d = dd.domainRow.domain;
+        // Clear DNS cache for all health-related FQDNs
         DnsCache.clear(d);
         DnsCache.clear('_dmarc.' + d);
         DnsCache.clear('_mta-sts.' + d);
@@ -2289,6 +2258,8 @@ function attachHealthDelegation() {
           var sel = dd.mailDomain.dkim_selector || 'dkim';
           DnsCache.clear(sel + '._domainkey.' + d);
         }
+        // Invalidate HealthCache so next load is fresh
+        window.HealthCache.invalidate(d);
       }
       loadDomainHealth();
     }
