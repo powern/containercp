@@ -87,7 +87,7 @@ void DomainViewService::write_enriched(std::ostringstream& json,
          << ",\"mail_domain_mode\":\"" << api::JsonFormatter::escape(mail_domain_mode)
          << "\",\"dkim_generated\":" << (dkim_generated ? "true" : "false")
          << ",\"dkim_selector\":\"" << api::JsonFormatter::escape(dkim_selector)
-         << "\",\"dkim_public_key_dns\":\"" << api::JsonFormatter::escape(dkim_public_key_dns);
+         << "\",\"dkim_public_key_dns\":\"" << api::JsonFormatter::escape(dkim_public_key_dns) << "\"";
 
     if (is_system) {
         json << ",\"system_role\":\"admin-panel\""

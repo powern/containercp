@@ -892,7 +892,7 @@ async function loadDomains(p) {
         }},
         {label:'Actions', html: r => {
           let acts = `<button class="btn-icon" onclick="navigate('domain-detail',${r.id})" title="View details">&#128065;</button>`;
-          acts += `<button class="btn-icon" onclick="window.open('http://${esc(r.domain)}','_blank')" title="Open in browser">&#8599;</button>`;
+          acts += `<button class="btn-icon" onclick="window.open('${domainUsableHttps(r) ? 'https' : 'http'}://${esc(r.domain)}','_blank')" title="Open in browser">&#8599;</button>`;
           acts += `<button class="btn-icon" onclick="copyText('${esc(r.domain)}')" title="Copy domain">&#128203;</button>`;
           if (r.can_delete !== false) {
             acts += `<button class="btn-icon" style="color:var(--red)" onclick="removeDomain('${esc(r.domain)}')" title="Remove domain">&#10005;</button>`;
@@ -1028,7 +1028,7 @@ async function loadDomainDetail(p, domainId) {
         <h1><a href="#" onclick="navigate('domains');return false" style="color:var(--text2);text-decoration:none;">&larr;</a> ${esc(domainRow.domain)}</h1>
         <div class="page-actions">
           <span class="health-badge" style="margin-right:8px;font-size:13px;">Health: ${hsBadge}</span>
-          <button class="btn btn-sm" onclick="window.open('http://${esc(domainRow.domain)}','_blank')">Open</button>
+          <button class="btn btn-sm" onclick="window.open('${domainUsableHttps(domainRow) ? 'https' : 'http'}://${esc(domainRow.domain)}','_blank')">Open</button>
           <button class="btn btn-sm" onclick="copyText('${esc(domainRow.domain)}')">Copy</button>
           ${domainRow.can_delete !== false ? `<button class="btn btn-sm btn-danger" onclick="removeDomain('${esc(domainRow.domain)}')">Remove</button>` : ''}
         </div>
@@ -1293,7 +1293,40 @@ async function loadDomainOverview() {
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;">
       ${mailCard}
       ${sslCard}
-      ${siteCard}
+      ${siteCard}${domainRow.system_role === 'admin-panel' ? `
+      <div class="card">
+        <h3>System: Admin Panel</h3>
+        <div style="margin-top:8px;font-size:13px;">
+          <div>Site ID: <code>${domainRow.site_id}</code></div>
+          <div>Role: <span class="badge badge-admin">${esc(domainRow.system_role)}</span></div>
+          <div>FQDN: <strong>${esc(domainRow.domain)}</strong></div>
+          <div>Proxy upstream: <code>${esc(domainRow.proxy_upstream || '—')}</code></div>
+          <div>SSL: <span class="badge ${sslBadgeCls[sslKey] || 'badge-info'}">${esc(sslBadgeMap[sslKey] || sslStatusDisplay)}</span></div>
+          <div>Runtime: <span class="badge badge-info">N/A</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Proxy Management</h3>
+        <div style="margin-top:8px;font-size:13px;">
+          <div>Status: <span class="badge badge-ok">Configured</span></div>
+          <div style="margin-top:8px;">
+            <button class="btn btn-sm" onclick="apiPost('/api/proxy/test').then(r=>toast(r.success?'Config OK: '+r.data.message:'Error: '+r.error,r.success?'success':'error'))">Test Config</button>
+            <button class="btn btn-sm" onclick="apiPost('/api/proxy/reload').then(r=>toast(r.success?'Proxy reloaded':'Error: '+r.error,r.success?'success':'error'))" style="margin-left:4px;">Reload</button>
+            <button class="btn btn-sm" onclick="apiPost('/api/proxy/sync').then(r=>toast(r.success?'Proxy synced':'Error: '+r.error,r.success?'success':'error'))" style="margin-left:4px;">Sync</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>SSL Certificate</h3>
+        <div style="margin-top:8px;font-size:13px;">
+          <div>Status: <span class="badge ${sslBadgeCls[sslKey] || 'badge-info'}">${esc(sslBadgeMap[sslKey] || sslStatusDisplay)}</span></div>
+          <div>HTTPS: <span class="badge ${httpsBadge}">${httpsLabel}</span></div>
+          <div style="margin-top:8px;">
+            ${sslStatusDisplay === 'Active' ? `<button class="btn btn-sm" onclick="apiPost('/api/ssl/${esc(domainRow.domain)}/renew').then(r=>toast(r.success?'Renewal queued':'Error: '+r.error,r.success?'success':'error'))">Renew</button>` : ''}
+            ${sslStatusDisplay === 'Disabled' || sslStatusDisplay === 'Error' || sslStatusDisplay === '' || sslStatusDisplay === 'Issuing' ? `<button class="btn btn-sm" onclick="apiPost('/api/ssl/${esc(domainRow.domain)}/issue',{provider_id:'letsencrypt'}).then(r=>toast(r.success?'Issuance queued':'Error: '+r.error,r.success?'success':'error'))">Issue</button>` : ''}
+          </div>
+        </div>
+      </div>` : ''}
     </div>`;
 }
 
@@ -2913,7 +2946,7 @@ async function loadProxy(p) {
           return `<span class="badge ${m[r.backend_health]||'badge-info'}">${esc(r.backend_health)}</span>`;
         }},
         {label:'Actions',html:r=>{
-          let acts = `<button class="btn-icon" onclick="window.open('http://${esc(r.domain)}','_blank')" title="Open">&#8599;</button>`;
+          let acts = `<button class="btn-icon" onclick="window.open('${r.ssl_status === 'Active' || r.ssl_status === 'Expiring' ? 'https' : 'http'}://${esc(r.domain)}','_blank')" title="Open">&#8599;</button>`;
           if (r.site_id > 0) acts += `<button class="btn-icon" onclick="navigate('site-detail',${r.site_id})" title="View site">&#128065;</button>`;
           if (!r.protected) {
             acts += `<button class="btn-icon" style="color:var(--red)" onclick="removeProxy('${esc(r.domain)}')" title="Remove">&#10005;</button>`;

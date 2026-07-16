@@ -270,6 +270,8 @@ TEST_CASE("DomainViewService includes admin panel (site_id=0) when server_hostna
     // With server_hostname: admin panel appears first with site_id=0
     {
         std::string hostname = "admin.example.com";
+        // Add a reverse proxy entry so proxy_upstream is populated
+        rp_mgr.create(hostname, 0, "/path/to/config", "127.0.0.1:8081");
         domain::DomainViewService view(logger::Logger::instance(),
             domains, sites, cert_store, md_mgr, rp_mgr, hostname);
         std::string json = view.build_enriched_json();
@@ -279,9 +281,23 @@ TEST_CASE("DomainViewService includes admin panel (site_id=0) when server_hostna
         CHECK(json.find("\"site_id\":0") != std::string::npos);
         CHECK(json.find("\"ssl_status\":\"Active\"") != std::string::npos);
 
+        // System domain fields
+        CHECK(json.find("\"type\":\"system\"") != std::string::npos);
+        CHECK(json.find("\"site_name\":\"ContainerCP Admin\"") != std::string::npos);
+        CHECK(json.find("\"system_role\":\"admin-panel\"") != std::string::npos);
+        CHECK(json.find("\"can_delete\":false") != std::string::npos);
+        CHECK(json.find("\"can_manage_runtime\":false") != std::string::npos);
+        CHECK(json.find("\"can_manage_ssl\":true") != std::string::npos);
+        CHECK(json.find("\"can_manage_proxy\":true") != std::string::npos);
+        CHECK(json.find("\"proxy_upstream\":\"127.0.0.1:8081\"") != std::string::npos);
+        CHECK(json.find("\"target\":\"127.0.0.1:8081\"") != std::string::npos);
+
         // Managed domains still present
         CHECK(json.find("\"domain\":\"example.com\"") != std::string::npos);
         CHECK(json.find("\"domain\":\"other.com\"") != std::string::npos);
+        // Normal domains have can_delete=true, can_manage_runtime=true
+        CHECK(json.find("\"can_delete\":true") != std::string::npos);
+        CHECK(json.find("\"can_manage_runtime\":true") != std::string::npos);
 
         // Admin panel is first entry (before managed domains)
         std::string::size_type admin_pos = json.find("\"domain\":\"admin.example.com\"");
