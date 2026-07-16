@@ -2,10 +2,12 @@
 #define CONTAINERCP_STORAGE_SQLITE_STORAGE_H
 
 #include "ConnectionPool.h"
+#include "database/Database.h"
 #include "domain/Domain.h"
 #include "node/Node.h"
 #include "php/PhpVersion.h"
 #include "profile/Profile.h"
+#include "proxy/ReverseProxy.h"
 #include "site/Site.h"
 #include "user/User.h"
 
@@ -78,6 +80,14 @@ public:
     // Domains
     void save_domains(const std::vector<domain::Domain>& domains);
     std::vector<domain::Domain> load_domains();
+
+    // Databases
+    void save_databases(const std::vector<database::Database>& databases);
+    std::vector<database::Database> load_databases();
+
+    // Reverse proxies
+    void save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies);
+    std::vector<proxy::ReverseProxy> load_reverse_proxies();
 
 private:
     ConnectionPool& pool_;

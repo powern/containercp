@@ -347,4 +347,104 @@ std::vector<domain::Domain> SQLiteStorage::load_domains() {
     return domains;
 }
 
+// --- Databases ---
+
+void SQLiteStorage::save_databases(const std::vector<database::Database>& databases) {
+    replace_all(pool_, "DELETE FROM databases",
+        [&](SQLiteDB& db) -> bool {
+            const char* sql = "INSERT INTO databases (id, db_name, db_user, db_password, "
+                "engine, version, owner_id, site_id, enabled, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
+            for (const auto& d : databases) {
+                if (!db.prepare(sql)) return false;
+                if (!db.bind_int(1, static_cast<int64_t>(d.id))) return false;
+                if (!db.bind_text(2, d.db_name)) return false;
+                if (!db.bind_text(3, d.db_user)) return false;
+                if (!db.bind_text(4, d.db_password)) return false;
+                if (!db.bind_text(5, d.engine)) return false;
+                if (!db.bind_text(6, d.version)) return false;
+                if (!db.bind_int(7, static_cast<int64_t>(d.owner_id))) return false;
+                if (!db.bind_int(8, static_cast<int64_t>(d.site_id))) return false;
+                if (!db.bind_int(9, d.enabled ? 1 : 0)) return false;
+                if (db.step() == false && db.error_code() != 0) return false;
+            }
+            return true;
+        });
+}
+
+std::vector<database::Database> SQLiteStorage::load_databases() {
+    std::vector<database::Database> databases;
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return databases;
+    if (!rl->prepare("SELECT id, db_name, db_user, db_password, engine, version, "
+                      "owner_id, site_id, enabled FROM databases ORDER BY id"))
+        return databases;
+    while (rl->step()) {
+        database::Database d;
+        d.id = static_cast<uint64_t>(rl->column_int(0));
+        d.db_name = rl->column_text(1);
+        d.db_user = rl->column_text(2);
+        d.db_password = rl->column_text(3);
+        d.engine = rl->column_text(4);
+        d.version = rl->column_text(5);
+        d.owner_id = static_cast<uint64_t>(rl->column_int(6));
+        d.site_id = static_cast<uint64_t>(rl->column_int(7));
+        d.enabled = (rl->column_int(8) != 0);
+        d.name = d.db_name;
+        databases.push_back(std::move(d));
+    }
+    return databases;
+}
+
+// --- Reverse proxies ---
+
+void SQLiteStorage::save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies) {
+    replace_all(pool_, "DELETE FROM reverse_proxies",
+        [&](SQLiteDB& db) -> bool {
+            const char* sql = "INSERT INTO reverse_proxies (id, domain, site_id, provider, "
+                "config_path, upstream, enabled, status, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
+            for (const auto& p : proxies) {
+                if (!db.prepare(sql)) return false;
+                if (!db.bind_int(1, static_cast<int64_t>(p.id))) return false;
+                if (!db.bind_text(2, p.domain)) return false;
+                if (!db.bind_int(3, static_cast<int64_t>(p.site_id))) return false;
+                if (!db.bind_text(4, p.provider)) return false;
+                if (!db.bind_text(5, p.config_path)) return false;
+                if (!db.bind_text(6, p.upstream)) return false;
+                if (!db.bind_int(7, p.enabled ? 1 : 0)) return false;
+                if (!db.bind_text(8, p.status)) return false;
+                if (db.step() == false && db.error_code() != 0) return false;
+            }
+            return true;
+        });
+}
+
+std::vector<proxy::ReverseProxy> SQLiteStorage::load_reverse_proxies() {
+    std::vector<proxy::ReverseProxy> proxies;
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return proxies;
+    if (!rl->prepare("SELECT id, domain, site_id, provider, config_path, upstream, "
+                      "enabled, status FROM reverse_proxies ORDER BY id"))
+        return proxies;
+    while (rl->step()) {
+        proxy::ReverseProxy p;
+        p.id = static_cast<uint64_t>(rl->column_int(0));
+        p.domain = rl->column_text(1);
+        p.site_id = static_cast<uint64_t>(rl->column_int(2));
+        p.provider = rl->column_text(3);
+        p.config_path = rl->column_text(4);
+        p.upstream = rl->column_text(5);
+        p.enabled = (rl->column_int(6) != 0);
+        p.status = rl->column_text(7);
+        p.name = p.domain;
+        proxies.push_back(std::move(p));
+    }
+    return proxies;
+}
+
 } // namespace containercp::storage

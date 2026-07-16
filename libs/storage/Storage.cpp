@@ -338,6 +338,13 @@ std::vector<php::PhpVersion> Storage::load_php_versions() {
 }
 
 void Storage::save_databases(const std::vector<database::Database>& databases) {
+    if (use_sqlite()) {
+        sqlite_.save_databases(databases);
+        return;
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return;
+    }
     std::ofstream file(databases_file());
     for (const auto& d : databases) {
         file << d.id << "|" << d.db_name << "|" << d.db_user << "|" << d.db_password << "|"
@@ -347,6 +354,12 @@ void Storage::save_databases(const std::vector<database::Database>& databases) {
 }
 
 std::vector<database::Database> Storage::load_databases() {
+    if (use_sqlite()) {
+        return sqlite_.load_databases();
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return {};
+    }
     std::vector<database::Database> databases;
     std::ifstream file(databases_file());
     if (!file.is_open()) {
@@ -769,6 +782,13 @@ std::vector<access::AccessGrant> Storage::load_access_grants() {
 }
 
 void Storage::save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies) {
+    if (use_sqlite()) {
+        sqlite_.save_reverse_proxies(proxies);
+        return;
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return;
+    }
     std::ofstream file(reverse_proxies_file());
     for (const auto& p : proxies) {
         file << p.id << "|" << p.domain << "|" << p.site_id << "|"
@@ -778,6 +798,12 @@ void Storage::save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxi
 }
 
 std::vector<proxy::ReverseProxy> Storage::load_reverse_proxies() {
+    if (use_sqlite()) {
+        return sqlite_.load_reverse_proxies();
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return {};
+    }
     std::vector<proxy::ReverseProxy> proxies;
     std::ifstream file(reverse_proxies_file());
     if (!file.is_open()) {

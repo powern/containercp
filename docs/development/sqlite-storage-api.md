@@ -207,7 +207,7 @@ With explicit SQLite mode:
 
 | Backend | Resources |
 |---------|-----------|
-| SQLite | nodes, php_versions, profiles, users, sites, domains |
+| SQLite | nodes, php_versions, profiles, users, sites, domains, databases, reverse_proxies |
 | TXT | all other resources |
 
 Without explicit SQLite mode (default):
@@ -317,6 +317,35 @@ verifying that shutdown cannot proceed and the connection remains valid.
 | `web_server` | `web_server` | |
 | `php_mail_enabled` | `php_mail_enabled` | |
 | `php_mail_enabled_present` | — | Set to `true` for SQLite rows (field always present) |
+| `name` | — | Set from `domain` on load |
+
+### Database → `databases`
+
+| Field | Column | Notes |
+|-------|--------|-------|
+| `id` | `id` | Preserved exactly |
+| `db_name` | `db_name` | |
+| `db_user` | `db_user` | |
+| `db_password` | `db_password` | **Sensitive** — backward-compat plaintext |
+| `engine` | `engine` | |
+| `version` | `version` | |
+| `owner_id` | `owner_id` | No FK — sentinel 0 = system owner |
+| `site_id` | `site_id` | No FK — sentinel 0 = orphan |
+| `enabled` | `enabled` | |
+| `name` | — | Set from `db_name` on load |
+
+### ReverseProxy → `reverse_proxies`
+
+| Field | Column | Notes |
+|-------|--------|-------|
+| `id` | `id` | Preserved exactly |
+| `domain` | `domain` | |
+| `site_id` | `site_id` | No FK — sentinel 0 = admin panel |
+| `provider` | `provider` | |
+| `config_path` | `config_path` | Metadata only — no filesystem validation |
+| `upstream` | `upstream` | |
+| `enabled` | `enabled` | |
+| `status` | `status` | |
 | `name` | — | Set from `domain` on load |
 
 ### Domain → `domains`

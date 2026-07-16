@@ -1112,6 +1112,297 @@ TEST_CASE("Phase6a nodes/php/profiles still work") {
     tclean(dir);
 }
 
+// ============================================================
+// Phase 6b — Database and ReverseProxy SQLite storage tests
+// ============================================================
+
+// --- Databases ---
+
+TEST_CASE("SQLiteStorage databases empty") {
+    auto dir = tdir("s6b_db_empty"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    CHECK(ss.load_databases().empty());
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage databases round trip all fields") {
+    auto dir = tdir("s6b_db_rt"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::database::Database d;
+    d.id = 1; d.db_name = "my_db"; d.db_user = "my_user";
+    d.db_password = "s3cret!"; d.engine = "mariadb"; d.version = "10.11";
+    d.owner_id = 1; d.site_id = 1; d.enabled = true;
+    ss.save_databases({d});
+    auto loaded = ss.load_databases();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].id == 1); CHECK(loaded[0].db_name == "my_db");
+    CHECK(loaded[0].db_user == "my_user");
+    CHECK(loaded[0].db_password == "s3cret!");  // sensitive but round-trip
+    CHECK(loaded[0].engine == "mariadb"); CHECK(loaded[0].version == "10.11");
+    CHECK(loaded[0].owner_id == 1); CHECK(loaded[0].site_id == 1);
+    CHECK(loaded[0].enabled); CHECK(loaded[0].name == "my_db");
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage databases sentinel 0") {
+    auto dir = tdir("s6b_db_sent"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::database::Database d;
+    d.id = 1; d.db_name = "d"; d.owner_id = 0; d.site_id = 0;
+    ss.save_databases({d});
+    auto loaded = ss.load_databases();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].owner_id == 0); CHECK(loaded[0].site_id == 0);
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage databases enabled false") {
+    auto dir = tdir("s6b_db_dis"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::database::Database d;
+    d.id = 1; d.db_name = "x"; d.enabled = false;
+    ss.save_databases({d});
+    CHECK_FALSE(ss.load_databases()[0].enabled);
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage databases non-contiguous IDs") {
+    auto dir = tdir("s6b_db_ncid"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::database::Database d1, d2;
+    d1.id = 1; d1.db_name = "a"; d1.site_id = 1;
+    d2.id = 9; d2.db_name = "b"; d2.site_id = 2;
+    ss.save_databases({d1, d2});
+    auto loaded = ss.load_databases();
+    REQUIRE(loaded.size() == 2);
+    CHECK(loaded[0].id == 1); CHECK(loaded[1].id == 9);
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage databases special chars in name/user/pass") {
+    auto dir = tdir("s6b_db_spec"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::database::Database d;
+    d.id = 1; d.db_name = "db_'\"\\|pipe"; d.db_user = "user_'\"\\|";
+    d.db_password = "p@$$'\"\\|"; d.site_id = 1;
+    ss.save_databases({d});
+    auto loaded = ss.load_databases();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].db_name == d.db_name);
+    CHECK(loaded[0].db_user == d.db_user);
+    CHECK(loaded[0].db_password == d.db_password);
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage databases reopens") {
+    auto dir = tdir("s6b_db_reopen"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+        containercp::storage::SQLiteStorage ss(pool);
+        containercp::database::Database d;
+        d.id = 7; d.db_name = "persist"; d.site_id = 1;
+        ss.save_databases({d});
+    }
+    {
+        containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+        containercp::storage::SQLiteStorage ss(pool);
+        auto loaded = ss.load_databases();
+        REQUIRE(loaded.size() == 1); CHECK(loaded[0].id == 7);
+    }
+    tclean(dir);
+}
+
+// --- Reverse proxies ---
+
+TEST_CASE("SQLiteStorage reverse_proxies empty") {
+    auto dir = tdir("s6b_rp_empty"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    CHECK(ss.load_reverse_proxies().empty());
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage reverse_proxies round trip all fields") {
+    auto dir = tdir("s6b_rp_rt"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::proxy::ReverseProxy p;
+    p.id = 1; p.domain = "example.com"; p.site_id = 1;
+    p.provider = "nginx"; p.config_path = "/etc/nginx/sites/example.conf";
+    p.upstream = "site-1-web:80"; p.enabled = true; p.status = "active";
+    ss.save_reverse_proxies({p});
+    auto loaded = ss.load_reverse_proxies();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].id == 1); CHECK(loaded[0].domain == "example.com");
+    CHECK(loaded[0].site_id == 1); CHECK(loaded[0].provider == "nginx");
+    CHECK(loaded[0].config_path == "/etc/nginx/sites/example.conf");
+    CHECK(loaded[0].upstream == "site-1-web:80");
+    CHECK(loaded[0].enabled); CHECK(loaded[0].status == "active");
+    CHECK(loaded[0].name == "example.com");
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage reverse_proxies site_id=0 sentinel") {
+    auto dir = tdir("s6b_rp_s0"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::proxy::ReverseProxy p;
+    p.id = 1; p.domain = "admin.example.com"; p.site_id = 0;
+    ss.save_reverse_proxies({p});
+    auto loaded = ss.load_reverse_proxies();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].site_id == 0);
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage reverse_proxies enabled false and different status") {
+    auto dir = tdir("s6b_rp_flags"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::proxy::ReverseProxy p;
+    p.id = 1; p.domain = "x.com"; p.site_id = 1;
+    p.enabled = false; p.status = "error";
+    ss.save_reverse_proxies({p});
+    auto loaded = ss.load_reverse_proxies();
+    REQUIRE(loaded.size() == 1);
+    CHECK_FALSE(loaded[0].enabled); CHECK(loaded[0].status == "error");
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage reverse_proxies special chars") {
+    auto dir = tdir("s6b_rp_spec"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::proxy::ReverseProxy p;
+    p.id = 1; p.domain = "example.com";
+    p.config_path = "/path/with spaces/'quotes' and \\backslash";
+    p.upstream = "192.168.1.1:8080";
+    p.site_id = 1; p.status = "active";
+    ss.save_reverse_proxies({p});
+    auto loaded = ss.load_reverse_proxies();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].config_path == p.config_path);
+    CHECK(loaded[0].upstream == "192.168.1.1:8080");
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage reverse_proxies reopens") {
+    auto dir = tdir("s6b_rp_reopen"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+        containercp::storage::SQLiteStorage ss(pool);
+        containercp::proxy::ReverseProxy p;
+        p.id = 3; p.domain = "p.com"; p.site_id = 1;
+        ss.save_reverse_proxies({p});
+    }
+    {
+        containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+        containercp::storage::SQLiteStorage ss(pool);
+        auto loaded = ss.load_reverse_proxies();
+        REQUIRE(loaded.size() == 1); CHECK(loaded[0].id == 3);
+    }
+    tclean(dir);
+}
+
+// --- Cross-backend and mode tests ---
+
+TEST_CASE("Phase6b explicit SQLite mode uses SQLite for databases and proxies") {
+    auto dir = tdir("s6b_mode"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::StorageOptions opts;
+        opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        containercp::storage::Storage s(dir, opts);
+        CHECK(s.sqlite_ready());
+
+        containercp::database::Database db;
+        db.id = 1; db.db_name = "db1"; db.site_id = 1;
+        s.save_databases({db});
+        CHECK_FALSE(fs::exists(dir + "databases.db"));
+
+        containercp::proxy::ReverseProxy rp;
+        rp.id = 1; rp.domain = "p.com"; rp.site_id = 1;
+        s.save_reverse_proxies({rp});
+        CHECK_FALSE(fs::exists(dir + "reverse_proxies.db"));
+
+        CHECK(s.load_databases().size() == 1);
+        CHECK(s.load_reverse_proxies().size() == 1);
+    }
+    tclean(dir);
+}
+
+TEST_CASE("Phase6b default mode reads TXT databases and proxies") {
+    auto dir = tdir("s6b_txt"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::Storage s(dir);
+        containercp::database::Database db;
+        db.id = 1; db.db_name = "d"; db.site_id = 1;
+        s.save_databases({db});
+        containercp::proxy::ReverseProxy rp;
+        rp.id = 1; rp.domain = "p.com"; rp.site_id = 1;
+        s.save_reverse_proxies({rp});
+    }
+    {
+        containercp::storage::Storage s(dir);
+        CHECK(s.load_databases().size() == 1);
+        CHECK(s.load_reverse_proxies().size() == 1);
+    }
+    tclean(dir);
+}
+
+TEST_CASE("Phase6b saving databases does not alter proxies and vice versa") {
+    auto dir = tdir("s6b_isolation"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::StorageOptions opts;
+        opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        containercp::storage::Storage s(dir, opts);
+        CHECK(s.sqlite_ready());
+
+        containercp::database::Database db;
+        db.id = 1; db.db_name = "db1"; db.site_id = 1;
+        s.save_databases({db});
+
+        containercp::proxy::ReverseProxy rp;
+        rp.id = 1; rp.domain = "p.com"; rp.site_id = 1;
+        s.save_reverse_proxies({rp});
+
+        // Databases don't affect proxies
+        CHECK(s.load_databases().size() == 1);
+        CHECK(s.load_reverse_proxies().size() == 1);
+    }
+    tclean(dir);
+}
+
+TEST_CASE("Phase6b existing phases still work") {
+    auto dir = tdir("s6b_existing"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::StorageOptions opts;
+        opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        containercp::storage::Storage s(dir, opts);
+        CHECK(s.sqlite_ready());
+
+        containercp::node::Node n; n.id = 1; n.name = "n"; n.type = "local";
+        s.save_nodes({n});
+        CHECK(s.load_nodes().size() == 1);
+
+        containercp::user::User u; u.id = 1; u.username = "u"; u.enabled = true;
+        s.save_users({u});
+        CHECK(s.load_users().size() == 1);
+
+        // TXT-backed auth_users unchanged
+        containercp::auth::AuthUser au; au.id = 1; au.username = "admin";
+        au.password_hash = "h"; au.role = "admin";
+        s.save_auth_users({au});
+        CHECK(s.load_auth_users().size() == 1);
+    }
+    tclean(dir);
+}
+
 TEST_CASE("Shutdown then reinitialize still works") {
     auto dir = tdir("shutdown_reinit");
     tclean(dir); fs::create_directories(dir);
