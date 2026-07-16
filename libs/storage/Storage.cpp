@@ -1,4 +1,6 @@
 #include "Storage.h"
+#include "MigrationEngine.h"
+#include "SchemaMigrations.h"
 
 #include <fstream>
 #include <sstream>
@@ -9,8 +11,24 @@ namespace containercp::storage {
 
 Storage::Storage(const std::string& db_path)
     : db_path_(db_path)
+    , pool_()
+    , sqlite_(pool_)
 {
     ::mkdir(db_path_.c_str(), 0755);
+
+    // Initialize SQLite infrastructure (connection pool + schema).
+    // This is safe to call on every Storage construction — if the
+    // database already exists, the schema migration is a no-op.
+    std::string sqlite_path = sqlite_db_path();
+    if (pool_.initialize(sqlite_path)) {
+        MigrationEngine engine;
+        register_all_schema_migrations(engine);
+        SQLiteDB migrator;
+        if (migrator.open(sqlite_path)) {
+            engine.migrate(migrator);
+            migrator.close();
+        }
+    }
 }
 
 std::string Storage::nodes_file() const {
@@ -82,30 +100,11 @@ std::string Storage::reverse_proxies_file() const {
 }
 
 void Storage::save_nodes(const std::vector<node::Node>& nodes) {
-    std::ofstream file(nodes_file());
-    for (const auto& n : nodes) {
-        file << n.id << "|" << n.name << "|" << n.type << "\n";
-    }
+    sqlite_.save_nodes(nodes);
 }
 
 std::vector<node::Node> Storage::load_nodes() {
-    std::vector<node::Node> nodes;
-    std::ifstream file(nodes_file());
-    if (!file.is_open()) {
-        return nodes;
-    }
-    std::string line;
-    while (std::getline(file, line)) {
-        if (line.empty()) continue;
-        std::istringstream ss(line);
-        std::string token;
-        node::Node n;
-        if (std::getline(ss, token, '|')) n.id = std::stoull(token);
-        if (std::getline(ss, token, '|')) n.name = token;
-        if (std::getline(ss, token, '|')) n.type = token;
-        nodes.push_back(std::move(n));
-    }
-    return nodes;
+    return sqlite_.load_nodes();
 }
 
 void Storage::save_sites(const std::vector<site::Site>& sites) {
@@ -217,34 +216,11 @@ std::vector<domain::Domain> Storage::load_domains() {
 }
 
 void Storage::save_php_versions(const std::vector<php::PhpVersion>& versions) {
-    std::ofstream file(php_versions_file());
-    for (const auto& pv : versions) {
-        file << pv.id << "|" << pv.version << "|" << pv.image << "|"
-             << (pv.enabled ? "1" : "0") << "|" << (pv.default_version ? "1" : "0") << "\n";
-    }
+    sqlite_.save_php_versions(versions);
 }
 
 std::vector<php::PhpVersion> Storage::load_php_versions() {
-    std::vector<php::PhpVersion> versions;
-    std::ifstream file(php_versions_file());
-    if (!file.is_open()) {
-        return versions;
-    }
-    std::string line;
-    while (std::getline(file, line)) {
-        if (line.empty()) continue;
-        std::istringstream ss(line);
-        std::string token;
-        php::PhpVersion pv;
-        if (std::getline(ss, token, '|')) pv.id = std::stoull(token);
-        if (std::getline(ss, token, '|')) pv.version = token;
-        if (std::getline(ss, token, '|')) pv.image = token;
-        if (std::getline(ss, token, '|')) pv.enabled = (token == "1");
-        if (std::getline(ss, token, '|')) pv.default_version = (token == "1");
-        pv.name = pv.version;
-        versions.push_back(std::move(pv));
-    }
-    return versions;
+    return sqlite_.load_php_versions();
 }
 
 void Storage::save_databases(const std::vector<database::Database>& databases) {
@@ -722,41 +698,11 @@ std::string Storage::template_profiles_file() const {
 }
 
 void Storage::save_profiles(const std::vector<profile::Profile>& profiles) {
-    std::ofstream file(profiles_file());
-    for (const auto& p : profiles) {
-        file << p.id << "|" << p.profile_name << "|"
-             << profile::profile_type_to_string(p.type) << "|"
-             << p.web_server << "|" << p.runtime << "|"
-             << p.template_path << "|" << p.description << "|"
-             << (p.enabled ? "1" : "0") << "|" << (p.default_profile ? "1" : "0") << "\n";
-    }
+    sqlite_.save_profiles(profiles);
 }
 
 std::vector<profile::Profile> Storage::load_profiles() {
-    std::vector<profile::Profile> profiles;
-    std::ifstream file(profiles_file());
-    if (!file.is_open()) {
-        return profiles;
-    }
-    std::string line;
-    while (std::getline(file, line)) {
-        if (line.empty()) continue;
-        std::istringstream ss(line);
-        std::string token;
-        profile::Profile p;
-        if (std::getline(ss, token, '|')) p.id = std::stoull(token);
-        if (std::getline(ss, token, '|')) p.profile_name = token;
-        if (std::getline(ss, token, '|')) p.type = profile::profile_type_from_string(token);
-        if (std::getline(ss, token, '|')) p.web_server = token;
-        if (std::getline(ss, token, '|')) p.runtime = token;
-        if (std::getline(ss, token, '|')) p.template_path = token;
-        if (std::getline(ss, token, '|')) p.description = token;
-        if (std::getline(ss, token, '|')) p.enabled = (token == "1");
-        if (std::getline(ss, token, '|')) p.default_profile = (token == "1");
-        p.name = p.profile_name;
-        profiles.push_back(std::move(p));
-    }
-    return profiles;
+    return sqlite_.load_profiles();
 }
 
 std::vector<profile::Profile> Storage::migrate_template_profiles() {
@@ -787,6 +733,10 @@ std::vector<profile::Profile> Storage::migrate_template_profiles() {
 
 bool Storage::begin_transaction() {
     return false;  // TXT backend does not support transactions
+}
+
+std::string Storage::sqlite_db_path() const {
+    return db_path_ + "containercp.db";
 }
 
 bool Storage::commit_transaction() {

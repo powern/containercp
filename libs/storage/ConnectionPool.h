@@ -120,6 +120,7 @@ public:
 
 private:
     friend class WriteGuard;
+    friend class TransactionGuard;
 
     void lock_write();
     void unlock_write();

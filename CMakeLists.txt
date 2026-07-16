@@ -95,6 +95,7 @@ set(CONTAINERCP_SOURCES
     libs/storage/ConnectionPool.cpp
     libs/storage/MigrationEngine.cpp
     libs/storage/SchemaMigrations.cpp
+    libs/storage/SQLiteStorage.cpp
     libs/template/TemplateEngine.cpp
     libs/profile/ProfileManager.cpp
     libs/user/User.cpp

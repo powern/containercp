@@ -401,6 +401,29 @@ snapshot.
 
 ---
 
+## SQLiteStorage — SQLite Backend for Low-Risk Resources
+
+Phase 5 introduced `SQLiteStorage` for nodes, PHP versions, and
+profiles. See `docs/development/sqlite-storage-api.md` for the
+complete contract.
+
+### Dual-backend architecture
+
+```
+Storage
+  ├── TXT: sites, users, domains, databases, backups, SSL,
+  │         mail, access, proxies, profiles (Phase 5: migrated),
+  │         auth users, mail config
+  └── SQLiteStorage (via ConnectionPool):
+        └── nodes, php_versions, profiles
+```
+
+The `Storage` constructor initializes `ConnectionPool` and runs the
+schema migration. The public API is unchanged — callers use the same
+`Storage` methods regardless of backend.
+
+---
+
 ## Storage — Transaction Stubs (TXT Backend)
 
 The `Storage` class declares transaction and backup methods for
@@ -415,4 +438,4 @@ bool backup(const std::string& dest_path);
 
 With the current TXT backend, these all return `false`.
 They will delegate to `ConnectionPool` when Storage is switched
-to SQLite in Phase 5+.
+to SQLite in Phase 11+.
