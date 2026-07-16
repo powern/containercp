@@ -152,6 +152,13 @@ std::vector<node::Node> Storage::load_nodes() {
 }
 
 void Storage::save_sites(const std::vector<site::Site>& sites) {
+    if (use_sqlite()) {
+        sqlite_.save_sites(sites);
+        return;
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return;
+    }
     std::ofstream file(sites_file());
     for (const auto& s : sites) {
         file << s.id << "|" << s.domain << "|" << s.owner << "|"
@@ -161,6 +168,12 @@ void Storage::save_sites(const std::vector<site::Site>& sites) {
 }
 
 std::vector<site::Site> Storage::load_sites() {
+    if (use_sqlite()) {
+        return sqlite_.load_sites();
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return {};
+    }
     std::vector<site::Site> sites;
     std::ifstream file(sites_file());
     if (!file.is_open()) {
@@ -170,7 +183,6 @@ std::vector<site::Site> Storage::load_sites() {
     while (std::getline(file, line)) {
         if (line.empty()) continue;
 
-        // Count pipe characters to distinguish 5-field (legacy) vs 6-field format
         int pipes = 0;
         for (char c : line) if (c == '|') pipes++;
 
@@ -184,8 +196,6 @@ std::vector<site::Site> Storage::load_sites() {
         if (std::getline(ss, token, '|')) s.web_server = token.empty() ? "apache" : token;
         if (std::getline(ss, token, '|')) s.php_mail_enabled = (token == "1");
 
-        // Legacy 5-field format (4 pipes): php_mail_enabled field was absent.
-        // Set transient flag so ServiceRegistry can detect this for migration.
         s.php_mail_enabled_present = (pipes >= 5);
         s.name = s.domain;
         sites.push_back(std::move(s));
@@ -194,6 +204,13 @@ std::vector<site::Site> Storage::load_sites() {
 }
 
 void Storage::save_users(const std::vector<user::User>& users) {
+    if (use_sqlite()) {
+        sqlite_.save_users(users);
+        return;
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return;
+    }
     std::ofstream file(users_file());
     for (const auto& u : users) {
         file << u.id << "|" << u.username << "|" << u.uid << "|"
@@ -202,6 +219,12 @@ void Storage::save_users(const std::vector<user::User>& users) {
 }
 
 std::vector<user::User> Storage::load_users() {
+    if (use_sqlite()) {
+        return sqlite_.load_users();
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return {};
+    }
     std::vector<user::User> users;
     std::ifstream file(users_file());
     if (!file.is_open()) {
@@ -226,6 +249,13 @@ std::vector<user::User> Storage::load_users() {
 }
 
 void Storage::save_domains(const std::vector<domain::Domain>& domains) {
+    if (use_sqlite()) {
+        sqlite_.save_domains(domains);
+        return;
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return;
+    }
     std::ofstream file(domains_file());
     for (const auto& d : domains) {
         file << d.id << "|" << d.fqdn << "|" << d.owner_id << "|"
@@ -235,6 +265,12 @@ void Storage::save_domains(const std::vector<domain::Domain>& domains) {
 }
 
 std::vector<domain::Domain> Storage::load_domains() {
+    if (use_sqlite()) {
+        return sqlite_.load_domains();
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return {};
+    }
     std::vector<domain::Domain> domains;
     std::ifstream file(domains_file());
     if (!file.is_open()) {

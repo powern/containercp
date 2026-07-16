@@ -207,7 +207,7 @@ With explicit SQLite mode:
 
 | Backend | Resources |
 |---------|-----------|
-| SQLite | nodes, php_versions, profiles |
+| SQLite | nodes, php_versions, profiles, users, sites, domains |
 | TXT | all other resources |
 
 Without explicit SQLite mode (default):
@@ -289,6 +289,50 @@ Called at a precise point in `backup()`:
 
 The test uses this to pause backup while it holds the write mutex,
 verifying that shutdown cannot proceed and the connection remains valid.
+
+---
+
+## Phase 6a field mappings
+
+### User → `users`
+
+| Field | Column | Notes |
+|-------|--------|-------|
+| `id` | `id` | Preserved exactly |
+| `username` | `username` | |
+| `uid` | `uid` | |
+| `home_directory` | `home_directory` | |
+| `shell` | `shell` | |
+| `enabled` | `enabled` | |
+| `name` | — | Set from `username` on load (same as TXT) |
+
+### Site → `sites`
+
+| Field | Column | Notes |
+|-------|--------|-------|
+| `id` | `id` | Preserved exactly |
+| `domain` | `domain` | |
+| `owner` | `owner` | |
+| `node_id` | `node_id` | No FK — sentinel 0 = default/local node |
+| `web_server` | `web_server` | |
+| `php_mail_enabled` | `php_mail_enabled` | |
+| `php_mail_enabled_present` | — | Set to `true` for SQLite rows (field always present) |
+| `name` | — | Set from `domain` on load |
+
+### Domain → `domains`
+
+| Field | Column | Notes |
+|-------|--------|-------|
+| `id` | `id` | Preserved exactly |
+| `fqdn` | `fqdn` | |
+| `owner_id` | `owner_id` | No FK — sentinel 0 = system owner |
+| `site_id` | `site_id` | No FK — sentinel 0 = orphan/admin panel |
+| `php_version` | `php_version` | |
+| `ssl_enabled` | `ssl_enabled` | |
+| `enabled` | `enabled` | |
+| `type` | `type` | All domain types preserved |
+| `target` | `target` | Redirect/alias target URL |
+| `name` | — | Set from `fqdn` on load |
 
 ---
 

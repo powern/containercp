@@ -2,9 +2,12 @@
 #define CONTAINERCP_STORAGE_SQLITE_STORAGE_H
 
 #include "ConnectionPool.h"
+#include "domain/Domain.h"
 #include "node/Node.h"
 #include "php/PhpVersion.h"
 #include "profile/Profile.h"
+#include "site/Site.h"
+#include "user/User.h"
 
 #include <string>
 #include <vector>
@@ -63,6 +66,18 @@ public:
 
     void save_profiles(const std::vector<profile::Profile>& profiles);
     std::vector<profile::Profile> load_profiles();
+
+    // Users
+    void save_users(const std::vector<user::User>& users);
+    std::vector<user::User> load_users();
+
+    // Sites
+    void save_sites(const std::vector<site::Site>& sites);
+    std::vector<site::Site> load_sites();
+
+    // Domains
+    void save_domains(const std::vector<domain::Domain>& domains);
+    std::vector<domain::Domain> load_domains();
 
 private:
     ConnectionPool& pool_;

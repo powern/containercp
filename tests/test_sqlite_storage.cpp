@@ -695,6 +695,423 @@ TEST_CASE("Backup and shutdown do not race") {
     tclean(dir);
 }
 
+// ============================================================
+// Phase 6a — User, Site, Domain SQLite storage tests
+// ============================================================
+
+// Helper: create a ConnectionPool + schema for direct SQLiteStorage tests
+static void init_6a(containercp::storage::ConnectionPool& pool, const std::string& dir) {
+    REQUIRE(pool.initialize(dir + "test6a.db"));
+    containercp::storage::SQLiteDB migrator;
+    REQUIRE(migrator.open(dir + "test6a.db"));
+    containercp::storage::MigrationEngine eng;
+    containercp::storage::register_all_schema_migrations(eng);
+    REQUIRE(eng.migrate(migrator));
+    migrator.close();
+}
+
+// --- Users ---
+
+TEST_CASE("SQLiteStorage users empty") {
+    auto dir = tdir("s6a_u_empty"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    CHECK(ss.load_users().empty());
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage users round trip") {
+    auto dir = tdir("s6a_u_rt"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::user::User u;
+    u.id = 1; u.username = "admin"; u.uid = 1000;
+    u.home_directory = "/home/admin"; u.shell = "/bin/bash"; u.enabled = true;
+    ss.save_users({u});
+    auto loaded = ss.load_users();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].id == 1); CHECK(loaded[0].username == "admin");
+    CHECK(loaded[0].uid == 1000); CHECK(loaded[0].home_directory == "/home/admin");
+    CHECK(loaded[0].shell == "/bin/bash"); CHECK(loaded[0].enabled);
+    CHECK(loaded[0].name == "admin");
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage users multi non-contiguous IDs") {
+    auto dir = tdir("s6a_u_ncid"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::user::User u1, u2;
+    u1.id = 1; u1.username = "a"; u1.uid = 1000; u1.enabled = true;
+    u2.id = 8; u2.username = "b"; u2.uid = 1001; u2.enabled = false;
+    ss.save_users({u1, u2});
+    auto loaded = ss.load_users();
+    REQUIRE(loaded.size() == 2);
+    CHECK(loaded[0].id == 1); CHECK(loaded[0].enabled);
+    CHECK(loaded[1].id == 8); CHECK_FALSE(loaded[1].enabled);
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage users special chars") {
+    auto dir = tdir("s6a_u_spec"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::user::User u;
+    u.id = 1; u.username = "o'brien"; u.uid = 1000;
+    u.home_directory = "/home/with \"quotes\" and \\backslash";
+    u.shell = "/usr/bin/zsh"; u.enabled = true;
+    ss.save_users({u});
+    auto loaded = ss.load_users();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].username == "o'brien");
+    CHECK(loaded[0].home_directory.find("\"quotes\"") != std::string::npos);
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage users replacement clears removed") {
+    auto dir = tdir("s6a_u_rem"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::user::User u1, u2;
+    u1.id = 1; u1.username = "keep"; u1.enabled = true;
+    u2.id = 2; u2.username = "remove"; u2.enabled = true;
+    ss.save_users({u1, u2});
+    ss.save_users({u1});
+    auto loaded = ss.load_users();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].id == 1);
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage users empty vector clears") {
+    auto dir = tdir("s6a_u_clear"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::user::User u; u.id = 1; u.username = "tmp"; u.enabled = true;
+    ss.save_users({u});
+    ss.save_users({});
+    CHECK(ss.load_users().empty());
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage users reopen reloads") {
+    auto dir = tdir("s6a_u_reopen"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+        containercp::storage::SQLiteStorage ss(pool);
+        containercp::user::User u; u.id = 42; u.username = "persist"; u.enabled = true;
+        ss.save_users({u});
+    }
+    {
+        containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+        containercp::storage::SQLiteStorage ss(pool);
+        auto loaded = ss.load_users();
+        REQUIRE(loaded.size() == 1);
+        CHECK(loaded[0].id == 42);
+    }
+    tclean(dir);
+}
+
+// --- Sites ---
+
+TEST_CASE("SQLiteStorage sites empty") {
+    auto dir = tdir("s6a_s_empty"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    CHECK(ss.load_sites().empty());
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage sites round trip") {
+    auto dir = tdir("s6a_s_rt"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::site::Site s;
+    s.id = 1; s.domain = "example.com"; s.owner = "admin";
+    s.node_id = 1; s.web_server = "nginx"; s.php_mail_enabled = true;
+    ss.save_sites({s});
+    auto loaded = ss.load_sites();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].id == 1); CHECK(loaded[0].domain == "example.com");
+    CHECK(loaded[0].owner == "admin"); CHECK(loaded[0].node_id == 1);
+    CHECK(loaded[0].web_server == "nginx");
+    CHECK(loaded[0].php_mail_enabled); CHECK(loaded[0].php_mail_enabled_present);
+    CHECK(loaded[0].name == "example.com");
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage sites php_mail false") {
+    auto dir = tdir("s6a_s_nomail"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::site::Site s;
+    s.id = 1; s.domain = "test.com"; s.php_mail_enabled = false;
+    ss.save_sites({s});
+    auto loaded = ss.load_sites();
+    REQUIRE(loaded.size() == 1);
+    CHECK_FALSE(loaded[0].php_mail_enabled);
+    CHECK(loaded[0].php_mail_enabled_present);
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage sites node_id=0 sentinel") {
+    auto dir = tdir("s6a_s_n0"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::site::Site s;
+    s.id = 1; s.domain = "d.com"; s.node_id = 0;
+    ss.save_sites({s});
+    auto loaded = ss.load_sites();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].node_id == 0);
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage sites replacement clears") {
+    auto dir = tdir("s6a_s_rem"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::site::Site s1, s2;
+    s1.id = 1; s1.domain = "keep.com"; s1.node_id = 1;
+    s2.id = 2; s2.domain = "remove.com"; s2.node_id = 1;
+    ss.save_sites({s1, s2});
+    ss.save_sites({s1});
+    CHECK(ss.load_sites().size() == 1);
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage sites reopen") {
+    auto dir = tdir("s6a_s_reopen"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+        containercp::storage::SQLiteStorage ss(pool);
+        containercp::site::Site s; s.id = 7; s.domain = "p.com"; s.node_id = 1;
+        ss.save_sites({s});
+    }
+    {
+        containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+        containercp::storage::SQLiteStorage ss(pool);
+        auto loaded = ss.load_sites();
+        REQUIRE(loaded.size() == 1); CHECK(loaded[0].id == 7);
+    }
+    tclean(dir);
+}
+
+// --- Domains ---
+
+TEST_CASE("SQLiteStorage domains empty") {
+    auto dir = tdir("s6a_d_empty"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    CHECK(ss.load_domains().empty());
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage domains round trip all fields") {
+    auto dir = tdir("s6a_d_rt"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::domain::Domain d;
+    d.id = 1; d.fqdn = "example.com"; d.owner_id = 1; d.site_id = 1;
+    d.php_version = "8.4"; d.ssl_enabled = true; d.enabled = true;
+    d.type = "primary"; d.target = "";
+    ss.save_domains({d});
+    auto loaded = ss.load_domains();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].id == 1); CHECK(loaded[0].fqdn == "example.com");
+    CHECK(loaded[0].owner_id == 1); CHECK(loaded[0].site_id == 1);
+    CHECK(loaded[0].php_version == "8.4"); CHECK(loaded[0].ssl_enabled);
+    CHECK(loaded[0].enabled); CHECK(loaded[0].type == "primary");
+    CHECK(loaded[0].target.empty()); CHECK(loaded[0].name == "example.com");
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage domains sentinel 0 values") {
+    auto dir = tdir("s6a_d_sent"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::domain::Domain d;
+    d.id = 1; d.fqdn = "o.com"; d.owner_id = 0; d.site_id = 0;
+    d.type = "primary"; d.target = "";
+    ss.save_domains({d});
+    auto loaded = ss.load_domains();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].owner_id == 0); CHECK(loaded[0].site_id == 0);
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage domains all types") {
+    auto dir = tdir("s6a_d_types"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    std::vector<std::string> types = {"primary", "alias", "redirect", "wildcard"};
+    int id = 0;
+    for (auto& t : types) {
+        containercp::domain::Domain d;
+        d.id = ++id; d.fqdn = t + ".com"; d.type = t; d.target = "http://target/" + t;
+        ss.save_domains({d});
+        auto loaded = ss.load_domains();
+        REQUIRE(loaded.size() == 1);
+        CHECK(loaded[0].type == t);
+        CHECK(loaded[0].target.find(t) != std::string::npos);
+        ss.save_domains({});  // clear for next type
+    }
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage domains special chars in target") {
+    auto dir = tdir("s6a_d_spec"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::domain::Domain d;
+    d.id = 1; d.fqdn = "x.com";
+    d.target = "https://x.com/path?q=a|b&c=d'e\"f";
+    d.type = "redirect";
+    ss.save_domains({d});
+    auto loaded = ss.load_domains();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].target == d.target);
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage domains reopen") {
+    auto dir = tdir("s6a_d_reopen"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+        containercp::storage::SQLiteStorage ss(pool);
+        containercp::domain::Domain d;
+        d.id = 5; d.fqdn = "p.com"; d.type = "primary";
+        ss.save_domains({d});
+    }
+    {
+        containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+        containercp::storage::SQLiteStorage ss(pool);
+        auto loaded = ss.load_domains();
+        REQUIRE(loaded.size() == 1); CHECK(loaded[0].id == 5);
+    }
+    tclean(dir);
+}
+
+// --- Cross-backend and mode tests ---
+
+TEST_CASE("Phase6a Storage explicit SQLite mode uses SQLite for users/sites/domains") {
+    auto dir = tdir("s6a_mode"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::StorageOptions opts;
+        opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        containercp::storage::Storage s(dir, opts);
+        CHECK(s.sqlite_ready());
+
+        containercp::user::User u; u.id = 1; u.username = "u1"; u.enabled = true;
+        s.save_users({u});
+        CHECK_FALSE(fs::exists(dir + "users.db"));
+
+        containercp::site::Site si; si.id = 1; si.domain = "s.com"; si.node_id = 1;
+        s.save_sites({si});
+        CHECK_FALSE(fs::exists(dir + "sites.db"));
+
+        containercp::domain::Domain d; d.id = 1; d.fqdn = "d.com";
+        s.save_domains({d});
+        CHECK_FALSE(fs::exists(dir + "domains.db"));
+
+        CHECK(s.load_users().size() == 1);
+        CHECK(s.load_sites().size() == 1);
+        CHECK(s.load_domains().size() == 1);
+    }
+    tclean(dir);
+}
+
+TEST_CASE("Phase6a default mode reads TXT users/sites/domains") {
+    auto dir = tdir("s6a_txt"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::Storage s(dir);
+        containercp::user::User u; u.id = 1; u.username = "u"; u.enabled = true;
+        s.save_users({u});
+        containercp::site::Site si; si.id = 1; si.domain = "s.com"; si.node_id = 1;
+        s.save_sites({si});
+        containercp::domain::Domain d; d.id = 1; d.fqdn = "d.com";
+        s.save_domains({d});
+    }
+    {
+        containercp::storage::Storage s(dir);
+        CHECK(s.load_users().size() == 1);
+        CHECK(s.load_sites().size() == 1);
+        CHECK(s.load_domains().size() == 1);
+        CHECK_FALSE(fs::exists(dir + "containercp.db"));  // no SQLite in default mode
+    }
+    tclean(dir);
+}
+
+TEST_CASE("Phase6a SQLite resources coexist with TXT resources") {
+    auto dir = tdir("s6a_coexist"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::StorageOptions opts;
+        opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        containercp::storage::Storage s(dir, opts);
+        CHECK(s.sqlite_ready());
+
+        // SQLite-backed users
+        containercp::user::User u; u.id = 1; u.username = "sqlite_user"; u.enabled = true;
+        s.save_users({u});
+
+        // TXT-backed auth_users
+        containercp::auth::AuthUser au; au.id = 1; au.username = "admin";
+        au.password_hash = "h"; au.role = "admin";
+        s.save_auth_users({au});
+
+        CHECK(s.load_users().size() == 1);
+        CHECK(s.load_auth_users().size() == 1);
+    }
+    tclean(dir);
+}
+
+TEST_CASE("Phase6a saving sites does not alter users or domains") {
+    auto dir = tdir("s6a_isolation"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::StorageOptions opts;
+        opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        containercp::storage::Storage s(dir, opts);
+        CHECK(s.sqlite_ready());
+
+        containercp::user::User u; u.id = 1; u.username = "u"; u.enabled = true;
+        s.save_users({u});
+        containercp::domain::Domain d; d.id = 1; d.fqdn = "d.com";
+        s.save_domains({d});
+        containercp::site::Site si; si.id = 1; si.domain = "s.com"; si.node_id = 1;
+        s.save_sites({si});
+
+        CHECK(s.load_users().size() == 1);
+        CHECK(s.load_domains().size() == 1);
+        CHECK(s.load_sites().size() == 1);
+    }
+    tclean(dir);
+}
+
+TEST_CASE("Phase6a nodes/php/profiles still work") {
+    auto dir = tdir("s6a_legacy"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::StorageOptions opts;
+        opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        containercp::storage::Storage s(dir, opts);
+        CHECK(s.sqlite_ready());
+
+        containercp::node::Node n; n.id = 1; n.name = "local"; n.type = "local";
+        s.save_nodes({n});
+        CHECK(s.load_nodes().size() == 1);
+
+        containercp::php::PhpVersion pv;
+        pv.id = 1; pv.version = "8.4"; pv.enabled = true;
+        s.save_php_versions({pv});
+        CHECK(s.load_php_versions().size() == 1);
+
+        containercp::profile::Profile p;
+        p.id = 1; p.profile_name = "default"; p.web_server = "apache";
+        s.save_profiles({p});
+        CHECK(s.load_profiles().size() == 1);
+    }
+    tclean(dir);
+}
+
 TEST_CASE("Shutdown then reinitialize still works") {
     auto dir = tdir("shutdown_reinit");
     tclean(dir); fs::create_directories(dir);

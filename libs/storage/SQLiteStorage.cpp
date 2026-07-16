@@ -206,4 +206,145 @@ std::vector<profile::Profile> SQLiteStorage::load_profiles() {
     return profiles;
 }
 
+// --- Users ---
+
+void SQLiteStorage::save_users(const std::vector<user::User>& users) {
+    replace_all(pool_, "DELETE FROM users",
+        [&](SQLiteDB& db) -> bool {
+            const char* sql = "INSERT INTO users (id, username, uid, home_directory, "
+                "shell, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
+            for (const auto& u : users) {
+                if (!db.prepare(sql)) return false;
+                if (!db.bind_int(1, static_cast<int64_t>(u.id))) return false;
+                if (!db.bind_text(2, u.username)) return false;
+                if (!db.bind_int(3, static_cast<int64_t>(u.uid))) return false;
+                if (!db.bind_text(4, u.home_directory)) return false;
+                if (!db.bind_text(5, u.shell)) return false;
+                if (!db.bind_int(6, u.enabled ? 1 : 0)) return false;
+                if (db.step() == false && db.error_code() != 0) return false;
+            }
+            return true;
+        });
+}
+
+std::vector<user::User> SQLiteStorage::load_users() {
+    std::vector<user::User> users;
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return users;
+    if (!rl->prepare("SELECT id, username, uid, home_directory, shell, enabled "
+                      "FROM users ORDER BY id")) return users;
+    while (rl->step()) {
+        user::User u;
+        u.id = static_cast<uint64_t>(rl->column_int(0));
+        u.username = rl->column_text(1);
+        u.uid = static_cast<uint64_t>(rl->column_int(2));
+        u.home_directory = rl->column_text(3);
+        u.shell = rl->column_text(4);
+        u.enabled = (rl->column_int(5) != 0);
+        u.name = u.username;
+        users.push_back(std::move(u));
+    }
+    return users;
+}
+
+// --- Sites ---
+
+void SQLiteStorage::save_sites(const std::vector<site::Site>& sites) {
+    replace_all(pool_, "DELETE FROM sites",
+        [&](SQLiteDB& db) -> bool {
+            const char* sql = "INSERT INTO sites (id, domain, owner, node_id, "
+                "web_server, php_mail_enabled, created_at, updated_at) VALUES "
+                "(?, ?, ?, ?, ?, ?, "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
+            for (const auto& s : sites) {
+                if (!db.prepare(sql)) return false;
+                if (!db.bind_int(1, static_cast<int64_t>(s.id))) return false;
+                if (!db.bind_text(2, s.domain)) return false;
+                if (!db.bind_text(3, s.owner)) return false;
+                if (!db.bind_int(4, static_cast<int64_t>(s.node_id))) return false;
+                if (!db.bind_text(5, s.web_server)) return false;
+                if (!db.bind_int(6, s.php_mail_enabled ? 1 : 0)) return false;
+                if (db.step() == false && db.error_code() != 0) return false;
+            }
+            return true;
+        });
+}
+
+std::vector<site::Site> SQLiteStorage::load_sites() {
+    std::vector<site::Site> sites;
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return sites;
+    if (!rl->prepare("SELECT id, domain, owner, node_id, web_server, php_mail_enabled "
+                      "FROM sites ORDER BY id")) return sites;
+    while (rl->step()) {
+        site::Site s;
+        s.id = static_cast<uint64_t>(rl->column_int(0));
+        s.domain = rl->column_text(1);
+        s.owner = rl->column_text(2);
+        s.node_id = static_cast<uint64_t>(rl->column_int(3));
+        s.web_server = rl->column_text(4);
+        s.php_mail_enabled = (rl->column_int(5) != 0);
+        // SQLite rows have an explicit php_mail_enabled column —
+        // mark the field as present (equivalent to current 6-field format).
+        s.php_mail_enabled_present = true;
+        s.name = s.domain;
+        sites.push_back(std::move(s));
+    }
+    return sites;
+}
+
+// --- Domains ---
+
+void SQLiteStorage::save_domains(const std::vector<domain::Domain>& domains) {
+    replace_all(pool_, "DELETE FROM domains",
+        [&](SQLiteDB& db) -> bool {
+            const char* sql = "INSERT INTO domains (id, fqdn, owner_id, site_id, "
+                "php_version, ssl_enabled, enabled, type, target, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
+            for (const auto& d : domains) {
+                if (!db.prepare(sql)) return false;
+                if (!db.bind_int(1, static_cast<int64_t>(d.id))) return false;
+                if (!db.bind_text(2, d.fqdn)) return false;
+                if (!db.bind_int(3, static_cast<int64_t>(d.owner_id))) return false;
+                if (!db.bind_int(4, static_cast<int64_t>(d.site_id))) return false;
+                if (!db.bind_text(5, d.php_version)) return false;
+                if (!db.bind_int(6, d.ssl_enabled ? 1 : 0)) return false;
+                if (!db.bind_int(7, d.enabled ? 1 : 0)) return false;
+                if (!db.bind_text(8, d.type)) return false;
+                if (!db.bind_text(9, d.target)) return false;
+                if (db.step() == false && db.error_code() != 0) return false;
+            }
+            return true;
+        });
+}
+
+std::vector<domain::Domain> SQLiteStorage::load_domains() {
+    std::vector<domain::Domain> domains;
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return domains;
+    if (!rl->prepare("SELECT id, fqdn, owner_id, site_id, php_version, "
+                      "ssl_enabled, enabled, type, target "
+                      "FROM domains ORDER BY id")) return domains;
+    while (rl->step()) {
+        domain::Domain d;
+        d.id = static_cast<uint64_t>(rl->column_int(0));
+        d.fqdn = rl->column_text(1);
+        d.owner_id = static_cast<uint64_t>(rl->column_int(2));
+        d.site_id = static_cast<uint64_t>(rl->column_int(3));
+        d.php_version = rl->column_text(4);
+        d.ssl_enabled = (rl->column_int(5) != 0);
+        d.enabled = (rl->column_int(6) != 0);
+        d.type = rl->column_text(7);
+        d.target = rl->column_text(8);
+        d.name = d.fqdn;
+        domains.push_back(std::move(d));
+    }
+    return domains;
+}
+
 } // namespace containercp::storage
