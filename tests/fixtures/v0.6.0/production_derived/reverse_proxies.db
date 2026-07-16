@@ -1,0 +1,9 @@
+1|site-a.anonymized.local|1|nginx|/srv/containercp/proxy/sites/site-a.anonymized.local.conf|site-1-web:80|1|active
+2|site-b.anonymized.local|2|nginx|/srv/containercp/proxy/sites/site-b.anonymized.local.conf|site-2-web:80|1|active
+3|site-c.anonymized.local|3|nginx|/srv/containercp/proxy/sites/site-c.anonymized.local.conf|site-3-web:80|1|active
+4|site-d.customer-a.example.com|4|nginx|/srv/containercp/proxy/sites/site-d.customer-a.example.com.conf|site-4-web:80|1|active
+5|admin.anonymized.example.com|0|nginx|/srv/containercp/proxy/sites/admin.anonymized.example.com.conf|172.17.0.1:8081|1|active
+10|site-e.customer-b.example.net|8|nginx|/srv/containercp/proxy/sites/site-e.customer-b.example.net.conf|site-8-web:80|1|active
+11|site-f.customer-b.example.net|9|nginx|/srv/containercp/proxy/sites/site-f.customer-b.example.net.conf|site-9-web:80|1|active
+12|site-g.customer-b.example.net|10|nginx|/srv/containercp/proxy/sites/site-g.customer-b.example.net.conf|site-10-web:80|1|active
+13|site-h.customer-a.example.com|11|nginx|/srv/containercp/proxy/sites/site-h.customer-a.example.com.conf|site-11-web:80|1|active

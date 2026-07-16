@@ -2,9 +2,15 @@
 
 > **Based on:** `planning/proposals/ARCH-008-SQLite-Storage-Foundation.md`
 >
-> **Status:** Draft — not yet started
-> **Total phases:** 14
+> **Status:** Phase 0 complete. Phases 1–14 pending.
+> **Total phases:** 14 (Phase 0 + Phases 1–14)
 > **Definition of Done:** see Phase 14
+> **Migration test data:**
+>   1. Small synthetic edge-case fixtures (`tests/fixtures/v0.6.0/normal/`,
+>      `legacy/`, `sentinels/`, `malformed/`)
+>   2. Anonymized production-derived fixtures
+>      (`tests/fixtures/v0.6.0/production_derived/`)
+>   3. Temporary raw production snapshot (local only, never committed)
 
 ---
 
@@ -901,11 +907,12 @@ private:
 
 ### Expected tests
 
-- [ ] Import nodes from fixture.
-- [ ] Import sites from fixture (including legacy 5-field).
-- [ ] Import SSL certs from fixture (including legacy 4-field).
-- [ ] Import mail domains from fixture (including legacy 10-field).
-- [ ] Import all types in dependency order.
+- [ ] Import nodes from synthetic fixtures.
+- [ ] Import sites from synthetic fixtures (including legacy 5-field).
+- [ ] Import SSL certs from synthetic fixtures (including legacy 4-field).
+- [ ] Import mail domains from synthetic fixtures (including legacy 10-field).
+- [ ] Import all types from **anonymized production-derived fixture** (`production_derived/`)
+      and verify record counts match the production snapshot.
 - [ ] Malformed field count → fail with line number.
 - [ ] Duplicate ID → fail.
 - [ ] Empty file → skip.
@@ -1020,7 +1027,8 @@ public:
 
 ### Expected tests
 
-- [ ] Successful equivalence: TXT checksum matches SQLite checksum.
+- [ ] Successful equivalence on synthetic fixtures.
+- [ ] Successful equivalence on **anonymized production-derived fixtures** (full 16-step pipeline).
 - [ ] Count mismatch → detected and reported.
 - [ ] Field mismatch → detected with field path.
 - [ ] Checksum mismatch → verification fails.
@@ -1516,6 +1524,10 @@ unless separately approved.
 - [ ] `containercp site list` works via CLI.
 - [ ] Legacy `.db` files archived.
 - [ ] Rollback by removing `containercp.db` and restoring `.db` files → works.
+- [ ] Upgrade from anonymized production-derived data produces identical
+      record counts and relationship integrity.
+- [ ] Migration of production-scale data (8 sites, 2 mail domains,
+      1 mailbox, 9 reverse proxies) completes within 1 second.
 
 #### WAL behavior
 

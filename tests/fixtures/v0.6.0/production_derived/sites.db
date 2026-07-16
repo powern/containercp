@@ -1,0 +1,8 @@
+1|site-a.anonymized.local|admin|1|apache|0
+2|site-b.anonymized.local|admin|1|nginx|0
+3|site-c.anonymized.local|admin|1|apache|0
+4|site-d.customer-a.example.com|admin|1|apache|0
+8|site-e.customer-b.example.net|admin|1|apache|0
+9|site-f.customer-b.example.net|admin|1|apache|0
+10|site-g.customer-b.example.net|admin|1|apache|0
+11|site-h.customer-a.example.com|admin|1|apache|1

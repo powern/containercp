@@ -1,0 +1,2 @@
+2|local-primary|site-e.customer-b.example.net|8|8|1||dkim|v=DKIM1; k=rsa; p=PLACEHOLDER_PUBLIC_KEY_FOR_ANONYMIZED_FIXTURE|0|0
+3|local-primary|site-h.customer-a.example.com|0|11|1||dkim|v=DKIM1; k=rsa; p=PLACEHOLDER_PUBLIC_KEY_FOR_ANONYMIZED_FIXTURE|0|0

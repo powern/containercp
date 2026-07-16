@@ -464,6 +464,106 @@ TEST_CASE("Fixture loader: sentinel sites node_id=0") {
 }
 
 // ============================================================
+// Production-derived fixture verification
+// ============================================================
+
+TEST_CASE("Production-derived fixture loads successfully") {
+    auto tmp = copy_fixtures_to_temp("production_derived");
+    containercp::storage::Storage st(tmp + "/");
+
+    auto nodes = st.load_nodes();
+    CHECK(nodes.size() == 1);
+
+    auto sites = st.load_sites();
+    CHECK(sites.size() == 8);  // non-contiguous IDs: 1,2,3,4,8,9,10,11
+
+    auto users = st.load_users();
+    CHECK(users.size() == 1);
+
+    auto domains = st.load_domains();
+    CHECK(domains.size() == 8);
+
+    auto pv = st.load_php_versions();
+    CHECK(pv.size() == 3);
+
+    auto dbs = st.load_databases();
+    CHECK(dbs.size() == 8);
+    // Verify sensitive field presence without exposing value
+    for (auto& d : dbs) {
+        CHECK(d.db_password.length() > 0);
+        CHECK(d.db_password.find("ANON_") == 0);  // anonymized
+    }
+
+    auto backups = st.load_backups();
+    CHECK(backups.size() == 1);
+
+    auto certs = st.load_ssl_certificates();
+    CHECK(certs.size() == 0);  // no SSL in production database
+
+    auto mdomains = st.load_mail_domains();
+    CHECK(mdomains.size() == 2);
+
+    auto mboxes = st.load_mailboxes();
+    CHECK(mboxes.size() == 1);
+    // Verify password hash present and anonymized
+    if (!mboxes.empty()) {
+        CHECK(mboxes[0].password_hash.length() > 0);
+        CHECK(mboxes[0].password_hash.find("ANON_") != std::string::npos);
+    }
+
+    auto aliases = st.load_mail_aliases();
+    CHECK(aliases.size() == 0);
+
+    auto mstate = st.load_mail_module_state();
+    CHECK(mstate == "active");
+
+    auto smtp = st.load_mail_smarthost();
+    CHECK(smtp.length() > 0);
+    CHECK(smtp.find("0|") == 0);  // disabled
+
+    auto ausers = st.load_access_users();
+    CHECK(ausers.size() == 0);
+
+    auto grants = st.load_access_grants();
+    CHECK(grants.size() == 0);
+
+    auto proxies = st.load_reverse_proxies();
+    CHECK(proxies.size() == 9);
+
+    auto profs = st.load_profiles();
+    CHECK(profs.size() == 5);
+
+    auto auths = st.load_auth_users();
+    CHECK(auths.size() == 1);
+    if (!auths.empty()) {
+        CHECK(auths[0].role == "admin");
+        CHECK(auths[0].password_hash.length() > 0);
+        CHECK(auths[0].password_hash.find("ANON_") == 0);
+    }
+
+    // Sentinel checks
+    CHECK(proxies.size() >= 5);  // proxy id=5 has site_id=0
+    auto* admin_proxy = proxies.size() >= 5 ? &proxies[4] : nullptr;
+    if (admin_proxy) {
+        CHECK(admin_proxy->site_id == 0);  // admin panel sentinel
+    }
+
+    // Find mail domain with domain_id=0 (external)
+    bool found_external = false;
+    for (auto& md : mdomains) {
+        if (md.domain_id == 0) found_external = true;
+    }
+    CHECK(found_external);
+
+    // All domains have owner_id=0 (sentinel)
+    for (auto& d : domains) {
+        CHECK(d.owner_id == 0);
+    }
+
+    CHECK(fs::remove_all(tmp));
+}
+
+// ============================================================
 // Empty fixture verification
 // ============================================================
 
