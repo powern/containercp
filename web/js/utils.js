@@ -241,27 +241,35 @@ window.compareDmarcRecords = function(recommended, published) {
 
 // Context-aware Health Score (frontend-calculated for v1).
 // TODO: Move to backend as single source of truth.
-// TODO: store result in HealthCache for cross-view consistency.
-// Returns: {score, grade, breakdown[], earnedWeight, applicableWeight}
+// IMPORTANT: This function distinguishes between "data not loaded" (evaluated=false)
+// and "data loaded and checked" (evaluated=true). Missing data is NOT penalized.
+//
+// ctx fields:
+// - domainRow, mailDomain (object or null)
+// - rootDns, dkimDns, dmarcDns, mtaStsDns, autoDns (DNS result or null/undefined)
+// - sslStatus, runtimeStatus (string or null)
+// - allDnsLoaded, allMailDnsLoaded, runtimeLoaded (booleans — marks if fetch attempted)
+// - serverHostname
 window.computeDomainHealthScore = function(ctx) {
-  // ctx = { domainRow, mailDomain, rootDns, dkimDns, dmarcDns, mtaStsDns, autoDns,
-  //          sslStatus, runtimeStatus, serverHostname }
-  // If mailDomain is not passed but domainRow.mail_domain_id exists, builds partial mail.
   var row = ctx.domainRow || {};
   var mail = ctx.mailDomain;
   var rdns = ctx.rootDns;
   var ssl = ctx.sslStatus || row.ssl_status;
   var rt = ctx.runtimeStatus;
-  var expectedIpv4 = rdns && rdns.expected_ipv4 || '';
-  var expectedIpv6 = rdns && rdns.expected_ipv6 || '';
+  var expectedIpv4 = rdns && typeof rdns.expected_ipv4 === 'string' ? rdns.expected_ipv4 : '';
+  var expectedIpv6 = rdns && typeof rdns.expected_ipv6 === 'string' ? rdns.expected_ipv6 : '';
   var spf = rdns && rdns.spf_analysis;
   var serverHost = ctx.serverHostname || '';
 
-  // Detect mail from domainRow if mailDomain not passed
-  if (!mail && row.mail_domain_id && row.mail_domain_id > 0) {
-    mail = { domain: row.domain, mode: 'local-primary', dkim_public_key_dns: row.dkim_generated ? row.dkim_public_key_dns : '' };
-  }
+  // Mail detection from row if mailDomain not passed (for Domain List / Header consistency)
   var hasMail = !!(mail && mail.mode && mail.mode !== 'disabled');
+  if (!hasMail && row.mail_domain_id && row.mail_domain_id > 0) {
+    hasMail = true;
+  }
+
+  var dnsLoaded = ctx.allDnsLoaded;
+  var mailDnsLoaded = ctx.allMailDnsLoaded;
+  var rtLoaded = ctx.runtimeLoaded;
 
   function getRecs(typeName) {
     if (!rdns || !Array.isArray(rdns.per_type)) return [];
@@ -270,129 +278,195 @@ window.computeDomainHealthScore = function(ctx) {
     return pt.records;
   }
 
-  // Partial credit mapping
-  function computeEarned(weight, status, cls) {
+  // Weight → earned mapping with partial credit
+  function earnedForWeight(weight, status) {
     if (status === 'Match' || status === 'Active' || status === 'Running' || status === 'Healthy') return weight;
-    if (status === 'Expiring') return Math.round(weight * 0.5);
-    if (status === 'Starting') return Math.round(weight * 0.5);
-    if (status === 'N/A') return null; // excluded from denominator
+    if (status === 'Expiring' || status === 'Starting') return Math.round(weight * 0.5);
     if (status === 'Unexpected') return 0;
-    return 0; // Mismatch, Not Published, Expired, Stopped, Error, Unknown
+    if (status === 'Not Published') return 0;
+    if (status === 'Mismatch') return 0;
+    if (status === 'Error') return 0;
+    if (status === 'Expired' || status === 'Disabled') return 0;
+    return 0;
   }
 
-  function checkConfig(id, label, cls, weight, status, configured, published) {
-    var earned = computeEarned(weight, status, cls);
+  function makeCheck(id, label, cls, weight, status, configured, published, evaluated) {
+    var applicable = (status !== 'N/A' && weight > 0);
+    var earned = evaluated ? earnedForWeight(weight, status) : null;
     return { id:id, label:label, cls:cls, weight:weight, status:status,
              configured:configured || '', published:published || '',
-             earned: earned, applicable: earned !== null };
+             evaluated:evaluated, earned:earned, applicable:applicable };
   }
 
   var checks = [];
   var now = new Date().toISOString();
 
   // 1. A record (required, 25)
-  var aRecs = getRecs('A');
-  var aPub = aRecs.map(function(r) { return r.value; }).join(', ');
-  var aHasExpected = !!expectedIpv4;
-  var aMatch = aHasExpected && aRecs.some(function(r) { return r.value === expectedIpv4; });
-  var aStatus = aHasExpected ? (aMatch ? 'Match' : (aRecs.length ? 'Mismatch' : 'Not Published')) : (aRecs.length ? 'Unexpected' : 'N/A');
-  checks.push(checkConfig('a', 'A record', 'req', 25, aStatus, expectedIpv4, aPub));
+  if (dnsLoaded) {
+    var aRecs = getRecs('A');
+    var aPub = aRecs.map(function(r) { return r.value; }).join(', ');
+    var aHasExpected = !!expectedIpv4;
+    var aMatch = aHasExpected && aRecs.some(function(r) { return r.value === expectedIpv4; });
+    var aStatus = aHasExpected ? (aMatch ? 'Match' : (aRecs.length ? 'Mismatch' : 'Not Published')) : (aRecs.length ? 'Unexpected' : 'N/A');
+    checks.push(makeCheck('a', 'A record', 'req', 25, aStatus, expectedIpv4, aPub, true));
+  } else {
+    checks.push(makeCheck('a', 'A record', 'req', 25, 'Pending', '', '', false));
+  }
 
   // 2. AAAA (informational, 0)
-  var aaaaRecs = getRecs('AAAA');
-  var aaaaPub = aaaaRecs.map(function(r) { return r.value; }).join(', ');
-  var aaaaStatus = expectedIpv6 ? (aaaaRecs.length ? 'Match' : 'Not Published') : 'N/A';
-  checks.push(checkConfig('aaaa', 'AAAA (IPv6)', 'info', 0, aaaaStatus, expectedIpv6, aaaaPub));
+  if (dnsLoaded) {
+    var aaaaRecs = getRecs('AAAA');
+    var aaaaPub = aaaaRecs.map(function(r) { return r.value; }).join(', ');
+    var aaaaHasExpected = !!expectedIpv6;
+    var aaaaMatch = aaaaHasExpected && aaaaRecs.some(function(r) { return r.value === expectedIpv6; });
+    var aaaaStatus;
+    if (!aaaaHasExpected && aaaaRecs.length === 0) aaaaStatus = 'N/A';
+    else if (aaaaHasExpected && aaaaMatch) aaaaStatus = 'Match';
+    else if (aaaaRecs.length > 0 && !aaaaHasExpected) aaaaStatus = 'Unexpected';
+    else if (aaaaHasExpected && aaaaRecs.length > 0) aaaaStatus = 'Mismatch';
+    else if (aaaaHasExpected && aaaaRecs.length === 0) aaaaStatus = 'Not Published';
+    else aaaaStatus = 'N/A';
+    checks.push(makeCheck('aaaa', 'AAAA (IPv6)', 'info', 0, aaaaStatus, expectedIpv6, aaaaPub, true));
+  } else {
+    checks.push(makeCheck('aaaa', 'AAAA (IPv6)', 'info', 0, 'Pending', '', '', false));
+  }
 
   // 3–6. Mail checks
   if (hasMail) {
     // 3. MX (required, 12)
-    var mxRecs = getRecs('MX');
-    var expectedMx = window.getExpectedMxTarget(mail, serverHost);
-    var mxPub = mxRecs.map(function(r) { return (r.priority ? r.priority + ' ' : '') + r.value; }).join(', ');
-    var mxMatch = expectedMx && mxRecs.some(function(r) { return window.normalizeHostname(r.value) === window.normalizeHostname(expectedMx); });
-    var mxStatus = expectedMx ? (mxMatch ? 'Match' : (mxRecs.length ? 'Mismatch' : 'Not Published')) : 'N/A';
-    checks.push(checkConfig('mx', 'MX', 'req', 12, mxStatus, expectedMx, mxPub));
-
-    // 4. SPF (required, 10) — from spf_analysis
-    if (spf && spf.match) {
-      var spfStatus = spf.match === 'match' ? 'Match' : spf.match === 'error' ? 'Error' : spf.match === 'not_published' ? 'Not Published' : 'Mismatch';
-      checks.push(checkConfig('spf', 'SPF', 'req', 10, spfStatus, 'v=spf1 mx ~all', spf.record || ''));
+    if (mailDnsLoaded) {
+      var mxRecs = getRecs('MX');
+      var expectedMx = '';
+      if (mail && mail.mode) expectedMx = window.getExpectedMxTarget(mail, serverHost);
+      var mxPub = mxRecs.map(function(r) { return (r.priority ? r.priority + ' ' : '') + r.value; }).join(', ');
+      var mxMatch = expectedMx && mxRecs.some(function(r) { return window.normalizeHostname(r.value) === window.normalizeHostname(expectedMx); });
+      var mxStatus = expectedMx ? (mxMatch ? 'Match' : (mxRecs.length ? 'Mismatch' : 'Not Published')) : (mxRecs.length ? 'Unexpected' : 'N/A');
+      checks.push(makeCheck('mx', 'MX', 'req', 12, mxStatus, expectedMx, mxPub, true));
     } else {
-      var spfRecs = getRecs('TXT').filter(function(r) { return typeof r.value === 'string' && r.value.indexOf('v=spf1') === 0; });
-      var spfPub = spfRecs.length > 0 ? spfRecs[0].value : '';
-      checks.push(checkConfig('spf', 'SPF', 'req', 10, spfPub ? 'Unexpected' : 'N/A', 'v=spf1 mx ~all', spfPub));
+      checks.push(makeCheck('mx', 'MX', 'req', 12, 'Pending', '', '', false));
+    }
+
+    // 4. SPF (required, 10)
+    if (dnsLoaded) {
+      if (spf && spf.match) {
+        var spfStatus = spf.match === 'match' ? 'Match' : spf.match === 'error' ? 'Error' : spf.match === 'not_published' ? 'Not Published' : 'Mismatch';
+        checks.push(makeCheck('spf', 'SPF', 'req', 10, spfStatus, 'v=spf1 mx ~all', spf.record || '', true));
+      } else {
+        var spfRecs = getRecs('TXT').filter(function(r) { return typeof r.value === 'string' && r.value.indexOf('v=spf1') === 0; });
+        if (spfRecs.length > 0) {
+          checks.push(makeCheck('spf', 'SPF', 'req', 10, 'Unexpected', 'v=spf1 mx ~all', spfRecs[0].value, true));
+        } else {
+          checks.push(makeCheck('spf', 'SPF', 'req', 10, 'Not Published', 'v=spf1 mx ~all', '', true));
+        }
+      }
+    } else {
+      checks.push(makeCheck('spf', 'SPF', 'req', 10, 'Pending', '', '', false));
     }
 
     // 5. DKIM (required, 10 — only if generated)
-    var dkimKey = mail.dkim_public_key_dns || '';
+    var dkimKey = mail && mail.dkim_public_key_dns ? mail.dkim_public_key_dns : (row.dkim_public_key_dns || '');
     if (dkimKey) {
-      var dkimRecs = [];
-      if (ctx.dkimDns) {
-        var dpt = ctx.dkimDns.per_type && ctx.dkimDns.per_type.find(function(x) { return x && x.type === 'TXT'; });
-        if (dpt && Array.isArray(dpt.records)) dkimRecs = dpt.records;
+      if (mailDnsLoaded) {
+        var dkimRecs = [];
+        if (ctx.dkimDns) {
+          var dpt = ctx.dkimDns.per_type && ctx.dkimDns.per_type.find(function(x) { return x && x.type === 'TXT'; });
+          if (dpt && Array.isArray(dpt.records)) dkimRecs = dpt.records;
+        }
+        var dkimPub = dkimRecs.length > 0 ? dkimRecs[0].value : '';
+        var dkimMatch = dkimPub && window.normalizeDnsValue(dkimPub) === window.normalizeDnsValue(dkimKey);
+        var dkimStatus = dkimMatch ? 'Match' : (dkimPub ? 'Mismatch' : 'Not Published');
+        checks.push(makeCheck('dkim', 'DKIM', 'req', 10, dkimStatus, dkimKey, dkimPub, true));
+      } else {
+        checks.push(makeCheck('dkim', 'DKIM', 'req', 10, 'Pending', dkimKey, '', false));
       }
-      var dkimPub = dkimRecs.length > 0 ? dkimRecs[0].value : '';
-      var dkimMatch = dkimPub && window.normalizeDnsValue(dkimPub) === window.normalizeDnsValue(dkimKey);
-      var dkimStatus = dkimMatch ? 'Match' : (dkimPub ? 'Mismatch' : 'Not Published');
-      checks.push(checkConfig('dkim', 'DKIM', 'req', 10, dkimStatus, dkimKey, dkimPub));
     }
 
-    // 6. DMARC (required, 8) — any valid DMARC policy is acceptable
-    var dmarcPub = '';
-    if (ctx.dmarcDns) {
-      var dpt = ctx.dmarcDns.per_type && ctx.dmarcDns.per_type.find(function(x) { return x && x.type === 'TXT'; });
-      if (dpt && Array.isArray(dpt.records) && dpt.records.length > 0) dmarcPub = dpt.records[0].value;
+    // 6. DMARC (required, 8)
+    if (mailDnsLoaded) {
+      var dmarcPub = '';
+      if (ctx.dmarcDns) {
+        var dpt = ctx.dmarcDns.per_type && ctx.dmarcDns.per_type.find(function(x) { return x && x.type === 'TXT'; });
+        if (dpt && Array.isArray(dpt.records) && dpt.records.length > 0) dmarcPub = dpt.records[0].value;
+      }
+      var dmarcValid = false;
+      if (dmarcPub) {
+        var norm = window.normalizeDmarcValue(dmarcPub);
+        dmarcValid = norm.indexOf('v=dmarc1') === 0 && (norm.indexOf('p=none') >= 0 || norm.indexOf('p=quarantine') >= 0 || norm.indexOf('p=reject') >= 0);
+      }
+      var dmarcStatus = dmarcValid ? 'Match' : (dmarcPub ? 'Error' : 'Not Published');
+      checks.push(makeCheck('dmarc', 'DMARC', 'req', 8, dmarcStatus, 'v=DMARC1; p=none;', dmarcPub, true));
+    } else {
+      checks.push(makeCheck('dmarc', 'DMARC', 'req', 8, 'Pending', '', '', false));
     }
-    var dmarcValid = dmarcPub && dmarcPub.indexOf('v=DMARC1') === 0;
-    var dmarcStatus = dmarcValid ? 'Match' : (dmarcPub ? 'Error' : 'Not Published');
-    checks.push(checkConfig('dmarc', 'DMARC', 'req', 8, dmarcStatus, 'v=DMARC1; p=none;', dmarcPub));
 
     // Recommended mail checks (only for local-primary)
-    if (mail.mode === 'local-primary') {
+    if (mail && mail.mode === 'local-primary') {
       // MTA-STS (recommended, 3)
-      var stsPub = '';
-      if (ctx.mtaStsDns) {
-        var spt = ctx.mtaStsDns.per_type && ctx.mtaStsDns.per_type.find(function(x) { return x && x.type === 'TXT'; });
-        if (spt && Array.isArray(spt.records) && spt.records.length > 0) stsPub = spt.records[0].value;
+      if (mailDnsLoaded) {
+        var stsPub = '';
+        if (ctx.mtaStsDns) {
+          var spt = ctx.mtaStsDns.per_type && ctx.mtaStsDns.per_type.find(function(x) { return x && x.type === 'TXT'; });
+          if (spt && Array.isArray(spt.records) && spt.records.length > 0) stsPub = spt.records[0].value;
+        }
+        checks.push(makeCheck('mta-sts', 'MTA-STS', 'rec', 3, stsPub ? 'Match' : 'Not Published', 'v=STSv1; id=1', stsPub, true));
+      } else {
+        checks.push(makeCheck('mta-sts', 'MTA-STS', 'rec', 3, 'Pending', '', '', false));
       }
-      checks.push(checkConfig('mta-sts', 'MTA-STS', 'rec', 3, stsPub ? 'Match' : 'Not Published', 'v=STSv1; id=1', stsPub));
 
-      // Autodiscover (recommended, 3) — real check
-      var autoRecs = [];
-      if (ctx.autoDns) {
-        var cpt = ctx.autoDns.per_type && ctx.autoDns.per_type.find(function(x) { return x && (x.type === 'CNAME' || x.type === 'A'); });
-        if (cpt && Array.isArray(cpt.records)) autoRecs = cpt.records;
+      // Autodiscover (recommended, 3)
+      if (mailDnsLoaded && serverHost) {
+        var autoRecs = [];
+        if (ctx.autoDns) {
+          var cpt = ctx.autoDns.per_type && ctx.autoDns.per_type.find(function(x) { return x && (x.type === 'CNAME' || x.type === 'A'); });
+          if (cpt && Array.isArray(cpt.records)) autoRecs = cpt.records;
+        }
+        var autoPub = '';
+        var autoMatch = false;
+        if (autoRecs.length > 0) {
+          var r0 = autoRecs[0];
+          if (r0.type === 'CNAME') {
+            autoPub = 'CNAME ' + r0.value;
+            autoMatch = window.normalizeHostname(r0.value) === window.normalizeHostname(serverHost);
+          } else if (r0.type === 'A') {
+            autoPub = 'A ' + r0.value;
+            autoMatch = expectedIpv4 && r0.value === expectedIpv4;
+          }
+        }
+        var autoStatus = autoMatch ? 'Match' : (autoRecs.length > 0 ? 'Mismatch' : 'Not Published');
+        checks.push(makeCheck('autodiscover', 'Autodiscover', 'rec', 3, autoStatus, 'CNAME → ' + serverHost, autoPub, true));
+      } else if (!serverHost) {
+        checks.push(makeCheck('autodiscover', 'Autodiscover', 'rec', 3, 'N/A', '—', '', true));
+      } else {
+        checks.push(makeCheck('autodiscover', 'Autodiscover', 'rec', 3, 'Pending', '', '', false));
       }
-      var autoPub = autoRecs.length > 0 ? autoRecs[0].value : '';
-      var autoStatus = serverHost ? (autoPub ? 'Match' : 'Not Published') : 'N/A';
-      checks.push(checkConfig('autodiscover', 'Autodiscover', 'rec', 3, autoStatus, 'CNAME → ' + serverHost, autoPub));
     }
   }
 
   // 7. SSL Certificate (required, 20) — ALL domains
-  checks.push(checkConfig('ssl', 'SSL Certificate', 'req', 20, ssl || 'Unknown', '—', ssl || 'Unknown'));
+  checks.push(makeCheck('ssl', 'SSL Certificate', 'req', 20, ssl || 'Pending', '—', ssl || '', !!ssl));
 
   // 8. Runtime Status (required, 15) — site_id > 0 only
   if (row.site_id > 0) {
-    var rtStatus = rt || 'Unknown';
-    checks.push(checkConfig('runtime', 'Runtime Status', 'req', 15, rtStatus, '—', rtStatus));
+    checks.push(makeCheck('runtime', 'Runtime Status', 'req', 15, rt || 'Pending', '—', rt || '', !!rtLoaded));
   }
 
   // 9. CAA (recommended, 2)
-  var caaRecs = getRecs('CAA');
-  var caaPub = caaRecs.map(function(r) { return r.value; }).join(', ');
-  var caaStatus = caaRecs.length > 0 ? 'Match' : 'Not Published';
-  checks.push(checkConfig('caa', 'CAA', 'rec', 2, caaStatus, '0 issue "letsencrypt.org"', caaPub));
+  if (dnsLoaded) {
+    var caaRecs = getRecs('CAA');
+    var caaPub = caaRecs.map(function(r) { return r.value; }).join(', ');
+    checks.push(makeCheck('caa', 'CAA', 'rec', 2, caaRecs.length > 0 ? 'Match' : 'Not Published', '0 issue "letsencrypt.org"', caaPub, true));
+  } else {
+    checks.push(makeCheck('caa', 'CAA', 'rec', 2, 'Pending', '', '', false));
+  }
 
-  // Compute score
-  var applicable = checks.filter(function(c) { return c.applicable && c.weight > 0; });
-  if (applicable.length === 0) return {score: null, grade: 'N/A', breakdown: checks, earnedWeight: 0, applicableWeight: 0, computed_at: now};
+  // Compute score: only applicable + evaluated (not pending) checks
+  var scored = checks.filter(function(c) { return c.applicable && c.evaluated; });
+  if (scored.length === 0) return {score: null, grade: 'N/A', breakdown: checks, earnedWeight: 0, applicableWeight: 0, pending: true, computed_at: now};
 
-  var totalWeight = applicable.reduce(function(s, c) { return s + c.weight; }, 0);
-  var earnedWeight = applicable.reduce(function(s, c) { return s + c.earned; }, 0);
+  var totalWeight = scored.reduce(function(s, c) { return s + c.weight; }, 0);
+  var earnedWeight = scored.reduce(function(s, c) { return s + c.earned; }, 0);
   var score = Math.round((earnedWeight / totalWeight) * 100);
   var grade = window.healthGradeLabel(score);
 
-  return {score: score, grade: grade, breakdown: checks, earnedWeight: earnedWeight, applicableWeight: totalWeight, computed_at: now};
+  return {score: score, grade: grade, breakdown: checks, earnedWeight: earnedWeight, applicableWeight: totalWeight, pending: false, computed_at: now};
 };

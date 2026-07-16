@@ -91,3 +91,34 @@ window.RuntimeCache = {
     delete this._store[siteId];
   }
 };
+
+// Health result cache — stores computed HealthScore results keyed by domain.
+// Ensures Domain List, Detail header, and Health tab show the same value.
+// Uses a loading flag for progressive loading.
+window.HealthCache = {
+  _store: {},
+
+  get(domain) {
+    var entry = this._store[domain];
+    if (!entry) return null;
+    if (entry.loading) return 'loading';
+    return entry.result;
+  },
+
+  set(domain, result) {
+    this._store[domain] = {result: result, timestamp: Date.now(), loading: false};
+  },
+
+  setLoading(domain) {
+    this._store[domain] = {result: null, timestamp: Date.now(), loading: true};
+  },
+
+  isLoading(domain) {
+    var entry = this._store[domain];
+    return entry && entry.loading;
+  },
+
+  invalidate(domain) {
+    delete this._store[domain];
+  }
+};

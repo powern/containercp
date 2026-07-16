@@ -884,6 +884,8 @@ async function loadDomains(p) {
         }},
         {label:'SSL', html: r => domainSslBadge(r.ssl_status)},
         {label:'Health', html: r => {
+          var cachedHealth = window.HealthCache.get(r.domain);
+          if (cachedHealth && cachedHealth !== 'loading') return window.healthGradeBadge(cachedHealth.score, cachedHealth.grade);
           const dnsData = DnsCache.get(r.domain, 'A,AAAA,MX');
           const hs = window.computeDomainHealthScore({domainRow: r, rootDns: dnsData});
           return window.healthGradeBadge(hs.score, hs.grade);
@@ -928,7 +930,10 @@ async function loadDomains(p) {
       if (cells.length < 9) return;
       const dnsData = DnsCache.get(r.domain);
       cells[4].innerHTML = window.dnsStatusBadge(dnsData ? dnsData.overall_status : null);
-      var hs2 = window.computeDomainHealthScore({domainRow: r, rootDns: dnsData});
+      var cachedH = window.HealthCache.get(r.domain);
+      var hs2 = cachedH && cachedH !== 'loading'
+        ? cachedH
+        : window.computeDomainHealthScore({domainRow: r, rootDns: dnsData});
       cells[8].innerHTML = window.healthGradeBadge(hs2.score, hs2.grade);
     });
 
@@ -1007,9 +1012,12 @@ async function loadDomainDetail(p, domainId) {
       }
     }
 
-    // Compute health score (use any cached DNS data)
+    // Compute health score from HealthCache or basic DNS data
+    var cachedHealth = window.HealthCache.get(domainRow.domain);
     const dnsCacheData = DnsCache.get(domainRow.domain, 'A,AAAA,MX') || DnsCache.get(domainRow.domain, 'A,AAAA,MX,TXT') || DnsCache.get(domainRow.domain, 'A,TXT');
-    const hs = window.computeDomainHealthScore({domainRow: domainRow, rootDns: dnsCacheData});
+    const hs = cachedHealth && cachedHealth !== 'loading'
+      ? cachedHealth
+      : window.computeDomainHealthScore({domainRow: domainRow, rootDns: dnsCacheData, mailDomain: mailDomain});
     const hsBadge = window.healthGradeBadge(hs.score, hs.grade);
 
     p.innerHTML = `
@@ -2188,10 +2196,14 @@ function loadDomainHealth() {
       }
     }
 
-    // SSL status from domainRow
+    // Mark DNS loaded flags
+    ctx.allDnsLoaded = true;
+    ctx.allMailDnsLoaded = true;
+
+    // SSL from domainRow
     ctx.sslStatus = dd.domainRow.ssl_status;
 
-    // Runtime status — only for site_id > 0
+    // Runtime — site_id > 0 only
     if (dd.domainRow.site_id > 0) {
       try {
         var rtRes = await api('/api/runtime/' + dd.domainRow.site_id);
@@ -2200,8 +2212,13 @@ function loadDomainHealth() {
         console.error('Runtime health fetch failed for site ' + dd.domainRow.site_id, e);
       }
     }
+    ctx.runtimeLoaded = true;
 
     var result = window.computeDomainHealthScore(ctx);
+
+    // Store in HealthCache for cross-view consistency (Header + Domain List)
+    window.HealthCache.set(domain, result);
+
     var ts = result.computed_at ? new Date(result.computed_at).toLocaleTimeString() : new Date().toLocaleTimeString();
 
     if (result.score == null) {
