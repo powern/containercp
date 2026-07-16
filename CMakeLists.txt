@@ -91,6 +91,7 @@ set(CONTAINERCP_SOURCES
     libs/ssl/RenewalScheduler.cpp
     libs/ssl/HTTP01ChallengeProvider.cpp
     libs/storage/Storage.cpp
+    libs/storage/SQLiteWrapper.cpp
     libs/template/TemplateEngine.cpp
     libs/profile/ProfileManager.cpp
     libs/user/User.cpp
@@ -117,12 +118,15 @@ target_compile_options(containercpd PRIVATE
     -Wpedantic
 )
 
+find_package(SQLite3 REQUIRED)
+
 target_link_libraries(containercpd PRIVATE
     cares
     curl
     ssl
     crypto
     crypt
+    SQLite::SQLite3
 )
 
 # CLI client binary (thin)
