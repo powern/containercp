@@ -1,0 +1,2 @@
+1|apache-php-default|web_server|apache|docker|/etc/containercp/templates/web/apache-php-default.conf.template|Default Apache PHP profile|1|1
+2|nginx-php-default|web_server|nginx|docker|/etc/containercp/templates/web/nginx-php-default.conf.template|Default Nginx PHP profile|1|0

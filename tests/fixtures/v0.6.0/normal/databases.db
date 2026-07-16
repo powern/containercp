@@ -1,0 +1,2 @@
+1|example_db|example_user|s3cur3_p@ss|mariadb|10.11|1|1|1
+2|test_db|test_user|another_pass_123|mariadb|10.11|1|2|1

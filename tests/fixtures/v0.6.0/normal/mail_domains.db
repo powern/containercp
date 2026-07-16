@@ -1,0 +1,2 @@
+1|local|example.com|1|1|1||dkim|||0|0
+2|external|test.org|3|2|1|postmaster@test.org|dkim|v=DKIM1; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCq|relay.test.org:587|10|5

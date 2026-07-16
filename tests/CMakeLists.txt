@@ -1,5 +1,6 @@
 add_executable(containercp_tests
     main.cpp
+    test_fixture_loader.cpp
     test_validator.cpp
     test_managers.cpp
     test_access.cpp
@@ -101,6 +102,10 @@ target_compile_options(containercp_tests PRIVATE
     -Wall
     -Wextra
     -Wpedantic
+)
+
+target_compile_definitions(containercp_tests PRIVATE
+    TEST_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures"
 )
 
 target_link_libraries(containercp_tests PRIVATE

@@ -1,0 +1,2 @@
+1|1|1|example-com-20260701.tar.gz|manual|1048576|2026-07-01T00:00:00Z|completed|/srv/containercp/backups/example-com-20260701.tar.gz|gzip
+2|2|1|test-org-20260701.tar.gz|manual|2097152|2026-07-01T01:00:00Z|completed|/srv/containercp/backups/test-org-20260701.tar.gz|gzip

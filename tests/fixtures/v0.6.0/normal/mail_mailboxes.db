@@ -1,0 +1,2 @@
+1|1|admin|{SHA512-CRYPT}$6$placeholderhash|0|0|1|Admin User||1|2026-07-01T00:00:00Z|2026-07-01T00:00:00Z|2026-07-01T00:00:00Z
+2|1|noreply|{SHA512-CRYPT}$6$anotherplaceholder|0|0|1|No Reply|forward@other.com|0|2026-07-01T00:00:00Z|2026-07-01T00:00:00Z|2026-07-01T00:00:00Z

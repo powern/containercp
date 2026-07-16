@@ -1,0 +1,2 @@
+1|example.com|1|nginx|/srv/containercp/proxy/sites/example.com.conf|site-1-web:80|1|active
+2|test.org|2|nginx|/srv/containercp/proxy/sites/test.org.conf|site-2-web:80|1|active

@@ -1,0 +1,2 @@
+1|admin|1000|/srv/containercp/users/admin|/usr/sbin/nologin|1
+2|developer|1001|/srv/containercp/users/developer|/bin/bash|1
