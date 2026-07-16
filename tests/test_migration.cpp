@@ -4,6 +4,7 @@
 #include "runtime/CommandExecutor.h"
 
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <sys/stat.h>
@@ -762,4 +763,314 @@ TEST_CASE("VestaSiteImporter marker - legacy missing files_imported/sql_pending"
     CHECK(m.files_status == "pending");
     CHECK(m.sql_status == "pending");
     std::remove(tp.c_str()); std::system(("rm -rf " + sd).c_str());
+}
+
+// ============================================================
+// SQLite Migration Engine tests
+// ============================================================
+// These tests verify the MigrationEngine class used for versioned
+// SQLite schema migrations. They are independent of the VestaCP
+// import tests above.
+
+#include "storage/SQLiteWrapper.h"
+#include "storage/MigrationEngine.h"
+
+#include <chrono>
+#include <thread>
+
+namespace {
+
+std::string mig_db_path(const std::string& name) {
+    return (std::filesystem::temp_directory_path() / name).string();
+}
+
+void mig_cleanup(const std::string& path) {
+    std::filesystem::remove(path);
+    std::filesystem::remove(path + "-wal");
+    std::filesystem::remove(path + "-shm");
+}
+
+containercp::storage::Migration make_migration(int version,
+                                                const std::string& name,
+                                                const std::string& sql) {
+    containercp::storage::Migration m;
+    m.version = version;
+    m.name = name;
+    m.up = [sql](containercp::storage::SQLiteDB& db, std::string& diag) -> bool {
+        if (!db.exec(sql)) {
+            diag = db.error_message();
+            return false;
+        }
+        return true;
+    };
+    return m;
+}
+
+} // anonymous namespace
+
+TEST_CASE("MigrationEngine ensure_meta_tables creates tables") {
+    auto path = mig_db_path("containercp_test_meta.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        containercp::storage::MigrationEngine eng;
+        CHECK_FALSE(db.exec("SELECT 1 FROM schema_migrations LIMIT 1"));
+        CHECK(eng.migrate(db));
+        CHECK(db.exec("SELECT 1 FROM schema_migrations LIMIT 1"));
+        CHECK(db.exec("SELECT 1 FROM storage_meta LIMIT 1"));
+    }
+    mig_cleanup(path);
+}
+
+TEST_CASE("MigrationEngine first migration from 0 to 1") {
+    auto path = mig_db_path("containercp_test_v1.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        containercp::storage::MigrationEngine eng;
+        eng.register_migration(make_migration(1, "create_test_table",
+                                               "CREATE TABLE test_v1 (id INTEGER)"));
+
+        CHECK(eng.migrate(db));
+        CHECK(eng.current_version(db) == 1);
+        CHECK(db.exec("INSERT INTO test_v1 VALUES (1)"));
+    }
+    mig_cleanup(path);
+}
+
+TEST_CASE("MigrationEngine two sequential migrations") {
+    auto path = mig_db_path("containercp_test_v2.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        containercp::storage::MigrationEngine eng;
+        eng.register_migration(make_migration(1, "create_t1",
+                                               "CREATE TABLE t1 (id INTEGER)"));
+        eng.register_migration(make_migration(2, "create_t2",
+                                               "CREATE TABLE t2 (id INTEGER)"));
+
+        CHECK(eng.migrate(db));
+        CHECK(eng.current_version(db) == 2);
+        CHECK(db.exec("INSERT INTO t1 VALUES (1)"));
+        CHECK(db.exec("INSERT INTO t2 VALUES (1)"));
+    }
+    mig_cleanup(path);
+}
+
+TEST_CASE("MigrationEngine repeated migrate is no-op") {
+    auto path = mig_db_path("containercp_test_repeat.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        containercp::storage::MigrationEngine eng;
+        eng.register_migration(make_migration(1, "create_t1",
+                                               "CREATE TABLE t1 (id INTEGER)"));
+
+        CHECK(eng.migrate(db));
+        CHECK(eng.current_version(db) == 1);
+        CHECK(eng.migrate(db));
+        CHECK(eng.current_version(db) == 1);
+    }
+    mig_cleanup(path);
+}
+
+TEST_CASE("MigrationEngine checksum mismatch detection") {
+    auto path = mig_db_path("containercp_test_checksum.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        containercp::storage::MigrationEngine eng1;
+        eng1.register_migration(make_migration(1, "create_t1",
+                                                "CREATE TABLE t1 (id INTEGER)"));
+        CHECK(eng1.migrate(db));
+
+        containercp::storage::MigrationEngine eng2;
+        eng2.register_migration(make_migration(1, "different_name",
+                                                "CREATE TABLE t2 (id INTEGER)"));
+        CHECK_FALSE(eng2.migrate(db));
+        CHECK_FALSE(eng2.last_error().empty());
+        CHECK(eng2.last_error().find("checksum mismatch") != std::string::npos);
+    }
+    mig_cleanup(path);
+}
+
+TEST_CASE("MigrationEngine failed migration is recorded") {
+    auto path = mig_db_path("containercp_test_failed.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        containercp::storage::MigrationEngine eng;
+        containercp::storage::Migration m;
+        m.version = 1;
+        m.name = "failing_migration";
+        m.up = [](containercp::storage::SQLiteDB&, std::string& diag) -> bool {
+            diag = "intentional failure";
+            return false;
+        };
+        eng.register_migration(std::move(m));
+
+        CHECK_FALSE(eng.migrate(db));
+        CHECK_FALSE(eng.last_error().empty());
+        CHECK(eng.last_error().find("intentional failure") != std::string::npos);
+
+        CHECK(db.prepare("SELECT status FROM schema_migrations WHERE version = 1"));
+        CHECK(db.step());
+        CHECK(db.column_text(0) == "failed");
+    }
+    mig_cleanup(path);
+}
+
+TEST_CASE("MigrationEngine failed migration prevents retry") {
+    auto path = mig_db_path("containercp_test_noretry.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        {
+            containercp::storage::MigrationEngine eng;
+            containercp::storage::Migration m;
+            m.version = 1;
+            m.name = "failing";
+            m.up = [](containercp::storage::SQLiteDB&, std::string& diag) -> bool {
+                diag = "fail";
+                return false;
+            };
+            eng.register_migration(std::move(m));
+            CHECK_FALSE(eng.migrate(db));
+        }
+
+        {
+            containercp::storage::MigrationEngine eng;
+            containercp::storage::Migration m2;
+            m2.version = 1;
+            m2.name = "failing";
+            m2.up = [](containercp::storage::SQLiteDB&, std::string& diag) -> bool {
+                diag = "fail";
+                return false;
+            };
+            eng.register_migration(std::move(m2));
+            CHECK_FALSE(eng.migrate(db));
+            CHECK(eng.last_error().find("previously failed") != std::string::npos);
+        }
+    }
+    mig_cleanup(path);
+}
+
+TEST_CASE("MigrationEngine interrupted migration retries") {
+    auto path = mig_db_path("containercp_test_interrupted.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        REQUIRE(db.exec("CREATE TABLE IF NOT EXISTS schema_migrations ("
+                        "version INTEGER PRIMARY KEY,"
+                        "name TEXT NOT NULL,"
+                        "checksum TEXT NOT NULL,"
+                        "started_at TEXT NOT NULL,"
+                        "completed_at TEXT,"
+                        "status TEXT NOT NULL DEFAULT 'pending',"
+                        "diagnostics TEXT)"));
+        REQUIRE(db.exec("INSERT INTO schema_migrations "
+                        "(version, name, checksum, started_at, status) "
+                        "VALUES (1, 'interrupted', 'abc', '2026-01-01T00:00:00Z', 'running')"));
+
+        containercp::storage::MigrationEngine eng;
+        containercp::storage::Migration m;
+        m.version = 1;
+        m.name = "interrupted";
+        m.up = [](containercp::storage::SQLiteDB& db2, std::string&) -> bool {
+            return db2.exec("CREATE TABLE recovered (id INTEGER)");
+        };
+        eng.register_migration(std::move(m));
+
+        CHECK(eng.migrate(db));
+        CHECK(eng.current_version(db) == 1);
+        CHECK(db.exec("INSERT INTO recovered VALUES (1)"));
+    }
+    mig_cleanup(path);
+}
+
+TEST_CASE("MigrationEngine storage_meta keys") {
+    auto path = mig_db_path("containercp_test_meta_keys.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        containercp::storage::MigrationEngine eng;
+        CHECK(eng.migrate(db));
+
+        CHECK(db.exec("INSERT INTO storage_meta VALUES ('schema_version', '1')"));
+        CHECK(db.prepare("SELECT value FROM storage_meta WHERE key = 'schema_version'"));
+        CHECK(db.step());
+        CHECK(db.column_text(0) == "1");
+    }
+    mig_cleanup(path);
+}
+
+TEST_CASE("MigrationEngine duplicate version skipped silently") {
+    auto path = mig_db_path("containercp_test_dup.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        {
+            containercp::storage::MigrationEngine eng;
+            eng.register_migration(make_migration(1, "create_t1",
+                                                   "CREATE TABLE t1 (id INTEGER)"));
+            CHECK(eng.migrate(db));
+            CHECK(eng.current_version(db) == 1);
+        }
+
+        {
+            containercp::storage::MigrationEngine eng;
+            eng.register_migration(make_migration(1, "create_t1",
+                                                   "CREATE TABLE t1 (id INTEGER)"));
+            CHECK(eng.migrate(db));
+        }
+
+        {
+            containercp::storage::MigrationEngine eng;
+            eng.register_migration(make_migration(1, "different_name",
+                                                   "CREATE TABLE t2 (id INTEGER)"));
+            CHECK_FALSE(eng.migrate(db));
+        }
+    }
+    mig_cleanup(path);
+}
+
+TEST_CASE("MigrationEngine out-of-order registration works") {
+    auto path = mig_db_path("containercp_test_order.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        containercp::storage::MigrationEngine eng;
+        eng.register_migration(make_migration(2, "second",
+                                               "CREATE TABLE t2 (id INTEGER)"));
+        eng.register_migration(make_migration(1, "first",
+                                               "CREATE TABLE t1 (id INTEGER)"));
+
+        CHECK(eng.migrate(db));
+        CHECK(eng.current_version(db) == 2);
+        CHECK(db.exec("INSERT INTO t1 VALUES (1)"));
+        CHECK(db.exec("INSERT INTO t2 VALUES (1)"));
+    }
+    mig_cleanup(path);
 }

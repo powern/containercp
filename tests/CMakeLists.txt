@@ -1,6 +1,7 @@
 add_executable(containercp_tests
     main.cpp
     test_fixture_loader.cpp
+    test_migration.cpp
     test_validator.cpp
     test_managers.cpp
     test_access.cpp
@@ -57,6 +58,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/storage/Storage.cpp
     ${CMAKE_SOURCE_DIR}/libs/storage/SQLiteWrapper.cpp
     ${CMAKE_SOURCE_DIR}/libs/storage/ConnectionPool.cpp
+    ${CMAKE_SOURCE_DIR}/libs/storage/MigrationEngine.cpp
     ${CMAKE_SOURCE_DIR}/libs/node/Node.cpp
     ${CMAKE_SOURCE_DIR}/libs/core/Resource.cpp
     ${CMAKE_SOURCE_DIR}/libs/api/Router.cpp
