@@ -2,9 +2,11 @@
 #include "storage/SQLiteStorage.h"
 #include "storage/SchemaMigrations.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 
 #include "doctest/doctest.h"
 
@@ -437,6 +439,142 @@ TEST_CASE("sqlite_ready true when explicit mode init succeeds") {
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
         containercp::storage::Storage s(dir, opts);
         CHECK(s.sqlite_ready());
+    }
+    tclean(dir);
+}
+
+// ============================================================
+// Shutdown/write synchronization tests
+// ============================================================
+
+TEST_CASE("WriteGuard prevents shutdown completion") {
+    auto dir = tdir("wg_shutdown_lock");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+
+    std::thread shutdown_thread;
+
+    // Scope limits WriteGuard lifetime so it is released before join
+    {
+        containercp::storage::WriteGuard wg(pool);
+        REQUIRE(wg.is_valid());
+
+        shutdown_thread = std::thread([&] { pool.shutdown(); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        CHECK(wg.db().exec("SELECT 1"));
+    }  // wg destroyed → mutex released → shutdown proceeds
+
+    shutdown_thread.join();
+    tclean(dir);
+}
+
+TEST_CASE("WriteGuard cannot activate after shutdown starts") {
+    auto dir = tdir("wg_no_activate");
+    tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::ConnectionPool pool;
+        init_pool(pool, dir);
+
+        pool.shutdown();
+
+        // After shutdown, WriteGuard should be invalid
+        containercp::storage::WriteGuard wg(pool);
+        CHECK_FALSE(wg.is_valid());
+    }
+    tclean(dir);
+}
+
+TEST_CASE("TransactionGuard prevents shutdown completion") {
+    auto dir = tdir("tg_shutdown_lock");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+
+    std::thread shutdown_thread;
+
+    {
+        containercp::storage::TransactionGuard txn(pool);
+        REQUIRE(txn.is_active());
+
+        shutdown_thread = std::thread([&] { pool.shutdown(); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        CHECK(txn.db().exec("SELECT 1"));
+        CHECK(txn.commit());
+    }  // txn destroyed → mutex released → shutdown proceeds
+
+    shutdown_thread.join();
+    tclean(dir);
+}
+
+TEST_CASE("TransactionGuard rollback then shutdown") {
+    auto dir = tdir("tg_rollback_shutdown");
+    tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::ConnectionPool pool;
+        init_pool(pool, dir);
+
+        {
+            containercp::storage::TransactionGuard txn(pool);
+            REQUIRE(txn.is_active());
+            REQUIRE(txn.db().exec("INSERT INTO mail_config VALUES ('k', 'v')"));
+        }
+
+        pool.shutdown();
+        CHECK(pool.is_shutdown());
+    }
+    tclean(dir);
+}
+
+TEST_CASE("TransactionGuard cannot activate after shutdown starts") {
+    auto dir = tdir("tg_no_activate");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    pool.shutdown();
+
+    containercp::storage::TransactionGuard txn(pool);
+    CHECK_FALSE(txn.is_active());
+    tclean(dir);
+}
+
+TEST_CASE("Backup and shutdown do not race") {
+    auto dir = tdir("bk_shutdown");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+
+    std::string backup_path = dir + "backup.db";
+    std::thread backup_thread([&] { pool.backup(backup_path); });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    // shutdown will block until backup's WriteGuard completes
+    // (backup holds WriteGuard → lock_write → shutdown waits)
+    // Then backup's WriteGuard releases → shutdown acquires lock →
+    // destroys write_conn_ → backup's WriteGuard was already
+    // destroyed so the DB handle is gone after shutdown.
+    // This test verifies no crash or deadlock.
+    pool.shutdown();
+    backup_thread.join();
+    tclean(dir);
+}
+
+TEST_CASE("Shutdown then reinitialize still works") {
+    auto dir = tdir("shutdown_reinit");
+    tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::ConnectionPool pool;
+        init_pool(pool, dir);
+        pool.shutdown();
+
+        CHECK(pool.initialize(dir + "test.db"));
+
+        containercp::storage::WriteGuard wg(pool);
+        CHECK(wg.is_valid());
+        CHECK(wg.db().exec("SELECT 1"));
     }
     tclean(dir);
 }

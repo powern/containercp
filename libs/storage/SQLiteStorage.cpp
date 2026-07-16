@@ -12,8 +12,15 @@ namespace containercp::storage {
 TransactionGuard::TransactionGuard(ConnectionPool& pool)
     : pool_(pool) {
     pool_.lock_write();
-    SQLiteDB* db = pool_.try_write_connection();
-    active_ = (db != nullptr && db->is_open() && db->exec("BEGIN IMMEDIATE"));
+    // Check shutdown state while holding the mutex.
+    if (pool_.is_shutdown()) {
+        pool_.unlock_write();
+        return;
+    }
+    db_ = pool_.try_write_connection();
+    if (db_ && db_->is_open() && db_->exec("BEGIN IMMEDIATE")) {
+        active_ = true;
+    }
     if (!active_) {
         pool_.unlock_write();
     }
@@ -22,7 +29,7 @@ TransactionGuard::TransactionGuard(ConnectionPool& pool)
 TransactionGuard::~TransactionGuard() {
     if (!active_) return;  // never activated — lock already released
     if (!committed_) {
-        pool_.try_write_connection()->exec("ROLLBACK");
+        db_->exec("ROLLBACK");
     }
     pool_.unlock_write();
 }
@@ -33,11 +40,15 @@ bool TransactionGuard::is_active() const {
 
 bool TransactionGuard::commit() {
     if (!active_ || committed_) return committed_;
-    if (pool_.try_write_connection()->exec("COMMIT")) {
+    if (db_->exec("COMMIT")) {
         committed_ = true;
         return true;
     }
     return false;
+}
+
+SQLiteDB& TransactionGuard::db() const {
+    return *db_;
 }
 
 // ============================================================
@@ -57,14 +68,10 @@ static bool replace_all(
     TransactionGuard txn(pool);
     if (!txn.is_active()) return false;
 
-    // Obtain write connection through the guard's locked scope.
-    // try_write_connection is safe here because the guard holds the lock.
-    SQLiteDB* db = pool.try_write_connection();
-    if (!db) return false;
+    // The guard holds a stable db_ pointer — use txn.db() for writes.
+    if (!txn.db().exec(delete_sql)) return false;
 
-    if (!db->exec(delete_sql)) return false;
-
-    if (!bind_each(*db)) return false;
+    if (!bind_each(txn.db())) return false;
 
     return txn.commit();
 }

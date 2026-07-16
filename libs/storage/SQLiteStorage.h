@@ -14,21 +14,20 @@ namespace containercp::storage {
 // RAII transaction guard with fail-closed semantics.
 //
 // Lifecycle:
-//   1. Construction: acquires write lock, executes BEGIN IMMEDIATE.
-//      Check is_active() before proceeding.
-//   2. If active: perform writes.  Every bind/prepare/step return
-//      value must be checked — on failure the guard is marked for
-//      rollback via suppress_commit().
-//   3. Destruction: if active and not committed → ROLLBACK.
-//      If active and committed → no-op.
-//      If never activated → only releases the lock.
+//   Construction: lock write mutex, check shutdown state,
+//     try_write_connection(), BEGIN IMMEDIATE.
+//     If all succeed → is_active() = true, db_ is stable.
+//   Active: perform writes through db().
+//   commit(): COMMIT, mark committed.
+//   Destruction: if active and not committed → ROLLBACK.
+//     Release write mutex.
 //
 // Key rules:
-//   - NEVER auto-commits.  Always rollback by default.
+//   - Rollback by default on destruction.
 //   - Explicit commit() required for persistence.
-//   - suppress_commit() marks for rollback on destruction.
-//   - is_active() returns false if BEGIN IMMEDIATE failed.
-//   - After commit(), the guard is inactive.
+//   - db_ is stored once during construction — no repeated lookup.
+//   - Shutdown cannot destroy write_conn_ while this guard is
+//     active because shutdown() waits for write_mutex_.
 class TransactionGuard {
 public:
     explicit TransactionGuard(ConnectionPool& pool);
@@ -37,28 +36,21 @@ public:
     TransactionGuard(const TransactionGuard&) = delete;
     TransactionGuard& operator=(const TransactionGuard&) = delete;
 
-    // Returns true if BEGIN IMMEDIATE succeeded and a transaction
-    // is active.  No writes should proceed if this returns false.
     bool is_active() const;
-
-    // Commit explicitly.  Returns true on success.
-    // On failure, marks for rollback and returns false.
-    // Safe to call multiple times (idempotent after success).
     bool commit();
+
+    // Access the transaction-scoped write connection.
+    // Valid only when is_active() returns true.
+    SQLiteDB& db() const;
 
 private:
     ConnectionPool& pool_;
+    SQLiteDB* db_ = nullptr;
     bool active_ = false;
     bool committed_ = false;
 };
 
 // SQLite-backed storage for a subset of resource types.
-//
-// Used internally by Storage in explicit SQLite mode
-// (CoreStorageBackend::SqlitePhase5).  Not active in default TXT mode.
-//
-// Uses ConnectionPool (write via WriteGuard + TransactionGuard,
-// reads via ReadLease).  No direct SQLite C API calls.
 class SQLiteStorage {
 public:
     explicit SQLiteStorage(ConnectionPool& pool);

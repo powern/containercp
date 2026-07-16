@@ -14,13 +14,16 @@ namespace containercp::storage {
 class ConnectionPool;
 
 // RAII write guard.  Locks the write mutex on construction, unlocks
-// on destruction.  Provides access to the serialized write connection.
+// on destruction.  After shutdown has started, is_valid() returns
+// false and db() must not be used.
 //
 // Usage:
 //   {
 //       WriteGuard wg(pool);
-//       wg.db().exec("INSERT ...");
-//   }  // mutex released automatically
+//       if (wg.is_valid()) {
+//           wg.db().exec("INSERT ...");
+//       }
+//   }
 class WriteGuard {
 public:
     explicit WriteGuard(ConnectionPool& pool);
@@ -29,25 +32,22 @@ public:
     WriteGuard(const WriteGuard&) = delete;
     WriteGuard& operator=(const WriteGuard&) = delete;
 
+    // Returns true if the lock was acquired and shutdown had not
+    // yet started.  If false, no write operation may proceed.
+    bool is_valid() const;
+
+    // Access the write connection.  Only valid when is_valid()
+    // returns true.
     SQLiteDB& db();
 
 private:
     ConnectionPool& pool_;
+    SQLiteDB* db_ = nullptr;
+    bool locked_ = false;
 };
 
 // RAII read lease.  Acquires a read connection on construction,
-// returns it on destruction.  Move-constructible (transfers the
-// connection to the new lease), but NOT move-assignable (prevents
-// cross-pool ownership bugs since the pool reference cannot be
-// reseated).
-//
-// Usage:
-//   {
-//       ReadLease rl(pool);
-//       if (rl.is_valid()) {
-//           rl->exec("SELECT ...");
-//       }
-//   }  // connection returned automatically on destruction
+// returns it on destruction.  Move-constructible only.
 class ReadLease {
 public:
     explicit ReadLease(ConnectionPool& pool);
@@ -68,30 +68,23 @@ private:
     SQLiteDB* db_ = nullptr;
 };
 
-// Bounded connection pool for the Storage subsystem.
+class TransactionGuard;
+
+// Bounded connection pool.
 //
-// Architecture:
-//   - One serialized write connection protected by a std::mutex.
-//   - Exactly kReadPoolSize (3) read connections for concurrent reads.
+// Write connection lifecycle (lock order):
+//   1. shutdown_ flag is set atomically (prevent new acquisitions).
+//   2. Read lease count is drained (existing leases complete).
+//   3. write_mutex_ is locked (waits for active WriteGuard,
+//      TransactionGuard, or backup).
+//   4. write_conn_ is closed and reset.
+//   5. write_mutex_ is unlocked.
+//   6. Read connections are closed.
 //
-// Ownership:
-//   - The pool owns all connections.
-//   - Callers lease read connections temporarily and must return them.
-//   - The write connection is accessed exclusively through WriteGuard.
-//
-// Lease lifetime:
-//   - A read lease is valid until return_read() is called.
-//   - shutdown() waits indefinitely for all outstanding leases to
-//     be returned.  Connections are never destroyed while leased.
-//   - After shutdown(), lease_read() returns nullptr.
-//
-// Thread-safety:
-//   - Write mutex serializes all write operations.
-//   - Lease acquisition increments the outstanding count BEFORE
-//     checking shutdown state, ensuring shutdown can never complete
-//     while a lease is being acquired.
-//   - Read pool uses atomic compare-exchange for lease assignment.
-//   - Read connections do not block each other.
+// Any WriteGuard or TransactionGuard that acquires write_mutex_ after
+// shutdown_ is set will detect the flag, release the mutex, and become
+// inactive.  This guarantees: once shutdown() acquires write_mutex_,
+// no new write operation can interleave.
 class ConnectionPool {
 public:
     static constexpr int kReadPoolSize = 3;
@@ -104,14 +97,11 @@ public:
 
     bool initialize(const std::string& db_path);
 
-    // === Write connection (use via WriteGuard) ===
+    // === Write connection ===
+    // write_connection() requires an active WriteGuard or
+    // TransactionGuard to be valid.  Undefined behaviour if
+    // called without one.
     SQLiteDB& write_connection();
-
-    // Safe write-connection access.  Returns nullptr if the pool was
-    // never initialized, initialization failed, or the pool was shut
-    // down.  Prefer this over write_connection() when the pool
-    // lifecycle is not guaranteed.
-    SQLiteDB* try_write_connection();
 
     // === Read connections ===
     SQLiteDB* lease_read();
@@ -130,6 +120,11 @@ private:
 
     void lock_write();
     void unlock_write();
+
+    // Returns nullptr if write_conn_ is null (uninitialized,
+    // init failed, or shut down).  Requires write_mutex_ to be
+    // held by the caller (ensures pointer stability).
+    SQLiteDB* try_write_connection();
 
     bool open_connection(SQLiteDB& conn, const std::string& path);
 

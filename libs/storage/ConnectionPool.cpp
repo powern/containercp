@@ -15,14 +15,64 @@ namespace containercp::storage {
 WriteGuard::WriteGuard(ConnectionPool& pool)
     : pool_(pool) {
     pool_.lock_write();
+    // Check shutdown state while holding the mutex.
+    // If shutdown has started, do not proceed — release and mark invalid.
+    if (pool_.shutdown_.load()) {
+        pool_.unlock_write();
+        return;
+    }
+    db_ = pool_.try_write_connection();
+    locked_ = (db_ != nullptr);
+    if (!locked_) {
+        pool_.unlock_write();
+    }
 }
 
 WriteGuard::~WriteGuard() {
-    pool_.unlock_write();
+    if (locked_) {
+        pool_.unlock_write();
+    }
+}
+
+bool WriteGuard::is_valid() const {
+    return locked_;
 }
 
 SQLiteDB& WriteGuard::db() {
-    return pool_.write_connection();
+    return *db_;
+}
+
+// ============================================================
+// ReadLease
+// ============================================================
+
+ReadLease::ReadLease(ConnectionPool& pool)
+    : pool_(pool)
+    , db_(pool_.lease_read()) {
+}
+
+ReadLease::~ReadLease() {
+    if (db_) {
+        pool_.return_read(db_);
+    }
+}
+
+ReadLease::ReadLease(ReadLease&& other) noexcept
+    : pool_(other.pool_)
+    , db_(other.db_) {
+    other.db_ = nullptr;
+}
+
+SQLiteDB& ReadLease::db() const {
+    return *db_;
+}
+
+SQLiteDB* ReadLease::operator->() const {
+    return db_;
+}
+
+bool ReadLease::is_valid() const {
+    return db_ != nullptr;
 }
 
 // ============================================================
@@ -82,10 +132,8 @@ void ConnectionPool::unlock_write() {
 }
 
 SQLiteDB* ConnectionPool::lease_read() {
-    // Increment outstanding count FIRST, before checking shutdown.
-    // This ensures shutdown() can never see zero leases while a new
-    // lease is being acquired.  If we detect shutdown after incrementing,
-    // we decrement and return nullptr.
+    if (shutdown_.load()) return nullptr;
+
     outstanding_leases_.fetch_add(1);
 
     if (shutdown_.load()) {
@@ -93,7 +141,6 @@ SQLiteDB* ConnectionPool::lease_read() {
         return nullptr;
     }
 
-    // Round-robin with compare-exchange
     for (int attempt = 0; attempt < kReadPoolSize * 2; ++attempt) {
         int idx = read_next_.fetch_add(1) % kReadPoolSize;
         bool expected = false;
@@ -103,7 +150,6 @@ SQLiteDB* ConnectionPool::lease_read() {
         std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
 
-    // Linear scan fallback
     for (int i = 0; i < kReadPoolSize * 50; ++i) {
         if (shutdown_.load()) {
             outstanding_leases_.fetch_sub(1);
@@ -122,39 +168,6 @@ SQLiteDB* ConnectionPool::lease_read() {
     return nullptr;
 }
 
-// ============================================================
-// ReadLease
-// ============================================================
-
-ReadLease::ReadLease(ConnectionPool& pool)
-    : pool_(pool)
-    , db_(pool_.lease_read()) {
-}
-
-ReadLease::~ReadLease() {
-    if (db_) {
-        pool_.return_read(db_);
-    }
-}
-
-ReadLease::ReadLease(ReadLease&& other) noexcept
-    : pool_(other.pool_)
-    , db_(other.db_) {
-    other.db_ = nullptr;
-}
-
-SQLiteDB& ReadLease::db() const {
-    return *db_;
-}
-
-SQLiteDB* ReadLease::operator->() const {
-    return db_;
-}
-
-bool ReadLease::is_valid() const {
-    return db_ != nullptr;
-}
-
 void ConnectionPool::return_read(SQLiteDB* db) {
     if (!db) return;
     for (int i = 0; i < kReadPoolSize; ++i) {
@@ -167,21 +180,29 @@ void ConnectionPool::return_read(SQLiteDB* db) {
 }
 
 void ConnectionPool::shutdown() {
+    // 1. Mark pool as shutting down — prevents new leases and
+    //    new WriteGuard/TransactionGuard acquisitions.
     shutdown_.store(true);
 
-    // Wait for ALL outstanding leases to be returned.
-    // Never destroy connections while a caller holds a lease.
-    // Deterministic shutdown is more important than fast shutdown.
+    // 2. Wait for all outstanding read leases to be returned.
     while (outstanding_leases_.load() > 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    // All leases are returned. Safe to close connections now.
+    // 3. Acquire write mutex — waits for any active WriteGuard,
+    //    TransactionGuard, or backup operation to finish.
+    //    After acquiring, no write guard is active, so it is safe
+    //    to close the write connection.
+    lock_write();
+
     if (write_conn_) {
         write_conn_->close();
         write_conn_.reset();
     }
 
+    unlock_write();
+
+    // 4. Close read connections (all leases returned).
     for (int i = 0; i < kReadPoolSize; ++i) {
         if (read_conns_[i]) {
             read_conns_[i]->close();
@@ -195,7 +216,10 @@ bool ConnectionPool::is_shutdown() const {
 }
 
 bool ConnectionPool::backup(const std::string& dest_path) {
+    // backup acquires the write mutex (via WriteGuard), preventing
+    // shutdown from destroying write_conn_ during backup.
     WriteGuard wg(*this);
+    if (!wg.is_valid()) return false;
     SQLiteDB& src = wg.db();
 
     sqlite3* dest_db = nullptr;
