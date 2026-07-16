@@ -249,6 +249,23 @@ struct TestObserver {
 - This interface must **never** be used by production logic, REST API,
   CLI, configuration, GUI, managers, or business code.
 
+### Test cleanup rules
+
+Tests using `TestObserver` must follow these rules to prevent
+use-after-free:
+
+1. **Always release blocked callbacks** before destroying the
+   `ConnectionPool` or synchronization state. Set the release flag and
+   call `cv.notify_all()`.
+2. **Join every worker thread**. Never `detach()` a thread that
+   references local test state.
+3. **Clear observer callbacks** (`= nullptr`) after threads are joined.
+4. **Timeouts are deadlock safeguards**, not valid completion paths. If
+   a `cv.wait_for` timeout fires, the test must fail after safe cleanup.
+5. **RAII cleanup objects** must release callbacks and join threads in
+   their destructor, and must be declared after the `ConnectionPool` and
+   synchronization state they reference (so they are destroyed first).
+
 ### `on_shutdown_awaiting_write_mutex`
 
 Called at a precise point in `shutdown()`:

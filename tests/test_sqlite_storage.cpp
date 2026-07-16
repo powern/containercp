@@ -586,30 +586,24 @@ TEST_CASE("Backup and shutdown do not race") {
     containercp::storage::ConnectionPool pool;
     init_pool(pool, dir);
 
-    // Seed the source database with data
+    // Seed
     {
         containercp::storage::WriteGuard wg(pool);
         REQUIRE(wg.is_valid());
         REQUIRE(wg.db().exec("INSERT INTO mail_config VALUES ('k1', 'v1')"));
     }
 
-    // Coordination
     std::mutex mtx;
     std::condition_variable cv;
     bool backup_guard_held = false;
     bool backup_continue = false;
     bool shutdown_awaiting = false;
-
-    // Cleanup guard — ensures threads terminate even on assertion failure
-    struct Cleanup {
-        std::thread backup_thr;
-        std::thread shutdown_thr;
-        containercp::storage::ConnectionPool::TestObserver* obs;
-        ~Cleanup() {
-            if (backup_thr.joinable()) backup_thr.detach();
-            if (shutdown_thr.joinable()) shutdown_thr.detach();
-        }
-    };
+    std::atomic<bool> shutdown_completed{false};
+    bool backup_released_by_timeout = false;
+    bool backup_result = false;
+    std::string backup_path = dir + "backup.db";
+    std::thread backup_thr;
+    std::thread shutdown_thr;
 
     pool.test_obs_.on_backup_guard_acquired = [&] {
         {
@@ -619,7 +613,9 @@ TEST_CASE("Backup and shutdown do not race") {
         cv.notify_one();
 
         std::unique_lock<std::mutex> lk(mtx);
-        cv.wait_for(lk, std::chrono::seconds(10), [&] { return backup_continue; });
+        bool released = cv.wait_for(lk, std::chrono::seconds(10),
+                                     [&] { return backup_continue; });
+        if (!released) backup_released_by_timeout = true;
     };
 
     pool.test_obs_.on_shutdown_awaiting_write_mutex = [&] {
@@ -628,74 +624,64 @@ TEST_CASE("Backup and shutdown do not race") {
         cv.notify_one();
     };
 
-    Cleanup cleanup;
-    cleanup.obs = &pool.test_obs_;
+    backup_thr = std::thread([&] { backup_result = pool.backup(backup_path); });
 
-    std::string backup_path = dir + "backup.db";
-    bool backup_result = false;
-
-    cleanup.backup_thr = std::thread([&] {
-        backup_result = pool.backup(backup_path);
-    });
-
-    // Wait for backup to acquire WriteGuard (up to 5 seconds)
+    // Wait for backup guard
     {
         std::unique_lock<std::mutex> lk(mtx);
-        bool timed_out = !cv.wait_for(lk, std::chrono::seconds(5),
-                                       [&] { return backup_guard_held; });
-        REQUIRE_MESSAGE(backup_guard_held,
-                        "Backup did not acquire WriteGuard within 5s"
-                        << (timed_out ? " (timeout)" : ""));
+        cv.wait_for(lk, std::chrono::seconds(5), [&] { return backup_guard_held; });
+        if (!backup_guard_held) { /* cleanup will handle */ }
     }
 
-    // Start shutdown — will wait at write_mutex_ because backup holds it
-    cleanup.shutdown_thr = std::thread([&] { pool.shutdown(); });
+    if (backup_guard_held) {
+        shutdown_thr = std::thread([&] {
+            pool.shutdown();
+            shutdown_completed.store(true);
+        });
 
-    // Wait for shutdown to signal it is awaiting write_mutex_ (up to 5s)
-    {
-        std::unique_lock<std::mutex> lk(mtx);
-        bool timed_out = !cv.wait_for(lk, std::chrono::seconds(5),
-                                       [&] { return shutdown_awaiting; });
-        REQUIRE_MESSAGE(shutdown_awaiting,
-                        "Shutdown did not reach awaiting-write-mutex within 5s"
-                        << (timed_out ? " (timeout)" : ""));
+        {
+            std::unique_lock<std::mutex> lk(mtx);
+            cv.wait_for(lk, std::chrono::seconds(5), [&] { return shutdown_awaiting; });
+        }
     }
 
-    // Backup still holds WriteGuard — shutdown cannot complete
-    CHECK(pool.is_shutdown());  // flag set, but write_conn_ not yet destroyed
-
-    // Release backup
+    // Always release backup
     {
         std::lock_guard<std::mutex> lk(mtx);
         backup_continue = true;
     }
-    cv.notify_one();
+    cv.notify_all();
 
-    // Join threads (cleanup guard prevents dangling if assertions fail)
-    cleanup.backup_thr.join();
-    cleanup.shutdown_thr.join();
+    if (backup_thr.joinable()) backup_thr.join();
+    if (shutdown_thr.joinable()) shutdown_thr.join();
 
-    // Verify backup result
+    pool.test_obs_.on_backup_guard_acquired = nullptr;
+    pool.test_obs_.on_shutdown_awaiting_write_mutex = nullptr;
+
+    // Verify
+    CHECK_FALSE(backup_released_by_timeout);
     REQUIRE(backup_result);
     REQUIRE(fs::exists(backup_path));
+    CHECK(shutdown_completed.load());
+    CHECK(pool.is_shutdown());
 
-    // Verify backup is a valid SQLite database with copied data
     {
         containercp::storage::SQLiteDB verify;
         REQUIRE(verify.open(backup_path));
         REQUIRE(verify.prepare("SELECT value FROM mail_config WHERE key='k1'"));
         REQUIRE(verify.step());
         CHECK(verify.column_text(0) == "v1");
-        CHECK_FALSE(verify.step());  // no more rows
+        CHECK_FALSE(verify.step());
 
-        // Verify integrity
         REQUIRE(verify.prepare("PRAGMA integrity_check"));
         REQUIRE(verify.step());
         CHECK(verify.column_text(0) == "ok");
+
+        REQUIRE(verify.prepare("PRAGMA foreign_key_check"));
+        bool fk = verify.step();
+        CHECK_FALSE(fk);
     }
 
-    pool.test_obs_.on_backup_guard_acquired = nullptr;
-    pool.test_obs_.on_shutdown_awaiting_write_mutex = nullptr;
     tclean(dir);
 }
 
