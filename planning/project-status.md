@@ -471,7 +471,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 
 ---
 
-## v0.6.0-rc1 — DNS and Mail Release Candidate
+## v0.6.0 — DNS and Mail Stable Release
 
 | Item | Status | Notes |
 |------|--------|-------|
@@ -481,9 +481,11 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | Build: clean Release | ✅ | Zero warnings |
 | Deterministic tests | ✅ | 242 passed |
 | Full test suite | ✅ | 257 passed |
-| Manual UI acceptance | 🟡 | In progress |
-| 24-hour stability test | ⏭️ | Deferred to RC2 |
-| Production deployment | ⛔ | Not yet |
+| Manual UI acceptance | ✅ | Browser verification complete |
+| 24-hour stability test | ⏭️ | Deferred to future release |
+| Production deployment | ⛔ | Not yet deployed |
+
+**Release notes:** `docs/release-notes-v0.6.0.md`
 
 **Completed epics:** ARCH-003, ARCH-004, ARCH-005, ARCH-006, ARCH-007
 
@@ -498,4 +500,4 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 ---
 
 *Last updated: 2026-07-16*
-*Current Version: v0.6.0-rc1*
+*Current Version: v0.6.0*

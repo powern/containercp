@@ -60,7 +60,7 @@ Browser / CLI / curl
 
 ## Project Status
 
-**Version 0.6.0 Release Candidate 1** — DNS and Mail release.
+**Version 0.6.0** — DNS and Mail release. See `docs/release-notes-v0.6.0.md`.
 
 | Subsystem | Status | Completeness |
 |-----------|--------|-------------|

@@ -6,6 +6,17 @@ Format: date | commit | summary
 
 ---
 
+## v0.6.0 — 2026-07-16
+
+**Stable release.** See `docs/release-notes-v0.6.0.md` for full release notes.
+
+**Validation:** All 94 items across 5 stages passed. 242 deterministic tests.
+257 full suite. Zero compiler warnings. Browser verification complete.
+
+**RC1:** `v0.6.0-rc1` (2026-07-16) — validated and promoted to stable.
+
+---
+
 ## v0.6.0-rc1 — 2026-07-16
 
 **Release scope:** DNS and Mail release. First release candidate for v0.6.

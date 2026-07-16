@@ -84,7 +84,7 @@ Before planning any new Epic, read these documents IN ORDER:
 - [x] Final validation — *merged into v0.6.0-rc1*
 - [x] Release v0.5.0 — *superseded by v0.6.0-rc1*
 
-## Version 0.6 — DNS and Mail ✅ (v0.6.0-rc1)
+## Version 0.6 — DNS and Mail ✅ (v0.6.0)
 
 - [x] ARCH-006: Mail module — MailDomain, Mailbox, Alias, Docker stack, DKIM
 - [x] ARCH-007: DNS Diagnostics — DnsCheckService, Health Score, Admin Panel
