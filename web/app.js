@@ -885,7 +885,7 @@ async function loadDomains(p) {
         {label:'SSL', html: r => domainSslBadge(r.ssl_status)},
         {label:'Health', html: r => {
           const dnsData = DnsCache.get(r.domain, 'A,AAAA,MX');
-          const hs = window.computeDomainHealthScore(r, dnsData);
+          const hs = window.computeDomainHealthScore({domainRow: r, rootDns: dnsData});
           return window.healthGradeBadge(hs.score, hs.grade);
         }},
         {label:'Actions', html: r => {
@@ -928,8 +928,8 @@ async function loadDomains(p) {
       if (cells.length < 9) return;
       const dnsData = DnsCache.get(r.domain);
       cells[4].innerHTML = window.dnsStatusBadge(dnsData ? dnsData.overall_status : null);
-      const hs = window.computeDomainHealthScore(r, dnsData);
-      cells[8].innerHTML = window.healthGradeBadge(hs.score, hs.grade);
+      var hs2 = window.computeDomainHealthScore({domainRow: r, rootDns: dnsData});
+      cells[8].innerHTML = window.healthGradeBadge(hs2.score, hs2.grade);
     });
 
     // Progressive Runtime loading (separate pass, concurrency=3)
@@ -1007,9 +1007,9 @@ async function loadDomainDetail(p, domainId) {
       }
     }
 
-    // Compute health score (use any cached DNS data — A,AAAA,MX,TXT is the most common)
+    // Compute health score (use any cached DNS data)
     const dnsCacheData = DnsCache.get(domainRow.domain, 'A,AAAA,MX') || DnsCache.get(domainRow.domain, 'A,AAAA,MX,TXT') || DnsCache.get(domainRow.domain, 'A,TXT');
-    const hs = window.computeDomainHealthScore(domainRow, dnsCacheData);
+    const hs = window.computeDomainHealthScore({domainRow: domainRow, rootDns: dnsCacheData});
     const hsBadge = window.healthGradeBadge(hs.score, hs.grade);
 
     p.innerHTML = `
@@ -2152,8 +2152,119 @@ function getEvidenceSteps(type, domain) {
   return [...shared, ...(map[type] || ['Add or update the DNS record with the correct value.', 'Click Check Again to verify.'])];
 }
 function loadDomainHealth() {
-  const content = document.getElementById('domain-tab-content');
-  if (content) content.innerHTML = '<div class="empty-state">Health tab — coming in Phase 8</div>';
+  var content = document.getElementById('domain-tab-content');
+  if (!content) return;
+  var dd = window._domainDetailData;
+  if (!dd) { content.innerHTML = '<div class="empty-state">No data</div>'; return; }
+
+  content.innerHTML = '<div class="empty-state">Computing health score...</div>';
+
+  var domain = dd.domainRow.domain;
+  var ctx = {
+    domainRow: dd.domainRow,
+    mailDomain: dd.mailDomain,
+    serverHostname: dd.serverHostname,
+  };
+
+  // Fetch DNS data if not already cached
+  (async function() {
+    ctx.rootDns = DnsCache.get(domain, 'A,AAAA,MX,TXT,NS,CAA')
+      || DnsCache.get(domain, 'A,AAAA,MX,TXT')
+      || await fetchDnsForFqdn(domain, 'A,AAAA,MX,TXT,NS,CAA');
+
+    if (dd.mailDomain && dd.mailDomain.dkim_public_key_dns) {
+      var sel = dd.mailDomain.dkim_selector || 'dkim';
+      ctx.dkimDns = DnsCache.get(sel + '._domainkey.' + domain, 'TXT')
+        || await fetchDnsForFqdn(sel + '._domainkey.' + domain, 'TXT');
+    }
+    if (dd.mailDomain) {
+      ctx.dmarcDns = DnsCache.get('_dmarc.' + domain, 'TXT')
+        || await fetchDnsForFqdn('_dmarc.' + domain, 'TXT');
+      ctx.mtaStsDns = DnsCache.get('_mta-sts.' + domain, 'TXT')
+        || await fetchDnsForFqdn('_mta-sts.' + domain, 'TXT');
+    }
+
+    // SSL status from domainRow
+    ctx.sslStatus = dd.domainRow.ssl_status;
+
+    // Runtime status
+    if (dd.domainRow.site_id > 0) {
+      try {
+        var rtRes = await api('/api/runtime/' + dd.domainRow.site_id);
+        if (rtRes && rtRes.data) ctx.runtimeStatus = rtRes.data.web;
+      } catch(e) {}
+    }
+
+    var result = window.computeDomainHealthScore(ctx);
+    var ts = new Date().toLocaleTimeString();
+
+    if (result.score == null) {
+      content.innerHTML = '<div class="empty-state">No checks applicable for this domain.</div>';
+      return;
+    }
+
+    // Build breakdown rows
+    var rows = '';
+    for (var i = 0; i < result.breakdown.length; i++) {
+      var c = result.breakdown[i];
+      var clsLabel = c.cls === 'req' ? 'Required' : c.cls === 'rec' ? 'Recommended' : 'Informational';
+      var clsBadge = c.cls === 'req' ? 'badge-err' : c.cls === 'rec' ? 'badge-warn' : 'badge-info';
+      var scoreStr = c.weight > 0 ? (c.ok ? c.weight : '0') + '/' + c.weight : '—';
+      rows += '<tr>'
+        + '<td><span class="badge ' + clsBadge + '">' + clsLabel + '</span></td>'
+        + '<td>' + esc(c.label) + '</td>'
+        + '<td>' + window.statusBadge(c.status || 'N/A', c.status === 'Match' || c.status === 'Active' || c.status === 'Running' ? 'badge-ok' : c.status === 'N/A' ? 'badge-info' : c.status === 'Unexpected' || c.status === 'Expiring' ? 'badge-warn' : 'badge-err') + '</td>'
+        + '<td>' + c.weight + '</td>'
+        + '<td>' + (c.ok ? c.weight : '0') + '</td>'
+        + '<td>' + scoreStr + '</td>'
+        + '</tr>';
+    }
+
+    var gradeColor = result.grade === 'Excellent' ? 'badge-ok' : result.grade === 'Good' ? 'badge-info' : result.grade === 'Fair' ? 'badge-warn' : 'badge-err';
+
+    content.innerHTML = '<div id="health-tab-content">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">'
+      + '<h3 style="font-size:14px;">Health Score</h3>'
+      + '<button class="btn btn-sm" data-health-check-again="1">Check Again</button></div>'
+
+      + '<div class="card" style="text-align:center;margin-bottom:16px;">'
+      + '<div style="font-size:48px;font-weight:700;">' + result.score + '</div>'
+      + '<div style="font-size:14px;">/ 100</div>'
+      + '<div style="margin-top:8px;"><span class="badge ' + gradeColor + '" style="font-size:14px;padding:4px 16px;">' + esc(result.grade) + '</span></div>'
+      + '<div style="margin-top:8px;font-size:12px;color:var(--text3);">' + result.earnedWeight + ' of ' + result.applicableWeight + ' weighted points</div>'
+      + '<div style="margin-top:4px;font-size:11px;color:var(--text3);">Last checked: ' + ts + '</div></div>'
+
+      + '<h3 style="font-size:13px;margin-bottom:8px;">Check Details</h3>'
+      + '<div class="table-wrap">'
+      + '<table><thead><tr><th>Class</th><th>Check</th><th>Status</th><th>Weight</th><th>Earned</th><th>Score</th></tr></thead>'
+      + '<tbody>' + rows + '</tbody></table></div></div>';
+
+    attachHealthDelegation();
+  })().catch(function(err) {
+    console.error('Health tab failed', err);
+    content.innerHTML = '<div class="empty-state">Failed to load Health tab</div>';
+  });
+}
+
+function attachHealthDelegation() {
+  var root = document.getElementById('health-tab-content');
+  if (!root) return;
+  root.addEventListener('click', function(e) {
+    if (e.target.closest('[data-health-check-again]')) {
+      var dd = window._domainDetailData;
+      if (dd) {
+        var d = dd.domainRow.domain;
+        DnsCache.clear(d);
+        DnsCache.clear('_dmarc.' + d);
+        DnsCache.clear('_mta-sts.' + d);
+        if (dd.mailDomain && dd.mailDomain.dkim_public_key_dns) {
+          var sel = dd.mailDomain.dkim_selector || 'dkim';
+          DnsCache.clear(sel + '._domainkey.' + d);
+        }
+      }
+      loadDomainHealth();
+    }
+  });
 }
 
 function copyText(text, msg) {

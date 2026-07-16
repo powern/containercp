@@ -242,25 +242,114 @@ window.compareDmarcRecords = function(recommended, published) {
 // Context-aware Health Score (frontend-calculated for v1).
 // TODO: Move to backend as single source of truth.
 //       Frontend should only display API-provided health_score field.
-window.computeDomainHealthScore = function(r, dnsResult) {
-  const checks = [];
-  checks.push({id:'a', label:'A record', weight:25,
-    ok: dnsResult && dnsResult.per_type &&
-        dnsResult.per_type.some(pt => pt.type === 'A' && pt.status_code === 'NOERROR')});
-  if (r.mail_domain_id && r.mail_domain_id > 0 && r.dkim_generated) {
-    checks.push({id:'dkim', label:'DKIM', weight:10,
-      ok: dnsResult && dnsResult.per_type &&
-          dnsResult.per_type.some(pt => pt.type === 'TXT' && pt.status_code === 'NOERROR')});
+// Returns: {score, grade, breakdown, earnedWeight, applicableWeight}
+window.computeDomainHealthScore = function(ctx) {
+  // ctx = { domainRow, mailDomain, rootDns, dkimDns, dmarcDns, sslStatus, runtimeStatus, serverHostname }
+  var row = ctx.domainRow || {};
+  var mail = ctx.mailDomain;
+  var rdns = ctx.rootDns;
+  var ssl = ctx.sslStatus || row.ssl_status;
+  var rt = ctx.runtimeStatus;
+  var expectedIpv4 = rdns && rdns.expected_ipv4 || '';
+  var expectedIpv6 = rdns && rdns.expected_ipv6 || '';
+  var spf = rdns && rdns.spf_analysis;
+  var hasMail = !!(mail && mail.mode && mail.mode !== 'disabled');
+
+  function getRecs(typeName) {
+    if (!rdns || !Array.isArray(rdns.per_type)) return [];
+    var pt = rdns.per_type.find(function(x) { return x && x.type === typeName; });
+    if (!pt || !Array.isArray(pt.records)) return [];
+    return pt.records;
   }
-  if (r.site_id !== undefined) {
-    checks.push({id:'ssl', label:'SSL', weight:20,
-      ok: r.ssl_status === 'Active' || r.ssl_status === 'Expiring'});
+
+  // Weight mapping for status → earned weight
+  function earnedWeight(isOk) { return isOk ? 1 : 0; }
+
+  var checks = [];
+
+  // 1. A record (required, 25)
+  var aRecs = getRecs('A');
+  var aOk = aRecs.length > 0 && aRecs.some(function(r) { return r.value === expectedIpv4; });
+  var aStatus = expectedIpv4 ? (aOk ? 'Match' : 'Mismatch') : (aRecs.length > 0 ? 'Unexpected' : 'N/A');
+  checks.push({id:'a', label:'A record', cls:'req', weight:25, status:aStatus, ok:!!aOk && !!expectedIpv4});
+
+  // 2. AAAA (informational, 0)
+  var aaaaRecs = getRecs('AAAA');
+  checks.push({id:'aaaa', label:'AAAA (IPv6)', cls:'info', weight:0, status:expectedIpv6 ? (aaaaRecs.length ? 'Match' : 'Not Published') : 'N/A', ok:true});
+
+  // 3–6. Mail checks
+  if (hasMail) {
+    // 3. MX (required, 12)
+    var mxRecs = getRecs('MX');
+    var expectedMx = window.getExpectedMxTarget(mail, ctx.serverHostname || '');
+    var mxMatch = expectedMx && mxRecs.some(function(r) { return window.normalizeHostname(r.value) === window.normalizeHostname(expectedMx); });
+    checks.push({id:'mx', label:'MX', cls:'req', weight:12, status:expectedMx ? (mxMatch ? 'Match' : (mxRecs.length ? 'Mismatch' : 'Not Published')) : 'N/A', ok:!!mxMatch});
+
+    // 4. SPF (required, 10)
+    var spfMatch = spf && spf.match === 'match';
+    checks.push({id:'spf', label:'SPF', cls:'req', weight:10, status:spf ? (spf.match === 'match' ? 'Match' : spf.match === 'not_published' ? 'Not Published' : 'Mismatch') : 'N/A', ok:!!spfMatch});
+
+    // 5. DKIM (required, 10 — only if generated)
+    var dkimKey = mail.dkim_public_key_dns || '';
+    if (dkimKey) {
+      var dkimRecs = [];
+      if (ctx.dkimDns) {
+        var dkimPt = ctx.dkimDns.per_type && ctx.dkimDns.per_type.find(function(x) { return x && x.type === 'TXT'; });
+        if (dkimPt && Array.isArray(dkimPt.records)) dkimRecs = dkimPt.records;
+      }
+      var dkimPub = dkimRecs.length > 0 ? dkimRecs[0].value : '';
+      var dkimMatch = dkimPub && window.normalizeDnsValue(dkimPub) === window.normalizeDnsValue(dkimKey);
+      checks.push({id:'dkim', label:'DKIM', cls:'req', weight:10, status:dkimKey ? (dkimMatch ? 'Match' : (dkimPub ? 'Mismatch' : 'Not Published')) : 'N/A', ok:!!dkimMatch});
+    }
+
+    // 6. DMARC (required, 8)
+    var dmarcPub = '';
+    if (ctx.dmarcDns) {
+      var dmarcPt = ctx.dmarcDns.per_type && ctx.dmarcDns.per_type.find(function(x) { return x && x.type === 'TXT'; });
+      if (dmarcPt && Array.isArray(dmarcPt.records) && dmarcPt.records.length > 0) dmarcPub = dmarcPt.records[0].value;
+    }
+    var dmarcMatch = dmarcPub && window.normalizeDmarcValue('v=DMARC1; p=none;') === window.normalizeDmarcValue(dmarcPub);
+    checks.push({id:'dmarc', label:'DMARC', cls:'req', weight:8, status:dmarcPub ? (dmarcMatch ? 'Match' : 'Mismatch') : 'Not Published', ok:!!dmarcMatch});
+
+    // Recommended mail checks (only for local-primary)
+    if (mail.mode === 'local-primary') {
+      // MTA-STS (recommended, 3)
+      var stsPub = '';
+      if (ctx.mtaStsDns) {
+        var stsPt = ctx.mtaStsDns.per_type && ctx.mtaStsDns.per_type.find(function(x) { return x && x.type === 'TXT'; });
+        if (stsPt && Array.isArray(stsPt.records) && stsPt.records.length > 0) stsPub = stsPt.records[0].value;
+      }
+      checks.push({id:'mta-sts', label:'MTA-STS', cls:'rec', weight:3, status:stsPub ? 'Match' : 'Not Published', ok:!!stsPub});
+
+      // Autodiscover (recommended, 3)
+      checks.push({id:'autodiscover', label:'Autodiscover', cls:'rec', weight:3, status:'N/A', ok:true}); // informational for v1
+    }
   }
-  const applicable = checks.filter(c => c.weight > 0);
-  if (applicable.length === 0) return {score: null, grade: 'N/A'};
-  const totalWeight = applicable.reduce((s, c) => s + c.weight, 0);
-  const earned = applicable.reduce((s, c) => s + (c.ok ? c.weight : 0), 0);
-  const score = Math.round((earned / totalWeight) * 100);
-  const grade = window.healthGradeLabel(score);
-  return {score, grade};
+
+  // 7. SSL Certificate (required, 20) — applicable for ALL domains (site_id >= 0)
+  var sslOk = ssl === 'Active' || ssl === 'Expiring';
+  var sslLabel = ssl || 'Unknown';
+  checks.push({id:'ssl', label:'SSL Certificate', cls:'req', weight:20, status:sslLabel, ok:sslOk});
+
+  // 8. Runtime Status (required, 15) — only for site_id > 0
+  if (row.site_id > 0) {
+    var rtOk = rt === 'Running' || rt === 'Healthy';
+    checks.push({id:'runtime', label:'Runtime Status', cls:'req', weight:15, status:rt || 'N/A', ok:rtOk});
+  }
+
+  // 9. CAA (recommended, 2)
+  var caaRecs = getRecs('CAA');
+  var caaFound = caaRecs.length > 0;
+  checks.push({id:'caa', label:'CAA', cls:'rec', weight:2, status:caaFound ? 'Match' : 'Not Published', ok:caaFound});
+
+  // Compute score
+  var applicable = checks.filter(function(c) { return c.weight > 0; });
+  if (applicable.length === 0) return {score: null, grade: 'N/A', breakdown: [], earnedWeight: 0, applicableWeight: 0};
+
+  var totalWeight = applicable.reduce(function(s, c) { return s + c.weight; }, 0);
+  var earnedWeight = applicable.reduce(function(s, c) { return s + (c.ok ? c.weight : 0); }, 0);
+  var score = Math.round((earnedWeight / totalWeight) * 100);
+  var grade = window.healthGradeLabel(score);
+
+  return {score: score, grade: grade, breakdown: checks, earnedWeight: earnedWeight, applicableWeight: totalWeight};
 };
