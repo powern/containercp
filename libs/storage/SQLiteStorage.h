@@ -6,11 +6,15 @@
 #include "ConnectionPool.h"
 #include "database/Database.h"
 #include "domain/Domain.h"
+#include "mail/MailAlias.h"
+#include "mail/MailDomain.h"
+#include "mail/Mailbox.h"
 #include "node/Node.h"
 #include "php/PhpVersion.h"
 #include "profile/Profile.h"
 #include "proxy/ReverseProxy.h"
 #include "site/Site.h"
+#include "ssl/SslCertificate.h"
 #include "user/User.h"
 
 #include <string>
@@ -98,6 +102,30 @@ public:
     // Access grants (child table, FK-dependent)
     void save_access_grants(const std::vector<access::AccessGrant>& grants);
     std::vector<access::AccessGrant> load_access_grants();
+
+    // SSL certificate metadata
+    void save_ssl_certificates(const std::vector<ssl::SslCertificate>& certs);
+    std::vector<ssl::SslCertificate> load_ssl_certificates();
+
+    // Mail domains (referenced by mailboxes/aliases — uses parent sync)
+    void save_mail_domains(const std::vector<mail::MailDomain>& domains);
+    std::vector<mail::MailDomain> load_mail_domains();
+
+    // Mail mailboxes (child table, FK → mail_domains)
+    void save_mailboxes(const std::vector<mail::Mailbox>& mailboxes);
+    std::vector<mail::Mailbox> load_mailboxes();
+
+    // Mail aliases (child table, FK → mail_domains)
+    void save_mail_aliases(const std::vector<mail::MailAlias>& aliases);
+    std::vector<mail::MailAlias> load_mail_aliases();
+
+    // Mail module state (key in mail_config)
+    void save_mail_module_state(const std::string& state);
+    std::string load_mail_module_state();
+
+    // Mail smarthost config (key in mail_config)
+    void save_mail_smarthost(const std::string& config);
+    std::string load_mail_smarthost();
 
 private:
     ConnectionPool& pool_;

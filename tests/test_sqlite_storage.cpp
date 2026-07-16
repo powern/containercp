@@ -1785,6 +1785,263 @@ TEST_CASE("Phase6c existing phases still work") {
     tclean(dir);
 }
 
+// ============================================================
+// Phase 7 — Mail and SSL metadata SQLite storage tests
+// ============================================================
+
+// --- SSL certificates ---
+
+TEST_CASE("SQLiteStorage ssl_certificates empty") {
+    auto dir = tdir("s7_ssl_empty"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    CHECK(ss.load_ssl_certificates().empty());
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage ssl_certificates round trip") {
+    auto dir = tdir("s7_ssl_rt"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::ssl::SslCertificate c;
+    c.id = 1; c.domain_id = 1; c.domain = "example.com";
+    c.provider = "letsencrypt"; c.status = "active";
+    c.certificate_path = "/ssl/1/fullchain.pem";
+    c.key_path = "/ssl/1/privkey.pem";
+    c.auto_renew = true; c.https_enabled = true;
+    c.version = 2;
+    ss.save_ssl_certificates({c});
+    auto loaded = ss.load_ssl_certificates();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].id == 1); CHECK(loaded[0].domain == "example.com");
+    CHECK(loaded[0].provider == "letsencrypt"); CHECK(loaded[0].status == "active");
+    CHECK(loaded[0].certificate_path == "/ssl/1/fullchain.pem");
+    CHECK(loaded[0].key_path == "/ssl/1/privkey.pem");
+    CHECK(loaded[0].auto_renew); CHECK(loaded[0].https_enabled);
+    CHECK(loaded[0].version == 2); CHECK(loaded[0].name == "example.com");
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage ssl_certificates no PEM content") {
+    auto dir = tdir("s7_ssl_nopem"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::ssl::SslCertificate c;
+    c.id = 1; c.domain = "t.com";
+    c.certificate_path = "/path.pem";
+    ss.save_ssl_certificates({c});
+    containercp::storage::ReadLease rl(pool);
+    REQUIRE(rl.is_valid());
+    // Check no PEM header lives in any column
+    REQUIRE(rl->prepare("SELECT sql FROM sqlite_master WHERE type='table' "
+                        "AND name='ssl_certificates'"));
+    REQUIRE(rl->step());
+    std::string ddl = rl->column_text(0);
+    CHECK(ddl.find("BEGIN CERTIFICATE") == std::string::npos);
+    CHECK(ddl.find("BEGIN PRIVATE KEY") == std::string::npos);
+    tclean(dir);
+}
+
+// --- Mail domains ---
+
+TEST_CASE("SQLiteStorage mail_domains empty") {
+    auto dir = tdir("s7_md_empty"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    CHECK(ss.load_mail_domains().empty());
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage mail_domains round trip and sentinels") {
+    auto dir = tdir("s7_md_rt"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::mail::MailDomain m;
+    m.id = 1; m.domain_name = "example.com";
+    m.mode = containercp::mail::MailDomainMode::LocalPrimary;
+    m.domain_id = 0; m.site_id = 0;  // sentinels
+    m.dkim_selector = "dkim2024";
+    m.dkim_private_key_path = "/dkim/example.com/private.pem";
+    m.dkim_public_key_dns = "v=DKIM1; p=abc";
+    m.max_mailboxes = 10; m.max_aliases = 5;
+    m.catch_all = "postmaster@example.com";
+    m.enabled = true;
+    ss.save_mail_domains({m});
+    auto loaded = ss.load_mail_domains();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].domain_name == "example.com");
+    CHECK(loaded[0].mode == containercp::mail::MailDomainMode::LocalPrimary);
+    CHECK(loaded[0].domain_id == 0); CHECK(loaded[0].site_id == 0);
+    CHECK(loaded[0].dkim_selector == "dkim2024");
+    CHECK(loaded[0].dkim_private_key_path == "/dkim/example.com/private.pem");
+    CHECK(loaded[0].dkim_public_key_dns == "v=DKIM1; p=abc");
+    CHECK(loaded[0].max_mailboxes == 10); CHECK(loaded[0].max_aliases == 5);
+    CHECK(loaded[0].catch_all == "postmaster@example.com");
+    CHECK(loaded[0].enabled); CHECK(loaded[0].name == "example.com");
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage mail_domains all modes") {
+    auto dir = tdir("s7_md_modes"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    auto modes = {
+        containercp::mail::MailDomainMode::Disabled,
+        containercp::mail::MailDomainMode::LocalPrimary,
+        containercp::mail::MailDomainMode::ExternalRelay,
+        containercp::mail::MailDomainMode::SplitM365,
+    };
+    int id = 0;
+    for (auto mode : modes) {
+        containercp::mail::MailDomain m;
+        m.id = static_cast<uint64_t>(++id);
+        m.domain_name = "m" + std::to_string(id) + ".com";
+        m.mode = mode;
+        if (mode == containercp::mail::MailDomainMode::ExternalRelay ||
+            mode == containercp::mail::MailDomainMode::SplitM365) {
+            m.relay_host = "relay.m" + std::to_string(id) + ".com";
+        }
+        ss.save_mail_domains({m});
+        auto loaded = ss.load_mail_domains();
+        REQUIRE(loaded.size() == 1);
+        CHECK(loaded[0].mode == mode);
+        ss.save_mail_domains({});
+    }
+    tclean(dir);
+}
+
+// --- Mail mailboxes ---
+
+TEST_CASE("SQLiteStorage mail_mailboxes round trip and FK") {
+    auto dir = tdir("s7_mb_rt"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    // Create parent mail domain
+    containercp::mail::MailDomain md;
+    md.id = 1; md.domain_name = "example.com";
+    ss.save_mail_domains({md});
+
+    containercp::mail::Mailbox mb;
+    mb.id = 1; mb.domain_id = 1;
+    mb.local_part = "admin";
+    mb.password_hash = "$6$test";
+    mb.quota_bytes = 1073741824;
+    mb.display_name = "Admin User";
+    mb.forward_to = "admin@other.com";
+    mb.spam_enabled = true;
+    mb.enabled = true;
+    ss.save_mailboxes({mb});
+    auto loaded = ss.load_mailboxes();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].local_part == "admin");
+    CHECK(loaded[0].password_hash == "$6$test");
+    CHECK(loaded[0].display_name == "Admin User");
+    CHECK(loaded[0].name == "admin");
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage mail_mailboxes FK: missing domain fails") {
+    auto dir = tdir("s7_mb_nodom"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::mail::Mailbox mb;
+    mb.id = 1; mb.domain_id = 999; mb.local_part = "x";
+    ss.save_mailboxes({mb});
+    CHECK(ss.load_mailboxes().empty());
+    tclean(dir);
+}
+
+// --- Mail aliases ---
+
+TEST_CASE("SQLiteStorage mail_aliases round trip") {
+    auto dir = tdir("s7_ma_rt"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::mail::MailDomain md;
+    md.id = 1; md.domain_name = "example.com";
+    ss.save_mail_domains({md});
+
+    containercp::mail::MailAlias a;
+    a.id = 1; a.domain_id = 1;
+    a.source_local_part = "info";
+    a.destination = "admin@example.com";
+    a.enabled = true;
+    ss.save_mail_aliases({a});
+    auto loaded = ss.load_mail_aliases();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].source_local_part == "info");
+    CHECK(loaded[0].destination == "admin@example.com");
+    CHECK(loaded[0].name == "info");
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage mail_aliases FK: missing domain fails") {
+    auto dir = tdir("s7_ma_nodom"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::mail::MailAlias a;
+    a.id = 1; a.domain_id = 999;
+    a.source_local_part = "x"; a.destination = "y@z.com";
+    ss.save_mail_aliases({a});
+    CHECK(ss.load_mail_aliases().empty());
+    tclean(dir);
+}
+
+// --- Mail config (state + smarthost) ---
+
+TEST_CASE("SQLiteStorage mail_config state round trip") {
+    auto dir = tdir("s7_mc_state"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+
+    CHECK(ss.load_mail_module_state().empty());
+
+    ss.save_mail_module_state("active");
+    CHECK(ss.load_mail_module_state() == "active");
+
+    ss.save_mail_module_state("inactive");
+    CHECK(ss.load_mail_module_state() == "inactive");
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage mail_config state and smarthost coexist") {
+    auto dir = tdir("s7_mc_coexist"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+
+    ss.save_mail_module_state("active");
+    ss.save_mail_smarthost("1|smtp.example.com|587|user|pass");
+
+    CHECK(ss.load_mail_module_state() == "active");
+    CHECK(ss.load_mail_smarthost() == "1|smtp.example.com|587|user|pass");
+
+    // Updating state must not erase smarthost
+    ss.save_mail_module_state("inactive");
+    CHECK(ss.load_mail_module_state() == "inactive");
+    CHECK(ss.load_mail_smarthost() == "1|smtp.example.com|587|user|pass");
+    tclean(dir);
+}
+
+// --- Cross-backend ---
+
+TEST_CASE("Phase7 explicit SQLite mode stores mail/SSL in SQLite") {
+    auto dir = tdir("s7_mode"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::StorageOptions opts;
+        opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        containercp::storage::Storage s(dir, opts);
+        CHECK(s.sqlite_ready());
+
+        containercp::ssl::SslCertificate c;
+        c.id = 1; c.domain = "t.com";
+        s.save_ssl_certificates({c});
+        CHECK_FALSE(fs::exists(dir + "ssl_certificates.db"));
+
+        CHECK(s.load_ssl_certificates().size() == 1);
+    }
+    tclean(dir);
+}
+
 TEST_CASE("Shutdown then reinitialize still works") {
     auto dir = tdir("shutdown_reinit");
     tclean(dir); fs::create_directories(dir);

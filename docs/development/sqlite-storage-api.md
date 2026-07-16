@@ -207,8 +207,8 @@ With explicit SQLite mode:
 
 | Backend | Resources |
 |---------|-----------|
-| SQLite | nodes, php_versions, profiles, users, sites, domains, databases, reverse_proxies, access_users, access_grants |
-| TXT | all other resources |
+| SQLite | nodes, php_versions, profiles, users, sites, domains, databases, reverse_proxies, access_users, access_grants, ssl_certificates, mail_domains, mail_mailboxes, mail_aliases, mail_config |
+| TXT | backups, auth_users, all other resources |
 
 Without explicit SQLite mode (default):
 
@@ -422,6 +422,99 @@ verifying that shutdown cannot proceed and the connection remains valid.
 
 Sentinel 0 is NOT valid for `access_user_id` or `site_id` — both FKs
 enforce existence.
+
+### SslCertificate → `ssl_certificates`
+
+| Field | Column | Notes |
+|-------|--------|-------|
+| `id` | `id` | Preserved |
+| `domain_id` | `domain_id` | No FK — sentinel 0 valid |
+| `domain` | `domain` | |
+| `provider` | `provider` | |
+| `certificate_path` | `certificate_path` | Filesystem path only — no PEM content |
+| `key_path` | `key_path` | Filesystem path only — no key content |
+| `chain_path` | `chain_path` | Filesystem path only |
+| `issued_at` | `issued_at` | |
+| `expires_at` | `expires_at` | |
+| `renew_after` | `renew_after` | |
+| `status` | `status` | |
+| `auto_renew` | `auto_renew` | |
+| `https_enabled` | `https_enabled` | |
+| `redirect_enabled` | `redirect_enabled` | |
+| `domains` | `domains` | SAN domain list |
+| `challenge_type` | `challenge_type` | |
+| `last_error` | `last_error` | |
+| `last_validation` | `last_validation` | |
+| `renew_attempts` | `renew_attempts` | |
+| `version` | `version` | Metadata format version |
+| `name` | — | Set from `domain` on load |
+
+### MailDomain → `mail_domains`
+
+| Field | Column | Notes |
+|-------|--------|-------|
+| `id` | `id` | Preserved |
+| `domain_id` | `domain_id` | No FK — 0 = external domain |
+| `site_id` | `site_id` | No FK — 0 = unlinked |
+| `domain_name` | `domain_name` | |
+| `mode` | `mode` | Via `mail_domain_mode_to/from_string` |
+| `relay_host` | `relay_host` | |
+| `dkim_selector` | `dkim_selector` | |
+| `dkim_private_key_path` | `dkim_private_key_path` | Path only — no key content |
+| `dkim_public_key_dns` | `dkim_public_key_dns` | Public DNS value |
+| `max_mailboxes` | `max_mailboxes` | |
+| `max_aliases` | `max_aliases` | |
+| `catch_all` | `catch_all` | |
+| `enabled` | `enabled` | |
+| `name` | — | Set from `domain_name` on load |
+
+Mail domains are referenced by mailboxes and aliases with FK RESTRICT.
+Uses `sync_parent_rows` (UPSERT + prune) to preserve referenced domains.
+
+### Mailbox → `mail_mailboxes`
+
+| Field | Column | Notes |
+|-------|--------|-------|
+| `id` | `id` | Preserved |
+| `domain_id` | `domain_id` | FK → `mail_domains(id)` RESTRICT |
+| `local_part` | `local_part` | |
+| `password_hash` | `password_hash` | **Sensitive** |
+| `quota_bytes` | `quota_bytes` | |
+| `quota_messages` | `quota_messages` | |
+| `enabled` | `enabled` | |
+| `display_name` | `display_name` | |
+| `forward_to` | `forward_to` | |
+| `spam_enabled` | `spam_enabled` | |
+| `last_login` | `last_login` | |
+| `created_at` | `created_at` | |
+| `updated_at` | `updated_at` | |
+| `name` | — | Set from `local_part` on load |
+
+### MailAlias → `mail_aliases`
+
+| Field | Column | Notes |
+|-------|--------|-------|
+| `id` | `id` | Preserved |
+| `domain_id` | `domain_id` | FK → `mail_domains(id)` RESTRICT |
+| `source_local_part` | `source_local_part` | |
+| `destination` | `destination` | Full email address |
+| `enabled` | `enabled` | |
+| `created_at` | `created_at` | |
+| `updated_at` | `updated_at` | |
+| `name` | — | Set from `source_local_part` on load |
+
+### Mail config (module state + smarthost)
+
+Both stored in `mail_config` key-value table with persistent keys:
+
+| Key | Value | Persistence method |
+|-----|-------|-------------------|
+| `module_state` | `"active"` or `"inactive"` | `INSERT OR REPLACE` per key |
+| `smarthost` | Pipe-delimited config string | `INSERT OR REPLACE` per key |
+
+Smarthost format: `enabled|host|port|username|password`
+
+Each key is updated independently — saving one does not erase the other.
 
 ### ReverseProxy → `reverse_proxies`
 

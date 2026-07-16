@@ -425,6 +425,8 @@ std::vector<backup::Backup> Storage::load_backups() {
 }
 
 void Storage::save_ssl_certificates(const std::vector<ssl::SslCertificate>& certs) {
+    if (use_sqlite()) { sqlite_.save_ssl_certificates(certs); return; }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) return;
     std::ofstream file(ssl_certificates_file());
     for (const auto& c : certs) {
         file << c.id << "|" << c.domain_id << "|" << c.domain << "|"
@@ -438,6 +440,8 @@ void Storage::save_ssl_certificates(const std::vector<ssl::SslCertificate>& cert
 }
 
 std::vector<ssl::SslCertificate> Storage::load_ssl_certificates() {
+    if (use_sqlite()) return sqlite_.load_ssl_certificates();
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) return {};
     std::vector<ssl::SslCertificate> certs;
     std::ifstream file(ssl_certificates_file());
     if (!file.is_open()) {
@@ -505,6 +509,8 @@ std::vector<ssl::SslCertificate> Storage::load_ssl_certificates() {
 }
 
 void Storage::save_mail_domains(const std::vector<mail::MailDomain>& domains) {
+    if (use_sqlite()) { sqlite_.save_mail_domains(domains); return; }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) return;
     std::ofstream file(mail_domains_file());
     for (const auto& m : domains) {
         file << m.id << "|"
@@ -523,6 +529,8 @@ void Storage::save_mail_domains(const std::vector<mail::MailDomain>& domains) {
 }
 
 std::vector<mail::MailDomain> Storage::load_mail_domains() {
+    if (use_sqlite()) return sqlite_.load_mail_domains();
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) return {};
     std::vector<mail::MailDomain> domains;
     std::ifstream file(mail_domains_file());
     if (!file.is_open()) {
@@ -572,6 +580,8 @@ std::vector<mail::MailDomain> Storage::load_mail_domains() {
 }
 
 void Storage::save_mailboxes(const std::vector<mail::Mailbox>& mailboxes) {
+    if (use_sqlite()) { sqlite_.save_mailboxes(mailboxes); return; }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) return;
     std::ofstream file(mailboxes_file());
     for (const auto& mb : mailboxes) {
         file << mb.id << "|"
@@ -591,6 +601,8 @@ void Storage::save_mailboxes(const std::vector<mail::Mailbox>& mailboxes) {
 }
 
 std::vector<mail::Mailbox> Storage::load_mailboxes() {
+    if (use_sqlite()) return sqlite_.load_mailboxes();
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) return {};
     std::vector<mail::Mailbox> mailboxes;
     std::ifstream file(mailboxes_file());
     if (!file.is_open()) {
@@ -622,6 +634,8 @@ std::vector<mail::Mailbox> Storage::load_mailboxes() {
 }
 
 void Storage::save_mail_aliases(const std::vector<mail::MailAlias>& aliases) {
+    if (use_sqlite()) { sqlite_.save_mail_aliases(aliases); return; }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) return;
     std::ofstream file(mail_aliases_file());
     for (const auto& a : aliases) {
         file << a.id << "|"
@@ -635,6 +649,8 @@ void Storage::save_mail_aliases(const std::vector<mail::MailAlias>& aliases) {
 }
 
 std::vector<mail::MailAlias> Storage::load_mail_aliases() {
+    if (use_sqlite()) return sqlite_.load_mail_aliases();
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) return {};
     std::vector<mail::MailAlias> aliases;
     std::ifstream file(mail_aliases_file());
     if (!file.is_open()) {
@@ -660,11 +676,15 @@ std::vector<mail::MailAlias> Storage::load_mail_aliases() {
 }
 
 void Storage::save_mail_module_state(const std::string& state) {
+    if (use_sqlite()) { sqlite_.save_mail_module_state(state); return; }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) return;
     std::ofstream file(mail_state_file());
     file << state << "\n";
 }
 
 std::string Storage::load_mail_module_state() {
+    if (use_sqlite()) return sqlite_.load_mail_module_state();
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) return {};
     std::ifstream file(mail_state_file());
     std::string state;
     if (file.is_open()) {
@@ -674,11 +694,15 @@ std::string Storage::load_mail_module_state() {
 }
 
 void Storage::save_mail_smarthost(const std::string& config) {
+    if (use_sqlite()) { sqlite_.save_mail_smarthost(config); return; }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) return;
     std::ofstream file(mail_smarthost_file());
     file << config << "\n";
 }
 
 std::string Storage::load_mail_smarthost() {
+    if (use_sqlite()) return sqlite_.load_mail_smarthost();
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) return {};
     std::ifstream file(mail_smarthost_file());
     std::string config;
     if (file.is_open()) {
