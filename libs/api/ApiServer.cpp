@@ -355,7 +355,47 @@ bool ApiServer::start() {
 
     router_.add("GET", "/api/sites", [&s](const Request&) {
         Response r;
-        r.body = JsonFormatter::success(JsonFormatter::sites(s.sites().list()));
+        auto all_sites = s.sites().list();
+
+        // Build enriched JSON array starting with virtual admin-panel site
+        std::ostringstream json;
+        json << "[";
+        bool first = true;
+
+        // Admin-panel virtual site (site_id=0)
+        std::string hostname = s.config().server_hostname();
+        if (!hostname.empty()) {
+            std::string proxy_upstream;
+            auto* rp = s.reverse_proxies().find_by_domain(hostname);
+            if (rp) proxy_upstream = rp->upstream;
+
+            json << "{\"id\":0"
+                 << ",\"name\":\"ContainerCP Admin\""
+                 << ",\"domain\":\"" << JsonFormatter::escape(hostname) << "\""
+                 << ",\"type\":\"system\""
+                 << ",\"system_role\":\"admin-panel\""
+                 << ",\"proxy_upstream\":\"" << JsonFormatter::escape(proxy_upstream) << "\""
+                 << ",\"web_server\":\"nginx\""
+                 << ",\"node_id\":0"
+                 << ",\"owner\":\"system\""
+                 << ",\"site_id\":0"
+                 << ",\"enabled\":true"
+                 << ",\"can_delete\":false"
+                 << ",\"can_manage_runtime\":false"
+                 << ",\"can_manage_ssl\":true"
+                 << ",\"can_manage_proxy\":true"
+                 << "}";
+            first = false;
+        }
+
+        for (const auto& site : all_sites) {
+            if (!first) json << ",";
+            first = false;
+            json << JsonFormatter::site(site);
+        }
+        json << "]";
+
+        r.body = "{\"success\":true,\"data\":" + json.str() + "}";
         return r;
     });
 
@@ -886,6 +926,13 @@ bool ApiServer::start() {
         if (domain.empty()) {
             r.status_code = 400;
             r.body = "{\"success\":false,\"error\":\"domain required\"}";
+            return r;
+        }
+
+        // Protect admin-panel system site from removal
+        if (domain == s.config().server_hostname()) {
+            r.status_code = 403;
+            r.body = "{\"success\":false,\"error\":\"System site cannot be removed\"}";
             return r;
         }
 

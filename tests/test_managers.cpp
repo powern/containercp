@@ -466,6 +466,59 @@ TEST_CASE("DomainViewService includes admin panel (site_id=0) when server_hostna
     std::system(rm_cmd.c_str());
 }
 
+TEST_CASE("System domain id=0 must not match MailDomain with domain_id=0") {
+    using namespace containercp;
+
+    char tmp[] = "/tmp/containercp_test_mail_collision_XXXXXX";
+    char* ssl_root = mkdtemp(tmp);
+    REQUIRE(ssl_root != nullptr);
+    std::string ssl_root_str(ssl_root);
+
+    domain::DomainManager domains;
+    site::SiteManager sites;
+    ssl::CertificateStore cert_store(logger::Logger::instance(), ssl_root_str);
+
+    mail::MailDomainManager md_mgr;
+    // Create a MailDomain with domain_id=0 (unlinked/external) for unity.softico.ua
+    uint64_t mail_id = md_mgr.create("unity.softico.ua",
+        mail::MailDomainMode::LocalPrimary, 0, 0);
+    CHECK(mail_id > 0);
+
+    // MailDomain lookup by string fqdn should work
+    auto* by_fqdn = md_mgr.find_by_domain("unity.softico.ua");
+    CHECK(by_fqdn != nullptr);
+    CHECK(by_fqdn->domain_name == "unity.softico.ua");
+
+    // MailDomain lookup by string fqdn for admin hostname should NOT match unity
+    auto* admin_mail = md_mgr.find_by_domain("web2.softico.ua");
+    CHECK(admin_mail == nullptr);
+
+    // DomainViewService with admin hostname — mail must NOT be attached
+    proxy::ReverseProxyManager rp_mgr;
+    std::string hostname = "web2.softico.ua";
+    domain::DomainViewService view(logger::Logger::instance(),
+        domains, sites, cert_store, md_mgr, rp_mgr, hostname);
+    std::string json = view.build_enriched_json();
+
+    // Admin panel entry has mail_domain_id=0 (no mail)
+    {
+        auto admin_start = json.find("{\"id\":0");
+        CHECK(admin_start != std::string::npos);
+        std::string admin_obj = json.substr(admin_start);
+        CHECK(json_extract_uint(admin_obj, "mail_domain_id") == 0);
+        CHECK(json_extract_string(admin_obj, "mail_domain_mode") == "");
+    }
+
+    // The unity.softico.ua MailDomain should NOT appear in the admin panel entry
+    CHECK(json.find("unity.softico.ua") == std::string::npos);
+
+    // The unity MailDomain should NOT influence admin panel health checks
+    // (verified by mail_domain_id=0 and mail_domain_mode="" in admin entry)
+
+    std::string rm_cmd = "rm -rf " + ssl_root_str;
+    std::system(rm_cmd.c_str());
+}
+
 #include "mail/MailDomainManager.h"
 
 TEST_CASE("MailDomainManager create/find/list/remove") {

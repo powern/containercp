@@ -386,10 +386,11 @@ async function loadSites(p) {
         {label:'HTTPS',html:r=>`<span data-rt-id="${r.id}" data-rt-service="https" class="badge badge-info">...</span>`},
         {label:'Owner',html:r=>esc(r.owner)},
         {label:'Backend',html:r=>r.web_server==='nginx'?'<span class="badge badge-info">Nginx</span>':'<span class="badge badge-ok">Apache2</span>'},
-        {label:'Actions',html:r=>`<button class="btn-icon" onclick="navigate('site-detail',${r.id})" title="View">&#128065;</button><button class="btn-icon" style="color:var(--red)" title="Remove" onclick="removeSite('${esc(r.domain)}')">&#10005;</button>`}
+        {label:'Actions',html:r=>`<button class="btn-icon" onclick="navigate('site-detail',${r.id})" title="View">&#128065;</button>${r.can_delete!==false?`<button class="btn-icon" style="color:var(--red)" title="Remove" onclick="removeSite('${esc(r.domain)}')">&#10005;</button>`:''}`}
       ], filtered, 'No sites');
-      // Fetch runtime + HTTPS status for each site
+      // Fetch runtime + HTTPS status for each site (skip admin panel)
       filtered.forEach(site => {
+        if (site.id === 0) return;
         api('/api/runtime/' + site.id).then(rt => {
           if (!rt.success) return;
           const m={'Running':'badge-ok','Active':'badge-ok','Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn','Expiring':'badge-warn','Error':'badge-err','Expired':'badge-err','Disabled':'badge-info','Issuing':'badge-warn','Unknown':'badge-info'};
@@ -537,7 +538,7 @@ async function loadSiteDetail(p, siteId) {
     p.innerHTML = `
       <div class="page-header">
         <h1><a href="#" onclick="navigate('sites');return false" style="color:var(--text2);text-decoration:none;">&larr;</a> ${esc(site.domain)}</h1>
-        <div class="page-actions"><button class="btn btn-sm btn-danger" onclick="removeSite('${esc(site.domain)}')">Remove</button></div>
+        <div class="page-actions">${site.can_delete!==false?`<button class="btn btn-sm btn-danger" onclick="removeSite('${esc(site.domain)}')">Remove</button>`:''}</div>
       </div>
       <div class="details-panel" style="margin-bottom:16px;">
         <div class="details-grid">
@@ -574,8 +575,8 @@ async function loadSiteDetail(p, siteId) {
       makeCard('Backups', (backups.data||[]).filter(b=>b.site_id==site.id).map(b=>b.filename), '#f97316');
     // PHP Mail section (loaded separately — failure does NOT break the page)
     loadPhpMailCard(site.id, site.domain);
-    // Load runtime card
-    loadRuntimeCard(site.id, site.domain, site.web_server);
+    // Load runtime card (skip for admin panel — runtime N/A)
+    if (site.id !== 0) loadRuntimeCard(site.id, site.domain, site.web_server);
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load site</div>'; }
 }
 
@@ -982,7 +983,7 @@ async function loadDomainDetail(p, domainId) {
     let mailDomain = null;
     try {
       const mdRes = await api('/api/mail/domains');
-      mailDomain = (mdRes.data || []).find(m => m.domain === domainRow.domain || m.domain_id == domainId) || null;
+      mailDomain = (mdRes.data || []).find(m => m.domain === domainRow.domain || (domainRow.id > 0 && m.domain_id == domainId)) || null;
     } catch(e) {
       console.error('Failed to load mail domain', e);
     }
