@@ -1096,9 +1096,15 @@ bool ApiServer::start() {
                  << "\",\"issuer\":\"" << JsonFormatter::escape(meta.issuer)
                  << "\",\"subject\":\"" << JsonFormatter::escape(meta.subject)
                  << "\",\"fingerprint_sha256\":\"" << JsonFormatter::escape(meta.fingerprint_sha256)
-                 << "\",\"last_validation\":\"" << JsonFormatter::escape(meta.last_validation)
-                 << "\",\"last_error\":\"" << JsonFormatter::escape(meta.last_error)
-                 << "\",\"renew_attempts\":" << meta.renew_attempts;
+                 << "\",\"domains\":[";
+        for (size_t i = 0; i < meta.domains.size(); ++i) {
+            if (i > 0) json << ",";
+            json << "\"" << JsonFormatter::escape(meta.domains[i]) << "\"";
+        }
+        json << "]"
+             << ",\"last_validation\":\"" << JsonFormatter::escape(meta.last_validation)
+             << "\",\"last_error\":\"" << JsonFormatter::escape(meta.last_error)
+             << "\",\"renew_attempts\":" << meta.renew_attempts;
         } else {
             json << ",\"status\":\"HTTP_ONLY\""
                  << ",\"https_enabled\":false"
@@ -1409,14 +1415,14 @@ bool ApiServer::start() {
     auto remove_resource = [&s](const std::string& type, const std::string& name) -> Response {
         Response r;
         if (type == "domain") {
-            auto* domain = s.domains().find(name);
-            if (!domain) { r.body = "{\"success\":false,\"error\":\"Not found\"}"; return r; }
-            // Protect admin-panel domain (site_id=0) from being removed
-            if (domain->site_id == 0) {
+            // Protect admin-panel domain (server hostname) from removal
+            if (name == s.config().server_hostname()) {
                 r.status_code = 403;
                 r.body = "{\"success\":false,\"error\":\"System domain cannot be removed\"}";
                 return r;
             }
+            auto* domain = s.domains().find(name);
+            if (!domain) { r.body = "{\"success\":false,\"error\":\"Not found\"}"; return r; }
             s.domains().remove(domain->id);
         } else if (type == "database") {
             auto* db = s.databases().find(name);

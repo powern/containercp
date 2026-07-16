@@ -1096,7 +1096,7 @@ async function fetchDnsForFqdn(fqdn, types) {
 }
 
 // --- System domain action helper ---
-async function runSystemAction(btnId, actionFn, confirmMsg) {
+async function runSystemAction(btnId, actionFn, confirmMsg, onSuccess) {
   var btn = document.getElementById(btnId);
   if (!btn || btn.disabled) return;
   if (confirmMsg && !confirm(confirmMsg)) return;
@@ -1106,6 +1106,7 @@ async function runSystemAction(btnId, actionFn, confirmMsg) {
     var res = await actionFn();
     if (res && res.success) {
       toast(res.data && res.data.message ? res.data.message : 'Action completed', 'success');
+      if (onSuccess) onSuccess();
     } else {
       toast('Error: ' + (res && res.error ? res.error : 'Unknown error'), 'error');
     }
@@ -1383,35 +1384,38 @@ async function loadDomainOverview() {
             ACME rate limits apply. Temporary HTTPS interruption may occur during issuance.
           </div>
           <div style="margin-top:8px;">
-            <button class="btn btn-sm" id="ssl-renew-btn">Renew Certificate</button>
-            <button class="btn btn-sm" id="ssl-issue-btn" style="margin-left:4px;">Issue New Certificate</button>
+            ${sslStatusDisplay === 'Active' || sslStatusDisplay === 'Expiring' ? `<button class="btn btn-sm" id="ssl-renew-btn">Renew Certificate</button>` : ''}
+            ${sslStatusDisplay === 'Disabled' || sslStatusDisplay === 'Error' || sslStatusDisplay === '' || sslStatusDisplay === 'HTTP_ONLY' || sslStatusDisplay === 'http_only' ? `<button class="btn btn-sm" id="ssl-issue-btn">Issue New Certificate</button>` : ''}
+            ${sslStatusDisplay === 'Issuing' ? `<span class="badge badge-warn">Issuance in progress</span>` : ''}
           </div>
         </div>
       </div>` : ''}
     </div>`;
 
-  // Wire system-domain action buttons via event delegation on domain-tab-content
+  // Wire system-domain action buttons via single onclick handler (no accumulation)
+  // Using onclick = assignment replaces previous handler, preventing duplicates
   var tabContent = document.getElementById('domain-tab-content');
   if (tabContent) {
-    tabContent.addEventListener('click', function(e) {
+    var handler = function(e) {
       var target = e.target;
-      if (target.id === 'proxy-test-btn') {
-        runSystemAction('proxy-test-btn', function() { return apiPost('/api/proxy/test'); },
-          null);
-      } else if (target.id === 'proxy-reload-btn') {
+      if (target.id === 'proxy-test-btn')
+        runSystemAction('proxy-test-btn', function() { return apiPost('/api/proxy/test'); }, null);
+      else if (target.id === 'proxy-reload-btn')
         runSystemAction('proxy-reload-btn', function() { return apiPost('/api/proxy/reload'); },
           'Reload central reverse proxy?\n\nThis will restart nginx for ALL domains. An invalid configuration may interrupt access to ContainerCP and other sites.');
-      } else if (target.id === 'proxy-sync-btn') {
+      else if (target.id === 'proxy-sync-btn')
         runSystemAction('proxy-sync-btn', function() { return apiPost('/api/proxy/sync'); },
           'Synchronize all proxy configurations?\n\nThis regenerates HTTPS proxy configs for ALL domains.');
-      } else if (target.id === 'ssl-renew-btn') {
+      else if (target.id === 'ssl-renew-btn')
         runSystemAction('ssl-renew-btn', function() { return apiPost('/api/ssl/' + encodeURIComponent(domainRow.domain) + '/renew'); },
-          'Renew SSL certificate for ' + domainRow.domain + '?\n\nACME rate limits apply. Temporary HTTPS interruption may occur.');
-      } else if (target.id === 'ssl-issue-btn') {
+          'Renew SSL certificate for ' + domainRow.domain + '?\n\nACME rate limits apply. Temporary HTTPS interruption may occur.',
+          function() { loadSslDetails(domainRow.domain); refreshDomainOverview(); });
+      else if (target.id === 'ssl-issue-btn')
         runSystemAction('ssl-issue-btn', function() { return apiPost('/api/ssl/' + encodeURIComponent(domainRow.domain) + '/issue', {provider_id:'letsencrypt'}); },
-          'Issue new SSL certificate for ' + domainRow.domain + '?\n\nACME rate limits apply. Temporary HTTPS interruption may occur.');
-      }
-    });
+          'Issue new SSL certificate for ' + domainRow.domain + '?\n\nACME rate limits apply. Temporary HTTPS interruption may occur.',
+          function() { loadSslDetails(domainRow.domain); refreshDomainOverview(); });
+    };
+    tabContent.onclick = handler;
   }
 
   // Load SSL details for the admin panel

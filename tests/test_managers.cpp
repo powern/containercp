@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -13,6 +14,70 @@
 #include "mail/MailAliasManager.h"
 #include "mail/MailboxManager.h"
 #include "mail/providers/DockerMailProvider.h"
+
+// Simple JSON syntax validator — checks structural correctness.
+// Returns true if valid, false with error message.
+static bool json_validate(const std::string& json, std::string& error) {
+    if (json.empty()) { error = "empty string"; return false; }
+    if (json.front() != '{' && json.front() != '[') { error = "must start with { or ["; return false; }
+    if (json.back() != '}' && json.back() != ']') { error = "must end with } or ]"; return false; }
+    std::vector<char> stack;
+    bool in_string = false;
+    bool escaped = false;
+    for (size_t i = 0; i < json.size(); ++i) {
+        char c = json[i];
+        if (escaped) { escaped = false; continue; }
+        if (c == '\\' && in_string) { escaped = true; continue; }
+        if (c == '"') { in_string = !in_string; continue; }
+        if (in_string) {
+            if (c < 32) { error = "unescaped control char in string"; return false; }
+            continue;
+        }
+        if (c == '{' || c == '[') { stack.push_back(c); }
+        else if (c == '}') {
+            if (stack.empty() || stack.back() != '{') { error = "unexpected }"; return false; }
+            size_t j = i; while (j > 0 && (json[j-1] == ' ' || json[j-1] == '\t' || json[j-1] == '\n')) j--;
+            if (j > 0 && json[j-1] == ',') { error = "trailing comma before }"; return false; }
+            stack.pop_back();
+        } else if (c == ']') {
+            if (stack.empty() || stack.back() != '[') { error = "unexpected ]"; return false; }
+            size_t j = i; while (j > 0 && (json[j-1] == ' ' || json[j-1] == '\t' || json[j-1] == '\n')) j--;
+            if (j > 0 && json[j-1] == ',') { error = "trailing comma before ]"; return false; }
+            stack.pop_back();
+        }
+    }
+    if (in_string) { error = "unterminated string"; return false; }
+    if (!stack.empty()) { error = "unclosed brace/bracket"; return false; }
+    return true;
+}
+
+// Minimal JSON field extractors for test validation.
+static std::string json_extract_string(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\":\"";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) return "";
+    pos += search.size();
+    auto end = json.find("\"", pos);
+    if (end == std::string::npos) return "";
+    return json.substr(pos, end - pos);
+}
+static bool json_extract_bool(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\":";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) return false;
+    pos += search.size();
+    if (json.substr(pos, 4) == "true") return true;
+    if (json.substr(pos, 5) == "false") return false;
+    return false;
+}
+static uint64_t json_extract_uint(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\":";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) return 0;
+    pos += search.size();
+    char* end = nullptr;
+    return std::strtoull(json.c_str() + pos, &end, 10);
+}
 
 TEST_CASE("UserManager create/find/list/remove") {
     containercp::user::UserManager mgr;
@@ -155,6 +220,13 @@ TEST_CASE("DomainViewService produces valid JSON for various target values") {
     CHECK(json_result.size() > 0);
     CHECK(json_result.front() == '[');
     CHECK(json_result.back() == ']');
+    // Strict JSON syntax validation
+    {
+        std::string js_err;
+        bool js_ok = json_validate(json_result, js_err);
+        CHECK(js_ok);
+        if (!js_ok) { fprintf(stderr, "JSON VALIDATION ERROR: %s\n", js_err.c_str()); }
+    }
 
 
     // Verify each domain's JSON contains the expected patterns
@@ -212,6 +284,14 @@ TEST_CASE("DomainViewService enriched JSON includes mail fields") {
         domains, sites, cert_store, md_mgr, rp_mgr2);
     std::string json_result = view.build_enriched_json();
 
+    // Strict JSON syntax validation
+    {
+        std::string js_err;
+        bool js_ok = json_validate(json_result, js_err);
+        CHECK(js_ok);
+        if (!js_ok) { fprintf(stderr, "JSON VALIDATION ERROR: %s\n", js_err.c_str()); }
+    }
+
     CHECK(json_result.find("\"domain\":\"with-mail.com\"") != std::string::npos);
     CHECK(json_result.find("\"mail_domain_id\":1") != std::string::npos);
     CHECK(json_result.find("\"mail_domain_mode\":\"local-primary\"") != std::string::npos);
@@ -224,38 +304,6 @@ TEST_CASE("DomainViewService enriched JSON includes mail fields") {
 
     std::string rm_cmd = "rm -rf " + ssl_root_str;
     std::system(rm_cmd.c_str());
-}
-
-// Minimal JSON field extractor for test validation.
-// Parses "key":"value" pairs from a JSON object substring.
-// Does NOT handle nested objects, arrays, or escaped quotes in values.
-static std::string json_extract_string(const std::string& json, const std::string& key) {
-    std::string search = "\"" + key + "\":\"";
-    auto pos = json.find(search);
-    if (pos == std::string::npos) return "";
-    pos += search.size();
-    auto end = json.find("\"", pos);
-    if (end == std::string::npos) return "";
-    return json.substr(pos, end - pos);
-}
-
-static bool json_extract_bool(const std::string& json, const std::string& key) {
-    std::string search = "\"" + key + "\":";
-    auto pos = json.find(search);
-    if (pos == std::string::npos) return false;
-    pos += search.size();
-    if (json.substr(pos, 4) == "true") return true;
-    if (json.substr(pos, 5) == "false") return false;
-    return false;
-}
-
-static uint64_t json_extract_uint(const std::string& json, const std::string& key) {
-    std::string search = "\"" + key + "\":";
-    auto pos = json.find(search);
-    if (pos == std::string::npos) return 0;
-    pos += search.size();
-    char* end = nullptr;
-    return std::strtoull(json.c_str() + pos, &end, 10);
 }
 
 TEST_CASE("DomainViewService includes admin panel (site_id=0) when server_hostname set") {
@@ -335,6 +383,14 @@ TEST_CASE("DomainViewService includes admin panel (site_id=0) when server_hostna
         std::string::size_type admin_pos = json.find("\"domain\":\"admin.example.com\"");
         std::string::size_type ex_pos = json.find("\"domain\":\"example.com\"");
         CHECK(admin_pos < ex_pos);
+
+        // Validate JSON syntax
+        {
+            std::string js_err;
+            bool js_ok = json_validate(json, js_err);
+            CHECK(js_ok);
+            if (!js_ok) { fprintf(stderr, "JSON VALIDATION ERROR: %s\n", js_err.c_str()); }
+        }
 
         // Parse JSON and validate extracted fields
         {
