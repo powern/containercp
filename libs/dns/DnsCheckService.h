@@ -59,7 +59,7 @@ public:
                                   const std::vector<std::string>& record_types);
 
     void set_cache_ttl(int seconds);
-    void clear_cache(const std::string& domain);
+    virtual void clear_cache(const std::string& domain);
     bool has_cached(const std::string& domain) const;
 
     // Public for testing (format/type validation/computation, no DNS lookup)

@@ -14,6 +14,7 @@ using containercp::api::Response;
 
 // -----------------------------------------------------------------------
 // FakeDnsCheckService — returns controlled results without live DNS
+// Tracks check() and clear_cache() calls for refresh testing.
 // -----------------------------------------------------------------------
 class FakeDnsCheckService : public DnsCheckService {
 public:
@@ -35,7 +36,6 @@ public:
         }
         if (h) return h(domain, types);
 
-        // Default: success with A record
         DnsCheckResult r;
         r.domain = domain;
         r.success = true;
@@ -54,7 +54,32 @@ public:
         return r;
     }
 
-    // Cache tracking for refresh tests
+    // Override clear_cache to track calls and clear fake cache state
+    void clear_cache(const std::string& domain) override {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        clear_cache_count_++;
+        last_cleared_domain_ = domain;
+        cache_flags_.erase(domain);
+    }
+
+    // Query and reset tracking
+    int clear_cache_count() const {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        return clear_cache_count_;
+    }
+
+    std::string last_cleared_domain() const {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        return last_cleared_domain_;
+    }
+
+    void reset_clear_cache_tracking() {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        clear_cache_count_ = 0;
+        last_cleared_domain_.clear();
+    }
+
+    // Mark domain as cached or uncached
     void set_cache_has(const std::string& domain, bool has) {
         std::lock_guard<std::mutex> lock(cache_mutex_);
         if (has)
@@ -73,6 +98,8 @@ private:
     mutable std::mutex mutex_;
     mutable std::mutex cache_mutex_;
     mutable std::map<std::string, bool> cache_flags_;
+    int clear_cache_count_ = 0;
+    std::string last_cleared_domain_;
 };
 
 // -----------------------------------------------------------------------
@@ -180,12 +207,10 @@ TEST_CASE("API handler: ?types=A,MX returns only requested types") {
     CHECK(type_count == 2);
 }
 
-TEST_CASE("API handler: ?refresh=1 bypasses cache via real handler") {
+TEST_CASE("API handler: ?refresh=1 bypasses cache via real handler — clear_cache intercepted") {
     FakeDnsCheckService fake;
-    int check_count = 0;
     fake.set_check_hook([&](const std::string& domain,
                              const std::vector<std::string>& types) {
-        check_count++;
         DnsCheckResult r;
         r.domain = domain;
         r.success = true;
@@ -210,29 +235,58 @@ TEST_CASE("API handler: ?refresh=1 bypasses cache via real handler") {
             return handleDnsCheck(req, fake);
         });
 
-    // First: cache miss
+    // 1. Mark domain as cached
+    fake.set_cache_has("refresh-test.com", true);
+    fake.reset_clear_cache_tracking();
+
+    // 2. Request WITHOUT refresh — cache is NOT cleared, cached=true returned
     auto r1 = router.dispatch(
-        make_req("/api/domains/example.com/dns-check", "A"));
+        make_req("/api/domains/refresh-test.com/dns-check", "A"));
     CHECK(r1.status_code == 200);
-    CHECK(r1.body.find("\"cached\":false") != std::string::npos);
-    CHECK(check_count == 1);
+    CHECK(r1.body.find("\"cached\":true") != std::string::npos);
+    CHECK(fake.clear_cache_count() == 0);
 
-    // Second: mark as cached, should see cached=true
-    fake.set_cache_has("example.com", true);
+    // 3. Request WITH refresh=1 — handler calls clear_cache, then check returns cached=false
     auto r2 = router.dispatch(
-        make_req("/api/domains/example.com/dns-check", "A"));
+        make_req("/api/domains/refresh-test.com/dns-check", "A", "1"));
     CHECK(r2.status_code == 200);
-    CHECK(r2.body.find("\"cached\":true") != std::string::npos);
-    CHECK(check_count == 2);
+    CHECK(r2.body.find("\"cached\":false") != std::string::npos);
+    CHECK(fake.clear_cache_count() == 1);
+    CHECK(fake.last_cleared_domain() == "refresh-test.com");
 
-    // Third: with refresh=1 — handler calls clear_cache, then check
-    // The hook will now return cached=false because we removed the flag
-    fake.set_cache_has("example.com", false);
+    // 4. Verify refresh=0 does NOT call clear_cache
+    fake.reset_clear_cache_tracking();
+    fake.set_cache_has("refresh-test.com", true);
     auto r3 = router.dispatch(
-        make_req("/api/domains/example.com/dns-check", "A", "1"));
+        make_req("/api/domains/refresh-test.com/dns-check", "A", "0"));
     CHECK(r3.status_code == 200);
-    CHECK(r3.body.find("\"cached\":false") != std::string::npos);
-    CHECK(check_count == 3);
+    CHECK(fake.clear_cache_count() == 0);
+    CHECK(r3.body.find("\"cached\":true") != std::string::npos);
+}
+
+TEST_CASE("API handler: missing refresh param does not call clear_cache") {
+    FakeDnsCheckService fake;
+    fake.set_check_hook([&](const std::string& domain,
+                             const std::vector<std::string>& types) {
+        DnsCheckResult r;
+        r.domain = domain;
+        r.success = true;
+        r.overall_status = "complete";
+        r.cached = true;
+        return r;
+    });
+
+    Router router;
+    router.add_prefix("GET", "/api/domains/",
+        [&fake](const Request& req) {
+            return handleDnsCheck(req, fake);
+        });
+
+    fake.reset_clear_cache_tracking();
+    auto resp = router.dispatch(
+        make_req("/api/domains/example.com/dns-check", "A"));
+    CHECK(resp.status_code == 200);
+    CHECK(fake.clear_cache_count() == 0);
 }
 
 TEST_CASE("API handler: invalid domain returns 400") {
@@ -395,53 +449,6 @@ TEST_CASE("API handler: empty types defaults to all supported types") {
     }
     CHECK(has_a);
     CHECK(has_mx);
-}
-
-TEST_CASE("API handler: refresh=1 clears cache before check") {
-    FakeDnsCheckService fake;
-    int clear_calls = 0;
-    fake.set_check_hook([&](const std::string& domain,
-                             const std::vector<std::string>& types) {
-        DnsCheckResult r;
-        r.domain = domain;
-        r.success = true;
-        r.overall_status = "complete";
-        r.cached = fake.has_cached_impl(domain);
-        fake.set_cache_has(domain, true);
-        PerTypeResult pt;
-        pt.type = "A";
-        pt.status_code = "NOERROR";
-        DnsRecord rec;
-        rec.type = "A";
-        rec.name = domain;
-        rec.value = "192.0.2.1";
-        rec.ttl = 300;
-        pt.records.push_back(std::move(rec));
-        r.per_type.push_back(std::move(pt));
-        return r;
-    });
-
-    Router router;
-    router.add_prefix("GET", "/api/domains/",
-        [&fake](const Request& req) {
-            return handleDnsCheck(req, fake);
-        });
-
-    // First call — cache miss
-    auto r1 = router.dispatch(
-        make_req("/api/domains/refresh-test.com/dns-check", "A"));
-    CHECK(r1.body.find("\"cached\":false") != std::string::npos);
-
-    // Second call — cache hit (fake marks it cached)
-    auto r2 = router.dispatch(
-        make_req("/api/domains/refresh-test.com/dns-check", "A"));
-    CHECK(r2.body.find("\"cached\":true") != std::string::npos);
-
-    // Third call with refresh=1 — handler clears cache, result is fresh
-    fake.set_cache_has("refresh-test.com", false);
-    auto r3 = router.dispatch(
-        make_req("/api/domains/refresh-test.com/dns-check", "A", "1"));
-    CHECK(r3.body.find("\"cached\":false") != std::string::npos);
 }
 
 // -----------------------------------------------------------------------
