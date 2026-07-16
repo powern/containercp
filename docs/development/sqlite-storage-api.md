@@ -218,6 +218,63 @@ Without explicit SQLite mode (default):
 
 ---
 
+## TestObserver (test-only lifecycle hooks)
+
+`ConnectionPool::TestObserver` provides callbacks for deterministic
+internal lifecycle tests. **NOT for production use.**
+
+```cpp
+struct TestObserver {
+    // Called from shutdown() after setting shutdown_ flag and draining
+    // read leases, immediately before attempting to lock write_mutex_.
+    // May block (e.g., on a condition_variable) for test coordination.
+    std::function<void()> on_shutdown_awaiting_write_mutex;
+
+    // Called from backup() after successfully acquiring WriteGuard
+    // (and therefore owning write_mutex_).  May block to pause backup
+    // at a known point for deterministic testing.
+    std::function<void()> on_backup_guard_acquired;
+};
+```
+
+### Contract
+
+- All callbacks are **empty by default** — zero production overhead.
+- Callbacks execute **synchronously** in the calling thread's context.
+- Callbacks **may block** (e.g., `cv.wait()`) for test coordination.
+- Callbacks **must not throw** exceptions.
+- Configure observers **before** starting worker threads.
+- Do **not** modify observers concurrently while the observed operation
+  is in progress.
+- This interface must **never** be used by production logic, REST API,
+  CLI, configuration, GUI, managers, or business code.
+
+### `on_shutdown_awaiting_write_mutex`
+
+Called at a precise point in `shutdown()`:
+
+1. `shutdown_` flag is set (no new guards, leases, backup).
+2. Read leases have been drained.
+3. **Observer fires.**
+4. `lock_write()` is called (waits for active guards/backup).
+
+The test uses this to verify that shutdown has reached the point where
+it is about to wait for a guard, and has not yet destroyed any connection.
+
+### `on_backup_guard_acquired`
+
+Called at a precise point in `backup()`:
+
+1. `WriteGuard` is acquired (write_mutex_ held).
+2. WriteGuard validity is confirmed.
+3. **Observer fires.**
+4. SQLite backup API calls begin.
+
+The test uses this to pause backup while it holds the write mutex,
+verifying that shutdown cannot proceed and the connection remains valid.
+
+---
+
 ## Non-goals
 
 - SQLite is NOT active in production runtime by default.

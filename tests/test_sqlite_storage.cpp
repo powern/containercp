@@ -586,23 +586,38 @@ TEST_CASE("Backup and shutdown do not race") {
     containercp::storage::ConnectionPool pool;
     init_pool(pool, dir);
 
-    // Coordination: backup signals when it holds the guard,
-    // then blocks until the test releases it.
+    // Seed the source database with data
+    {
+        containercp::storage::WriteGuard wg(pool);
+        REQUIRE(wg.is_valid());
+        REQUIRE(wg.db().exec("INSERT INTO mail_config VALUES ('k1', 'v1')"));
+    }
+
+    // Coordination
     std::mutex mtx;
     std::condition_variable cv;
     bool backup_guard_held = false;
     bool backup_continue = false;
     bool shutdown_awaiting = false;
 
+    // Cleanup guard — ensures threads terminate even on assertion failure
+    struct Cleanup {
+        std::thread backup_thr;
+        std::thread shutdown_thr;
+        containercp::storage::ConnectionPool::TestObserver* obs;
+        ~Cleanup() {
+            if (backup_thr.joinable()) backup_thr.detach();
+            if (shutdown_thr.joinable()) shutdown_thr.detach();
+        }
+    };
+
     pool.test_obs_.on_backup_guard_acquired = [&] {
-        // Signal that backup has the guard
         {
             std::lock_guard<std::mutex> lk(mtx);
             backup_guard_held = true;
         }
         cv.notify_one();
 
-        // Block until backup is allowed to continue (with timeout safeguard)
         std::unique_lock<std::mutex> lk(mtx);
         cv.wait_for(lk, std::chrono::seconds(10), [&] { return backup_continue; });
     };
@@ -613,49 +628,71 @@ TEST_CASE("Backup and shutdown do not race") {
         cv.notify_one();
     };
 
+    Cleanup cleanup;
+    cleanup.obs = &pool.test_obs_;
+
     std::string backup_path = dir + "backup.db";
     bool backup_result = false;
-    std::thread backup_thread([&] {
+
+    cleanup.backup_thr = std::thread([&] {
         backup_result = pool.backup(backup_path);
     });
 
-    // Wait for backup to acquire the WriteGuard
+    // Wait for backup to acquire WriteGuard (up to 5 seconds)
     {
         std::unique_lock<std::mutex> lk(mtx);
-        if (!cv.wait_for(lk, std::chrono::seconds(5), [&] { return backup_guard_held; })) {
-            // timeout — will fail at REQUIRE below
-        }
-        REQUIRE(backup_guard_held);
+        bool timed_out = !cv.wait_for(lk, std::chrono::seconds(5),
+                                       [&] { return backup_guard_held; });
+        REQUIRE_MESSAGE(backup_guard_held,
+                        "Backup did not acquire WriteGuard within 5s"
+                        << (timed_out ? " (timeout)" : ""));
     }
 
-    // Backup now holds the WriteGuard. Start shutdown — it will
-    // reach on_shutdown_awaiting_write_mutex and then block on
-    // lock_write() because backup holds the mutex.
-    std::thread shutdown_thread([&] { pool.shutdown(); });
+    // Start shutdown — will wait at write_mutex_ because backup holds it
+    cleanup.shutdown_thr = std::thread([&] { pool.shutdown(); });
 
-    // Wait for shutdown to signal it is awaiting the write mutex
+    // Wait for shutdown to signal it is awaiting write_mutex_ (up to 5s)
     {
         std::unique_lock<std::mutex> lk(mtx);
-        if (!cv.wait_for(lk, std::chrono::seconds(5), [&] { return shutdown_awaiting; })) {
-            // timeout — use MESSAGE to debug
-        }
-        REQUIRE(shutdown_awaiting);
+        bool timed_out = !cv.wait_for(lk, std::chrono::seconds(5),
+                                       [&] { return shutdown_awaiting; });
+        REQUIRE_MESSAGE(shutdown_awaiting,
+                        "Shutdown did not reach awaiting-write-mutex within 5s"
+                        << (timed_out ? " (timeout)" : ""));
     }
 
-    // Release backup — WriteGuard released, shutdown acquires lock
+    // Backup still holds WriteGuard — shutdown cannot complete
+    CHECK(pool.is_shutdown());  // flag set, but write_conn_ not yet destroyed
+
+    // Release backup
     {
         std::lock_guard<std::mutex> lk(mtx);
         backup_continue = true;
     }
     cv.notify_one();
 
-    backup_thread.join();
-    shutdown_thread.join();
+    // Join threads (cleanup guard prevents dangling if assertions fail)
+    cleanup.backup_thr.join();
+    cleanup.shutdown_thr.join();
 
-    // Backup may succeed (empty database backed up) or fail (source
-    // is small, destination is valid). Both outcomes are acceptable.
-    // The key test is no crash or deadlock.
-    CHECK(pool.is_shutdown());
+    // Verify backup result
+    REQUIRE(backup_result);
+    REQUIRE(fs::exists(backup_path));
+
+    // Verify backup is a valid SQLite database with copied data
+    {
+        containercp::storage::SQLiteDB verify;
+        REQUIRE(verify.open(backup_path));
+        REQUIRE(verify.prepare("SELECT value FROM mail_config WHERE key='k1'"));
+        REQUIRE(verify.step());
+        CHECK(verify.column_text(0) == "v1");
+        CHECK_FALSE(verify.step());  // no more rows
+
+        // Verify integrity
+        REQUIRE(verify.prepare("PRAGMA integrity_check"));
+        REQUIRE(verify.step());
+        CHECK(verify.column_text(0) == "ok");
+    }
 
     pool.test_obs_.on_backup_guard_acquired = nullptr;
     pool.test_obs_.on_shutdown_awaiting_write_mutex = nullptr;
