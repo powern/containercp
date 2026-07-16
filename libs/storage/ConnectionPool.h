@@ -116,10 +116,18 @@ public:
 
     bool backup(const std::string& dest_path);
 
-    // Test-only observer for shutdown synchronization.
-    // In production all callbacks are empty — no overhead.
+    // Test-only observer for synchronization.
+    // All callbacks are empty in production — no overhead.
+    // Callbacks run synchronously; they may block (e.g., on a cv).
+    // Configure before starting worker threads; do not modify
+    // concurrently while the observed operation is in progress.
     struct TestObserver {
+        // Called from shutdown() just before acquiring write_mutex_.
         std::function<void()> on_shutdown_awaiting_write_mutex;
+
+        // Called from backup() after acquiring WriteGuard.
+        // The callback may block to pause backup at a known point.
+        std::function<void()> on_backup_guard_acquired;
     };
     TestObserver test_obs_;
 

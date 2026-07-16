@@ -227,6 +227,13 @@ bool ConnectionPool::backup(const std::string& dest_path) {
     if (!wg.is_valid()) return false;
     SQLiteDB& src = wg.db();
 
+    // Notify test observer that backup holds the write guard.
+    // The callback may block (e.g., waiting for a condition variable
+    // set by the test) — this is intentional for deterministic tests.
+    if (test_obs_.on_backup_guard_acquired) {
+        test_obs_.on_backup_guard_acquired();
+    }
+
     sqlite3* dest_db = nullptr;
     int rc = sqlite3_open(dest_path.c_str(), &dest_db);
     if (rc != SQLITE_OK) {

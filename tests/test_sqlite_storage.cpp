@@ -586,25 +586,79 @@ TEST_CASE("Backup and shutdown do not race") {
     containercp::storage::ConnectionPool pool;
     init_pool(pool, dir);
 
-    // Use a promise to know when backup has started
-    std::promise<void> backup_started;
-    std::future<void> backup_started_future = backup_started.get_future();
+    // Coordination: backup signals when it holds the guard,
+    // then blocks until the test releases it.
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool backup_guard_held = false;
+    bool backup_continue = false;
+    bool shutdown_awaiting = false;
+
+    pool.test_obs_.on_backup_guard_acquired = [&] {
+        // Signal that backup has the guard
+        {
+            std::lock_guard<std::mutex> lk(mtx);
+            backup_guard_held = true;
+        }
+        cv.notify_one();
+
+        // Block until backup is allowed to continue (with timeout safeguard)
+        std::unique_lock<std::mutex> lk(mtx);
+        cv.wait_for(lk, std::chrono::seconds(10), [&] { return backup_continue; });
+    };
+
+    pool.test_obs_.on_shutdown_awaiting_write_mutex = [&] {
+        std::lock_guard<std::mutex> lk(mtx);
+        shutdown_awaiting = true;
+        cv.notify_one();
+    };
 
     std::string backup_path = dir + "backup.db";
+    bool backup_result = false;
     std::thread backup_thread([&] {
-        backup_started.set_value();
-        pool.backup(backup_path);
+        backup_result = pool.backup(backup_path);
     });
 
-    // Wait for backup to start
-    backup_started_future.wait();
+    // Wait for backup to acquire the WriteGuard
+    {
+        std::unique_lock<std::mutex> lk(mtx);
+        if (!cv.wait_for(lk, std::chrono::seconds(5), [&] { return backup_guard_held; })) {
+            // timeout — will fail at REQUIRE below
+        }
+        REQUIRE(backup_guard_held);
+    }
 
-    // Give backup a moment to acquire WriteGuard
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    // Backup now holds the WriteGuard. Start shutdown — it will
+    // reach on_shutdown_awaiting_write_mutex and then block on
+    // lock_write() because backup holds the mutex.
+    std::thread shutdown_thread([&] { pool.shutdown(); });
 
-    // shutdown will block until backup's internal WriteGuard completes
-    pool.shutdown();
+    // Wait for shutdown to signal it is awaiting the write mutex
+    {
+        std::unique_lock<std::mutex> lk(mtx);
+        if (!cv.wait_for(lk, std::chrono::seconds(5), [&] { return shutdown_awaiting; })) {
+            // timeout — use MESSAGE to debug
+        }
+        REQUIRE(shutdown_awaiting);
+    }
+
+    // Release backup — WriteGuard released, shutdown acquires lock
+    {
+        std::lock_guard<std::mutex> lk(mtx);
+        backup_continue = true;
+    }
+    cv.notify_one();
+
     backup_thread.join();
+    shutdown_thread.join();
+
+    // Backup may succeed (empty database backed up) or fail (source
+    // is small, destination is valid). Both outcomes are acceptable.
+    // The key test is no crash or deadlock.
+    CHECK(pool.is_shutdown());
+
+    pool.test_obs_.on_backup_guard_acquired = nullptr;
+    pool.test_obs_.on_shutdown_awaiting_write_mutex = nullptr;
     tclean(dir);
 }
 
