@@ -77,10 +77,18 @@ void ConnectionPool::unlock_write() {
 }
 
 SQLiteDB* ConnectionPool::lease_read() {
-    if (shutdown_.load()) return nullptr;
-
+    // Increment outstanding count FIRST, before checking shutdown.
+    // This ensures shutdown() can never see zero leases while a new
+    // lease is being acquired.  If we detect shutdown after incrementing,
+    // we decrement and return nullptr.
     outstanding_leases_.fetch_add(1);
 
+    if (shutdown_.load()) {
+        outstanding_leases_.fetch_sub(1);
+        return nullptr;
+    }
+
+    // Round-robin with compare-exchange
     for (int attempt = 0; attempt < kReadPoolSize * 2; ++attempt) {
         int idx = read_next_.fetch_add(1) % kReadPoolSize;
         bool expected = false;
@@ -90,6 +98,7 @@ SQLiteDB* ConnectionPool::lease_read() {
         std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
 
+    // Linear scan fallback
     for (int i = 0; i < kReadPoolSize * 50; ++i) {
         if (shutdown_.load()) {
             outstanding_leases_.fetch_sub(1);
@@ -106,6 +115,48 @@ SQLiteDB* ConnectionPool::lease_read() {
 
     outstanding_leases_.fetch_sub(1);
     return nullptr;
+}
+
+// ============================================================
+// ReadLease
+// ============================================================
+
+ReadLease::ReadLease(ConnectionPool& pool)
+    : pool_(pool)
+    , db_(pool_.lease_read()) {
+}
+
+ReadLease::~ReadLease() {
+    if (db_) {
+        pool_.return_read(db_);
+    }
+}
+
+ReadLease::ReadLease(ReadLease&& other) noexcept
+    : pool_(other.pool_)
+    , db_(other.db_) {
+    other.db_ = nullptr;
+}
+
+ReadLease& ReadLease::operator=(ReadLease&& other) noexcept {
+    if (this != &other) {
+        if (db_) pool_.return_read(db_);
+        db_ = other.db_;
+        other.db_ = nullptr;
+    }
+    return *this;
+}
+
+SQLiteDB& ReadLease::db() const {
+    return *db_;
+}
+
+SQLiteDB* ReadLease::operator->() const {
+    return db_;
+}
+
+bool ReadLease::is_valid() const {
+    return db_ != nullptr;
 }
 
 void ConnectionPool::return_read(SQLiteDB* db) {

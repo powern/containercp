@@ -35,6 +35,36 @@ private:
     ConnectionPool& pool_;
 };
 
+// RAII read lease.  Acquires a read connection on construction,
+// returns it on destruction.  Move-only, non-copyable.
+//
+// Usage:
+//   {
+//       ReadLease rl(pool);
+//       if (rl.is_valid()) {
+//           rl->exec("SELECT ...");
+//       }
+//   }  // connection returned automatically on destruction
+class ReadLease {
+public:
+    explicit ReadLease(ConnectionPool& pool);
+    ~ReadLease();
+
+    ReadLease(const ReadLease&) = delete;
+    ReadLease& operator=(const ReadLease&) = delete;
+
+    ReadLease(ReadLease&& other) noexcept;
+    ReadLease& operator=(ReadLease&& other) noexcept;
+
+    SQLiteDB& db() const;
+    SQLiteDB* operator->() const;
+    bool is_valid() const;
+
+private:
+    ConnectionPool& pool_;
+    SQLiteDB* db_ = nullptr;
+};
+
 // Bounded connection pool for the Storage subsystem.
 //
 // Architecture:
@@ -54,10 +84,11 @@ private:
 //
 // Thread-safety:
 //   - Write mutex serializes all write operations.
+//   - Lease acquisition increments the outstanding count BEFORE
+//     checking shutdown state, ensuring shutdown can never complete
+//     while a lease is being acquired.
 //   - Read pool uses atomic compare-exchange for lease assignment.
 //   - Read connections do not block each other.
-//   - A read may block on write during WAL checkpoint (handled
-//     by busy_timeout).
 class ConnectionPool {
 public:
     static constexpr int kReadPoolSize = 3;
@@ -68,38 +99,20 @@ public:
     ConnectionPool(const ConnectionPool&) = delete;
     ConnectionPool& operator=(const ConnectionPool&) = delete;
 
-    // Initialize: open the database, create write + read connections.
-    // Must be called once before any other method.
     bool initialize(const std::string& db_path);
 
     // === Write connection (use via WriteGuard) ===
-
-    // Returns reference to the serialized write connection.
-    // Caller must hold the write mutex (use WriteGuard).
     SQLiteDB& write_connection();
 
     // === Read connections ===
-
-    // Lease a read connection.  Blocks if all 3 are in use.
-    // Returns nullptr only on catastrophic error or if pool is shut down.
-    // Caller must return via return_read().
     SQLiteDB* lease_read();
-
-    // Return a leased read connection.  Safe to call with nullptr.
     void return_read(SQLiteDB* db);
 
     // === Lifecycle ===
-
-    // Close all connections.  Waits indefinitely for all outstanding
-    // leases to be returned.  Connections are never destroyed while
-    // a lease is active.  After shutdown, lease_read() returns nullptr.
     void shutdown();
 
-    // Returns true if shutdown() has been called.
     bool is_shutdown() const;
 
-    // Create a consistent snapshot using the SQLite Online Backup API.
-    // The write mutex is locked for the duration.
     bool backup(const std::string& dest_path);
 
 private:

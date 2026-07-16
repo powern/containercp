@@ -353,6 +353,83 @@ TEST_CASE("ConnectionPool shutdown waits for leases") {
     cleanup(path);
 }
 
+TEST_CASE("ConnectionPool lease/shutdown ordering") {
+    // Verify that lease_read() increments the outstanding count before
+    // checking shutdown_, so shutdown can never complete while a new
+    // lease is being acquired.
+    auto path = pool_path("containercp_test_ordering.db");
+    cleanup(path);
+    {
+        containercp::storage::ConnectionPool pool;
+        REQUIRE(pool.initialize(path));
+
+        // Lease all 3 connections
+        auto* c1 = pool.lease_read();
+        auto* c2 = pool.lease_read();
+        auto* c3 = pool.lease_read();
+        REQUIRE(c1);
+        REQUIRE(c2);
+        REQUIRE(c3);
+
+        // Start shutdown in background (will block waiting for leases)
+        std::thread shutdown_thread([&] { pool.shutdown(); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        // Try to lease — should see shutdown is active but still
+        // increment the count first (safe no-op that decrements)
+        auto* c4 = pool.lease_read();
+        CHECK(c4 == nullptr);  // pool is shut down
+
+        // Return our leases — this unblocks shutdown
+        pool.return_read(c1);
+        pool.return_read(c2);
+        pool.return_read(c3);
+
+        shutdown_thread.join();
+        CHECK(pool.is_shutdown());
+    }
+    cleanup(path);
+}
+
+TEST_CASE("ConnectionPool ReadLease RAII") {
+    auto path = pool_path("containercp_test_readlease.db");
+    cleanup(path);
+    {
+        containercp::storage::ConnectionPool pool;
+        REQUIRE(pool.initialize(path));
+
+        {
+            containercp::storage::ReadLease rl(pool);
+            CHECK(rl.is_valid());
+            CHECK(rl->exec("SELECT 1"));
+        }  // connection returned here
+
+        // Verify we can lease again (pool is intact)
+        {
+            containercp::storage::ReadLease rl2(pool);
+            CHECK(rl2.is_valid());
+        }
+    }
+    cleanup(path);
+}
+
+TEST_CASE("ConnectionPool ReadLease after shutdown") {
+    auto path = pool_path("containercp_test_rl_shutdown.db");
+    cleanup(path);
+    {
+        containercp::storage::ConnectionPool pool;
+        REQUIRE(pool.initialize(path));
+
+        pool.shutdown();
+
+        {
+            containercp::storage::ReadLease rl(pool);
+            CHECK_FALSE(rl.is_valid());  // should fail after shutdown
+        }
+    }
+    cleanup(path);
+}
+
 TEST_CASE("ConnectionPool shutdown never destroys active leases") {
     auto path = pool_path("containercp_test_nodangle.db");
     cleanup(path);

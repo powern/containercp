@@ -263,10 +263,49 @@ ConnectionPool
 - If all connections are busy, the lease attempt spins briefly
   (100µs–1ms) and retries.
 
+**Race-free shutdown:** `lease_read()` increments the outstanding
+lease count **before** checking the shutdown flag. This ensures that
+`shutdown()` can never observe zero leases while a new lease is being
+acquired. If shutdown is detected after incrementing, the count is
+decremented and `nullptr` is returned. The ordering guarantee is:
+1. Increment `outstanding_leases_` (visible to shutdown)
+2. Check `shutdown_` flag
+3. If shutdown, decrement and return nullptr
+4. Otherwise, proceed to acquire connection
+
+### ReadLease (RAII read lease)
+
+`ReadLease` is a move-only RAII wrapper that acquires a read
+connection on construction and returns it on destruction:
+
 ```cpp
+class ReadLease {
+public:
+    explicit ReadLease(ConnectionPool& pool);
+    ~ReadLease();
+    ReadLease(ReadLease&& other) noexcept;
+    SQLiteDB& db() const;
+    SQLiteDB* operator->() const;
+    bool is_valid() const;
+};
+```
+
+`is_valid()` returns false if the pool is shut down or if all
+connections are busy.
+
+```cpp
+// Raw pointer API:
 SQLiteDB* conn = pool.lease_read();
 // ... use conn ...
 pool.return_read(conn);
+
+// RAII ReadLease (preferred):
+{
+    ReadLease rl(pool);
+    if (rl.is_valid()) {
+        rl->exec("SELECT ...");
+    }
+}  // returned automatically
 ```
 
 ### Connection lifecycle
