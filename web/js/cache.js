@@ -128,56 +128,57 @@ window.HealthCache = {
 
     if (!domain) return Promise.resolve(null);
 
+    // Ensure generation counter exists
+    if (this._generation[domain] === undefined) this._generation[domain] = 0;
+
     // Return cached if fresh and not forced
     if (!options.force) {
       var cached = this.get(domain);
       if (cached && cached !== 'loading') return Promise.resolve(cached);
     }
 
-    // Ensure generation counter exists
-    if (this._generation[domain] === undefined) this._generation[domain] = 0;
-
-    // Increment generation on force refresh (invalidates old loaders)
+    // Force refresh: increment generation (invalidates old loaders)
     if (options.force) {
       this._generation[domain]++;
-      // Also invalidate store so get() returns null
       delete this._store[domain];
       delete this._loaders[domain];
     }
 
-    // Dedup concurrent loaders (only within same generation)
-    if (this._loaders[domain]) return this._loaders[domain];
+    // Dedup concurrent loaders within same generation
+    if (this._loaders[domain]) return this._loaders[domain].promise;
 
     var gen = this._generation[domain];
 
     // Mark loading
     this._store[domain] = {result: null, timestamp: Date.now(), loading: true};
 
-    // Async loader
-    this._loaders[domain] = this._doLoad(domain, domainRow, mailDomain, serverHostname)
+    // Store loader with generation + promise for ownership tracking
+    var loaderEntry = {generation: gen, promise: null};
+    this._loaders[domain] = loaderEntry;
+
+    var promise = this._doLoad(domain, domainRow, mailDomain, serverHostname)
       .then(function(result) {
-        // Stale loader protection: only store if generation matches
-        if (window.HealthCache._generation[domain] === gen) {
+        // Only act if we are still the active loader
+        var active = window.HealthCache._loaders[domain];
+        if (active && active.generation === gen && active.promise === promise) {
           window.HealthCache._store[domain] = {result: result, timestamp: Date.now(), loading: false};
-        } else {
-          // Stale loader — discard result silently
-          if (window.HealthCache._store[domain] && window.HealthCache._store[domain].loading) {
-            delete window.HealthCache._store[domain];
-          }
+          delete window.HealthCache._loaders[domain];
         }
-        delete window.HealthCache._loaders[domain];
+        // Else: stale loader — do nothing, don't touch current state
         return result;
       })
       .catch(function(err) {
         console.error('HealthCache.load failed for ' + domain, err);
-        if (window.HealthCache._generation[domain] === gen) {
+        var active = window.HealthCache._loaders[domain];
+        if (active && active.generation === gen && active.promise === promise) {
           delete window.HealthCache._store[domain];
+          delete window.HealthCache._loaders[domain];
         }
-        delete window.HealthCache._loaders[domain];
         return null;
       });
 
-    return this._loaders[domain];
+    loaderEntry.promise = promise;
+    return promise;
   },
 
   // Internal: fetch all data, compute score, return result
