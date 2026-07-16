@@ -46,14 +46,42 @@ std::string escape_sql_string(const std::string& s) {
 } // anonymous namespace
 
 void MigrationEngine::register_migration(Migration m) {
+    if (registration_error_) {
+        // Permanently invalid — do not accept new registrations
+        return;
+    }
+
+    if (m.version < 1) {
+        last_error_ = "Migration version " + std::to_string(m.version)
+            + " (" + m.name + ") is invalid. Version must be >= 1.";
+        registration_error_ = true;
+        return;
+    }
+
+    if (m.name.empty()) {
+        last_error_ = "Migration version " + std::to_string(m.version)
+            + " has an empty name. Name is required.";
+        registration_error_ = true;
+        return;
+    }
+
     if (m.descriptor.empty()) {
         last_error_ = "Migration " + std::to_string(m.version)
             + " (" + m.name + ") has an empty descriptor. "
             + "Descriptor is mandatory and must uniquely identify "
             + "the migration implementation.";
         registration_error_ = true;
-        return;  // migration NOT registered
+        return;
     }
+
+    if (!m.up) {
+        last_error_ = "Migration " + std::to_string(m.version)
+            + " (" + m.name + ") has no callback (up is empty). "
+            + "A migration function is required.";
+        registration_error_ = true;
+        return;
+    }
+
     migrations_.push_back(std::move(m));
 }
 
@@ -70,9 +98,8 @@ int MigrationEngine::current_version(SQLiteDB& db) {
 
 bool MigrationEngine::migrate(SQLiteDB& db) {
     if (registration_error_) {
-        std::string err = last_error_;
-        registration_error_ = false;
-        last_error_ = err;
+        // Permanently invalid state — never recovers.
+        // Caller must construct a new MigrationEngine.
         return false;
     }
     last_error_.clear();

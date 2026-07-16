@@ -22,24 +22,34 @@ through successive versions. It is designed for:
 
 ```cpp
 struct Migration {
-    int version;       // Monotonic, >= 1. Must be unique.
-    std::string name;  // Human-readable label (e.g. "create_sites_table").
-    std::string descriptor;  // Content fingerprint — MANDATORY, see below.
+    int version;       // >= 1, must be unique.
+    std::string name;  // Required — non-empty human-readable label.
+    std::string descriptor;  // Required — content fingerprint (see below).
     std::function<bool(SQLiteDB& db, std::string& diagnostics)> up;
 };
 ```
 
+**Registration requirements (all mandatory):**
+
+| Field | Requirement | Error if |
+|-------|------------|----------|
+| `version` | >= 1 | version < 1 |
+| `name` | non-empty | empty string |
+| `descriptor` | non-empty | empty string |
+| `up` | callable | empty `std::function` |
+
+If any requirement is violated, `register_migration()` sets the engine
+to a **permanently invalid state**. The engine never recovers — all
+subsequent `register_migration()` and `migrate()` calls return false.
+The caller must construct a new `MigrationEngine`.
+
 - `version` must be unique across all registered migrations. Each
-  version may appear at most once regardless of descriptor.
-- `name` is a human-readable label for logging and diagnostics.
-- `descriptor` is **mandatory**. Empty descriptors are rejected at
-  registration time with a clear error. The descriptor uniquely
-  identifies the migration's implementation. It MUST change when the
-  migration logic changes. The recommended approach is to use the SQL
-  content as the descriptor.
-- `up` is the migration function. It receives the database connection
-  and a diagnostics string to fill on error. Must return `true` on
-  success.
+  version may appear at most once regardless of descriptor. Duplicate
+  versions are detected at `migrate()` time.
+- `descriptor` uniquely identifies the migration's implementation. It
+  MUST change when the migration logic changes. The recommended
+  approach is to use the SQL content as the descriptor. The checksum
+  is `SHA-256(version + ":" + descriptor)`.
 
 ---
 
@@ -62,8 +72,9 @@ different checksum.
 
 ## Duplicate version policy
 
-Duplicate versions are **always rejected**. Each migration version may
-appear at most once, regardless of descriptor.
+Duplicate versions are **always rejected** and put the engine into a
+**permanently invalid state**. Each migration version may appear at
+most once, regardless of descriptor.
 
 This is enforced before any migration is applied. The error message
 identifies both conflicting migration names:
@@ -85,6 +96,12 @@ twice.
 
 Registers a migration for later execution. Migrations may be registered
 in any order — they are sorted by version when `migrate()` is called.
+
+**Validation:** If the migration definition fails validation (version < 1,
+empty name, empty descriptor, or missing callback), the engine enters a
+**permanently invalid state**. All subsequent `register_migration()` and
+`migrate()` calls return false. The caller must construct a new
+`MigrationEngine`.
 
 ### `int current_version(SQLiteDB& db)`
 
