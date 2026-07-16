@@ -949,10 +949,20 @@ TEST_CASE("MigrationEngine duplicate version rejected deterministically") {
         eng.register_migration(std::move(m1));
         eng.register_migration(std::move(m2));
 
-        // migrate() should detect duplicate versions with different descriptors
+        // migrate() should detect duplicate versions and permanently
+        // invalidate the engine
         CHECK_FALSE(eng.migrate(db));
         CHECK_FALSE(eng.last_error().empty());
         CHECK(eng.last_error().find("Duplicate migration version") != std::string::npos);
+
+        // Engine is permanently invalid — subsequent migrate() calls fail
+        CHECK_FALSE(eng.migrate(db));
+        CHECK(eng.last_error().find("Duplicate migration version") != std::string::npos);
+
+        // Valid registrations are ignored after invalidation
+        auto good = make_migration(3, "good", "CREATE TABLE t (id INTEGER)");
+        eng.register_migration(std::move(good));
+        CHECK_FALSE(eng.migrate(db));
     }
     mig_cleanup(path);
 }
@@ -1144,61 +1154,94 @@ TEST_CASE("MigrationEngine same version same descriptor from different engines O
 }
 
 TEST_CASE("MigrationEngine registration rejects version < 1") {
-    containercp::storage::MigrationEngine eng;
-    containercp::storage::Migration m;
-    m.version = 0;
-    m.name = "zero_version";
-    m.descriptor = "test";
-    m.up = [](containercp::storage::SQLiteDB&, std::string&) { return true; };
-    eng.register_migration(std::move(m));
-    CHECK_FALSE(eng.migrate(*(containercp::storage::SQLiteDB*)nullptr));
-    // engine is permanently invalid — even a valid registration won't help
-    auto good = make_migration(1, "good", "CREATE TABLE t (id INTEGER)");
-    eng.register_migration(std::move(good));
-    CHECK_FALSE(eng.migrate(*(containercp::storage::SQLiteDB*)nullptr));
+    auto path = mig_db_path("containercp_test_invver.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        containercp::storage::MigrationEngine eng;
+        containercp::storage::Migration m;
+        m.version = 0;
+        m.name = "zero_version";
+        m.descriptor = "test";
+        m.up = [](containercp::storage::SQLiteDB&, std::string&) { return true; };
+        eng.register_migration(std::move(m));
+        CHECK_FALSE(eng.migrate(db));
+
+        // Engine is permanently invalid — valid registrations are ignored
+        auto good = make_migration(1, "good", "CREATE TABLE t (id INTEGER)");
+        eng.register_migration(std::move(good));
+        CHECK_FALSE(eng.migrate(db));
+    }
+    mig_cleanup(path);
 }
 
 TEST_CASE("MigrationEngine registration rejects empty name") {
-    containercp::storage::MigrationEngine eng;
-    containercp::storage::Migration m;
-    m.version = 1;
-    m.name = "";
-    m.descriptor = "test";
-    m.up = [](containercp::storage::SQLiteDB&, std::string&) { return true; };
-    eng.register_migration(std::move(m));
-    CHECK_FALSE(eng.migrate(*(containercp::storage::SQLiteDB*)nullptr));
+    auto path = mig_db_path("containercp_test_invnam.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        containercp::storage::MigrationEngine eng;
+        containercp::storage::Migration m;
+        m.version = 1;
+        m.name = "";
+        m.descriptor = "test";
+        m.up = [](containercp::storage::SQLiteDB&, std::string&) { return true; };
+        eng.register_migration(std::move(m));
+        CHECK_FALSE(eng.migrate(db));
+    }
+    mig_cleanup(path);
 }
 
 TEST_CASE("MigrationEngine registration rejects empty callback") {
-    containercp::storage::MigrationEngine eng;
-    containercp::storage::Migration m;
-    m.version = 1;
-    m.name = "no_callback";
-    m.descriptor = "test";
-    // m.up is empty by default
-    eng.register_migration(std::move(m));
-    CHECK_FALSE(eng.migrate(*(containercp::storage::SQLiteDB*)nullptr));
+    auto path = mig_db_path("containercp_test_invcb.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        containercp::storage::MigrationEngine eng;
+        containercp::storage::Migration m;
+        m.version = 1;
+        m.name = "no_callback";
+        m.descriptor = "test";
+        // m.up is empty by default
+        eng.register_migration(std::move(m));
+        CHECK_FALSE(eng.migrate(db));
+    }
+    mig_cleanup(path);
 }
 
 TEST_CASE("MigrationEngine registration error is permanent") {
-    containercp::storage::MigrationEngine eng;
+    auto path = mig_db_path("containercp_test_perm.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
 
-    // First registration fails
-    containercp::storage::Migration bad;
-    bad.version = 0;
-    bad.name = "bad";
-    bad.descriptor = "test";
-    bad.up = [](containercp::storage::SQLiteDB&, std::string&) { return true; };
-    eng.register_migration(std::move(bad));
-    CHECK_FALSE(eng.migrate(*(containercp::storage::SQLiteDB*)nullptr));
+        containercp::storage::MigrationEngine eng;
 
-    // Subsequent valid registrations are silently ignored
-    auto good = make_migration(1, "good", "CREATE TABLE t (id INTEGER)");
-    eng.register_migration(std::move(good));
-    CHECK_FALSE(eng.migrate(*(containercp::storage::SQLiteDB*)nullptr));
+        // First registration fails (version < 1)
+        containercp::storage::Migration bad;
+        bad.version = 0;
+        bad.name = "bad";
+        bad.descriptor = "test";
+        bad.up = [](containercp::storage::SQLiteDB&, std::string&) { return true; };
+        eng.register_migration(std::move(bad));
+        CHECK_FALSE(eng.migrate(db));
 
-    // Even calling migrate repeatedly returns false
-    CHECK_FALSE(eng.migrate(*(containercp::storage::SQLiteDB*)nullptr));
+        // Subsequent valid registrations are silently ignored
+        auto good = make_migration(1, "good", "CREATE TABLE t (id INTEGER)");
+        eng.register_migration(std::move(good));
+        CHECK_FALSE(eng.migrate(db));
+
+        // Repeated migrate calls still fail
+        CHECK_FALSE(eng.migrate(db));
+    }
+    mig_cleanup(path);
 }
 
 TEST_CASE("MigrationEngine out-of-order registration works") {

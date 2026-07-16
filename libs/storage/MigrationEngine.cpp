@@ -110,8 +110,7 @@ bool MigrationEngine::migrate(SQLiteDB& db) {
               });
 
     // Reject ALL duplicate versions.  Each migration version must
-    // appear exactly once.  This is enforced before any migration
-    // is applied.
+    // appear exactly once.  Permanently invalidates the engine.
     for (size_t i = 1; i < migrations_.size(); ++i) {
         if (migrations_[i].version == migrations_[i - 1].version) {
             last_error_ = "Duplicate migration version "
@@ -121,6 +120,7 @@ bool MigrationEngine::migrate(SQLiteDB& db) {
                 + " is already registered by '"
                 + migrations_[i - 1].name + "'. "
                 + "Each version must appear exactly once.";
+            registration_error_ = true;
             return false;
         }
     }

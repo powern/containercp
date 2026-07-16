@@ -39,9 +39,15 @@ struct Migration {
 | `up` | callable | empty `std::function` |
 
 If any requirement is violated, `register_migration()` sets the engine
-to a **permanently invalid state**. The engine never recovers — all
-subsequent `register_migration()` and `migrate()` calls return false.
-The caller must construct a new `MigrationEngine`.
+to a **permanently invalid state**. The engine never recovers:
+
+- subsequent `register_migration()` calls are silently **ignored** —
+  the migration is not registered and the original error is preserved;
+- subsequent `migrate()` calls return `false` and preserve the original
+  error in `last_error()`.
+
+The caller must discard the engine and construct a new
+`MigrationEngine`.
 
 - `version` must be unique across all registered migrations. Each
   version may appear at most once regardless of descriptor. Duplicate
@@ -73,8 +79,9 @@ different checksum.
 ## Duplicate version policy
 
 Duplicate versions are **always rejected** and put the engine into a
-**permanently invalid state**. Each migration version may appear at
-most once, regardless of descriptor.
+**permanently invalid state** (same as a registration validation
+failure). Each migration version may appear at most once, regardless
+of descriptor.
 
 This is enforced before any migration is applied. The error message
 identifies both conflicting migration names:
@@ -99,8 +106,10 @@ in any order — they are sorted by version when `migrate()` is called.
 
 **Validation:** If the migration definition fails validation (version < 1,
 empty name, empty descriptor, or missing callback), the engine enters a
-**permanently invalid state**. All subsequent `register_migration()` and
-`migrate()` calls return false. The caller must construct a new
+**permanently invalid state**. Subsequent `register_migration()` calls
+are silently **ignored** (the migration is not registered; the original
+error is preserved). Subsequent `migrate()` calls return `false`.
+The caller must discard the engine and construct a new
 `MigrationEngine`.
 
 ### `int current_version(SQLiteDB& db)`
