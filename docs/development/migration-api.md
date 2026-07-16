@@ -24,17 +24,19 @@ through successive versions. It is designed for:
 struct Migration {
     int version;       // Monotonic, >= 1. Must be unique.
     std::string name;  // Human-readable label (e.g. "create_sites_table").
-    std::string descriptor;  // Content fingerprint — see Checksum below.
+    std::string descriptor;  // Content fingerprint — MANDATORY, see below.
     std::function<bool(SQLiteDB& db, std::string& diagnostics)> up;
 };
 ```
 
-- `version` must be unique. Two migrations with the same version but
-  different descriptors are rejected as a duplicate version error.
+- `version` must be unique across all registered migrations. Each
+  version may appear at most once regardless of descriptor.
 - `name` is a human-readable label for logging and diagnostics.
-- `descriptor` is a string that uniquely identifies the migration's
-  implementation. It MUST change when the migration logic changes.
-  Typically the descriptor is the SQL content or a hash of it.
+- `descriptor` is **mandatory**. Empty descriptors are rejected at
+  registration time with a clear error. The descriptor uniquely
+  identifies the migration's implementation. It MUST change when the
+  migration logic changes. The recommended approach is to use the SQL
+  content as the descriptor.
 - `up` is the migration function. It receives the database connection
   and a diagnostics string to fill on error. Must return `true` on
   success.
@@ -60,19 +62,20 @@ different checksum.
 
 ## Duplicate version policy
 
-Two migrations with the same version are accepted ONLY if they have
-the identical `descriptor` (and thus the identical checksum). In that
-case the second registration is idempotent — the engine skips it via
-checksum match.
+Duplicate versions are **always rejected**. Each migration version may
+appear at most once, regardless of descriptor.
 
-Two migrations with the same version but different `descriptor` values
-are rejected at `migrate()` time with a deterministic error:
+This is enforced before any migration is applied. The error message
+identifies both conflicting migration names:
 
 ```
-Duplicate migration version N with different descriptors: '...' vs '...'
+Duplicate migration version N (second_name) — version N is already
+registered by 'first_name'. Each version must appear exactly once.
 ```
 
-This is enforced before any migration is applied.
+If a migration needs to be changed, create a new migration with an
+incremented version number. Do not attempt to register the same version
+twice.
 
 ---
 

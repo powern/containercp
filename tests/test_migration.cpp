@@ -968,6 +968,7 @@ TEST_CASE("MigrationEngine failed migration is recorded") {
         containercp::storage::Migration m;
         m.version = 1;
         m.name = "failing_migration";
+        m.descriptor = "intentional_failure_test";
         m.up = [](containercp::storage::SQLiteDB&, std::string& diag) -> bool {
             diag = "intentional failure";
             return false;
@@ -997,6 +998,7 @@ TEST_CASE("MigrationEngine failed migration prevents retry") {
             containercp::storage::Migration m;
             m.version = 1;
             m.name = "failing";
+            m.descriptor = "failing_test_v1";
             m.up = [](containercp::storage::SQLiteDB&, std::string& diag) -> bool {
                 diag = "fail";
                 return false;
@@ -1010,6 +1012,7 @@ TEST_CASE("MigrationEngine failed migration prevents retry") {
             containercp::storage::Migration m2;
             m2.version = 1;
             m2.name = "failing";
+            m2.descriptor = "failing_test_v1";
             m2.up = [](containercp::storage::SQLiteDB&, std::string& diag) -> bool {
                 diag = "fail";
                 return false;
@@ -1045,6 +1048,7 @@ TEST_CASE("MigrationEngine interrupted migration retries") {
         containercp::storage::Migration m;
         m.version = 1;
         m.name = "interrupted";
+        m.descriptor = "interrupted_test_v1";
         m.up = [](containercp::storage::SQLiteDB& db2, std::string&) -> bool {
             return db2.exec("CREATE TABLE recovered (id INTEGER)");
         };
@@ -1075,14 +1079,37 @@ TEST_CASE("MigrationEngine storage_meta keys") {
     mig_cleanup(path);
 }
 
-TEST_CASE("MigrationEngine same version same descriptor skipped") {
+TEST_CASE("MigrationEngine empty descriptor rejected") {
+    auto path = mig_db_path("containercp_test_emptydesc.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        containercp::storage::MigrationEngine eng;
+        containercp::storage::Migration m;
+        m.version = 1;
+        m.name = "no_descriptor";
+        m.descriptor = "";  // empty — should be rejected
+        m.up = [](containercp::storage::SQLiteDB& d, std::string&) -> bool {
+            return d.exec("CREATE TABLE t (id INTEGER)");
+        };
+        eng.register_migration(std::move(m));
+        // Engine stored the migration but with an error marker
+        CHECK_FALSE(eng.migrate(db));
+        CHECK_FALSE(eng.last_error().empty());
+    }
+    mig_cleanup(path);
+}
+
+TEST_CASE("MigrationEngine same version same descriptor from different engines OK") {
     auto path = mig_db_path("containercp_test_dup.db");
     mig_cleanup(path);
     {
         containercp::storage::SQLiteDB db;
         REQUIRE(db.open(path));
 
-        // Apply migration
+        // Apply version 1
         {
             containercp::storage::MigrationEngine eng;
             eng.register_migration(make_migration(1, "create_t1",
@@ -1091,7 +1118,7 @@ TEST_CASE("MigrationEngine same version same descriptor skipped") {
             CHECK(eng.current_version(db) == 1);
         }
 
-        // Same version with same SQL → same descriptor → checksum match → skip
+        // Second engine with version 1 and same descriptor → checksum match → skip
         {
             containercp::storage::MigrationEngine eng;
             eng.register_migration(make_migration(1, "create_t1_again",
@@ -1099,13 +1126,13 @@ TEST_CASE("MigrationEngine same version same descriptor skipped") {
             CHECK(eng.migrate(db));
         }
 
-        // Same version with different SQL → different descriptor → duplicate version error
+        // Third engine with version 1 but different descriptor → checksum mismatch
         {
             containercp::storage::MigrationEngine eng;
             containercp::storage::Migration m;
             m.version = 1;
             m.name = "different_sql";
-            m.descriptor = "CREATE TABLE t2 (id INTEGER)";  // different from original
+            m.descriptor = "CREATE TABLE t2 (id INTEGER)";
             m.up = [](containercp::storage::SQLiteDB& d, std::string&) -> bool {
                 return d.exec("CREATE TABLE t2 (id INTEGER)");
             };

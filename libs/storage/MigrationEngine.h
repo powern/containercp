@@ -71,6 +71,7 @@ private:
 
     std::vector<Migration> migrations_;
     std::string last_error_;
+    bool registration_error_ = false;
 };
 
 } // namespace containercp::storage

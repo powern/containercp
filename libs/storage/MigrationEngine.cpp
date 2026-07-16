@@ -46,6 +46,14 @@ std::string escape_sql_string(const std::string& s) {
 } // anonymous namespace
 
 void MigrationEngine::register_migration(Migration m) {
+    if (m.descriptor.empty()) {
+        last_error_ = "Migration " + std::to_string(m.version)
+            + " (" + m.name + ") has an empty descriptor. "
+            + "Descriptor is mandatory and must uniquely identify "
+            + "the migration implementation.";
+        registration_error_ = true;
+        return;  // migration NOT registered
+    }
     migrations_.push_back(std::move(m));
 }
 
@@ -61,6 +69,12 @@ int MigrationEngine::current_version(SQLiteDB& db) {
 }
 
 bool MigrationEngine::migrate(SQLiteDB& db) {
+    if (registration_error_) {
+        std::string err = last_error_;
+        registration_error_ = false;
+        last_error_ = err;
+        return false;
+    }
     last_error_.clear();
 
     std::sort(migrations_.begin(), migrations_.end(),
@@ -68,18 +82,18 @@ bool MigrationEngine::migrate(SQLiteDB& db) {
                   return a.version < b.version;
               });
 
-    // Reject duplicate versions with different descriptors.
-    // Two migrations with the same version and same descriptor
-    // are allowed (idempotent registration) but the second is
-    // silently skipped via checksum match.
-    for (size_t i = 0; i + 1 < migrations_.size(); ++i) {
-        if (migrations_[i].version == migrations_[i + 1].version &&
-            migrations_[i].descriptor != migrations_[i + 1].descriptor) {
+    // Reject ALL duplicate versions.  Each migration version must
+    // appear exactly once.  This is enforced before any migration
+    // is applied.
+    for (size_t i = 1; i < migrations_.size(); ++i) {
+        if (migrations_[i].version == migrations_[i - 1].version) {
             last_error_ = "Duplicate migration version "
                 + std::to_string(migrations_[i].version)
-                + " with different descriptors: '"
-                + migrations_[i].descriptor + "' vs '"
-                + migrations_[i + 1].descriptor + "'";
+                + " (" + migrations_[i].name + ") — version "
+                + std::to_string(migrations_[i - 1].version)
+                + " is already registered by '"
+                + migrations_[i - 1].name + "'. "
+                + "Each version must appear exactly once.";
             return false;
         }
     }
@@ -256,16 +270,11 @@ bool MigrationEngine::checksum_matches(SQLiteDB& db, const Migration& m) {
 
 std::string MigrationEngine::compute_checksum(const Migration& m) {
     // The checksum uniquely identifies the migration definition:
-    // version + ":" + descriptor.
+    // SHA-256(version + ":" + descriptor).
     // The developer MUST change the descriptor whenever the migration
-    // logic (up function) changes.  This is a deterministic content
-    // fingerprint that can be computed without hashing the function
-    // itself (which is not safely hashable in C++).
-    //
-    // If no descriptor is provided, the name is used as fallback
-    // (for backward compatibility).
-    std::string input = std::to_string(m.version) + ":"
-        + (m.descriptor.empty() ? m.name : m.descriptor);
+    // logic (up function) changes.  Descriptor is mandatory — empty
+    // descriptors are rejected at registration time.
+    std::string input = std::to_string(m.version) + ":" + m.descriptor;
     return sha256_hex(input);
 }
 
