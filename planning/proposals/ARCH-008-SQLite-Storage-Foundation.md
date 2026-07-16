@@ -807,28 +807,15 @@ CREATE TABLE mail_config (
 -- smarthost value: JSON object with host/port/username/password/enabled
 ```
 
-### 7.4 Jobs table (schema foundation, future use)
+### 7.4 Jobs table — NOT in ARCH-008
 
-Jobs are currently in-memory only. The table schema is defined here
-so ARCH-010 can add persistence without a schema migration:
+Per product-owner decision #5, ARCH-008 does NOT create a `jobs`
+table. ARCH-010 owns job persistence and will introduce the jobs
+table through its own versioned schema migration after the exact
+job model is approved.
 
-```sql
-CREATE TABLE jobs (
-    id            INTEGER PRIMARY KEY,
-    type          TEXT NOT NULL,
-    status        TEXT NOT NULL DEFAULT 'pending',
-    progress      INTEGER NOT NULL DEFAULT 0,
-    steps         TEXT NOT NULL DEFAULT '[]',   -- JSON array of step names
-    current_step  INTEGER NOT NULL DEFAULT 0,
-    message       TEXT NOT NULL DEFAULT '',
-    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-    completed_at  TEXT
-);
-CREATE INDEX idx_jobs_status ON jobs(status);
-```
-
-The `JobManager` remains in-memory for v0.7.0. When ARCH-010
-implements job persistence, it writes to this table.
+ARCH-008 provides the Migration Engine (section 13) that ARCH-010
+will use to add its tables.
 
 ---
 
@@ -898,7 +885,6 @@ auto-creates this for `INTEGER PRIMARY KEY` columns.
 - `access_grants(access_user_id)` — look up grants by user
 - `access_grants(site_id)` — look up grants by site
 - `reverse_proxies(site_id)` — look up proxies by site
-- `jobs(status)` — filter jobs by status (future)
 
 ### 9.3 Future indices (deferred)
 
@@ -916,12 +902,13 @@ auto-creates this for `INTEGER PRIMARY KEY` columns.
 Every SQLite connection is initialized with:
 
 ```sql
-PRAGMA journal_mode = WAL;        -- Write-Ahead Logging for concurrent reads
-PRAGMA foreign_keys = ON;          -- Enforce FK constraints
-PRAGMA synchronous = FULL;         -- Safe crash recovery (full fsync)
-PRAGMA busy_timeout = 5000;        -- Wait 5s before SQLITE_BUSY
-PRAGMA journal_size_limit = 65536; -- Limit WAL file growth
-PRAGMA cache_size = -8000;         -- 8MB page cache
+PRAGMA journal_mode = WAL;             -- Write-Ahead Logging for concurrent reads
+PRAGMA foreign_keys = ON;               -- Enforce FK constraints
+PRAGMA synchronous = FULL;              -- Safe crash recovery (full fsync)
+PRAGMA busy_timeout = 5000;             -- Wait 5s before SQLITE_BUSY
+PRAGMA wal_autocheckpoint = 1000;       -- Checkpoint WAL every 1000 pages
+PRAGMA journal_size_limit = 67108864;   -- Retained WAL size limit: ~64 MiB
+PRAGMA cache_size = -8000;              -- 8MB page cache
 ```
 
 ### 10.2 Justification
@@ -934,7 +921,14 @@ PRAGMA cache_size = -8000;         -- 8MB page cache
   (not high-throughput).
 - **BUSY_TIMEOUT = 5000:** If a write is blocked by another writer,
   wait 5 seconds before failing. Protects against transient contention.
-- **WAL SIZE LIMIT:** Prevents unbounded WAL growth on busy systems.
+- **WAL_AUTOCHECKPOINT = 1000:** Automatically checkpoint after 1000
+  pages of WAL growth, keeping the WAL file small during normal operation.
+- **JOURNAL_SIZE_LIMIT = 67108864 (64 MiB):** This is a **retained**
+  WAL-size limit, not a database-size limit. The WAL file can grow up
+  to ~64 MiB before being checkpointed. This prevents unbounded WAL
+  growth on busy systems while accepting that the WAL may temporarily
+  reach this size before the next checkpoint. The limit is an upper
+  bound on WAL retention, not a cap on database size.
 
 ### 10.3 Optional PRAGMAs (under review)
 
@@ -984,8 +978,11 @@ benchmarking.
 
 ### 11.3 Read connection pool
 
-- **Initial pool size: 3.** Supports concurrent API requests (REST API
-  thread + Web UI thread + background job executor).
+- **Initial pool size: 3** (named constant `kReadPoolSize = 3`).
+  Supports concurrent API requests (REST API thread + Web UI thread +
+  background job executor). Defined as a constant in the Storage
+  configuration so it can be adjusted without redesigning the Storage
+  subsystem. No dynamic scaling or enterprise connection-pool framework.
 - **Allocation:** Simple round-robin with `std::atomic<int>` counter.
   If all connections are busy, wait on a condition variable (with
   configurable timeout).
@@ -1997,9 +1994,39 @@ On failure:
 
 ### 29.3 Secrets in SQLite
 
-The database stores hashed passwords (auth users, mailboxes) and
-plain-text database passwords. This is existing behavior. The file
-permissions (`0600`) protect against unauthorized OS-level access.
+The database stores three categories of sensitive data:
+
+**Category 1 — Password hashes (credential verifiers):**
+- Auth user password hashes (SHA-256)
+- Mailbox password hashes (SHA-512-CRYPT)
+- Access user password hashes
+
+These are credential verifiers, not private cryptographic keys.
+Approved for SQLite storage by product-owner decision #1.
+Requirements: never store plaintext; never expose through API,
+Web UI, logs, diagnostics, audit output, or error messages.
+
+**Category 2 — Recoverable plaintext secrets (technical debt):**
+- Website database passwords (`databases.db_password`)
+- Smarthost password (`mail_config`)
+
+These are migrated into SQLite for backward compatibility per
+product-owner decisions #2 and #7. They are marked as sensitive:
+- Never exposed through API responses, Web UI, logs, diagnostics,
+  or audit events.
+- Not described as a secure final-state architecture.
+- Future Secrets Encryption epic (post-v0.7.0) must encrypt these
+  using a protected local master key.
+
+**Category 3 — No private key material:**
+Per product-owner decision #10 (now #6 in the final list), no PEM
+private keys, ACME account keys, DKIM private keys, or SSH private
+keys are stored in SQLite. They remain filesystem-managed.
+
+**Database file protection:**
+The `containercp.db` file and its backups are treated as sensitive
+credential-bearing files. Permissions are `0600`. Backups must be
+stored with equivalent access controls.
 
 ### 29.4 Cryptographic keys are NOT in SQLite
 
@@ -2141,78 +2168,39 @@ and public metadata.
 
 ---
 
-## 32. Proposed Implementation Phases
+## 32. Implementation Plan
 
-### Phase 1: SQLite wrapper and connection pool (1 week)
+A detailed 14-phase implementation plan is maintained in a separate
+document:
 
-- `SQLiteStorage` class: open/close, PRAGMAs, connection pool.
-- Write connection with mutex.
-- Read connection pool (pool size 3).
-- `begin_transaction()`, `commit_transaction()`, `rollback_transaction()`.
-- `backup()` method using Online Backup API.
-- Unit tests for all wrapper operations.
+`planning/implementation/ARCH-008-SQLite-Storage-Foundation-Plan.md`
 
-### Phase 2: Schema migration engine (1 week)
+The plan follows the repository's phased implementation conventions
+with stop-and-review gates after every phase. See that document for
+the complete phase breakdown, file lists, test specifications, and
+commit boundaries.
 
-- `MigrationEngine` class: register, detect version, apply, rollback.
-- `schema_migrations` table creation.
-- `storage_meta` table creation.
-- Checksum computation and verification.
-- State machine: pending → running → completed → failed.
-- Interrupted migration detection and retry.
-- Unit tests for all migration states.
+**Summary of phases:**
 
-### Phase 3: Legacy importer for every resource type (1 week)
+| Phase | Purpose | Est. duration |
+|-------|---------|---------------|
+| 0 | Baseline and safety fixtures | 0.5 week |
+| 1 | SQLite dependency and low-level wrapper | 1 week |
+| 2 | Connection and transaction infrastructure | 0.5 week |
+| 3 | Migration Engine and metadata schema | 1 week |
+| 4 | Approved SQLite schema (business tables) | 0.5 week |
+| 5 | SQLite backend for non-sensitive core resources | 1 week |
+| 6 | Remaining core resource storage | 1 week |
+| 7 | Mail and SSL metadata storage | 0.5 week |
+| 8 | Legacy TXT importer | 1 week |
+| 9 | Migration verification | 0.5 week |
+| 10 | Legacy backup archive | 0.5 week |
+| 11 | Startup migration gate | 0.5 week |
+| 12 | SQLite-aware backup and restore | 0.5 week |
+| 13 | Remove permanent TXT production storage | 0.5 week |
+| 14 | Clean Debian 13 validation and release readiness | 1 week |
 
-- `LegacyImporter` class.
-- Import each of the 19 resource types.
-- Format detection (pipe counting) for legacy variants.
-- Canonical representation and checksum computation.
-- Verification pipeline (16 steps from section 18).
-- Import ordering (section 14.3).
-- Duplicate and corrupted record handling.
-
-### Phase 4: Legacy backup, archive, rollback (0.5 week)
-
-- Archive directory creation.
-- Manifest generation (SHA-256, record counts).
-- Post-migration cleanup.
-- Rollback procedure documentation.
-- Verification tests.
-
-### Phase 5: Startup migration gate (0.5 week)
-
-- Modified `main.cpp` startup sequence.
-- State detection (fresh / upgrade / migrated / mixed).
-- Fail-fast implementation.
-- Diagnostic logging.
-- `storage_meta` initialization.
-
-### Phase 6: New Storage implementation behind existing API (1 week)
-
-- Replace `Storage.cpp` implementation with SQLite backend.
-- All existing `save_*()` / `load_*()` methods backed by SQLite.
-- Legacy TXT parser preserved for migration only.
-- `CMakeLists.txt` changes (SQLite3 dependency).
-- `install.sh` update.
-
-### Phase 7: Production reopen validation (0.5 week)
-
-- Close migration connections.
-- Reopen through production Storage.
-- Load all types, verify integrity.
-- Seamless transition to normal startup.
-
-### Phase 8: Integration tests and validation (1 week)
-
-- Full regression suite.
-- v0.6.0 upgrade test with real data.
-- Fresh installation test.
-- Mixed state tests.
-- Validation VM deployment.
-- Benchmark measurements.
-
-**Total estimated duration: 6.5 weeks.**
+**Total estimated duration: ~9.5 weeks.**
 
 ---
 
@@ -2274,40 +2262,38 @@ from scratch. If migration fails, originals are untouched.
 
 ---
 
-## 34. Open Questions Requiring Product-Owner Approval
+## 34. Product-Owner Decisions — Closed
 
-1. **Mailbox password hash in SQLite.** Approved decision #10 says
-   "do not store cryptographic material inside SQLite." Password
-   hashes are authentication credentials (not private keys). **Proposed:**
-   Password hashes remain in SQLite (current behavior). Requesting
-   confirmation that this is acceptable.
+All open questions from the original draft have been answered by the
+product owner. The complete set of final decisions is documented in
+the architecture sections above. No open questions remain.
 
-2. **Database passwords in SQLite.** `databases.db_password` is
-   stored in plain text (existing behavior). **Proposed:** Keep in
-   SQLite for now. Future encryption is tracked as technical debt
-   (out of ARCH-008 scope). OK?
+Summary of decisions incorporated:
 
-3. **WAL mode + journal_size_limit.** Approved decision #5 requires
-   WAL mode. The `journal_size_limit` of 64KB is proposed. Acceptable?
+| # | Topic | Decision | Section |
+|---|-------|----------|---------|
+| 1 | Password hashes in SQLite | Approved — credential verifiers may be stored | 29.3 |
+| 2 | Database passwords in SQLite | Approved for ARCH-008 (backward compat) — tech debt tracked | 29.3 |
+| 3 | WAL and journal_size_limit | `wal_autocheckpoint=1000`, `journal_size_limit=67108864` (64 MiB) | 10 |
+| 4 | Read connection pool | Fixed pool of 3, named constant, no dynamic scaling | 11.3 |
+| 5 | Jobs table | NOT in ARCH-008 — ARCH-010 owns it via its own migration | 7.4 |
+| 6 | DKIM metadata in SQLite | Approved — paths and public DNS record only, private key on filesystem | 20.2 |
+| 7 | Smarthost password in SQLite | Approved for ARCH-008 — tech debt tracked for future encryption | 29.3 |
 
-4. **Read pool size of 3.** Approved decision #6 requires a "small
-   bounded pool." 3 is proposed for v0.7.0. Acceptable, or prefer a
-   different initial size?
+### Future technical debt: Secrets Encryption (post-ARCH-008)
 
-5. **Jobs table creation in ARCH-008.** The schema includes a `jobs`
-   table that ARCH-010 will use for persistence. Is it acceptable to
-   create the table now (with no runtime impact) so ARCH-010 does not
-   need a schema migration?
+The following items are deferred to a future Secrets Encryption epic:
+1. Website database passwords (`databases.db_password`) — encrypt with local master key
+2. Smarthost password (`mail_config` value for smarthost) — encrypt with local master key
+3. Any other recoverable credentials stored in SQLite
 
-6. **DKIM private key path in SQLite.** The `mail_domains.dkim_private_key_path`
-   column stores a filesystem path, not the key material. The actual
-   PEM file stays on disk. The `dkim_public_key_dns` column stores
-   the public DNS record value (public information). **Proposed:** Both
-   are acceptable in SQLite. Confirm?
-
-7. **Smarthost password in SQLite.** The smarthost config includes a
-   password for external SMTP relay. Currently stored in `mail_smarthost.db`.
-   **Proposed:** Keep in SQLite `mail_config` table. Acceptable?
+Requirements for the future epic:
+- Encrypt recoverable secrets using a protected local master key.
+- Master key stored on filesystem with restricted permissions (`0400`).
+- Decrypt on daemon startup; hold in memory; never log or expose.
+- Re-encrypt on configuration change.
+- Support key rotation.
+- ARCH-008 must not expand into a general secrets-management redesign.
 
 ---
 
@@ -2354,4 +2340,7 @@ from scratch. If migration fails, originals are untouched.
 - [ ] `containercp.db` has permissions 0600.
 - [ ] Archive directory has permissions 0700.
 - [ ] No PEM private key material exists in SQLite.
+- [ ] Password hashes are never exposed through API, Web UI, logs, or audit.
+- [ ] Plaintext secrets (db_password, smarthost password) are never exposed through API, Web UI, logs, or audit.
 - [ ] Missing certificate files are detected and reported.
+- [ ] Database backup is treated as a sensitive credential-bearing file.
