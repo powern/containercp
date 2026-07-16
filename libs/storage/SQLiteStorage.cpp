@@ -428,56 +428,86 @@ std::vector<proxy::ReverseProxy> SQLiteStorage::load_reverse_proxies() {
     return proxies;
 }
 
-// --- Access users (FK-safe parent sync: UPSERT + prune) ---
+// -----------------------------------------------------------
+// FK-safe parent synchronization helper (UPSERT + strict prune)
+// -----------------------------------------------------------
+// Enforces strict fail-closed semantics:
+//   - UPSERT all supplied rows
+//   - Enumerate existing IDs with strict error checking
+//   - Prune absent IDs using bound DELETE
+//   - Checked commit
+//   - Any failure rolls back entire transaction
+static bool sync_parent_rows(
+    ConnectionPool& pool,
+    const std::string& table,
+    const std::set<uint64_t>& supplied_ids,
+    const std::function<bool(SQLiteDB& db)>& upsert_all)
+{
+    TransactionGuard txn(pool);
+    if (!txn.is_active()) return false;
 
-void SQLiteStorage::save_access_users(const std::vector<access::AccessUser>& users) {
-    // Collect supplied IDs
-    std::set<uint64_t> supplied_ids;
-    for (const auto& u : users) supplied_ids.insert(u.id);
+    // Phase 1: UPSERT all supplied rows
+    if (!upsert_all(txn.db())) return false;
 
-    TransactionGuard txn(pool_);
-    if (!txn.is_active()) return;
+    // Phase 2: Enumerate existing IDs strictly
+    std::set<uint64_t> existing_ids;
+    if (!txn.db().prepare("SELECT id FROM " + table + " ORDER BY id")) return false;
 
-    const char* upsert = "INSERT INTO access_users "
-        "(id, username, auth_type, password_hash, enabled, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, "
-        "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
-        "strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
-        "ON CONFLICT(id) DO UPDATE SET "
-        "username=excluded.username, auth_type=excluded.auth_type, "
-        "password_hash=excluded.password_hash, enabled=excluded.enabled, "
-        "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')";
-
-    for (const auto& u : users) {
-        if (!txn.db().prepare(upsert)) return;
-        if (!txn.db().bind_int(1, static_cast<int64_t>(u.id))) return;
-        if (!txn.db().bind_text(2, u.username)) return;
-        if (!txn.db().bind_text(3, u.auth_type)) return;
-        if (!txn.db().bind_text(4, u.password_hash)) return;
-        if (!txn.db().bind_int(5, u.enabled ? 1 : 0)) return;
-        if (txn.db().step() == false && txn.db().error_code() != 0) return;
-    }
-
-    // Prune: delete rows whose IDs are not in the supplied set
-    // We iterate and DELETE each by ID to get individual FK feedback
-    std::vector<uint64_t> existing_ids;
-    if (txn.db().prepare("SELECT id FROM access_users ORDER BY id") &&
-        txn.db().step()) {
-        do {
-            existing_ids.push_back(
-                static_cast<uint64_t>(txn.db().column_int(0)));
-        } while (txn.db().step());
-    }
-
-    for (uint64_t eid : existing_ids) {
-        if (supplied_ids.find(eid) == supplied_ids.end()) {
-            std::string delsql = "DELETE FROM access_users WHERE id = "
-                + std::to_string(eid);
-            if (!txn.db().exec(delsql)) return;  // FK violation → rollback
+    // step(): true=ROW, false=DONE/ERROR.  Distinguish by error_code.
+    // (step() clears error before stepping, so error_code=0 after DONE)
+    bool has_row = txn.db().step();
+    while (true) {
+        if (has_row) {
+            existing_ids.insert(static_cast<uint64_t>(txn.db().column_int(0)));
+            has_row = txn.db().step();
+        } else {
+            if (txn.db().error_code() == 0) break;  // DONE — complete
+            return false;  // step error → rollback
         }
     }
 
-    txn.commit();
+    // Phase 3: Prune absent IDs using bound DELETE
+    const std::string del_sql = "DELETE FROM " + table + " WHERE id = ?";
+    for (uint64_t eid : existing_ids) {
+        if (supplied_ids.find(eid) == supplied_ids.end()) {
+            if (!txn.db().prepare(del_sql)) return false;
+            if (!txn.db().bind_int(1, static_cast<int64_t>(eid))) return false;
+            if (txn.db().step() == false && txn.db().error_code() != 0) return false;
+        }
+    }
+
+    // Phase 4: Checked commit
+    return txn.commit();
+}
+
+// --- Access users (FK-safe parent sync: UPSERT + prune) ---
+
+void SQLiteStorage::save_access_users(const std::vector<access::AccessUser>& users) {
+    std::set<uint64_t> supplied_ids;
+    for (const auto& u : users) supplied_ids.insert(u.id);
+
+    sync_parent_rows(pool_, "access_users", supplied_ids,
+        [&](SQLiteDB& db) -> bool {
+            const char* upsert = "INSERT INTO access_users "
+                "(id, username, auth_type, password_hash, enabled, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "username=excluded.username, auth_type=excluded.auth_type, "
+                "password_hash=excluded.password_hash, enabled=excluded.enabled, "
+                "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')";
+            for (const auto& u : users) {
+                if (!db.prepare(upsert)) return false;
+                if (!db.bind_int(1, static_cast<int64_t>(u.id))) return false;
+                if (!db.bind_text(2, u.username)) return false;
+                if (!db.bind_text(3, u.auth_type)) return false;
+                if (!db.bind_text(4, u.password_hash)) return false;
+                if (!db.bind_int(5, u.enabled ? 1 : 0)) return false;
+                if (db.step() == false && db.error_code() != 0) return false;
+            }
+            return true;
+        });
 }
 
 std::vector<access::AccessUser> SQLiteStorage::load_access_users() {
@@ -539,58 +569,34 @@ std::vector<access::AccessGrant> SQLiteStorage::load_access_grants() {
     return grants;
 }
 
-// -----------------------------------------------------------
-// Updated save_sites: FK-safe parent synchronization
-// -----------------------------------------------------------
-
 void SQLiteStorage::save_sites(const std::vector<site::Site>& sites) {
     std::set<uint64_t> supplied_ids;
     for (const auto& s : sites) supplied_ids.insert(s.id);
 
-    TransactionGuard txn(pool_);
-    if (!txn.is_active()) return;
-
-    const char* upsert_sites = "INSERT INTO sites "
-        "(id, domain, owner, node_id, web_server, php_mail_enabled, "
-        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, "
-        "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
-        "strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
-        "ON CONFLICT(id) DO UPDATE SET "
-        "domain=excluded.domain, owner=excluded.owner, "
-        "node_id=excluded.node_id, web_server=excluded.web_server, "
-        "php_mail_enabled=excluded.php_mail_enabled, "
-        "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')";
-
-    for (const auto& s : sites) {
-        if (!txn.db().prepare(upsert_sites)) return;
-        if (!txn.db().bind_int(1, static_cast<int64_t>(s.id))) return;
-        if (!txn.db().bind_text(2, s.domain)) return;
-        if (!txn.db().bind_text(3, s.owner)) return;
-        if (!txn.db().bind_int(4, static_cast<int64_t>(s.node_id))) return;
-        if (!txn.db().bind_text(5, s.web_server)) return;
-        if (!txn.db().bind_int(6, s.php_mail_enabled ? 1 : 0)) return;
-        if (txn.db().step() == false && txn.db().error_code() != 0) return;
-    }
-
-    // Prune absent IDs
-    std::vector<uint64_t> existing_ids;
-    if (txn.db().prepare("SELECT id FROM sites ORDER BY id") &&
-        txn.db().step()) {
-        do {
-            existing_ids.push_back(
-                static_cast<uint64_t>(txn.db().column_int(0)));
-        } while (txn.db().step());
-    }
-
-    for (uint64_t eid : existing_ids) {
-        if (supplied_ids.find(eid) == supplied_ids.end()) {
-            std::string delsql = "DELETE FROM sites WHERE id = "
-                + std::to_string(eid);
-            if (!txn.db().exec(delsql)) return;  // FK violation → rollback
-        }
-    }
-
-    txn.commit();
+    sync_parent_rows(pool_, "sites", supplied_ids,
+        [&](SQLiteDB& db) -> bool {
+            const char* upsert = "INSERT INTO sites "
+                "(id, domain, owner, node_id, web_server, php_mail_enabled, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "domain=excluded.domain, owner=excluded.owner, "
+                "node_id=excluded.node_id, web_server=excluded.web_server, "
+                "php_mail_enabled=excluded.php_mail_enabled, "
+                "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')";
+            for (const auto& s : sites) {
+                if (!db.prepare(upsert)) return false;
+                if (!db.bind_int(1, static_cast<int64_t>(s.id))) return false;
+                if (!db.bind_text(2, s.domain)) return false;
+                if (!db.bind_text(3, s.owner)) return false;
+                if (!db.bind_int(4, static_cast<int64_t>(s.node_id))) return false;
+                if (!db.bind_text(5, s.web_server)) return false;
+                if (!db.bind_int(6, s.php_mail_enabled ? 1 : 0)) return false;
+                if (db.step() == false && db.error_code() != 0) return false;
+            }
+            return true;
+        });
 }
 
 } // namespace containercp::storage

@@ -234,13 +234,21 @@ before the re-INSERT.
 
 ### Solution
 
-`save_sites()` and `save_access_users()` use a transactional three-phase
-algorithm instead of `DELETE-all`:
+`sync_parent_rows()` is a shared helper used by both `save_sites()` and
+`save_access_users()`. It uses a strict four-phase algorithm:
 
 1. **UPSERT** every supplied row using `INSERT ... ON CONFLICT(id) DO UPDATE SET ...`
-2. **Prune:** DELETE existing rows whose IDs are absent from the supplied set
-3. If any DELETE fails (FK RESTRICT), the transaction rolls back — all
-   prior UPSERTs are reverted atomically.
+2. **Enumerate** existing IDs using strict error-checked SELECT:
+   - `prepare()` failure → rollback
+   - any `step()` error (`error_code() != 0`) → rollback
+   - `error_code() == 0` after `step()` returns false = DONE (success)
+   - empty table correctly produces an empty set (DONE on first step)
+3. **Prune:** DELETE absent IDs using **bound parameters**
+   (`DELETE FROM table WHERE id = ?`), not SQL concatenation
+4. **Check commit** — if `commit()` fails, the transaction rolls back
+
+If any step fails (prepare, bind, step, commit, FK RESTRICT), the
+entire transaction rolls back. No partial state is visible.
 
 **Effects:**
 - Updating a referenced parent succeeds.
