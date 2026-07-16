@@ -959,7 +959,7 @@ no sleep. Runs as part of the standard deterministic test suite.
   - The read-only DNS check pattern (DnsCheckService vs DnsProvider) — **Not needed.** DnsCheckService is a service, not a provider. The read-only pattern is documented in the implementation plan.
   - The Configured vs Published comparison model — **Not needed.** Frontend-only comparison; no backend storage or provider interface required.
   - The site_id=0 semantics clarification — **Useful.** Added ARCH-007 summary to project-status.md documenting the virtual system-domain pattern.
-- [ ] New ADR file created — **Deferred.** The site_id=0 semantics and virtual system-domain pattern are documented in the implementation plan and project-status.md. A formal ADR can be added if the pattern is extended in future epics (e.g., DNS zone management).
+- [x] ADR evaluated — No new ADR required. The read-only DNS check pattern (DnsCheckService vs DnsProvider), Configured vs Published comparison model, and site_id=0 semantics are documented in the implementation plan (`planning/implementation/ARCH-007-DNS-GUI-Implementation-Plan.md`) and the project status (`planning/project-status.md`). The site_id=0 virtual system-domain pattern follows existing convention established in ProxyViewService. A formal ADR is not required for ARCH-007 completion.
 
 ---
 

@@ -18,25 +18,26 @@ Logger             Stable        100%
 Storage            Stable         95%
 CLI                Stable         90%
 Daemon             Stable         95%
-REST API           Active         90%
-Web UI             Active         80%
+REST API           Active         95%
+Web UI             Active         90%
 Sites              Stable         95%
 Domains            Stable         95%
 Databases          Stable         95%
 Users              Stable         95%
 PHP Versions       Stable         90%
 Docker/Runtime     Stable         90%
-Reverse Proxy      Active         90%
-SSL/Certs          Active         75%
+Reverse Proxy      Active         95%
+SSL/Certs          Active         90%
 Access/SFTP        Active         75%
 Backup             Active         85%
 Profiles           Stable         90%
 Templates          Stable         85%
 Jobs               Active         75%
-Mail               Placeholder    10%
-DNS                Not started     0%
+Mail               Active         85%
+DNS (Diagnostics)  Active         90%
+DNS (Zone Mgmt)    Not started     0%
 Multi-node         Not started     0%
-Tests              Growing        60%
+Tests              Active         75%
 ```
 
 ## Version 0.1 — Core Foundation (Complete)
@@ -89,7 +90,7 @@ Tests              Growing        60%
 
 **Remaining:** Backup scheduling, backup rotation.
 
-## Version 0.5 — Web Administration (RC1 Complete)
+## Version 0.5 — Web Administration ✅ COMPLETE
 
 **Features:**
 - Admin panel with 13 pages (dashboard, sites, domains, databases, SSL, proxy, access, backups, profiles, templates, nodes, logs, settings)
@@ -109,68 +110,81 @@ Tests              Growing        60%
 - Template overwrite on startup to prevent stale configs
 - Fix for Apache PHP upstream handling
 
-**Remaining:**
-- Edit/delete for all resources
-- Resource detail pages with full data
-- Dashboard with real monitoring data
-- Form validation (client + server)
-- Pagination for large datasets
-- PortManager cleanup (deprecated after ARCH-004)
-
 **Release Candidates:**
-- v0.5.0-rc1 — first validation on Debian 13 (Trixie) — **passed**
+- v0.5.0-rc1 — first validation on Debian 13 — **passed**
 - v0.5.0-rc2 — validated on real Debian 13 — **all items complete**
-- v0.5.0 — (future) stable release
 
-**First Production Validation milestone:**
-The RC1 validation cycle completed on 2025-07-07.
+**Completed epics:**
+- ARCH-003: Web UI Public Access (dual listener)
+- ARCH-004: Docker Network Multi-Site
+- ARCH-005: SSL/HTTPS Management (ACME HTTP-01, auto-renewal, redirect, Web UI)
+- ARCH-006: Mail Module (MailDomain, Mailbox, MailAlias, DKIM, Docker mail stack)
 
-Core lifecycle validation passed: 128 of 137 checklist items pass
-on a clean Debian 13 Validation VM. The 9 remaining items are
-24-hour stability checks deferred to RC2.
+## Version 0.6 — DNS and Mail (RC1)
 
-ARCH-004 (Docker network routing) was implemented and validated on 2025-07-08,
-replacing the temporary host-port allocation. Full multi-site hosting now works
-with proper container isolation and zero host port consumption per site.
+**Release:** v0.6.0-rc1 (2026-07-16)
 
-RC2 validated on real Debian 13 on 2025-07-08: systemd, install.sh, update.sh,
-Apache/Nginx backends, multi-site networking, central proxy recovery, Web UI,
-progress reporting, rollback cleanup, journald logging, startup recovery.
+**Scope:**
 
-See `planning/validation-v0.5.0-rc1.md` for RC1 results.
+**Mail (ARCH-006, completed during v0.5):**
+- MailDomain resource with 4 modes (Disabled, LocalPrimary, ExternalRelay, SplitM365)
+- Mailbox CRUD with SHA-512-CRYPT password hashing
+- Mail alias support with domain-level routing
+- Docker mail stack: Postfix, Dovecot, Redis, Rspamd
+- DKIM key generation via OpenSSL, stored in MailDomain
+- TLS configuration for Postfix + Dovecot
+- Rspamd DKIM signing via milter proxy
+- External relay mode: per-domain transport maps
+- Split-M365 mode: local mailboxes + catch-all relay to M365
+- Runtime synchronization (11 mail CRUD handlers trigger config regeneration)
+- Mail health reporting (Postfix/Dovecot/Redis status)
+- Module lifecycle (activate/deactivate/status)
+- Mail reload, recover endpoints
+- SMTP server fixes (chroot, socket cleanup, DNS resolution)
+- Smarthost API with TLS + SASL support
+- DKIM signing fix for PHP Mail (allow_username_mismatch)
 
-**Current Epic:** SSL/HTTPS Management (ARCH-005)
+**DNS Diagnostics (ARCH-007):**
+- DnsCheckService using c-ares library (A, AAAA, MX, TXT, CNAME, NS, SOA, CAA)
+- 60s in-memory cache with refresh=1 bypass
+- DNS Check REST API with type filtering and error semantics
+- Domain List with progressive DNS/Runtime/Health column loading
+- Domain Detail with 5 tabs: Overview, DNS Records, Mail, Security, Health
+- Configured vs Published comparison for A, MX, SPF, DKIM, DMARC, MTA-STS
+- SPF analysis (RFC 7208) with SpfAnalyzer
+- DMARC Wizard with 3 policies (Monitor, Quarantine, Reject)
+- Evidence/Why panels with expected/actual/reason/fix
+- Context-aware Health Score (weighted, grade boundaries, mail/no-mail context)
+- Admin-panel virtual system Site and Domain (site_id=0)
 
-Real ACME HTTP-01 implementation with automatic issue, renewal, HTTP→HTTPS
-redirect, REST API, and full Web UI. Replaces the placeholder LetsEncryptProvider.
+**SSL and Security (ARCH-005, completed):**
+- ACME HTTP-01 with Let's Encrypt (staging + production)
+- CertificateStore with versioned metadata
+- Auto-renewal scheduler
+- HTTP→HTTPS redirect support
+- SSL Web UI page
+- Admin panel virtual Site SSL (site_id=0)
 
-See `planning/proposals/ARCH-005-SSL-Management.md` for the architecture proposal.
+**Deferred to future releases:**
+- Authoritative DNS zone management (CLI, API, provider)
+- 24-hour stability test (RC2 criterion deferred)
+- Backup scheduling and rotation
+- PortManager cleanup (deprecated after ARCH-004)
+- Pagination for large datasets
+- Real authentication (AuthMiddleware is AllowAll)
+- Persistent theme preference
 
-**Acceptance criteria for v0.5.0:**
-- [x] Zero compiler warnings (Debug + Release)
-- [x] Core lifecycle validated on clean Debian 13 VM
-- [x] RC1 validated (128/137 pass, 9 deferred)
-- [x] RC2 validated on real Debian 13 (all items complete)
-- [x] Multi-site hosting with Docker network routing validated
-- [x] Apache2 default backend with Web UI selector
-- [x] Rollback cleanup on failure validated
-- [ ] SSL/HTTPS management with ACME HTTP-01
-- [ ] Auto-renewal of certificates
-- [ ] HTTP → HTTPS redirect
-- [ ] SSL Web UI page
-- [ ] No orphan resources after cleanup
-
-## Version 0.6 — DNS and Mail (after v0.5.0)
-
-**Planned features:**
-- DNS resource and provider
-- DNS template profiles
-- CLI and API for DNS management
-- MailDomain resource activation
-- Mail provider (Postfix/Dovecot placeholder)
-- Web UI pages for DNS and Mail
-
-**Estimated effort:** 2 epics, ~15 tasks
+**Acceptance criteria for v0.6.0-rc1:**
+- [x] Zero compiler warnings
+- [x] All deterministic tests pass (242+)
+- [x] Mail module operational (Postfix, Dovecot, Redis, Rspamd)
+- [x] DKIM generation and signing
+- [x] DNS diagnostics operational (live resolution, comparison, health)
+- [x] Admin-panel system Site and Domain visible and protected
+- [x] No /api/runtime/0 or /api/sites/0/mail-status calls
+- [x] API documentation updated
+- [x] CHANGELOG updated
+- [x] Architecture documentation updated
 
 ## Version 0.7 — Monitoring and Observability
 

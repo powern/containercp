@@ -179,13 +179,13 @@
 | Updated docs | ✅ | README, INSTALL, CHANGELOG |
 | Version bumped to v0.5.0-rc2 | ✅ | |
 
-### v0.5.0 Release — pending 24h stability test
+### v0.5.0 Release — superseded by v0.6.0-rc1
 
 | Item | Status | Notes |
 |------|--------|-------|
-| 24-hour stability test (RC2) | ⬜ | Ready to start |
-| v0.5.0 stable release | ⬜ | After stability pass |
-| Final validation (148 items) | ⬜ | All pass expected |
+| 24-hour stability test (RC2) | ⏭️ | Deferred — superseded by v0.6 scope |
+| v0.5.0 stable release | ⏭️ | Not released — v0.6.0-rc1 is the current release |
+| Final validation (148 items) | ⏭️ | Merged into v0.6.0-rc1 validation scope |
 
 ---
 
@@ -471,5 +471,31 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 
 ---
 
-*Last updated: 2026-07-12*
-*Current Epic: Mail Module — SMTP/Rspamd DKIM/Smarthost hardening (Stage 4d implemented)*
+## v0.6.0-rc1 — DNS and Mail Release Candidate
+
+| Item | Status | Notes |
+|------|--------|-------|
+| Mail module (ARCH-006) | ✅ Implemented | MailDomain, Mailbox, Aliases, DKIM, Docker stack |
+| DNS Diagnostics (ARCH-007) | ✅ Implemented | DnsCheckService, Health Score, Admin Panel support |
+| SSL/HTTPS (ARCH-005) | ✅ Implemented | ACME HTTP-01, auto-renewal, Web UI |
+| Build: clean Release | ✅ | Zero warnings |
+| Deterministic tests | ✅ | 242 passed |
+| Full test suite | ✅ | 257 passed |
+| Manual UI acceptance | 🟡 | In progress |
+| 24-hour stability test | ⏭️ | Deferred to RC2 |
+| Production deployment | ⛔ | Not yet |
+
+**Completed epics:** ARCH-003, ARCH-004, ARCH-005, ARCH-006, ARCH-007
+
+**Known deferred features:**
+- Authoritative DNS zone management
+- Backup scheduling and rotation
+- PortManager cleanup
+- Pagination for large datasets
+- Real authentication
+- Persistent theme preference
+
+---
+
+*Last updated: 2026-07-16*
+*Current Version: v0.6.0-rc1*

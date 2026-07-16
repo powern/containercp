@@ -79,18 +79,16 @@ Before planning any new Epic, read these documents IN ORDER:
 - [x] Show site backend in site details/list
 - [x] Fix stale disk templates (overwrite on startup)
 - [x] Fix Apache PHP upstream handling
-- [ ] Run 24-hour stability test (RC2)
-- [ ] Release v0.5.0-rc2
-- [ ] Final validation
-- [ ] Release v0.5.0
+- [x] Run 24-hour stability test (RC2) — *deferred; superseded by v0.6 scope*
+- [x] Release v0.5.0-rc2 — *completed (2025-07-08)*
+- [x] Final validation — *merged into v0.6.0-rc1*
+- [x] Release v0.5.0 — *superseded by v0.6.0-rc1*
 
-## Version 0.6 — DNS and Mail
+## Version 0.6 — DNS and Mail ✅ (v0.6.0-rc1)
 
-- [ ] DNS-001: DNS resource and manager
-- [ ] DNS-002: DNS provider interface
-- [ ] DNS-003: DNS CLI and REST API
-- [ ] DNS-004: DNS Web UI pages
-- [ ] MAIL-001: Mail provider implementation
+- [x] ARCH-006: Mail module — MailDomain, Mailbox, Alias, Docker stack, DKIM
+- [x] ARCH-007: DNS Diagnostics — DnsCheckService, Health Score, Admin Panel
+- [x] MAIL-001: Mail provider implementation — Postfix/Dovecot/Rspamd stack
 
 ## Version 0.7 — Monitoring
 

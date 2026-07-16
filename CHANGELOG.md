@@ -6,6 +6,68 @@ Format: date | commit | summary
 
 ---
 
+## v0.6.0-rc1 — 2026-07-16
+
+**Release scope:** DNS and Mail release. First release candidate for v0.6.
+
+### Mail (ARCH-006)
+- MailDomain resource with 4 modes (Disabled, LocalPrimary, ExternalRelay, SplitM365)
+- Mailbox CRUD with SHA-512-CRYPT password hashing
+- Mail alias support with domain-level routing and virtual_alias_maps
+- Docker mail stack: Postfix, Dovecot, Redis, Rspamd (stock images)
+- DKIM key generation via OpenSSL, stored in MailDomain, Rspamd milter signing
+- TLS configuration for Postfix + Dovecot with CertificateStore paths
+- External relay mode: per-domain transport maps
+- Split-M365 mode: local mailboxes + catch-all relay with LMTP routing
+- Runtime synchronization: 11 mail CRUD handlers trigger config regeneration
+- Mail health reporting (Postfix/Dovecot/Redis status via HealthRegistry)
+- Module lifecycle (activate/deactivate/status via MailModuleState)
+- Mail reload (`POST /api/mail/reload`) and recover (`POST /api/mail/recover`)
+- SMTP server fixes: bookworm base image, chroot, socket cleanup, DNS resolution
+- Smarthost API (`GET/POST /api/mail/smarthost`) with TLS + SASL support
+- DKIM signing fix for PHP Mail: `allow_username_mismatch=true`
+- PHP Mail enable/disable per site
+
+### DNS Diagnostics (ARCH-007)
+- DnsCheckService using c-ares library (A, AAAA, MX, TXT, CNAME, NS, SOA, CAA)
+- 60s in-memory cache with refresh=1 bypass and concurrent access protection
+- `GET /api/domains/<domain>/dns-check` with type filtering and error semantics
+- Domain List with progressive DNS/Runtime/Health column loading
+- Domain Detail with 5 tabs: Overview, DNS Records, Mail, Security, Health
+- Configured vs Published comparison for A, AAAA, MX, SPF, DKIM, DMARC, CAA, MTA-STS, TLS-RPT
+- SPF analysis (RFC 7208) with SpfAnalyzer — ip4, ip6, a, mx, include, redirect, all
+- DMARC Wizard with 3 policies (Monitor=none, Quarantine, Reject)
+- Evidence/Why panels with expected/actual/reason/fix for all record types
+- Context-aware Health Score (9 weighted checks, grade boundaries, mail/no-mail context)
+- Admin-panel virtual system Site and Domain (site_id=0) with capability fields
+- 16 commits, 257 tests, zero compiler warnings
+
+### SSL and Security
+- ACME HTTP-01 with Let's Encrypt (staging + production environments)
+- CertificateStore with versioned metadata and auto-renewal
+- SSL REST API (issue, renew, enable, disable, HTTP→HTTPS redirect)
+- SSL Web UI page with status overview
+- Admin-panel SSL (site_id=0) with certificate management
+
+### Tests and Reliability
+- Deterministic test suite: 242 tests
+- Live-DNS integration suite: 15 tests (tagged [integration])
+- API handler tests through Router dispatch with FakeDnsCheckService
+- JSON syntax validation in regression tests
+- CTest suite separation (deterministic vs integration)
+- Thread-safe concurrent cache access tests
+
+### Important Fixes
+- Site ID 0 foreign-key collision in MailDomain lookup (frontend)
+- JSON generation bug: missing closing quote in DomainViewService
+- Stale loader race condition in HealthCache
+- ID-0 collision in mail association (domain_id=0 matching)
+- Admin-panel site_id=0 cannot be removed via generic endpoints
+- SPF nesting bug in Health scoring (DKIM/DMARC outside rootDns block)
+- DMARC parser: `indexOf('p=none')` matched `sp=none`
+
+---
+
 ## ARCH-007 — DNS Diagnostic Center (2026-07-16)
 
 **Epic status:** COMPLETED

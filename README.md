@@ -60,8 +60,7 @@ Browser / CLI / curl
 
 ## Project Status
 
-**Version 0.5 Release Candidate 2** — RC2 stability and production
-foundation.
+**Version 0.6.0 Release Candidate 1** — DNS and Mail release.
 
 | Subsystem | Status | Completeness |
 |-----------|--------|-------------|
