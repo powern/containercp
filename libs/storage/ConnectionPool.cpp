@@ -138,15 +138,6 @@ ReadLease::ReadLease(ReadLease&& other) noexcept
     other.db_ = nullptr;
 }
 
-ReadLease& ReadLease::operator=(ReadLease&& other) noexcept {
-    if (this != &other) {
-        if (db_) pool_.return_read(db_);
-        db_ = other.db_;
-        other.db_ = nullptr;
-    }
-    return *this;
-}
-
 SQLiteDB& ReadLease::db() const {
     return *db_;
 }

@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #include "doctest/doctest.h"
@@ -388,6 +389,32 @@ TEST_CASE("ConnectionPool lease/shutdown ordering") {
         shutdown_thread.join();
         CHECK(pool.is_shutdown());
     }
+    cleanup(path);
+}
+
+// Compile-time check: ReadLease is not move-assignable
+static_assert(!std::is_move_assignable<containercp::storage::ReadLease>::value,
+              "ReadLease must not be move-assignable");
+
+TEST_CASE("ConnectionPool ReadLease move construction transfers ownership") {
+    auto path = pool_path("containercp_test_rlmove.db");
+    cleanup(path);
+    {
+        containercp::storage::ConnectionPool pool;
+        REQUIRE(pool.initialize(path));
+
+        containercp::storage::ReadLease rl1(pool);
+        REQUIRE(rl1.is_valid());
+
+        // Move-construct: rl2 takes ownership
+        containercp::storage::ReadLease rl2(std::move(rl1));
+        CHECK(rl2.is_valid());
+        CHECK_FALSE(rl1.is_valid());  // moved-from is empty
+
+        // rl2's destructor returns the connection
+
+        // Moved-from rl1 destructor must not double-return
+    }  // rl2 and rl1 destroyed here — rl1's destructor sees db_ == nullptr
     cleanup(path);
 }
 

@@ -36,7 +36,10 @@ private:
 };
 
 // RAII read lease.  Acquires a read connection on construction,
-// returns it on destruction.  Move-only, non-copyable.
+// returns it on destruction.  Move-constructible (transfers the
+// connection to the new lease), but NOT move-assignable (prevents
+// cross-pool ownership bugs since the pool reference cannot be
+// reseated).
 //
 // Usage:
 //   {
@@ -54,7 +57,7 @@ public:
     ReadLease& operator=(const ReadLease&) = delete;
 
     ReadLease(ReadLease&& other) noexcept;
-    ReadLease& operator=(ReadLease&& other) noexcept;
+    ReadLease& operator=(ReadLease&& other) noexcept = delete;
 
     SQLiteDB& db() const;
     SQLiteDB* operator->() const;

@@ -275,20 +275,35 @@ decremented and `nullptr` is returned. The ordering guarantee is:
 
 ### ReadLease (RAII read lease)
 
-`ReadLease` is a move-only RAII wrapper that acquires a read
-connection on construction and returns it on destruction:
+`ReadLease` is a scoped RAII wrapper that acquires a read connection
+on construction and returns it on destruction.
+
+**Move policy:** Move-constructible (transfers the connection to the
+new lease). **Not move-assignable** (prevents cross-pool ownership
+bugs since the pool reference cannot be reseated).
 
 ```cpp
 class ReadLease {
 public:
     explicit ReadLease(ConnectionPool& pool);
     ~ReadLease();
-    ReadLease(ReadLease&& other) noexcept;
+
+    ReadLease(const ReadLease&) = delete;
+    ReadLease& operator=(const ReadLease&) = delete;
+
+    ReadLease(ReadLease&& other) noexcept;             // OK
+    ReadLease& operator=(ReadLease&& other) noexcept = delete;  // forbidden
+
     SQLiteDB& db() const;
     SQLiteDB* operator->() const;
     bool is_valid() const;
 };
 ```
+
+**Moved-from state:** After move construction, the source lease's
+`db_` is set to `nullptr`. `is_valid()` returns false. The destructor
+of a moved-from lease does nothing — the connection is returned
+exactly once by the new lease.
 
 `is_valid()` returns false if the pool is shut down or if all
 connections are busy.
