@@ -35,7 +35,13 @@ SQLiteDB& SQLiteDB::operator=(SQLiteDB&& other) noexcept {
     return *this;
 }
 
+void SQLiteDB::clear_error() {
+    last_error_code_ = 0;
+    last_error_message_.clear();
+}
+
 bool SQLiteDB::open(const std::string& path) {
+    clear_error();
     if (db_) return true;  // already open, idempotent
 
     int rc = sqlite3_open(path.c_str(), &db_);
@@ -60,6 +66,7 @@ bool SQLiteDB::open(const std::string& path) {
 }
 
 bool SQLiteDB::close() {
+    clear_error();
     finalize_stmt();
     if (db_) {
         int rc = sqlite3_close(db_);
@@ -78,6 +85,7 @@ bool SQLiteDB::is_open() const {
 }
 
 bool SQLiteDB::exec(const std::string& sql) {
+    clear_error();
     if (!db_) {
         last_error_code_ = SQLITE_MISUSE;
         last_error_message_ = "Database not open";
@@ -96,6 +104,7 @@ bool SQLiteDB::exec(const std::string& sql) {
 }
 
 bool SQLiteDB::prepare(const std::string& sql) {
+    clear_error();
     if (!db_) {
         last_error_code_ = SQLITE_MISUSE;
         last_error_message_ = "Database not open";
@@ -115,6 +124,7 @@ bool SQLiteDB::prepare(const std::string& sql) {
 }
 
 bool SQLiteDB::bind_int(int index, int64_t value) {
+    clear_error();
     if (!stmt_) {
         last_error_code_ = SQLITE_MISUSE;
         last_error_message_ = "No prepared statement";
@@ -130,6 +140,7 @@ bool SQLiteDB::bind_int(int index, int64_t value) {
 }
 
 bool SQLiteDB::bind_text(int index, const std::string& value) {
+    clear_error();
     if (!stmt_) {
         last_error_code_ = SQLITE_MISUSE;
         last_error_message_ = "No prepared statement";
@@ -148,6 +159,7 @@ bool SQLiteDB::bind_text(int index, const std::string& value) {
 }
 
 bool SQLiteDB::bind_null(int index) {
+    clear_error();
     if (!stmt_) {
         last_error_code_ = SQLITE_MISUSE;
         last_error_message_ = "No prepared statement";
@@ -163,6 +175,7 @@ bool SQLiteDB::bind_null(int index) {
 }
 
 bool SQLiteDB::step() {
+    clear_error();
     if (!stmt_) {
         last_error_code_ = SQLITE_MISUSE;
         last_error_message_ = "No prepared statement";
@@ -213,6 +226,7 @@ bool SQLiteDB::rollback() {
 }
 
 bool SQLiteDB::apply_pragmas() {
+    clear_error();
     if (!db_) return false;
 
     const char* pragmas[] = {

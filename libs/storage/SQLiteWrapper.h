@@ -85,7 +85,10 @@ public:
     //   journal_size_limit = 67108864
     bool apply_pragmas();
 
-    // Last error information (cleared on each new call).
+    // Last error from the most recent public operation that failed.
+    // Cleared at the start of every mutating public method.
+    // After a successful call, error_code() returns 0 and
+    // error_message() returns empty string.
     std::string error_message() const;
     int error_code() const;
 
@@ -94,6 +97,7 @@ public:
     sqlite3* handle() const;
 
 private:
+    void clear_error();
     void finalize_stmt();
 
     sqlite3* db_ = nullptr;

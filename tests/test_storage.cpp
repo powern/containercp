@@ -244,6 +244,28 @@ TEST_CASE("SQLiteWrapper error after misuse") {
     CHECK(db.error_code() != 0);
 }
 
+TEST_CASE("SQLiteWrapper stale error is cleared after success") {
+    auto path = test_db_path("containercp_test_stale.db");
+    cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        // Cause an error
+        CHECK_FALSE(db.exec("INVALID SQL"));
+
+        // Verify error state is set
+        CHECK_FALSE(db.error_message().empty());
+        CHECK(db.error_code() != 0);
+
+        // Successful operation should clear the stale error
+        REQUIRE(db.exec("CREATE TABLE t (id INTEGER)"));
+        CHECK(db.error_code() == 0);
+        CHECK(db.error_message().empty());
+    }
+    cleanup(path);
+}
+
 TEST_CASE("Storage load from non-existent file") {
     containercp::storage::Storage s("/tmp/nonexistent_dir_containercp_test/");
     auto users = s.load_users();

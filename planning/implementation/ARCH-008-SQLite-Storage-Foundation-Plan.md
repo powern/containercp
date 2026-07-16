@@ -2,8 +2,8 @@
 
 > **Based on:** `planning/proposals/ARCH-008-SQLite-Storage-Foundation.md`
 >
-> **Status:** Phase 0 complete. Phases 1–14 pending.
-> **Total phases:** 14 (Phase 0 + Phases 1–14)
+> **Status:** Phase 1 complete. Phases 2–14 pending.
+> **Total phases:** 15 (Phase 0 through Phase 14)
 > **Definition of Done:** see Phase 14
 > **Migration test data:**
 >   1. Small synthetic edge-case fixtures (`tests/fixtures/v0.6.0/normal/`,
