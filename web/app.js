@@ -556,7 +556,7 @@ async function loadSiteDetail(p, siteId) {
       </div>
       ${isSystem ? `
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;">
-        <div class="card"><h3>Web Service</h3><div style="margin-top:8px;font-size:13px;"><div>Status: <span class="badge badge-ok">${esc(site.web_status||'Active')}</span></div></div></div>
+        <div class="card"><h3>Web Service</h3><div style="margin-top:8px;font-size:13px;"><div>Status: <span class="badge ${({'Available':'badge-ok','Active':'badge-ok','Running':'badge-ok','Disabled':'badge-info'})[site.web_status]||'badge-info'}">${esc(site.web_status||'Not verified')}</span></div></div></div>
         <div class="card"><h3>PHP</h3><div style="margin-top:8px;font-size:13px;"><div>Status: <span class="badge badge-info">N/A</span></div></div></div>
         <div class="card"><h3>Databases</h3><div style="margin-top:8px;font-size:13px;"><div>Not applicable</div></div></div>
         <div class="card"><h3>Backups</h3><div style="margin-top:8px;font-size:13px;"><div>Not applicable</div></div></div>
