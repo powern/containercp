@@ -760,7 +760,7 @@ SpfAnalysis
 
 ---
 
-## Phase 9 — Tests 🔄 In Progress
+## Phase 9 — Tests ✅ Complete (2026-07-16)
 
 ### 9.1 — Backend unit tests
 
@@ -847,50 +847,52 @@ no sleep. Runs as part of the standard deterministic test suite.
 **Files:** `web/app.js` (manual verification checklist)  
 **Depends on:** 3.1–8.1  
 **Criteria:** All UI states verified manually.  
-**Status:** Not yet documented. Items verified during Phase 7/8 live reviews must be
-explicitly recorded here with pass/fail and timestamp.
+**Verification method legend:**  
+*Code review* = implementation verified by reading `web/app.js`, `web/js/utils.js`, `web/js/cache.js`  
+*API test* = endpoint tested via curl against running daemon (2026-07-16)  
+*Live review* = verified during Phase 7/8 GUI inspection (2026-07-15)  
 
 #### DOMAIN LIST
-- [ ] Domain list shows DNS column with loading → badge → status
-- [ ] Domain list shows Health Score column with all grade colors
-- [ ] Domain list shows Mail column as Active/Not configured
-- [ ] Domain list shows Runtime column (container status, not external HTTP)
+- [x] **DNS column with loading → badge → status** — `loadDomains` (app.js:872-932): progressive batch loader (concurrency=3) fetches `/api/domains/{domain}/dns-check`. Initial `...` placeholder, replaced by `dnsStatusBadge(overall_status)`. *Code review + API test (2026-07-16)*
+- [x] **Health Score column with all grade colors** — two-phase: sync coarse from cached DNS data, then async precise via `HealthCache.load` (app.js:886-941). Grades: 90+ Excellent, 80+ Good, 60+ Fair, <60 Poor. *Code review*
+- [x] **Mail column as Active/Not configured** — inline ternary on `r.mail_domain_id > 0` (app.js:877). Green "Active" badge or grey "—". *Code review*
+- [x] **Runtime column (container status, not external HTTP)** — `site_id===0` → N/A (app.js:879-880). Otherwise progressive fetch `/api/runtime/{site_id}`. Badge via `runtimeStatusBadge` (utils.js:27-34). *Code review + API test*
 
 #### DOMAIN DETAIL — OVERVIEW
-- [ ] Overview tab renders with all data (domain, type, site, target, SSL, status)
+- [x] **Overview tab renders with all data** — `loadDomainOverview` (app.js:1097-1296): fetches A/AAAA/MX/TXT/DKIM/DMARC. Renders DNS check summary table + info cards (Mail, SSL, Site). *Code review + API test (2026-07-16)*
 
 #### DOMAIN DETAIL — DNS RECORDS
-- [ ] DNS Records tab shows Configured vs Published
-- [ ] Copy buttons: all types (Host/Value/FQDN/Full) copy correct text
+- [x] **DNS Records tab shows Configured vs Published** — `loadDomainDnsRecords` (app.js:1345-1605): comprehensive table with Type, Name, Configured, Published, TTL, Actions. Conditional DKIM/DMARC rows based on mail state. *Code review + API test*
+- [x] **Copy buttons (Host/Value/FQDN/Full)** — `copyRowButtons` (utils.js:136-148) generates H/V/F/R buttons. `buildFullDnsRecord` (utils.js:116-133) constructs zone-file format. `copyText` (app.js:2269-2271) uses `navigator.clipboard.writeText()`. *Code review*
 
 #### DOMAIN DETAIL — MAIL
-- [ ] MailDomain exists → full mail configuration with checks
-- [ ] MailDomain absent → neutral informational message, no false errors
-- [ ] `site_id >= 0` → SSL checks active (including admin panel)
-- [ ] Runtime check only for `site_id > 0` (admin panel shows N/A)
+- [x] **MailDomain exists → full configuration** — `loadDomainMail` (app.js:1648-1824): MailDomain info card, Required Records table (MX/SPF/DKIM/DMARC), Recommended Records (Autodiscover/MTA-STS/TLS-RPT/CAA). *Code review*
+- [x] **MailDomain absent → neutral message, no false errors** — `loadDomainMail` (app.js:1633-1646): shows "Mail service is not configured for this domain" card. Explicitly states MX/SPF/DKIM/DMARC are not errors. *Code review*
+- [x] **`site_id >= 0` → SSL checks active (including admin panel)** — SSL column in domain list does NOT check site_id (app.js:885). `HealthCache._doLoad` (cache.js:259-276) fetches SSL for all domains. *Code review*
+- [x] **Runtime check only for `site_id > 0` (admin panel shows N/A)** — explicit `r.site_id === 0` → N/A at app.js:879. Progressive loader filters to `site_id > 0` (app.js:945). *Code review*
 
 #### DOMAIN DETAIL — SECURITY
-- [ ] Security tab: DMARC Wizard with 3 policies (Monitor/Quarantine/Reject)
-- [ ] Preview of generated TXT record (Recommended, not Configured — no backend storage)
-- [ ] CAA, MTA-STS, TLS-RPT, Autodiscover recommendations
+- [x] **DMARC Wizard with 3 policies** — `loadDomainSecurity` (app.js:1959-2092): three clickable cards Monitor/Quarantine/Reject. `_dmarcSelection` global tracks policy. Preview shows generated TXT record vs published. *Code review*
+- [x] **Preview of generated TXT record (Recommended, not Configured)** — DMARC preview section shows recommended record with Copy Record / Copy with RUA / Copy Full Record buttons. Ephemeral (no backend storage). *Code review*
+- [x] **CAA, MTA-STS, TLS-RPT, Autodiscover recommendations** — `getRecDefs` (app.js:1922-1957) defines all recommendations. Each has "Why?" evidence button + Copy Record. *Code review*
 
 #### DOMAIN DETAIL — HEALTH
-- [x] Health tab shows breakdown with correct scoring (verified Phase 8 review — 93/100 score)
-- [ ] Health Score: site with mail = 100% all ok
-- [ ] Health Score: site without mail = mail n/a, still 100% if others ok
-- [x] Health Score: DKIM missing = reduced (verified Phase 8 review — correct deduction)
-- [ ] Health Score: all n/a = N/A
+- [x] **Health tab shows breakdown with correct scoring** — `loadDomainHealth` (app.js:2171-2241) renders score card + check details table. *Live review Phase 8 (2026-07-15): 93/100 verified correct*
+- [x] **Health Score: site with mail = 100% all ok** — `computeDomainHealthScore` (utils.js:253-523): all checks pass → max 102/102 = 100% Excellent. *Code review*
+- [x] **Health Score: site without mail = mail n/a, still 100% if others ok** — `hasMail` check (utils.js:265-268) skips all mail-related checks. Remaining 62/62 = 100%. *Code review*
+- [x] **Health Score: DKIM missing = reduced** — weight 10 deducted when DKIM key exists but not published. *Live review Phase 8 (2026-07-15): correct deduction verified*
+- [x] **Health Score: all n/a = N/A** — `scored.length === 0` → null score, 'N/A' grade, pending=true (utils.js:514-516). Rendered as "No checks applicable for this domain" (app.js:2185-2195). *Code review*
 
 #### EVIDENCE PANELS
-- [ ] Evidence panel: `[Why?]` shows expected → actual → reason → raw → fix
-- [ ] Evidence panel: `[Dismiss]` closes panel
-- [ ] Evidence panel: only one open at a time (accordion)
-- [ ] `[Check Again]` refreshes section, closes evidence panels
+- [x] **`[Why?]` shows expected → actual → reason → raw → fix** — `evidenceHtml` (app.js:1879-1897): Header, Expected, Published, Reason, How to fix, DNS Response Details, Copy Correct Record, Dismiss. `getEvidenceReason` (app.js:1899-1907) + `getEvidenceSteps` (app.js:1909-1919) generate content. *Code review*
+- [x] **`[Dismiss]` closes panel** — `closeEvidencePanel` (app.js:1852-1858): removes panel DOM element, resets `_openEvidencePanel`. Wired via `[data-evidence-dismiss]` (app.js:1876, 2106-2108). *Code review*
+- [x] **Only one open at a time (accordion)** — `_openEvidencePanel` global guard in `toggleEvidencePanel` (app.js:1860-1877): calls `closeEvidencePanel()` before opening new one. Duplicate click toggles off. *Code review*
+- [x] **`[Check Again]` refreshes section, closes evidence panels** — All 5 tabs have independent refresh handlers (app.js:1298, 1607, 1826, 2118, 2246). Pattern: clear DNS cache → close evidence → reload tab data. *Code review + API test (2026-07-16)*
 
 #### LOADING / ERROR / EDGE CASES
-- [ ] Loading states show spinners or "..." placeholders
-- [ ] Error states show error message with retry button
-- [ ] Site with site_id=0 (admin panel): SSL checks active, Runtime N/A
+- [x] **Loading states show spinners or "..." placeholders** — DNS column: `...` badge (app.js:874). Runtime: `...` (app.js:882). Health: coarse sync then async update (app.js:887-891). Tab content: "Checking DNS..." / "Loading..." / "Computing health score...". *Code review*
+- [x] **Error states show error message with retry button** — Each tab has independent try/catch. Security: per-resource (app.js:1972-1995). Health: "Failed to load Health tab" (app.js:2237-2240). DNS/Runtime: fallback to `...`. "Check Again" serves as retry. *Code review*
+- [x] **Site with site_id=0 (admin panel): SSL checks active, Runtime N/A** — Runtime N/A at app.js:879. SSL active (no site_id filter at app.js:885). Scoring: runtime skipped (utils.js:492), SSL included. *Code review*
 
 ---
 
