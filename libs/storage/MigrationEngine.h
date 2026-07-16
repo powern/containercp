@@ -15,12 +15,19 @@ namespace containercp::storage {
 //   version order.  There is no gap-filling — every version must
 //   be registered.
 // name: human-readable unique identifier (e.g. "create_meta_tables").
+// descriptor: string that uniquely identifies this migration's
+//   implementation.  MUST change when the migration logic changes.
+//   The checksum is computed as sha256(version + ":" + descriptor).
+//   Two migrations with the same version MUST have the same descriptor
+//   to be considered identical.  Different descriptors with the same
+//   version are a duplicate version error.
 // up: function that performs the migration.  Receives the database
 //   connection and a diagnostics string to fill on error.
 //   Returns true on success, false on failure.
 struct Migration {
     int version = 0;
     std::string name;
+    std::string descriptor;
     std::function<bool(SQLiteDB& db, std::string& diagnostics)> up;
 };
 

@@ -796,6 +796,9 @@ containercp::storage::Migration make_migration(int version,
     containercp::storage::Migration m;
     m.version = version;
     m.name = name;
+    // The descriptor is the SQL content itself — any change to the
+    // migration logic produces a different checksum.
+    m.descriptor = sql;
     m.up = [sql](containercp::storage::SQLiteDB& db, std::string& diag) -> bool {
         if (!db.exec(sql)) {
             diag = db.error_message();
@@ -889,17 +892,67 @@ TEST_CASE("MigrationEngine checksum mismatch detection") {
         containercp::storage::SQLiteDB db;
         REQUIRE(db.open(path));
 
+        // Apply migration with specific SQL content (descriptor = SQL)
         containercp::storage::MigrationEngine eng1;
         eng1.register_migration(make_migration(1, "create_t1",
                                                 "CREATE TABLE t1 (id INTEGER)"));
         CHECK(eng1.migrate(db));
 
+        // Same version, different SQL content → different descriptor →
+        // different checksum → mismatch detected
         containercp::storage::MigrationEngine eng2;
-        eng2.register_migration(make_migration(1, "different_name",
-                                                "CREATE TABLE t2 (id INTEGER)"));
+        containercp::storage::Migration m;
+        m.version = 1;
+        m.name = "create_t1_changed";
+        m.descriptor = "CREATE TABLE t1 (id INTEGER, name TEXT)";  // changed SQL
+        m.up = [](containercp::storage::SQLiteDB& d, std::string& diag) -> bool {
+            if (!d.exec("CREATE TABLE t1 (id INTEGER, name TEXT)")) {
+                diag = d.error_message();
+                return false;
+            }
+            return true;
+        };
+        eng2.register_migration(std::move(m));
         CHECK_FALSE(eng2.migrate(db));
         CHECK_FALSE(eng2.last_error().empty());
         CHECK(eng2.last_error().find("checksum mismatch") != std::string::npos);
+    }
+    mig_cleanup(path);
+}
+
+TEST_CASE("MigrationEngine duplicate version rejected deterministically") {
+    auto path = mig_db_path("containercp_test_dupver.db");
+    mig_cleanup(path);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(path));
+
+        containercp::storage::MigrationEngine eng;
+
+        // Two migrations with same version but different SQL → different descriptors
+        containercp::storage::Migration m1;
+        m1.version = 1;
+        m1.name = "first";
+        m1.descriptor = "CREATE TABLE a (id INTEGER)";
+        m1.up = [](containercp::storage::SQLiteDB& d, std::string&) -> bool {
+            return d.exec("CREATE TABLE a (id INTEGER)");
+        };
+
+        containercp::storage::Migration m2;
+        m2.version = 1;
+        m2.name = "second";
+        m2.descriptor = "CREATE TABLE b (id INTEGER)";  // different from m1
+        m2.up = [](containercp::storage::SQLiteDB& d, std::string&) -> bool {
+            return d.exec("CREATE TABLE b (id INTEGER)");
+        };
+
+        eng.register_migration(std::move(m1));
+        eng.register_migration(std::move(m2));
+
+        // migrate() should detect duplicate versions with different descriptors
+        CHECK_FALSE(eng.migrate(db));
+        CHECK_FALSE(eng.last_error().empty());
+        CHECK(eng.last_error().find("Duplicate migration version") != std::string::npos);
     }
     mig_cleanup(path);
 }
@@ -1022,13 +1075,14 @@ TEST_CASE("MigrationEngine storage_meta keys") {
     mig_cleanup(path);
 }
 
-TEST_CASE("MigrationEngine duplicate version skipped silently") {
+TEST_CASE("MigrationEngine same version same descriptor skipped") {
     auto path = mig_db_path("containercp_test_dup.db");
     mig_cleanup(path);
     {
         containercp::storage::SQLiteDB db;
         REQUIRE(db.open(path));
 
+        // Apply migration
         {
             containercp::storage::MigrationEngine eng;
             eng.register_migration(make_migration(1, "create_t1",
@@ -1037,17 +1091,25 @@ TEST_CASE("MigrationEngine duplicate version skipped silently") {
             CHECK(eng.current_version(db) == 1);
         }
 
+        // Same version with same SQL → same descriptor → checksum match → skip
         {
             containercp::storage::MigrationEngine eng;
-            eng.register_migration(make_migration(1, "create_t1",
+            eng.register_migration(make_migration(1, "create_t1_again",
                                                    "CREATE TABLE t1 (id INTEGER)"));
             CHECK(eng.migrate(db));
         }
 
+        // Same version with different SQL → different descriptor → duplicate version error
         {
             containercp::storage::MigrationEngine eng;
-            eng.register_migration(make_migration(1, "different_name",
-                                                   "CREATE TABLE t2 (id INTEGER)"));
+            containercp::storage::Migration m;
+            m.version = 1;
+            m.name = "different_sql";
+            m.descriptor = "CREATE TABLE t2 (id INTEGER)";  // different from original
+            m.up = [](containercp::storage::SQLiteDB& d, std::string&) -> bool {
+                return d.exec("CREATE TABLE t2 (id INTEGER)");
+            };
+            eng.register_migration(std::move(m));
             CHECK_FALSE(eng.migrate(db));
         }
     }

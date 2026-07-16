@@ -68,6 +68,22 @@ bool MigrationEngine::migrate(SQLiteDB& db) {
                   return a.version < b.version;
               });
 
+    // Reject duplicate versions with different descriptors.
+    // Two migrations with the same version and same descriptor
+    // are allowed (idempotent registration) but the second is
+    // silently skipped via checksum match.
+    for (size_t i = 0; i + 1 < migrations_.size(); ++i) {
+        if (migrations_[i].version == migrations_[i + 1].version &&
+            migrations_[i].descriptor != migrations_[i + 1].descriptor) {
+            last_error_ = "Duplicate migration version "
+                + std::to_string(migrations_[i].version)
+                + " with different descriptors: '"
+                + migrations_[i].descriptor + "' vs '"
+                + migrations_[i + 1].descriptor + "'";
+            return false;
+        }
+    }
+
     if (!ensure_meta_tables(db)) {
         return false;
     }
@@ -239,7 +255,17 @@ bool MigrationEngine::checksum_matches(SQLiteDB& db, const Migration& m) {
 }
 
 std::string MigrationEngine::compute_checksum(const Migration& m) {
-    std::string input = std::to_string(m.version) + ":" + m.name;
+    // The checksum uniquely identifies the migration definition:
+    // version + ":" + descriptor.
+    // The developer MUST change the descriptor whenever the migration
+    // logic (up function) changes.  This is a deterministic content
+    // fingerprint that can be computed without hashing the function
+    // itself (which is not safely hashable in C++).
+    //
+    // If no descriptor is provided, the name is used as fallback
+    // (for backward compatibility).
+    std::string input = std::to_string(m.version) + ":"
+        + (m.descriptor.empty() ? m.name : m.descriptor);
     return sha256_hex(input);
 }
 
