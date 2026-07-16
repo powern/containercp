@@ -1,6 +1,8 @@
 #ifndef CONTAINERCP_STORAGE_SQLITE_STORAGE_H
 #define CONTAINERCP_STORAGE_SQLITE_STORAGE_H
 
+#include "access/AccessGrant.h"
+#include "access/AccessUser.h"
 #include "ConnectionPool.h"
 #include "database/Database.h"
 #include "domain/Domain.h"
@@ -88,6 +90,14 @@ public:
     // Reverse proxies
     void save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies);
     std::vector<proxy::ReverseProxy> load_reverse_proxies();
+
+    // Access users (FK-safe parent sync)
+    void save_access_users(const std::vector<access::AccessUser>& users);
+    std::vector<access::AccessUser> load_access_users();
+
+    // Access grants (child table, FK-dependent)
+    void save_access_grants(const std::vector<access::AccessGrant>& grants);
+    std::vector<access::AccessGrant> load_access_grants();
 
 private:
     ConnectionPool& pool_;

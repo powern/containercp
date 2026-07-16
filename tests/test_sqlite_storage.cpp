@@ -1403,6 +1403,388 @@ TEST_CASE("Phase6b existing phases still work") {
     tclean(dir);
 }
 
+// ============================================================
+// Phase 6c — Access User and Access Grant SQLite storage tests
+// ============================================================
+
+// --- Access users ---
+
+TEST_CASE("SQLiteStorage access_users empty") {
+    auto dir = tdir("s6c_au_empty"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    CHECK(ss.load_access_users().empty());
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage access_users round trip") {
+    auto dir = tdir("s6c_au_rt"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::access::AccessUser u;
+    u.id = 1; u.username = "sftp1"; u.auth_type = "password";
+    u.password_hash = "$6$placeholder"; u.enabled = true;
+    ss.save_access_users({u});
+    auto loaded = ss.load_access_users();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].id == 1);
+    CHECK(loaded[0].username == "sftp1");
+    CHECK(loaded[0].auth_type == "password");
+    CHECK(loaded[0].password_hash == "$6$placeholder");
+    CHECK(loaded[0].enabled); CHECK(loaded[0].name == "sftp1");
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage access_users enabled false and auth types") {
+    auto dir = tdir("s6c_au_flags"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    containercp::access::AccessUser u;
+    u.id = 1; u.username = "disabled"; u.enabled = false;
+    ss.save_access_users({u});
+    auto loaded = ss.load_access_users();
+    REQUIRE(loaded.size() == 1);
+    CHECK_FALSE(loaded[0].enabled);
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage access_users UPSERT preservation") {
+    auto dir = tdir("s6c_au_upsert"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+
+    containercp::access::AccessUser u;
+    u.id = 1; u.username = "original"; u.password_hash = "h1"; u.enabled = true;
+    ss.save_access_users({u});
+
+    u.username = "updated"; u.password_hash = "h2";
+    ss.save_access_users({u});
+
+    auto loaded = ss.load_access_users();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].username == "updated");
+    CHECK(loaded[0].password_hash == "h2");
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage access_users prune unreferenced") {
+    auto dir = tdir("s6c_au_prune"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+
+    containercp::access::AccessUser u1, u2;
+    u1.id = 1; u1.username = "keep"; u1.enabled = true;
+    u2.id = 2; u2.username = "remove"; u2.enabled = true;
+    ss.save_access_users({u1, u2});
+    ss.save_access_users({u1});
+
+    auto loaded = ss.load_access_users();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].id == 1);
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage access_users empty vector clears") {
+    auto dir = tdir("s6c_au_clear"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+
+    containercp::access::AccessUser u;
+    u.id = 1; u.username = "tmp"; u.enabled = true;
+    ss.save_access_users({u});
+    ss.save_access_users({});
+    CHECK(ss.load_access_users().empty());
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage access_users reopen") {
+    auto dir = tdir("s6c_au_reopen"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+        containercp::storage::SQLiteStorage ss(pool);
+        containercp::access::AccessUser u;
+        u.id = 5; u.username = "persist"; u.enabled = true;
+        ss.save_access_users({u});
+    }
+    {
+        containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+        containercp::storage::SQLiteStorage ss(pool);
+        auto loaded = ss.load_access_users();
+        REQUIRE(loaded.size() == 1); CHECK(loaded[0].id == 5);
+    }
+    tclean(dir);
+}
+
+// --- Access grants ---
+
+TEST_CASE("SQLiteStorage access_grants empty") {
+    auto dir = tdir("s6c_ag_empty"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+    CHECK(ss.load_access_grants().empty());
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage access_grants round trip all permissions") {
+    auto dir = tdir("s6c_ag_rt"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+
+    // Set up parent rows
+    containercp::access::AccessUser u;
+    u.id = 1; u.username = "u"; u.enabled = true;
+    ss.save_access_users({u});
+    containercp::site::Site s;
+    s.id = 1; s.domain = "s.com"; s.node_id = 1;
+    ss.save_access_users({u});
+    ss.save_sites({s});
+
+    containercp::access::AccessGrant g;
+    g.id = 1; g.access_user_id = 1; g.site_id = 1;
+    g.permission = containercp::access::Permission::READ_WRITE;
+    ss.save_access_grants({g});
+    auto loaded = ss.load_access_grants();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].id == 1);
+    CHECK(loaded[0].access_user_id == 1);
+    CHECK(loaded[0].site_id == 1);
+    CHECK(loaded[0].permission == containercp::access::Permission::READ_WRITE);
+    CHECK(loaded[0].name == "1-1");
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage access_grants all permission values") {
+    auto dir = tdir("s6c_ag_perm"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+
+    containercp::access::AccessUser u;
+    u.id = 1; u.username = "u"; u.enabled = true;
+    ss.save_access_users({u});
+
+    containercp::site::Site s1, s2, s3;
+    s1.id = 1; s1.domain = "a.com"; s1.node_id = 1;
+    s2.id = 2; s2.domain = "b.com"; s2.node_id = 1;
+    s3.id = 3; s3.domain = "c.com"; s3.node_id = 1;
+    ss.save_sites({s1, s2, s3});
+
+    std::vector<std::pair<containercp::access::Permission, std::string>> perms = {
+        {containercp::access::Permission::READ_ONLY, "read_only"},
+        {containercp::access::Permission::READ_WRITE, "read_write"},
+        {containercp::access::Permission::DEPLOY, "deploy"},
+    };
+
+    for (size_t i = 0; i < perms.size(); ++i) {
+        containercp::access::AccessGrant g;
+        g.id = static_cast<uint64_t>(i + 1);
+        g.access_user_id = 1;
+        g.site_id = static_cast<uint64_t>(i + 1);
+        g.permission = perms[i].first;
+        ss.save_access_grants({g});
+
+        auto loaded = ss.load_access_grants();
+        REQUIRE(loaded.size() == 1);
+        CHECK(loaded[0].permission == perms[i].first);
+        ss.save_access_grants({});  // clear for next
+    }
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage access_grants FK: missing user fails") {
+    auto dir = tdir("s6c_ag_nouser"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+
+    containercp::site::Site s;
+    s.id = 1; s.domain = "s.com"; s.node_id = 1;
+    ss.save_sites({s});
+
+    containercp::access::AccessGrant g;
+    g.id = 1; g.access_user_id = 999; g.site_id = 1;
+    ss.save_access_grants({g});
+    // save_access_grants returns void — check that no grant was stored
+    CHECK(ss.load_access_grants().empty());
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage access_grants FK: missing site fails") {
+    auto dir = tdir("s6c_ag_nosite"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+
+    containercp::access::AccessUser u;
+    u.id = 1; u.username = "u"; u.enabled = true;
+    ss.save_access_users({u});
+
+    containercp::access::AccessGrant g;
+    g.id = 1; g.access_user_id = 1; g.site_id = 999;
+    ss.save_access_grants({g});
+    CHECK(ss.load_access_grants().empty());
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage access_grants FK: cannot delete referenced user") {
+    auto dir = tdir("s6c_ag_restrict_user"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+
+    containercp::access::AccessUser u;
+    u.id = 1; u.username = "u"; u.enabled = true;
+    ss.save_access_users({u});
+
+    containercp::site::Site s;
+    s.id = 1; s.domain = "s.com"; s.node_id = 1;
+    ss.save_sites({s});
+
+    containercp::access::AccessGrant g;
+    g.id = 1; g.access_user_id = 1; g.site_id = 1;
+    ss.save_access_grants({g});
+
+    // Trying to remove the user should fail (grant exists)
+    ss.save_access_users({});  // empty vector — prune should fail
+    auto users = ss.load_access_users();
+    CHECK_FALSE(users.empty());  // user should still exist
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage access_grants FK: cannot delete referenced site") {
+    auto dir = tdir("s6c_ag_restrict_site"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+
+    containercp::access::AccessUser u;
+    u.id = 1; u.username = "u"; u.enabled = true;
+    ss.save_access_users({u});
+
+    containercp::site::Site s;
+    s.id = 1; s.domain = "s.com"; s.node_id = 1;
+    ss.save_sites({s});
+
+    containercp::access::AccessGrant g;
+    g.id = 1; g.access_user_id = 1; g.site_id = 1;
+    ss.save_access_grants({g});
+
+    // Trying to remove the site should fail (grant exists)
+    ss.save_sites({});  // empty vector — prune should fail
+    auto sites = ss.load_sites();
+    CHECK_FALSE(sites.empty());  // site should still exist
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage access_grants remove grant then delete parent") {
+    auto dir = tdir("s6c_ag_order"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+
+    containercp::access::AccessUser u;
+    u.id = 1; u.username = "u"; u.enabled = true;
+    ss.save_access_users({u});
+
+    containercp::site::Site s;
+    s.id = 1; s.domain = "s.com"; s.node_id = 1;
+    ss.save_sites({s});
+
+    containercp::access::AccessGrant g;
+    g.id = 1; g.access_user_id = 1; g.site_id = 1;
+    ss.save_access_grants({g});
+
+    // Remove grant first
+    ss.save_access_grants({});
+    CHECK(ss.load_access_grants().empty());
+
+    // Now remove user — should succeed
+    ss.save_access_users({});
+    CHECK(ss.load_access_users().empty());
+
+    // Now remove site — should succeed
+    ss.save_sites({});
+    CHECK(ss.load_sites().empty());
+    tclean(dir);
+}
+
+TEST_CASE("SQLiteStorage access_grants PRAGMA foreign_key_check") {
+    auto dir = tdir("s6c_ag_fkcheck"); tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool; init_6a(pool, dir);
+    containercp::storage::SQLiteStorage ss(pool);
+
+    containercp::access::AccessUser u;
+    u.id = 1; u.username = "u"; u.enabled = true;
+    ss.save_access_users({u});
+
+    containercp::site::Site s;
+    s.id = 1; s.domain = "s.com"; s.node_id = 1;
+    ss.save_sites({s});
+
+    containercp::access::AccessGrant g;
+    g.id = 1; g.access_user_id = 1; g.site_id = 1;
+    ss.save_access_grants({g});
+
+    containercp::storage::ReadLease rl(pool);
+    REQUIRE(rl.is_valid());
+    REQUIRE(rl->prepare("PRAGMA foreign_key_check"));
+    CHECK_FALSE(rl->step());
+    tclean(dir);
+}
+
+TEST_CASE("Phase6c explicit SQLite mode uses SQLite for access") {
+    auto dir = tdir("s6c_mode"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::StorageOptions opts;
+        opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        containercp::storage::Storage s(dir, opts);
+        CHECK(s.sqlite_ready());
+
+        containercp::access::AccessUser u;
+        u.id = 1; u.username = "u"; u.enabled = true;
+        s.save_access_users({u});
+        CHECK_FALSE(fs::exists(dir + "access_users.db"));
+
+        CHECK(s.load_access_users().size() == 1);
+    }
+    tclean(dir);
+}
+
+TEST_CASE("Phase6c default mode reads TXT access") {
+    auto dir = tdir("s6c_txt"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::Storage s(dir);
+        containercp::access::AccessUser u;
+        u.id = 1; u.username = "u"; u.password_hash = "h"; u.enabled = true;
+        s.save_access_users({u});
+    }
+    {
+        containercp::storage::Storage s(dir);
+        CHECK(s.load_access_users().size() == 1);
+    }
+    tclean(dir);
+}
+
+TEST_CASE("Phase6c existing phases still work") {
+    auto dir = tdir("s6c_existing"); tclean(dir); fs::create_directories(dir);
+    {
+        containercp::storage::StorageOptions opts;
+        opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        containercp::storage::Storage s(dir, opts);
+        CHECK(s.sqlite_ready());
+
+        containercp::node::Node n; n.id = 1; n.name = "n"; n.type = "local";
+        s.save_nodes({n});
+        CHECK(s.load_nodes().size() == 1);
+
+        containercp::database::Database db;
+        db.id = 1; db.db_name = "d"; db.site_id = 1;
+        s.save_databases({db});
+        CHECK(s.load_databases().size() == 1);
+
+        // TXT-backed auth_users unchanged
+        containercp::auth::AuthUser au;
+        au.id = 1; au.username = "admin"; au.password_hash = "h"; au.role = "admin";
+        s.save_auth_users({au});
+        CHECK(s.load_auth_users().size() == 1);
+    }
+    tclean(dir);
+}
+
 TEST_CASE("Shutdown then reinitialize still works") {
     auto dir = tdir("shutdown_reinit");
     tclean(dir); fs::create_directories(dir);

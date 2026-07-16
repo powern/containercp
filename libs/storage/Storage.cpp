@@ -688,6 +688,13 @@ std::string Storage::load_mail_smarthost() {
 }
 
 void Storage::save_access_users(const std::vector<access::AccessUser>& users) {
+    if (use_sqlite()) {
+        sqlite_.save_access_users(users);
+        return;
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return;
+    }
     std::ofstream file(access_users_file());
     for (const auto& u : users) {
         file << u.id << "|" << u.username << "|" << u.auth_type << "|"
@@ -696,6 +703,12 @@ void Storage::save_access_users(const std::vector<access::AccessUser>& users) {
 }
 
 std::vector<access::AccessUser> Storage::load_access_users() {
+    if (use_sqlite()) {
+        return sqlite_.load_access_users();
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return {};
+    }
     std::vector<access::AccessUser> users;
     std::ifstream file(access_users_file());
     if (!file.is_open()) {
@@ -752,6 +765,13 @@ std::vector<auth::AuthUser> Storage::load_auth_users() {
 }
 
 void Storage::save_access_grants(const std::vector<access::AccessGrant>& grants) {
+    if (use_sqlite()) {
+        sqlite_.save_access_grants(grants);
+        return;
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return;
+    }
     std::ofstream file(access_grants_file());
     for (const auto& g : grants) {
         file << g.id << "|" << g.access_user_id << "|" << g.site_id << "|"
@@ -760,6 +780,12 @@ void Storage::save_access_grants(const std::vector<access::AccessGrant>& grants)
 }
 
 std::vector<access::AccessGrant> Storage::load_access_grants() {
+    if (use_sqlite()) {
+        return sqlite_.load_access_grants();
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return {};
+    }
     std::vector<access::AccessGrant> grants;
     std::ifstream file(access_grants_file());
     if (!file.is_open()) {

@@ -207,7 +207,7 @@ With explicit SQLite mode:
 
 | Backend | Resources |
 |---------|-----------|
-| SQLite | nodes, php_versions, profiles, users, sites, domains, databases, reverse_proxies |
+| SQLite | nodes, php_versions, profiles, users, sites, domains, databases, reverse_proxies, access_users, access_grants |
 | TXT | all other resources |
 
 Without explicit SQLite mode (default):
@@ -215,6 +215,61 @@ Without explicit SQLite mode (default):
 | Backend | Resources |
 |---------|-----------|
 | TXT | ALL resources |
+
+---
+
+## FK-safe parent synchronization (UPSERT + prune)
+
+### Problem
+
+`access_grants` has two enforced FKs:
+
+- `access_user_id → access_users(id) ON DELETE RESTRICT`
+- `site_id → sites(id) ON DELETE RESTRICT`
+
+The standard `DELETE-all` + `INSERT` algorithm used by `replace_all()`
+would fail for `access_users` and `sites` if any access_grants row
+references them, because the `DELETE` would trigger a FK violation
+before the re-INSERT.
+
+### Solution
+
+`save_sites()` and `save_access_users()` use a transactional three-phase
+algorithm instead of `DELETE-all`:
+
+1. **UPSERT** every supplied row using `INSERT ... ON CONFLICT(id) DO UPDATE SET ...`
+2. **Prune:** DELETE existing rows whose IDs are absent from the supplied set
+3. If any DELETE fails (FK RESTRICT), the transaction rolls back — all
+   prior UPSERTs are reverted atomically.
+
+**Effects:**
+- Updating a referenced parent succeeds.
+- Adding a new parent succeeds.
+- Removing an unreferenced parent succeeds.
+- Removing a referenced parent fails with FK violation → entire save
+  rolls back → no partial update.
+- Empty vector = "remove all rows." Succeeds if no grants reference
+  them; fails with rollback if any grant exists.
+
+### Update to `save_sites()`
+
+In Phase 6c, `save_sites()` was updated from `replace_all` to the
+UPSERT + prune algorithm to support FK-safe coexistence with
+`access_grants`. API and behavior are unchanged for the common case
+(no grants referencing the removed site).
+
+### Dependency order
+
+Callers must create resources in this order:
+
+1. `save_sites()` — creates sites that grants will reference
+2. `save_access_users()` — creates users that grants will reference
+3. `save_access_grants()` — creates grants referencing both
+
+For deletion, reverse the order:
+
+1. Remove grants (empty vector or reduced set)
+2. Remove users/sites
 
 ---
 
@@ -333,6 +388,32 @@ verifying that shutdown cannot proceed and the connection remains valid.
 | `site_id` | `site_id` | No FK — sentinel 0 = orphan |
 | `enabled` | `enabled` | |
 | `name` | — | Set from `db_name` on load |
+
+### AccessUser → `access_users`
+
+| Field | Column | Notes |
+|-------|--------|-------|
+| `id` | `id` | Preserved exactly |
+| `username` | `username` | |
+| `auth_type` | `auth_type` | |
+| `password_hash` | `password_hash` | **Sensitive** — credential verifier |
+| `enabled` | `enabled` | |
+| `name` | — | Set from `username` on load |
+
+**Synchronization:** Uses FK-safe UPSERT + prune algorithm (see below).
+
+### AccessGrant → `access_grants`
+
+| Field | Column | Notes |
+|-------|--------|-------|
+| `id` | `id` | Preserved exactly |
+| `access_user_id` | `access_user_id` | FK → `access_users(id)` ON DELETE RESTRICT |
+| `site_id` | `site_id` | FK → `sites(id)` ON DELETE RESTRICT |
+| `permission` | `permission` | Serialized via `permission_to_string` / `permission_from_string` |
+| `name` | — | Set from `"access_user_id-site_id"` on load |
+
+Sentinel 0 is NOT valid for `access_user_id` or `site_id` — both FKs
+enforce existence.
 
 ### ReverseProxy → `reverse_proxies`
 

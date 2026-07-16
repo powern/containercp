@@ -2,6 +2,9 @@
 #include "profile/ProfileType.h"
 
 #include <functional>
+#include <set>
+#include <string>
+#include <vector>
 
 namespace containercp::storage {
 
@@ -251,28 +254,6 @@ std::vector<user::User> SQLiteStorage::load_users() {
 
 // --- Sites ---
 
-void SQLiteStorage::save_sites(const std::vector<site::Site>& sites) {
-    replace_all(pool_, "DELETE FROM sites",
-        [&](SQLiteDB& db) -> bool {
-            const char* sql = "INSERT INTO sites (id, domain, owner, node_id, "
-                "web_server, php_mail_enabled, created_at, updated_at) VALUES "
-                "(?, ?, ?, ?, ?, ?, "
-                "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
-                "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
-            for (const auto& s : sites) {
-                if (!db.prepare(sql)) return false;
-                if (!db.bind_int(1, static_cast<int64_t>(s.id))) return false;
-                if (!db.bind_text(2, s.domain)) return false;
-                if (!db.bind_text(3, s.owner)) return false;
-                if (!db.bind_int(4, static_cast<int64_t>(s.node_id))) return false;
-                if (!db.bind_text(5, s.web_server)) return false;
-                if (!db.bind_int(6, s.php_mail_enabled ? 1 : 0)) return false;
-                if (db.step() == false && db.error_code() != 0) return false;
-            }
-            return true;
-        });
-}
-
 std::vector<site::Site> SQLiteStorage::load_sites() {
     std::vector<site::Site> sites;
     ReadLease rl(pool_);
@@ -445,6 +426,171 @@ std::vector<proxy::ReverseProxy> SQLiteStorage::load_reverse_proxies() {
         proxies.push_back(std::move(p));
     }
     return proxies;
+}
+
+// --- Access users (FK-safe parent sync: UPSERT + prune) ---
+
+void SQLiteStorage::save_access_users(const std::vector<access::AccessUser>& users) {
+    // Collect supplied IDs
+    std::set<uint64_t> supplied_ids;
+    for (const auto& u : users) supplied_ids.insert(u.id);
+
+    TransactionGuard txn(pool_);
+    if (!txn.is_active()) return;
+
+    const char* upsert = "INSERT INTO access_users "
+        "(id, username, auth_type, password_hash, enabled, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, "
+        "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
+        "strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
+        "ON CONFLICT(id) DO UPDATE SET "
+        "username=excluded.username, auth_type=excluded.auth_type, "
+        "password_hash=excluded.password_hash, enabled=excluded.enabled, "
+        "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')";
+
+    for (const auto& u : users) {
+        if (!txn.db().prepare(upsert)) return;
+        if (!txn.db().bind_int(1, static_cast<int64_t>(u.id))) return;
+        if (!txn.db().bind_text(2, u.username)) return;
+        if (!txn.db().bind_text(3, u.auth_type)) return;
+        if (!txn.db().bind_text(4, u.password_hash)) return;
+        if (!txn.db().bind_int(5, u.enabled ? 1 : 0)) return;
+        if (txn.db().step() == false && txn.db().error_code() != 0) return;
+    }
+
+    // Prune: delete rows whose IDs are not in the supplied set
+    // We iterate and DELETE each by ID to get individual FK feedback
+    std::vector<uint64_t> existing_ids;
+    if (txn.db().prepare("SELECT id FROM access_users ORDER BY id") &&
+        txn.db().step()) {
+        do {
+            existing_ids.push_back(
+                static_cast<uint64_t>(txn.db().column_int(0)));
+        } while (txn.db().step());
+    }
+
+    for (uint64_t eid : existing_ids) {
+        if (supplied_ids.find(eid) == supplied_ids.end()) {
+            std::string delsql = "DELETE FROM access_users WHERE id = "
+                + std::to_string(eid);
+            if (!txn.db().exec(delsql)) return;  // FK violation → rollback
+        }
+    }
+
+    txn.commit();
+}
+
+std::vector<access::AccessUser> SQLiteStorage::load_access_users() {
+    std::vector<access::AccessUser> users;
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return users;
+    if (!rl->prepare("SELECT id, username, auth_type, password_hash, enabled "
+                      "FROM access_users ORDER BY id")) return users;
+    while (rl->step()) {
+        access::AccessUser u;
+        u.id = static_cast<uint64_t>(rl->column_int(0));
+        u.username = rl->column_text(1);
+        u.auth_type = rl->column_text(2);
+        u.password_hash = rl->column_text(3);
+        u.enabled = (rl->column_int(4) != 0);
+        u.name = u.username;
+        users.push_back(std::move(u));
+    }
+    return users;
+}
+
+// --- Access grants (child table, normal replace_all with FK enforcement) ---
+
+void SQLiteStorage::save_access_grants(const std::vector<access::AccessGrant>& grants) {
+    replace_all(pool_, "DELETE FROM access_grants",
+        [&](SQLiteDB& db) -> bool {
+            const char* sql = "INSERT INTO access_grants "
+                "(id, access_user_id, site_id, permission, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
+            for (const auto& g : grants) {
+                if (!db.prepare(sql)) return false;
+                if (!db.bind_int(1, static_cast<int64_t>(g.id))) return false;
+                if (!db.bind_int(2, static_cast<int64_t>(g.access_user_id))) return false;
+                if (!db.bind_int(3, static_cast<int64_t>(g.site_id))) return false;
+                if (!db.bind_text(4, access::permission_to_string(g.permission))) return false;
+                if (db.step() == false && db.error_code() != 0) return false;
+            }
+            return true;
+        });
+}
+
+std::vector<access::AccessGrant> SQLiteStorage::load_access_grants() {
+    std::vector<access::AccessGrant> grants;
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return grants;
+    if (!rl->prepare("SELECT id, access_user_id, site_id, permission "
+                      "FROM access_grants ORDER BY id")) return grants;
+    while (rl->step()) {
+        access::AccessGrant g;
+        g.id = static_cast<uint64_t>(rl->column_int(0));
+        g.access_user_id = static_cast<uint64_t>(rl->column_int(1));
+        g.site_id = static_cast<uint64_t>(rl->column_int(2));
+        g.permission = access::permission_from_string(rl->column_text(3));
+        g.name = std::to_string(g.access_user_id) + "-" + std::to_string(g.site_id);
+        grants.push_back(std::move(g));
+    }
+    return grants;
+}
+
+// -----------------------------------------------------------
+// Updated save_sites: FK-safe parent synchronization
+// -----------------------------------------------------------
+
+void SQLiteStorage::save_sites(const std::vector<site::Site>& sites) {
+    std::set<uint64_t> supplied_ids;
+    for (const auto& s : sites) supplied_ids.insert(s.id);
+
+    TransactionGuard txn(pool_);
+    if (!txn.is_active()) return;
+
+    const char* upsert_sites = "INSERT INTO sites "
+        "(id, domain, owner, node_id, web_server, php_mail_enabled, "
+        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, "
+        "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
+        "strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
+        "ON CONFLICT(id) DO UPDATE SET "
+        "domain=excluded.domain, owner=excluded.owner, "
+        "node_id=excluded.node_id, web_server=excluded.web_server, "
+        "php_mail_enabled=excluded.php_mail_enabled, "
+        "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')";
+
+    for (const auto& s : sites) {
+        if (!txn.db().prepare(upsert_sites)) return;
+        if (!txn.db().bind_int(1, static_cast<int64_t>(s.id))) return;
+        if (!txn.db().bind_text(2, s.domain)) return;
+        if (!txn.db().bind_text(3, s.owner)) return;
+        if (!txn.db().bind_int(4, static_cast<int64_t>(s.node_id))) return;
+        if (!txn.db().bind_text(5, s.web_server)) return;
+        if (!txn.db().bind_int(6, s.php_mail_enabled ? 1 : 0)) return;
+        if (txn.db().step() == false && txn.db().error_code() != 0) return;
+    }
+
+    // Prune absent IDs
+    std::vector<uint64_t> existing_ids;
+    if (txn.db().prepare("SELECT id FROM sites ORDER BY id") &&
+        txn.db().step()) {
+        do {
+            existing_ids.push_back(
+                static_cast<uint64_t>(txn.db().column_int(0)));
+        } while (txn.db().step());
+    }
+
+    for (uint64_t eid : existing_ids) {
+        if (supplied_ids.find(eid) == supplied_ids.end()) {
+            std::string delsql = "DELETE FROM sites WHERE id = "
+                + std::to_string(eid);
+            if (!txn.db().exec(delsql)) return;  // FK violation → rollback
+        }
+    }
+
+    txn.commit();
 }
 
 } // namespace containercp::storage
