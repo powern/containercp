@@ -355,7 +355,7 @@ window.computeDomainHealthScore = function(ctx) {
       var mxRecs = getRecs('MX');
       var expectedMx = '';
       if (mail && mail.mode) expectedMx = window.getExpectedMxTarget(mail, serverHost);
-      var mxPub = mxRecs.map(function(r) { return (r.priority ? r.priority + ' ' : '') + r.value; }).join(', ');
+      var mxPub = mxRecs.length > 0 ? window.formatMxPublished(mxRecs) : '';
       var mxMatch = expectedMx && mxRecs.some(function(r) { return window.normalizeHostname(r.value) === window.normalizeHostname(expectedMx); });
       var mxStatus = expectedMx ? (mxMatch ? 'Match' : (mxRecs.length ? 'Mismatch' : 'Not Published')) : (mxRecs.length ? 'Unexpected' : 'N/A');
       addCheck('mx', 'MX', 'req', 12, mxStatus, expectedMx, mxPub, true);
