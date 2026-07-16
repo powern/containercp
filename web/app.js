@@ -1985,33 +1985,18 @@ function loadDomainSecurity() {
     const hasRua = dmarcCurrent.includes('rua=');
     const copyWithRua = hasRua ? dmarcCurrent : dmarcCurrent.replace(/;?\s*$/, '; rua=mailto:dmarc@' + domain);
 
-    const card = function(key, title, host, type, val, btns) {
-      const def = recDefs[key];
-      return '<div class="card" data-security-record="' + key + '"'
-        + ' data-evidence-configured="' + escAttr(def.configured) + '"'
-        + ' data-evidence-published="' + escAttr(def.published) + '"'
-        + ' data-evidence-copy="' + escAttr(def.copyValue) + '">'
-        + '<h3>' + title + '</h3>'
-        + '<div style="margin-top:8px;font-size:12px;"><div>' + esc(val) + '</div>'
-        + '<div style="margin-top:6px;font-family:monospace;font-size:11px;">Host: ' + esc(host) + '<br>Type: ' + esc(type) + '<br>Value: ' + esc(def.configured) + '</div></div>'
-        + '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">' + btns + '</div></div>';
-    };
+    // Build entire HTML in one string — single innerHTML assignment
+    var html = '';
 
-    const whyBtn = function(key) {
-      const def = recDefs[key];
-      if (!def) { console.error('Missing Security def', {key}); return ''; }
-      return '<button class="btn btn-sm" data-security-why="1" data-evidence-type="' + escAttr(def.type) + '" data-security-record-key="' + escAttr(key) + '">Why?</button>';
-    };
-    const copyBtn = function(v) { return '<button class="btn btn-sm" data-copy="' + escAttr(v) + '">Copy Record</button>'; };
-
-    content.innerHTML = '<div id="security-tab-content">'
-      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
+    // Header
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
       + '<h3 style="font-size:14px;">DMARC Policy</h3>'
       + '<button class="btn btn-sm" data-security-check-again="1">Check Again</button></div>'
       + '<div style="margin-bottom:12px;font-size:12px;color:var(--text3);">'
-      + (dmarcPublished ? 'Current in DNS: <code>' + esc(dmarcPublished) + '</code>' : 'No DMARC record found in DNS') + '</div>'
+      + (dmarcPublished ? 'Current in DNS: <code>' + esc(dmarcPublished) + '</code>' : 'No DMARC record found in DNS') + '</div>';
 
-      + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px;">'
+    // DMARC policy cards
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px;">'
       + '<div class="card" style="cursor:pointer;' + (_dmarcSelection && _dmarcSelection.includes('p=none') ? 'border-color:var(--primary);' : '') + '" data-dmarc-policy="v=DMARC1; p=none;">'
       + '<h3>Monitor</h3><div style="margin-top:8px;font-size:12px;font-family:monospace;">v=DMARC1; p=none;</div>'
       + '<div style="margin-top:4px;font-size:11px;color:var(--text3);">No action taken on failing messages</div></div>'
@@ -2022,23 +2007,24 @@ function loadDomainSecurity() {
       + '<h3>Reject</h3><div style="margin-top:8px;font-size:12px;font-family:monospace;">v=DMARC1; p=reject;</div>'
       + '<div style="margin-top:4px;font-size:11px;color:var(--text3);">Block failing emails entirely</div></div></div>';
 
+    // DMARC Preview + Comparison
     if (_dmarcSelection) {
-      let cmp = '';
+      var cmp = '';
       if (dmarcPublished) {
-        const r = window.compareDmarcRecords(_dmarcSelection, dmarcPublished);
-        const dmarcDef = recDefs['dmarc'];
+        var r = window.compareDmarcRecords(_dmarcSelection, dmarcPublished);
+        var dmarcDef = recDefs['dmarc'];
         cmp = '<div class="card" style="margin-top:8px;" data-security-record="dmarc"'
-          + ' data-evidence-configured="' + escAttr(dmarcDef.configured) + '"'
-          + ' data-evidence-published="' + escAttr(dmarcDef.published) + '"'
-          + ' data-evidence-copy="' + escAttr(dmarcDef.copyValue) + '">'
+          + ' data-evidence-configured="' + escAttr(dmarcDef ? dmarcDef.configured : '') + '"'
+          + ' data-evidence-published="' + escAttr(dmarcDef ? dmarcDef.published : '') + '"'
+          + ' data-evidence-copy="' + escAttr(dmarcDef ? dmarcDef.copyValue : '') + '">'
           + '<div style="font-size:12px;">Comparison</div>'
           + '<div style="margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">'
           + '<div><strong>Recommended:</strong><br><code style="font-size:11px;word-break:break-all;">' + esc(_dmarcSelection) + '</code></div>'
           + '<div><strong>Published:</strong><br><code style="font-size:11px;word-break:break-all;">' + esc(dmarcPublished) + '</code></div></div>'
           + '<div style="margin-top:6px;">' + window.statusBadge(r.status, r.cls)
-          + (r.status === 'Mismatch' ? whyBtn('dmarc') : '') + '</div></div>';
+          + (r.status === 'Mismatch' ? '<button class="btn btn-sm" data-security-why="1" data-evidence-type="DMARC_POLICY_MISMATCH" data-security-record-key="dmarc">Why?</button>' : '') + '</div></div>';
       }
-      content.innerHTML += '<div class="card"><h3>Your DMARC Record Preview</h3>'
+      html += '<div class="card"><h3>Your DMARC Record Preview</h3>'
         + '<div style="margin-top:8px;font-size:12px;font-family:monospace;word-break:break-all;background:var(--bg3);padding:8px;border-radius:4px;">' + esc(dmarcFull) + '</div>'
         + '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">'
         + '<button class="btn btn-sm btn-primary" data-copy="' + escAttr(_dmarcSelection) + '">Copy Record</button>'
@@ -2048,15 +2034,38 @@ function loadDomainSecurity() {
         + cmp + '</div>';
     }
 
-    content.innerHTML += '<h3 style="font-size:14px;margin:16px 0 8px;">Additional Recommendations</h3>'
+    // Additional recommendations
+    function secCard(key, title, host, type, val, btns) {
+      var def = recDefs[key];
+      if (!def) return '';
+      return '<div class="card" data-security-record="' + key + '"'
+        + ' data-evidence-configured="' + escAttr(def.configured) + '"'
+        + ' data-evidence-published="' + escAttr(def.published) + '"'
+        + ' data-evidence-copy="' + escAttr(def.copyValue) + '">'
+        + '<h3>' + title + '</h3>'
+        + '<div style="margin-top:8px;font-size:12px;"><div>' + esc(val) + '</div>'
+        + '<div style="margin-top:6px;font-family:monospace;font-size:11px;">Host: ' + esc(host) + '<br>Type: ' + esc(type) + '<br>Value: ' + esc(def.configured) + '</div></div>'
+        + '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">' + btns + '</div></div>';
+    }
+    function recWhy(key) {
+      var def = recDefs[key];
+      if (!def) return '';
+      return '<button class="btn btn-sm" data-security-why="1" data-evidence-type="' + escAttr(def.type) + '" data-security-record-key="' + escAttr(key) + '">Why?</button>';
+    }
+    function copyBtnHtml(v) { return '<button class="btn btn-sm" data-copy="' + escAttr(v) + '">Copy Record</button>'; }
+
+    html += '<h3 style="font-size:14px;margin:16px 0 8px;">Additional Recommendations</h3>'
       + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;">'
-      + card('mta-sts', 'MTA-STS', '_mta-sts', 'TXT', 'Ensures TLS is used for mail delivery (RFC 8461).', copyBtn('v=STSv1; id=1') + whyBtn('mta-sts'))
-      + card('caa', 'CAA', '@', 'CAA', 'Certification Authority Authorization lets you specify which CAs can issue certificates.', copyBtn('0 issue "letsencrypt.org"') + whyBtn('caa'))
-      + card('tls-rpt', 'TLS-RPT', '_smtp._tls', 'TXT', 'TLS-RPT sends delivery failure reports to your email.', copyBtn(recDefs['tls-rpt'].configured) + whyBtn('tls-rpt'))
-      + card('autodiscover', 'Autodiscover', 'autodiscover', 'CNAME', 'Autodiscover configures email clients automatically.', copyBtn(recDefs['autodiscover'].copyValue) + (serverHostname ? whyBtn('autodiscover') : ''))
+      + secCard('mta-sts', 'MTA-STS', '_mta-sts', 'TXT', 'Ensures TLS is used for mail delivery (RFC 8461).', copyBtnHtml('v=STSv1; id=1') + recWhy('mta-sts'))
+      + secCard('caa', 'CAA', '@', 'CAA', 'Certification Authority Authorization lets you specify which CAs can issue certificates.', copyBtnHtml('0 issue "letsencrypt.org"') + recWhy('caa'))
+      + secCard('tls-rpt', 'TLS-RPT', '_smtp._tls', 'TXT', 'TLS-RPT sends delivery failure reports to your email.', copyBtnHtml(recDefs['tls-rpt'].configured) + recWhy('tls-rpt'))
+      + secCard('autodiscover', 'Autodiscover', 'autodiscover', 'CNAME', 'Autodiscover configures email clients automatically.', copyBtnHtml(recDefs['autodiscover'].copyValue) + (serverHostname ? recWhy('autodiscover') : ''))
       + '</div>';
 
-    window.attachDataCopyListener('security-tab-content');
+    // Single innerHTML assignment — all elements inside #security-tab-content
+    content.innerHTML = '<div id="security-tab-content">' + html + '</div>';
+
+    // Unified event delegation
     attachSecurityDelegation();
   })().catch(function(err) {
     console.error('Security tab load failed', err);
@@ -2067,11 +2076,22 @@ function loadDomainSecurity() {
 
 // Single event delegation for Security tab
 function attachSecurityDelegation() {
-  const sec = document.getElementById('security-tab-content');
+  var sec = document.getElementById('security-tab-content');
   if (!sec) return;
   sec.addEventListener('click', function(e) {
+    // Copy buttons
+    var copyBtn = e.target.closest('[data-copy]');
+    if (copyBtn) {
+      copyText(copyBtn.getAttribute('data-copy'), 'Copied');
+      return;
+    }
+    // Dismiss evidence
+    if (e.target.closest('[data-evidence-dismiss]')) {
+      closeEvidencePanel();
+      return;
+    }
     // DMARC policy selection
-    const policyCard = e.target.closest('[data-dmarc-policy]');
+    var policyCard = e.target.closest('[data-dmarc-policy]');
     if (policyCard) {
       _dmarcSelection = policyCard.getAttribute('data-dmarc-policy');
       closeEvidencePanel();
@@ -2081,9 +2101,9 @@ function attachSecurityDelegation() {
     // Check Again
     if (e.target.closest('[data-security-check-again]')) {
       closeEvidencePanel();
-      const dd = window._domainDetailData;
+      var dd = window._domainDetailData;
       if (dd) {
-        const d = dd.domainRow.domain;
+        var d = dd.domainRow.domain;
         DnsCache.clear(d);
         DnsCache.clear('_dmarc.' + d);
         DnsCache.clear('_mta-sts.' + d);
@@ -2094,19 +2114,19 @@ function attachSecurityDelegation() {
       return;
     }
     // Why? evidence
-    const whyBtn = e.target.closest('[data-security-why]');
+    var whyBtn = e.target.closest('[data-security-why]');
     if (!whyBtn) return;
-    const key = whyBtn.getAttribute('data-security-record-key');
-    const type = whyBtn.getAttribute('data-evidence-type');
-    const dd = window._domainDetailData;
+    var key = whyBtn.getAttribute('data-security-record-key');
+    var type = whyBtn.getAttribute('data-evidence-type');
+    var dd = window._domainDetailData;
     if (!dd) return;
-    const card = sec.querySelector('[data-security-record="' + key + '"]');
+    var card = sec.querySelector('[data-security-record="' + key + '"]');
     if (!card) return;
-    const configured = card.getAttribute('data-evidence-configured') || '';
-    const published = card.getAttribute('data-evidence-published') || '(not published)';
-    const copyValue = card.getAttribute('data-evidence-copy') || '';
-    const steps = getEvidenceSteps(type, dd.domainRow.domain);
-    const html = evidenceHtml(type, configured, published, '', copyValue, steps);
+    var configured = card.getAttribute('data-evidence-configured') || '';
+    var published = card.getAttribute('data-evidence-published') || '(not published)';
+    var copyValue = card.getAttribute('data-evidence-copy') || '';
+    var steps = getEvidenceSteps(type, dd.domainRow.domain);
+    var html = evidenceHtml(type, configured, published, '', copyValue, steps);
     toggleEvidencePanel('ev-' + key, card, html);
   });
 }
