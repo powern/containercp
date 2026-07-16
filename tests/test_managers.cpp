@@ -166,9 +166,11 @@ TEST_CASE("SiteManager remove cleans state") {
     CHECK(mgr.find("other.com") != nullptr);
 }
 
+#include "api/SitesViewService.h"
 #include "domain/DomainManager.h"
 #include "domain/DomainViewService.h"
 #include "proxy/ReverseProxyManager.h"
+#include "site/Site.h"
 #include "ssl/CertificateStore.h"
 #include "logger/Logger.h"
 
@@ -514,6 +516,113 @@ TEST_CASE("System domain id=0 must not match MailDomain with domain_id=0") {
 
     // The unity MailDomain should NOT influence admin panel health checks
     // (verified by mail_domain_id=0 and mail_domain_mode="" in admin entry)
+
+    std::string rm_cmd = "rm -rf " + ssl_root_str;
+    std::system(rm_cmd.c_str());
+}
+
+TEST_CASE("build_enriched_sites_json includes virtual admin-panel site") {
+    using namespace containercp;
+
+    char tmp[] = "/tmp/containercp_test_sites_json_XXXXXX";
+    char* ssl_root = mkdtemp(tmp);
+    REQUIRE(ssl_root != nullptr);
+    std::string ssl_root_str(ssl_root);
+
+    // Setup: SSL for site_id=0
+    {
+        std::string dir = ssl_root_str + "/0/current";
+        ::mkdir((ssl_root_str + "/0").c_str(), 0755);
+        ::mkdir(dir.c_str(), 0755);
+        std::ofstream f(dir + "/metadata.json");
+        f << R"({"site_id":"0","status":"active","https_enabled":true,"domains":["admin.example.com"],"expires_at":"2030-01-01T00:00:00Z"})";
+        f.close();
+    }
+
+    ssl::CertificateStore cert_store(logger::Logger::instance(), ssl_root_str);
+    proxy::ReverseProxyManager rp_mgr;
+    site::SiteManager site_mgr;
+
+    // Create a normal site
+    site_mgr.create("testsite.com", "admin", 1);
+
+    // Add proxy entry for admin panel
+    rp_mgr.create("admin.example.com", 0, "/path/config", "127.0.0.1:8081");
+
+    // Empty server_hostname → no virtual site
+    {
+        std::string json = api::build_enriched_sites_json(
+            site_mgr.list(), "", rp_mgr, cert_store);
+        std::string js_err;
+        CHECK(json_validate(json, js_err));
+        CHECK(json.find("\"name\":\"ContainerCP Admin\"") == std::string::npos);
+        CHECK(json.find("\"domain\":\"testsite.com\"") != std::string::npos);
+    }
+
+    // With server_hostname → admin panel appears
+    {
+        std::string json = api::build_enriched_sites_json(
+            site_mgr.list(), "admin.example.com", rp_mgr, cert_store);
+        std::string js_err;
+        CHECK(json_validate(json, js_err));
+
+        // Admin panel is present with id=0
+        CHECK(json.find("\"id\":0") != std::string::npos);
+        CHECK(json.find("\"name\":\"ContainerCP Admin\"") != std::string::npos);
+        CHECK(json.find("\"domain\":\"admin.example.com\"") != std::string::npos);
+        CHECK(json.find("\"system_role\":\"admin-panel\"") != std::string::npos);
+        CHECK(json.find("\"proxy_upstream\":\"127.0.0.1:8081\"") != std::string::npos);
+        CHECK(json.find("\"proxy_status\":\"Active\"") != std::string::npos);
+        CHECK(json.find("\"ssl_status\":\"Active\"") != std::string::npos);
+        CHECK(json.find("\"ssl_https\":\"Active\"") != std::string::npos);
+        CHECK(json.find("\"web_status\":\"Available\"") != std::string::npos);
+        CHECK(json.find("\"php_status\":\"N/A\"") != std::string::npos);
+        CHECK(json.find("\"can_delete\":false") != std::string::npos);
+        CHECK(json.find("\"can_manage_runtime\":false") != std::string::npos);
+        CHECK(json.find("\"can_manage_php\":false") != std::string::npos);
+        CHECK(json.find("\"can_manage_ssl\":true") != std::string::npos);
+        CHECK(json.find("\"can_manage_proxy\":true") != std::string::npos);
+        CHECK(json.find("\"can_manage_databases\":false") != std::string::npos);
+        CHECK(json.find("\"can_manage_backups\":false") != std::string::npos);
+
+        // Normal site still present
+        CHECK(json.find("\"domain\":\"testsite.com\"") != std::string::npos);
+
+        // Parse and verify admin site object
+        auto admin_start = json.find("{\"id\":0");
+        CHECK(admin_start != std::string::npos);
+        std::string admin_obj = json.substr(admin_start);
+        CHECK(json_extract_string(admin_obj, "system_role") == "admin-panel");
+        CHECK(json_extract_string(admin_obj, "domain") == "admin.example.com");
+        CHECK(json_extract_string(admin_obj, "proxy_upstream") == "127.0.0.1:8081");
+        CHECK(json_extract_string(admin_obj, "web_status") == "Available");
+        CHECK(json_extract_string(admin_obj, "php_status") == "N/A");
+        CHECK(json_extract_string(admin_obj, "ssl_status") == "Active");
+        CHECK(json_extract_bool(admin_obj, "can_delete") == false);
+        CHECK(json_extract_bool(admin_obj, "can_manage_runtime") == false);
+        CHECK(json_extract_bool(admin_obj, "can_manage_ssl") == true);
+    }
+
+    // Proxy disabled → web_status = Disabled
+    {
+        rp_mgr.create("disabled-admin.com", 0, "/path/config", "0.0.0.0:8081");
+        // Set the proxy entry's enabled state — we need to modify the created entry
+        auto* p = rp_mgr.find_by_domain("disabled-admin.com");
+        if (p) p->enabled = false;
+
+        std::string json = api::build_enriched_sites_json(
+            site_mgr.list(), "disabled-admin.com", rp_mgr, cert_store);
+        CHECK(json.find("\"web_status\":\"Disabled\"") != std::string::npos);
+        CHECK(json.find("\"proxy_status\":\"Disabled\"") != std::string::npos);
+    }
+
+    // No proxy entry → web_status = Not verified
+    {
+        std::string json = api::build_enriched_sites_json(
+            site_mgr.list(), "unknown-host.com", rp_mgr, cert_store);
+        CHECK(json.find("\"proxy_upstream\":\"\"") != std::string::npos);
+        CHECK(json.find("\"web_status\":\"Not verified\"") != std::string::npos);
+    }
 
     std::string rm_cmd = "rm -rf " + ssl_root_str;
     std::system(rm_cmd.c_str());

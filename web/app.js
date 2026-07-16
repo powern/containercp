@@ -379,8 +379,7 @@ async function loadSites(p) {
       const tbl = $('sites-table');
       if (!tbl) return;
       const filtered = (data.data||[]).filter(r => !searchTerm || r.domain.includes(searchTerm) || r.owner.includes(searchTerm));
-      const badgeCls = {'Active':'badge-ok','Running':'badge-ok','Running':'badge-ok','N/A':'badge-info'};
-      const rtM = {'Running':'badge-ok','Active':'badge-ok','Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn','Expiring':'badge-warn','Error':'badge-err','Expired':'badge-err','Disabled':'badge-info','Issuing':'badge-warn','Unknown':'badge-info','N/A':'badge-info'};
+      const rtM = {'Running':'badge-ok','Active':'badge-ok','Available':'badge-ok','Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn','Expiring':'badge-warn','Error':'badge-err','Expired':'badge-err','Disabled':'badge-info','Not verified':'badge-info','Issuing':'badge-warn','Unknown':'badge-info','N/A':'badge-info'};
       tbl.innerHTML = buildTable([
         {label:'Domain',html:r=>`<a href="#" onclick="navigate('site-detail',${r.id});return false" style="color:var(--primary);text-decoration:none;">${esc(r.domain)}</a>`},
         {label:'Web',html:r=>r.web_status?`<span class="badge ${rtM[r.web_status]||'badge-info'}">${esc(r.web_status)}</span>`:`<span data-rt-id="${r.id}" data-rt-service="web" class="badge badge-info">...</span>`},
@@ -537,7 +536,7 @@ async function loadSiteDetail(p, siteId) {
     const site = (data.data||[]).find(s => s.id == siteId);
     if (!site) { p.innerHTML = '<div class="empty-state">Site not found</div>'; return; }
 
-    var isSystem = site.system_role === 'admin-panel' || site.can_delete === false;
+    var isSystem = site.system_role === 'admin-panel';
 
     p.innerHTML = `
       <div class="page-header">
@@ -563,8 +562,7 @@ async function loadSiteDetail(p, siteId) {
         <div class="card"><h3>Backups</h3><div style="margin-top:8px;font-size:13px;"><div>Not applicable</div></div></div>
       </div>
       <div style="margin-top:12px;">
-        <a href="#" onclick="navigate('domain-detail',0);return false" class="btn btn-sm">View Domain Configuration</a>
-        <a href="#" onclick="navigate('ssl',0);return false" class="btn btn-sm" style="margin-left:4px;">View SSL</a>
+        <a href="#" onclick="navigate('domain-detail',0);return false" class="btn btn-sm">View Domain Configuration (includes SSL &amp; Proxy management)</a>
       </div>` : `
       <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin-bottom:12px;">
         <div id="rt-card" class="card"></div>
