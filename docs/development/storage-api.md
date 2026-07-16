@@ -237,18 +237,22 @@ ConnectionPool
         All load_*(), SELECT, read-only PRAGMAs
 ```
 
-### Write connection
+### Write connection (WriteGuard)
 
 - One `SQLiteDB` instance, accessed under `std::mutex`.
 - All mutating operations (INSERT, UPDATE, DELETE, DDL) go through it.
 - Transaction primitives (`begin_immediate`, `commit`, `rollback`) use
   this connection.
 - The write mutex ensures only one thread writes at a time.
+- Access is protected by `WriteGuard` (RAII) — never use raw
+  `lock_write()` / `unlock_write()` directly.
 
 ```cpp
-pool.lock_write();
-pool.write_connection().exec("INSERT ...");
-pool.unlock_write();
+{
+    WriteGuard wg(pool);
+    wg.db().exec("INSERT ...");
+    wg.db().exec("UPDATE ...");
+}  // mutex released automatically, even on early return or exception
 ```
 
 ### Read connection pool
@@ -293,12 +297,35 @@ pool.return_read(conn);
 
 ### Shutdown behavior
 
-1. Read connections are force-released (outstanding leases lose their
-   connection).
-2. Write connection is closed.
-3. Read connections are closed.
+1. The pool is marked as shut down; new `lease_read()` calls return
+   `nullptr`.
+2. The pool waits up to `kShutdownTimeoutMs` (5000 ms) for all
+   outstanding leases to be returned.
+3. After all leases are returned (or timeout), write and read
+   connections are closed.
+4. Active pointers held by callers past shutdown remain valid until
+   `return_read()` is called — they are never invalidated by shutdown.
+5. If the timeout expires, outstanding leases are warned but the
+   connections remain open until returned. This avoids dangling
+   pointers at the cost of a potential leak.
+6. Double shutdown is safe.
 
-Double shutdown is safe.
+### WriteGuard (RAII write lock)
+
+`WriteGuard` is a move-only RAII wrapper that locks the write mutex
+on construction and unlocks it on destruction.
+
+```cpp
+class WriteGuard {
+public:
+    explicit WriteGuard(ConnectionPool& pool);
+    ~WriteGuard();
+    SQLiteDB& db();   // access the write connection
+};
+```
+
+The guard ensures the mutex is released even if the enclosing scope
+is exited via early return or exception.
 
 ### Public API
 

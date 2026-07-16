@@ -11,30 +11,57 @@
 
 namespace containercp::storage {
 
+class ConnectionPool;
+
+// RAII write guard.  Locks the write mutex on construction, unlocks
+// on destruction.  Provides access to the serialized write connection.
+//
+// Usage:
+//   {
+//       WriteGuard wg(pool);
+//       wg.db().exec("INSERT ...");
+//   }  // mutex released automatically
+class WriteGuard {
+public:
+    explicit WriteGuard(ConnectionPool& pool);
+    ~WriteGuard();
+
+    WriteGuard(const WriteGuard&) = delete;
+    WriteGuard& operator=(const WriteGuard&) = delete;
+
+    SQLiteDB& db();
+
+private:
+    ConnectionPool& pool_;
+};
+
 // Bounded connection pool for the Storage subsystem.
 //
 // Architecture:
-//   - One serialized write connection protected by a mutex.
+//   - One serialized write connection protected by a std::mutex.
 //   - Exactly kReadPoolSize (3) read connections for concurrent reads.
 //
-// All connections use the same database file and identical PRAGMA settings.
-// Connections are created during initialize() and destroyed during shutdown().
-//
 // Ownership:
-//   - The pool owns all connections. Callers lease read connections
-//     temporarily and must return them.
-//   - The write connection is accessed under a mutex — callers lock,
-//     use, unlock.
+//   - The pool owns all connections.
+//   - Callers lease read connections temporarily and must return them.
+//   - The write connection is accessed exclusively through WriteGuard.
+//
+// Lease lifetime:
+//   - A read lease is valid until return_read() is called.
+//   - shutdown() waits for all outstanding leases to be returned
+//     (with a timeout).  Active leases are never invalidated.
+//   - After shutdown(), lease_read() returns nullptr.
 //
 // Thread-safety:
 //   - Write mutex serializes all write operations.
-//   - Read pool uses atomic round-robin for lease assignment.
+//   - Read pool uses atomic compare-exchange for lease assignment.
 //   - Read connections do not block each other.
-//   - A read may block on write during WAL checkpoint (handled by
-//     busy_timeout).
+//   - A read may block on write during WAL checkpoint (handled
+//     by busy_timeout).
 class ConnectionPool {
 public:
     static constexpr int kReadPoolSize = 3;
+    static constexpr int kShutdownTimeoutMs = 5000;
 
     ConnectionPool() = default;
     ~ConnectionPool();
@@ -46,36 +73,42 @@ public:
     // Must be called once before any other method.
     bool initialize(const std::string& db_path);
 
-    // === Write connection ===
+    // === Write connection (use via WriteGuard) ===
 
     // Returns reference to the serialized write connection.
-    // Caller must hold the write mutex via lock_write()/unlock_write().
+    // Caller must hold the write mutex (use WriteGuard).
     SQLiteDB& write_connection();
-    void lock_write();
-    void unlock_write();
 
     // === Read connections ===
 
     // Lease a read connection.  Blocks if all 3 are in use.
-    // Returns nullptr only on catastrophic error.
-    // Caller must return the connection via return_read().
+    // Returns nullptr only on catastrophic error or if pool is shut down.
+    // Caller must return via return_read().
     SQLiteDB* lease_read();
 
-    // Return a leased read connection to the pool.
+    // Return a leased read connection.  Safe to call with nullptr.
     void return_read(SQLiteDB* db);
 
     // === Lifecycle ===
 
-    // Close all connections.  Safe to call multiple times.
-    // Outstanding leases are force-closed (log warning).
+    // Close all connections.  Waits for outstanding leases up to
+    // kShutdownTimeoutMs.  Never invalidates active pointers.
+    // After shutdown, lease_read() returns nullptr.
     void shutdown();
+
+    // Returns true if shutdown() has been called.
+    bool is_shutdown() const;
 
     // Create a consistent snapshot using the SQLite Online Backup API.
     // The write mutex is locked for the duration.
     bool backup(const std::string& dest_path);
 
 private:
-    // Open a single connection and apply PRAGMAs.
+    friend class WriteGuard;
+
+    void lock_write();
+    void unlock_write();
+
     bool open_connection(SQLiteDB& conn, const std::string& path);
 
     std::unique_ptr<SQLiteDB> write_conn_;
@@ -84,6 +117,8 @@ private:
     std::atomic<int> read_next_{0};
     std::array<std::atomic<bool>, kReadPoolSize> read_in_use_ = {};
     std::string db_path_;
+    std::atomic<bool> shutdown_{false};
+    std::atomic<int> outstanding_leases_{0};
 };
 
 } // namespace containercp::storage

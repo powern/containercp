@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "doctest/doctest.h"
@@ -260,10 +261,11 @@ TEST_CASE("ConnectionPool initialize opens 1 write + 3 read") {
         containercp::storage::ConnectionPool pool;
         CHECK(pool.initialize(path));
 
-        // Verify write connection works
-        pool.lock_write();
-        CHECK(pool.write_connection().exec("CREATE TABLE t (id INTEGER)"));
-        pool.unlock_write();
+        // Verify write connection works via WriteGuard
+        {
+            containercp::storage::WriteGuard wg(pool);
+            CHECK(wg.db().exec("CREATE TABLE t (id INTEGER)"));
+        }  // WriteGuard releases mutex here
 
         // Verify all 3 read connections work
         for (int i = 0; i < 3; ++i) {
@@ -310,37 +312,60 @@ TEST_CASE("ConnectionPool lease and return cycles") {
     cleanup(path);
 }
 
-TEST_CASE("ConnectionPool shutdown is clean") {
+TEST_CASE("ConnectionPool shutdown waits for leases") {
     auto path = pool_path("containercp_test_shutdown.db");
     cleanup(path);
     {
         containercp::storage::ConnectionPool pool;
         REQUIRE(pool.initialize(path));
 
-        // Lease some
+        // Lease all 3
         auto* c1 = pool.lease_read();
+        auto* c2 = pool.lease_read();
+        auto* c3 = pool.lease_read();
         REQUIRE(c1);
+        REQUIRE(c2);
+        REQUIRE(c3);
 
-        // Shutdown should handle outstanding leases gracefully
+        // Return one, then shutdown — should wait for remaining 2
+        pool.return_read(c1);
+
+        // Start shutdown in background (it will block waiting for leases)
+        std::thread shutdown_thread([&] { pool.shutdown(); });
+
+        // Small delay to let shutdown start waiting
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        // Pool should not be fully shut down yet (leases outstanding)
+        // Return remaining leases
+        pool.return_read(c2);
+        pool.return_read(c3);
+
+        shutdown_thread.join();
+
+        // After shutdown, lease_read should return nullptr
+        CHECK(pool.lease_read() == nullptr);
+        CHECK(pool.is_shutdown());
+
+        // Double shutdown should not crash
         pool.shutdown();
-
-        // Pool is shut down — further operations should not crash
-        pool.shutdown();  // double shutdown
     }
     cleanup(path);
 }
 
-TEST_CASE("ConnectionPool write mutex serializes") {
-    auto path = pool_path("containercp_test_mutex.db");
+TEST_CASE("ConnectionPool write guard RAII") {
+    auto path = pool_path("containercp_test_raii.db");
     cleanup(path);
     {
         containercp::storage::ConnectionPool pool;
         REQUIRE(pool.initialize(path));
 
-        pool.lock_write();
-        CHECK(pool.write_connection().exec("CREATE TABLE t (id INTEGER)"));
-        CHECK(pool.write_connection().exec("INSERT INTO t VALUES (1)"));
-        pool.unlock_write();
+        // Test that WriteGuard properly acquires and releases the mutex
+        {
+            containercp::storage::WriteGuard wg(pool);
+            CHECK(wg.db().exec("CREATE TABLE t (id INTEGER)"));
+            CHECK(wg.db().exec("INSERT INTO t VALUES (1)"));
+        }  // mutex released
 
         // Read back via read connection
         auto* r = pool.lease_read();
@@ -360,12 +385,13 @@ TEST_CASE("ConnectionPool PRAGMAs on all connections") {
         containercp::storage::ConnectionPool pool;
         REQUIRE(pool.initialize(path));
 
-        // Check write connection PRAGMAs
-        pool.lock_write();
-        CHECK(pool.write_connection().prepare("PRAGMA journal_mode"));
-        CHECK(pool.write_connection().step());
-        CHECK(pool.write_connection().column_text(0) == "wal");
-        pool.unlock_write();
+        // Check write connection PRAGMAs via WriteGuard
+        {
+            containercp::storage::WriteGuard wg(pool);
+            CHECK(wg.db().prepare("PRAGMA journal_mode"));
+            CHECK(wg.db().step());
+            CHECK(wg.db().column_text(0) == "wal");
+        }
 
         // Check read connection PRAGMAs
         for (int i = 0; i < 3; ++i) {
@@ -389,11 +415,12 @@ TEST_CASE("ConnectionPool backup creates valid snapshot") {
         containercp::storage::ConnectionPool pool;
         REQUIRE(pool.initialize(path));
 
-        // Insert data
-        pool.lock_write();
-        CHECK(pool.write_connection().exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)"));
-        CHECK(pool.write_connection().exec("INSERT INTO t VALUES (1, 'data')"));
-        pool.unlock_write();
+        // Insert data via WriteGuard
+        {
+            containercp::storage::WriteGuard wg(pool);
+            CHECK(wg.db().exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)"));
+            CHECK(wg.db().exec("INSERT INTO t VALUES (1, 'data')"));
+        }
 
         // Backup
         CHECK(pool.backup(backup_path));

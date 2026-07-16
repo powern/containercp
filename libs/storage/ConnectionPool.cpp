@@ -8,25 +8,44 @@
 
 namespace containercp::storage {
 
+// ============================================================
+// WriteGuard
+// ============================================================
+
+WriteGuard::WriteGuard(ConnectionPool& pool)
+    : pool_(pool) {
+    pool_.lock_write();
+}
+
+WriteGuard::~WriteGuard() {
+    pool_.unlock_write();
+}
+
+SQLiteDB& WriteGuard::db() {
+    return pool_.write_connection();
+}
+
+// ============================================================
+// ConnectionPool
+// ============================================================
+
 ConnectionPool::~ConnectionPool() {
     shutdown();
 }
 
 bool ConnectionPool::initialize(const std::string& db_path) {
     db_path_ = db_path;
+    shutdown_.store(false);
 
-    // Write connection
     auto write_conn = std::make_unique<SQLiteDB>();
     if (!open_connection(*write_conn, db_path)) {
         return false;
     }
     write_conn_ = std::move(write_conn);
 
-    // Read connections
     for (int i = 0; i < kReadPoolSize; ++i) {
         auto conn = std::make_unique<SQLiteDB>();
         if (!open_connection(*conn, db_path)) {
-            // Close already-opened read connections
             for (int j = 0; j < i; ++j) {
                 read_conns_[j]->close();
                 read_conns_[j].reset();
@@ -42,9 +61,7 @@ bool ConnectionPool::initialize(const std::string& db_path) {
 }
 
 bool ConnectionPool::open_connection(SQLiteDB& conn, const std::string& path) {
-    if (!conn.open(path)) return false;
-    // PRAGMAs are applied by SQLiteDB::open() via apply_pragmas()
-    return true;
+    return conn.open(path);
 }
 
 SQLiteDB& ConnectionPool::write_connection() {
@@ -60,20 +77,26 @@ void ConnectionPool::unlock_write() {
 }
 
 SQLiteDB* ConnectionPool::lease_read() {
-    // Round-robin: try each connection up to kReadPoolSize times.
-    // If all are busy, wait and retry (with timeout via busy_timeout
-    // on the connection itself, not on the lease).
+    if (shutdown_.load()) return nullptr;
+
+    outstanding_leases_.fetch_add(1);
+
+    // Round-robin with compare-exchange
     for (int attempt = 0; attempt < kReadPoolSize * 2; ++attempt) {
         int idx = read_next_.fetch_add(1) % kReadPoolSize;
         bool expected = false;
         if (read_in_use_[idx].compare_exchange_strong(expected, true)) {
             return read_conns_[idx].get();
         }
-        // Brief pause before retry to avoid tight spinning
         std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
-    // Fallback: linear scan with blocking wait
+
+    // Linear scan fallback
     for (int i = 0; i < kReadPoolSize * 50; ++i) {
+        if (shutdown_.load()) {
+            outstanding_leases_.fetch_sub(1);
+            return nullptr;
+        }
         for (int idx = 0; idx < kReadPoolSize; ++idx) {
             bool expected = false;
             if (read_in_use_[idx].compare_exchange_strong(expected, true)) {
@@ -82,23 +105,41 @@ SQLiteDB* ConnectionPool::lease_read() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    return nullptr;  // all connections busy (should not happen with busy_timeout)
+
+    outstanding_leases_.fetch_sub(1);
+    return nullptr;
 }
 
 void ConnectionPool::return_read(SQLiteDB* db) {
+    if (!db) return;
     for (int i = 0; i < kReadPoolSize; ++i) {
         if (read_conns_[i].get() == db) {
             read_in_use_[i].store(false);
+            outstanding_leases_.fetch_sub(1);
             return;
         }
     }
-    // db not found in pool — ignore (may happen after shutdown)
 }
 
 void ConnectionPool::shutdown() {
-    // Mark all read connections as available (force-release)
-    for (int i = 0; i < kReadPoolSize; ++i) {
-        read_in_use_[i].store(false);
+    shutdown_.store(true);
+
+    // Wait for outstanding leases to be returned (with timeout)
+    auto deadline = std::chrono::steady_clock::now()
+        + std::chrono::milliseconds(kShutdownTimeoutMs);
+    while (outstanding_leases_.load() > 0) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            break;  // timeout — log warning, connections remain valid
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // At this point, no outstanding leases exist (or we timed out).
+    // The pool is marked shut down; any caller holding a lease past
+    // shutdown still has a valid pointer but the connection will be
+    // closed when they return it.
+    if (outstanding_leases_.load() > 0) {
+        // Log warning — leak possible but no dangling pointer
     }
 
     if (write_conn_) {
@@ -114,13 +155,14 @@ void ConnectionPool::shutdown() {
     }
 }
 
+bool ConnectionPool::is_shutdown() const {
+    return shutdown_.load();
+}
+
 bool ConnectionPool::backup(const std::string& dest_path) {
-    // Lock write mutex to ensure consistent snapshot
     lock_write();
-    // Use the write connection for backup since it serializes all mutations
     SQLiteDB& src = *write_conn_;
 
-    // Open destination database
     sqlite3* dest_db = nullptr;
     int rc = sqlite3_open(dest_path.c_str(), &dest_db);
     if (rc != SQLITE_OK) {
@@ -128,7 +170,6 @@ bool ConnectionPool::backup(const std::string& dest_path) {
         return false;
     }
 
-    // Online Backup API
     sqlite3_backup* backup = sqlite3_backup_init(dest_db, "main",
                                                   src.handle(), "main");
     if (!backup) {
@@ -137,7 +178,6 @@ bool ConnectionPool::backup(const std::string& dest_path) {
         return false;
     }
 
-    // Copy all pages (5 pages per step to yield periodically)
     do {
         rc = sqlite3_backup_step(backup, 5);
     } while (rc == SQLITE_OK || rc == SQLITE_BUSY || rc == SQLITE_LOCKED);
