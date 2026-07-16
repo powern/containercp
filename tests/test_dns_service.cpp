@@ -452,3 +452,42 @@ TEST_CASE("DnsCheckService empty type list") {
     CHECK(r.overall_status == "complete");
     CHECK(r.per_type.empty());
 }
+
+TEST_CASE("DnsCheckService AAAA (IPv6) record") {
+    DnsCheckService svc;
+
+    auto r = svc.check("google.com", {"AAAA"});
+    CHECK(r.success);
+    CHECK(r.per_type.size() == 1);
+    CHECK(r.per_type[0].status_code == "NOERROR");
+    CHECK_FALSE(r.per_type[0].records.empty());
+
+    bool found_aaaa = false;
+    for (const auto& rec : r.per_type[0].records) {
+        if (rec.type == "AAAA" && !rec.value.empty()) {
+            found_aaaa = true;
+            CHECK(rec.value.find(':') != std::string::npos);
+            CHECK(rec.ttl > 0);
+            CHECK_FALSE(rec.dns_response_details.empty());
+        }
+    }
+    CHECK(found_aaaa);
+}
+
+TEST_CASE("DnsCheckService cache TTL expiry") {
+    DnsCheckService svc;
+
+    svc.set_cache_ttl(1);
+    auto r1 = svc.check("google.com", {"A"});
+    CHECK_FALSE(r1.cached);
+
+    auto r2 = svc.check("google.com", {"A"});
+    CHECK(r2.cached);
+
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    auto r3 = svc.check("google.com", {"A"});
+    CHECK_FALSE(r3.cached);
+
+    svc.set_cache_ttl(60);
+}

@@ -176,6 +176,50 @@ TEST_CASE("DomainViewService produces valid JSON for various target values") {
     std::system(rm_cmd.c_str());
 }
 
+TEST_CASE("DomainViewService enriched JSON includes mail fields") {
+    using namespace containercp;
+
+    char tmp[] = "/tmp/containercp_test_mail_json_XXXXXX";
+    char* ssl_root = mkdtemp(tmp);
+    REQUIRE(ssl_root != nullptr);
+    std::string ssl_root_str(ssl_root);
+
+    domain::DomainManager domains;
+    site::SiteManager sites;
+    ssl::CertificateStore cert_store(logger::Logger::instance(), ssl_root_str);
+    sites.create("testsite.com", "admin", 1);
+
+    domains.create("with-mail.com", 1, 1, "primary", "");
+    domains.create("no-mail.com", 1, 1, "primary", "");
+
+    mail::MailDomainManager md_mgr;
+    uint64_t mail_id = md_mgr.create("with-mail.com",
+        mail::MailDomainMode::LocalPrimary, 1, 1);
+    CHECK(mail_id > 0);
+    auto* md = md_mgr.find(mail_id);
+    REQUIRE(md != nullptr);
+    // Set DKIM fields
+    md->dkim_selector = "default";
+    md->dkim_public_key_dns = "v=DKIM1; p=MIGfMA0GCSqGSIb4...";
+
+    domain::DomainViewService view(logger::Logger::instance(),
+        domains, sites, cert_store, md_mgr);
+    std::string json_result = view.build_enriched_json();
+
+    CHECK(json_result.find("\"domain\":\"with-mail.com\"") != std::string::npos);
+    CHECK(json_result.find("\"mail_domain_id\":1") != std::string::npos);
+    CHECK(json_result.find("\"mail_domain_mode\":\"local-primary\"") != std::string::npos);
+    CHECK(json_result.find("\"dkim_generated\":true") != std::string::npos);
+    CHECK(json_result.find("\"dkim_selector\":\"default\"") != std::string::npos);
+
+    CHECK(json_result.find("\"domain\":\"no-mail.com\"") != std::string::npos);
+    bool has_empty_mail = json_result.find("\"mail_domain_id\":0") != std::string::npos;
+    CHECK(has_empty_mail);
+
+    std::string rm_cmd = "rm -rf " + ssl_root_str;
+    std::system(rm_cmd.c_str());
+}
+
 #include "mail/MailDomainManager.h"
 
 TEST_CASE("MailDomainManager create/find/list/remove") {
