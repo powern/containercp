@@ -453,44 +453,69 @@ ArchiveResult LegacyArchive::create_archive(
     }
 
 
-    // Copy files with durable streaming
+    // Durable copy with O_NOFOLLOW source open — no TOCTOU race
     auto durable_copy = [&](const std::string& src, const std::string& dst, const std::string& fn) -> bool {
-        struct stat st; if (stat(src.c_str(), &st) != 0) { result.error = "source_stat_failed:" + fn; return false; }
-        if (fs::is_symlink(fs::symlink_status(src))) { result.error = "source_symlink_rejected:" + fn; return false; }
-        if (!S_ISREG(st.st_mode)) { result.error = "source_not_regular:" + fn; return false; }
+        // Open source with O_NOFOLLOW to reject symlinks atomically
+        int src_fd = open(src.c_str(), O_RDONLY | O_NOFOLLOW);
+        if (src_fd < 0) { result.error = "source_open_failed:" + fn; return false; }
+
+        // fstat the opened fd for race-free type/size/inode check
+        struct stat st;
+        if (fstat(src_fd, &st) != 0) { close(src_fd); result.error = "source_fstat_failed:" + fn; return false; }
+        if (!S_ISREG(st.st_mode)) { close(src_fd); result.error = "source_not_regular:" + fn; return false; }
 
         uint64_t src_size = st.st_size;
         time_t src_mtime = st.st_mtime;
         ino_t src_inode = st.st_ino;
 
-        // Compute source SHA before copy
-        std::string src_sha = sha256_file(src);
-        if (src_sha.empty()) { result.error = "source_sha_failed:" + fn; return false; }
+        // Compute source SHA from opened fd
+        unsigned char hash[SHA256_DIGEST_LENGTH]; SHA256_CTX ctx; SHA256_Init(&ctx);
+        char buf[65536]; uint64_t total_read = 0; bool read_ok = true;
+        while (true) {
+            ssize_t n = read(src_fd, buf, sizeof(buf));
+            if (n < 0) { read_ok = false; break; }
+            if (n == 0) break;
+            SHA256_Update(&ctx, buf, n);
+            total_read += n;
+        }
+        if (!read_ok) { close(src_fd); result.error = "source_sha_failed:" + fn; return false; }
+        if (total_read != src_size) { close(src_fd); result.error = "source_size_changed:" + fn; return false; }
+        SHA256_Final(hash, &ctx);
+        std::string src_sha; src_sha.reserve(64);
+        for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
+            src_sha += "0123456789abcdef"[(hash[i] >> 4) & 0xf];
+            src_sha += "0123456789abcdef"[hash[i] & 0xf];
+        }
+
+        // Seek back and copy
+        if (lseek(src_fd, 0, SEEK_SET) != 0) { close(src_fd); result.error = "source_seek_failed:" + fn; return false; }
 
         // Exclusive create destination
         int dst_fd = open(dst.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0640);
-        if (dst_fd < 0) { result.error = "dest_create_failed:" + fn; return false; }
+        if (dst_fd < 0) { close(src_fd); result.error = "dest_create_failed:" + fn; return false; }
 
-        // Stream copy with 64KB buffer
-        std::ifstream in(src, std::ios::binary);
-        if (!in) { close(dst_fd); unlink(dst.c_str()); result.error = "copy_failed:" + fn; return false; }
-        char buf[65536]; bool ok = true;
-        while (in.read(buf, sizeof(buf)).gcount() > 0) {
-            ssize_t written = write(dst_fd, buf, in.gcount());
-            if (written < 0 || static_cast<size_t>(written) != in.gcount()) { ok = false; break; }
+        // Stream copy
+        bool copy_ok = true;
+        while (true) {
+            ssize_t n = read(src_fd, buf, sizeof(buf));
+            if (n < 0) { copy_ok = false; break; }
+            if (n == 0) break;
+            ssize_t written = write(dst_fd, buf, n);
+            if (written < 0 || written != n) { copy_ok = false; break; }
         }
-        if (!ok || in.bad()) { close(dst_fd); unlink(dst.c_str()); result.error = "copy_failed:" + fn; return false; }
+        close(src_fd);
+        if (!copy_ok) { close(dst_fd); unlink(dst.c_str()); result.error = "copy_failed:" + fn; return false; }
 
-        // fsync + close
+        // fsync + close destination
         if (fsync(dst_fd) != 0) { close(dst_fd); unlink(dst.c_str()); result.error = "archive_file_fsync_failed:" + fn; return false; }
         if (close(dst_fd) != 0) { unlink(dst.c_str()); result.error = "close_failed:" + fn; return false; }
 
-        // Verify destination
+        // Verify destination from disk
         std::string dst_sha = sha256_file(dst);
         if (dst_sha.empty()) { result.error = "dest_sha_failed:" + fn; return false; }
         if (dst_sha != src_sha) { result.error = "checksum_mismatch:" + fn; return false; }
 
-        // Verify source unchanged (size, mtime, inode)
+        // Verify source unchanged (stat after fd is closed)
         struct stat st2;
         if (stat(src.c_str(), &st2) != 0) { result.error = "source_recheck_failed:" + fn; return false; }
         if (static_cast<uint64_t>(st2.st_size) != src_size ||
