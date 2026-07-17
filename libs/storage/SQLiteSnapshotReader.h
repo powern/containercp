@@ -72,10 +72,11 @@ struct SQLiteSnapshotReader {
         return true;
     }
     static bool read_bool_col(SQLiteDB& db, int col, bool& out) {
+        if (db.column_is_null(col)) return false;
         int64_t v = db.column_int(col);
         if (v == 0) { out = false; return true; }
         if (v == 1) { out = true; return true; }
-        return false; // invalid boolean
+        return false;
     }
     static bool read_string_col(SQLiteDB& db, int col, std::string& out, bool allow_null = false) {
         if (db.column_is_null(col) && !allow_null) return false;
