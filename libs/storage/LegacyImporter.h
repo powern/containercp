@@ -68,7 +68,7 @@ struct ImportAllResult {
 // explicitly — never on startup or Storage construction.
 //
 // Importer success requires confirmed SQLite commit.
-// Phase 9 (migration verification) is not implemented.
+// Phase 9 (migration verification) is implemented in Verification.h/.cpp.
 class LegacyImporter {
 public:
     LegacyImporter(const std::string& legacy_directory, ConnectionPool& pool);

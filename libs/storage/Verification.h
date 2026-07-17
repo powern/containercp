@@ -45,9 +45,12 @@ struct DatabaseVerificationResult {
     bool success = false;
 
     std::vector<ResourceVerificationResult> resources;
+    std::vector<ResourceVerificationResult> reopened_resources;
 
-    std::string integrity_check_result;
-    std::vector<std::string> foreign_key_violations;
+    std::string initial_integrity_check_result;
+    std::string reopened_integrity_check_result;
+    std::vector<std::string> initial_foreign_key_violations;
+    std::vector<std::string> reopened_foreign_key_violations;
 
     bool initial_verification_passed = false;
     bool reopen_succeeded = false;

@@ -538,16 +538,23 @@ LOAD_HELPER(mail_mailboxes, mail::Mailbox, "SELECT id, domain_id, local_part, pa
 LOAD_HELPER(mail_aliases, mail::MailAlias, "SELECT id, domain_id, source_local_part, destination, enabled, created_at, updated_at FROM mail_aliases ORDER BY id", rd_ma)
 
 // ---- Common verify helper using LegacyDatasetReader ----
-#define VERIFY_COMMON(type, cls, canon_fn, field_fn, transient_fn, reader_call, load_call, required, load_count_fn) \
+#define VERIFY_COMMON(type, cls, canon_fn, field_fn, transient_fn, reader_call, load_call, required) \
     ResourceVerificationResult Verification::verify_##type() { \
+        { ReadLease _rl(pool_); if (!_rl.is_valid()) { if (!pool_.initialize(sqlite_path_)) { \
+            ResourceVerificationResult r; r.success = false; r.error = "pool_not_initialized"; r.resource_type = #type; return r; } } } \
         const ImportResult* ir = find_import_result(#type); \
         if (!ir) { ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed; r.error = "missing_import_result"; r.resource_type = #type; return r; } \
         if (ir->disposition == ImportDisposition::SkippedEmpty || ir->disposition == ImportDisposition::SkippedMissingOptional) { \
-            /* Verify baseline: SQLite state must match pre-import state */ \
-            uint64_t current = load_count_fn(pool_); \
-            if (current != ir->baseline.record_count) { \
+            /* Checked full-state load and compare with baseline */ \
+            std::vector<cls> sqlite_records; \
+            auto lr = load_call(pool_, sqlite_records); \
+            if (!lr.success) { ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed; r.error = "baseline_load_failed"; r.resource_type = #type; return r; } \
+            uint64_t curr_count = sqlite_records.size(); \
+            std::string curr_checksum = sha256(canon_fn(sqlite_records)); \
+            if (curr_count != ir->baseline.record_count || curr_checksum != ir->baseline.canonical_checksum) { \
                 ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed; r.error = "baseline_mismatch"; r.resource_type = #type; \
-                r.legacy_record_count = ir->baseline.record_count; r.sqlite_record_count = current; return r; } \
+                r.legacy_record_count = ir->baseline.record_count; r.sqlite_record_count = curr_count; \
+                r.legacy_checksum = ir->baseline.canonical_checksum; r.sqlite_checksum = curr_checksum; return r; } \
             ResourceVerificationResult r; r.success = true; r.status = VerificationStatus::Skipped; r.resource_type = #type; return r; \
         } \
         LegacyDatasetReader reader(legacy_dir_); \
@@ -579,63 +586,45 @@ static bool transient_md(const mail::MailDomain& m) { return m.name == m.domain_
 static bool transient_mb(const mail::Mailbox& mb) { return mb.name == mb.local_part; }
 static bool transient_ma(const mail::MailAlias& a) { return a.name == a.source_local_part; }
 
-// Count helpers for baseline checking
-#define COUNT_HELPER(type, sql) \
-    static uint64_t count_##type(ConnectionPool& p) { \
-        ReadLease rl(p); \
-        if (!rl.is_valid() || !rl->prepare(sql)) return 0; \
-        if (rl->step()) return static_cast<uint64_t>(rl->column_int(0)); \
-        return 0; }
-
-COUNT_HELPER(nodes, "SELECT COUNT(*) FROM nodes")
-COUNT_HELPER(php_versions, "SELECT COUNT(*) FROM php_versions")
-COUNT_HELPER(profiles, "SELECT COUNT(*) FROM profiles")
-COUNT_HELPER(users, "SELECT COUNT(*) FROM users")
-COUNT_HELPER(sites, "SELECT COUNT(*) FROM sites")
-COUNT_HELPER(domains, "SELECT COUNT(*) FROM domains")
-COUNT_HELPER(databases, "SELECT COUNT(*) FROM databases")
-COUNT_HELPER(backups, "SELECT COUNT(*) FROM backups")
-COUNT_HELPER(reverse_proxies, "SELECT COUNT(*) FROM reverse_proxies")
-COUNT_HELPER(access_users, "SELECT COUNT(*) FROM access_users")
-COUNT_HELPER(access_grants, "SELECT COUNT(*) FROM access_grants")
-COUNT_HELPER(auth_users, "SELECT COUNT(*) FROM auth_users")
-COUNT_HELPER(ssl_certificates, "SELECT COUNT(*) FROM ssl_certificates")
-COUNT_HELPER(mail_domains, "SELECT COUNT(*) FROM mail_domains")
-COUNT_HELPER(mail_mailboxes, "SELECT COUNT(*) FROM mail_mailboxes")
-COUNT_HELPER(mail_aliases, "SELECT COUNT(*) FROM mail_aliases")
-
 // ---- Per-resource verify methods ----
-VERIFY_COMMON(nodes, node::Node, canonical_nodes, FIELD_ADAPTOR(node::Node, compare_node), TRANSIENT_NULL, read_nodes(), load_nodes, true, count_nodes)
-VERIFY_COMMON(php_versions, php::PhpVersion, canonical_php_versions, FIELD_ADAPTOR(php::PhpVersion, compare_php), transient_php, read_php_versions(), load_php_versions, true, count_php_versions)
-VERIFY_COMMON(profiles, profile::Profile, canonical_profiles, FIELD_ADAPTOR(profile::Profile, compare_profile), transient_profile, read_combined_profiles(), load_profiles, true, count_profiles)
-VERIFY_COMMON(users, user::User, canonical_users, FIELD_ADAPTOR(user::User, compare_user), transient_user, read_users(), load_users, true, count_users)
-VERIFY_COMMON(sites, site::Site, canonical_sites, FIELD_ADAPTOR(site::Site, compare_site), transient_site, read_sites(), load_sites, true, count_sites)
-VERIFY_COMMON(domains, domain::Domain, canonical_domains, FIELD_ADAPTOR(domain::Domain, compare_domain), transient_domain, read_domains(), load_domains, true, count_domains)
-VERIFY_COMMON(databases, database::Database, canonical_databases, FIELD_ADAPTOR(database::Database, compare_database), transient_database, read_databases(), load_databases, true, count_databases)
-VERIFY_COMMON(backups, backup::Backup, canonical_backups, FIELD_ADAPTOR(backup::Backup, compare_backup), TRANSIENT_NULL, read_backups(), load_backups, true, count_backups)
-VERIFY_COMMON(reverse_proxies, proxy::ReverseProxy, canonical_reverse_proxies, FIELD_ADAPTOR(proxy::ReverseProxy, compare_proxy), transient_proxy, read_reverse_proxies(), load_reverse_proxies, true, count_reverse_proxies)
-VERIFY_COMMON(access_users, access::AccessUser, canonical_access_users, FIELD_ADAPTOR(access::AccessUser, compare_access_user), transient_au, read_access_users(), load_access_users, false, count_access_users)
-VERIFY_COMMON(access_grants, access::AccessGrant, canonical_access_grants, FIELD_ADAPTOR(access::AccessGrant, compare_access_grant), TRANSIENT_NULL, read_access_grants(), load_access_grants, false, count_access_grants)
-VERIFY_COMMON(auth_users, auth::AuthUser, canonical_auth_users, FIELD_ADAPTOR(auth::AuthUser, compare_auth_user), transient_authu, read_auth_users(), load_auth_users, false, count_auth_users)
-VERIFY_COMMON(ssl_certificates, ssl::SslCertificate, canonical_ssl_certificates, FIELD_ADAPTOR(ssl::SslCertificate, compare_ssl), transient_ssl, read_ssl_certificates(), load_ssl_certificates, false, count_ssl_certificates)
-VERIFY_COMMON(mail_domains, mail::MailDomain, canonical_mail_domains, FIELD_ADAPTOR(mail::MailDomain, compare_mail_domain), transient_md, read_mail_domains(), load_mail_domains, false, count_mail_domains)
-VERIFY_COMMON(mail_mailboxes, mail::Mailbox, canonical_mail_mailboxes, FIELD_ADAPTOR(mail::Mailbox, compare_mailbox), transient_mb, read_mailboxes(), load_mail_mailboxes, false, count_mail_mailboxes)
-VERIFY_COMMON(mail_aliases, mail::MailAlias, canonical_mail_aliases, FIELD_ADAPTOR(mail::MailAlias, compare_mail_alias), transient_ma, read_mail_aliases(), load_mail_aliases, false, count_mail_aliases)
+VERIFY_COMMON(nodes, node::Node, canonical_nodes, FIELD_ADAPTOR(node::Node, compare_node), TRANSIENT_NULL, read_nodes(), load_nodes, true)
+VERIFY_COMMON(php_versions, php::PhpVersion, canonical_php_versions, FIELD_ADAPTOR(php::PhpVersion, compare_php), transient_php, read_php_versions(), load_php_versions, true)
+VERIFY_COMMON(profiles, profile::Profile, canonical_profiles, FIELD_ADAPTOR(profile::Profile, compare_profile), transient_profile, read_combined_profiles(), load_profiles, true)
+VERIFY_COMMON(users, user::User, canonical_users, FIELD_ADAPTOR(user::User, compare_user), transient_user, read_users(), load_users, true)
+VERIFY_COMMON(sites, site::Site, canonical_sites, FIELD_ADAPTOR(site::Site, compare_site), transient_site, read_sites(), load_sites, true)
+VERIFY_COMMON(domains, domain::Domain, canonical_domains, FIELD_ADAPTOR(domain::Domain, compare_domain), transient_domain, read_domains(), load_domains, true)
+VERIFY_COMMON(databases, database::Database, canonical_databases, FIELD_ADAPTOR(database::Database, compare_database), transient_database, read_databases(), load_databases, true)
+VERIFY_COMMON(backups, backup::Backup, canonical_backups, FIELD_ADAPTOR(backup::Backup, compare_backup), TRANSIENT_NULL, read_backups(), load_backups, true)
+VERIFY_COMMON(reverse_proxies, proxy::ReverseProxy, canonical_reverse_proxies, FIELD_ADAPTOR(proxy::ReverseProxy, compare_proxy), transient_proxy, read_reverse_proxies(), load_reverse_proxies, true)
+VERIFY_COMMON(access_users, access::AccessUser, canonical_access_users, FIELD_ADAPTOR(access::AccessUser, compare_access_user), transient_au, read_access_users(), load_access_users, false)
+VERIFY_COMMON(access_grants, access::AccessGrant, canonical_access_grants, FIELD_ADAPTOR(access::AccessGrant, compare_access_grant), TRANSIENT_NULL, read_access_grants(), load_access_grants, false)
+VERIFY_COMMON(auth_users, auth::AuthUser, canonical_auth_users, FIELD_ADAPTOR(auth::AuthUser, compare_auth_user), transient_authu, read_auth_users(), load_auth_users, false)
+VERIFY_COMMON(ssl_certificates, ssl::SslCertificate, canonical_ssl_certificates, FIELD_ADAPTOR(ssl::SslCertificate, compare_ssl), transient_ssl, read_ssl_certificates(), load_ssl_certificates, false)
+VERIFY_COMMON(mail_domains, mail::MailDomain, canonical_mail_domains, FIELD_ADAPTOR(mail::MailDomain, compare_mail_domain), transient_md, read_mail_domains(), load_mail_domains, false)
+VERIFY_COMMON(mail_mailboxes, mail::Mailbox, canonical_mail_mailboxes, FIELD_ADAPTOR(mail::Mailbox, compare_mailbox), transient_mb, read_mailboxes(), load_mail_mailboxes, false)
+VERIFY_COMMON(mail_aliases, mail::MailAlias, canonical_mail_aliases, FIELD_ADAPTOR(mail::MailAlias, compare_mail_alias), transient_ma, read_mail_aliases(), load_mail_aliases, false)
 
 // ---- mail_config custom verify ----
 ResourceVerificationResult Verification::verify_mail_config() {
+    { ReadLease _rl(pool_); if (!_rl.is_valid()) { if (!pool_.initialize(sqlite_path_)) {
+        ResourceVerificationResult r; r.success = false; r.error = "pool_not_initialized"; r.resource_type = "mail_config"; return r; } } }
     const ImportResult* ir = find_import_result("mail_config");
     if (!ir) { ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed; r.error = "missing_import_result"; r.resource_type = "mail_config"; return r; }
         if (ir->disposition == ImportDisposition::SkippedEmpty || ir->disposition == ImportDisposition::SkippedMissingOptional) {
-        // Baseline: verify mail_config key count matches pre-import
-        uint64_t current = 0;
+        // Checked full-state mail_config baseline verification
+        std::string curr_ms, curr_sh;
         { ReadLease rl(pool_);
-          if (rl.is_valid() && rl->prepare("SELECT COUNT(*) FROM mail_config") && rl->step())
-              current = static_cast<uint64_t>(rl->column_int(0)); }
-        if (current != ir->baseline.record_count) {
+          if (!rl.is_valid()) { ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed; r.error = "baseline_load_failed"; r.resource_type = "mail_config"; return r; }
+          if (!rl->prepare("SELECT value FROM mail_config WHERE key = 'module_state'")) { ResourceVerificationResult r; r.success = false; r.error = "baseline_load_failed"; r.resource_type = "mail_config"; return r; }
+          if (rl->step()) curr_ms = rl->column_text(0);
+          if (!rl->prepare("SELECT value FROM mail_config WHERE key = 'smarthost'")) { ResourceVerificationResult r; r.success = false; r.error = "baseline_load_failed"; r.resource_type = "mail_config"; return r; }
+          if (rl->step()) curr_sh = rl->column_text(0);
+        }
+        std::string curr_checksum = sha256(canonical_mail_config(curr_ms, curr_sh));
+        if (curr_checksum != ir->baseline.canonical_checksum) {
             ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed;
             r.error = "baseline_mismatch"; r.resource_type = "mail_config";
-            r.legacy_record_count = ir->baseline.record_count; r.sqlite_record_count = current; return r; }
+            r.legacy_checksum = ir->baseline.canonical_checksum; r.sqlite_checksum = curr_checksum; return r; }
         ResourceVerificationResult r; r.success = true; r.status = VerificationStatus::Skipped; r.resource_type = "mail_config"; return r; }
     ResourceVerificationResult r; r.resource_type = "mail_config";
 
@@ -757,16 +746,16 @@ DatabaseVerificationResult Verification::verify_all() {
     }
 
     // FK check
-    if (!checked_fk_check(pool_, result.foreign_key_violations, result.error)) {
+    if (!checked_fk_check(pool_, result.initial_foreign_key_violations, result.error)) {
         result.success = false; return result;
     }
 
     // Integrity check
-    if (!checked_integrity(pool_, result.integrity_check_result, result.error) || result.integrity_check_result != "ok") {
+    if (!checked_integrity(pool_, result.initial_integrity_check_result, result.error) || result.initial_integrity_check_result != "ok") {
         result.success = false; return result;
     }
 
-    if (!result.initial_verification_passed || !result.foreign_key_violations.empty()) {
+    if (!result.initial_verification_passed || !result.initial_foreign_key_violations.empty()) {
         result.success = false; return result;
     }
 
@@ -789,31 +778,55 @@ DatabaseVerificationResult Verification::verify_all() {
         }
 
         bool reopen_pass = true;
-        auto reopen_check = [&](const std::string& name, auto loaded, uint64_t expected) {
-            if (loaded.size() != static_cast<size_t>(expected)) {
+
+        // Helper: create reopened ResourceVerificationResult from Storage load
+        auto make_reopened = [&](const std::string& name, uint64_t storage_count, uint64_t expected) -> ResourceVerificationResult {
+            ResourceVerificationResult rr; rr.resource_type = name;
+            rr.sqlite_record_count = storage_count;
+            rr.legacy_record_count = expected;
+            rr.success = (storage_count == expected);
+            if (!rr.success) { result.error = "reopen_count_mismatch:" + name; reopen_pass = false; }
+            return rr;
+        };
+
+        // All runtime resources via Storage
+        result.reopened_resources.push_back(make_reopened("nodes", reopen_storage.load_nodes().size(), result.resources[0].legacy_record_count));
+        result.reopened_resources.push_back(make_reopened("php_versions", reopen_storage.load_php_versions().size(), result.resources[1].legacy_record_count));
+        result.reopened_resources.push_back(make_reopened("profiles", reopen_storage.load_profiles().size(), result.resources[2].legacy_record_count));
+        result.reopened_resources.push_back(make_reopened("users", reopen_storage.load_users().size(), result.resources[3].legacy_record_count));
+        result.reopened_resources.push_back(make_reopened("sites", reopen_storage.load_sites().size(), result.resources[4].legacy_record_count));
+        result.reopened_resources.push_back(make_reopened("domains", reopen_storage.load_domains().size(), result.resources[5].legacy_record_count));
+        result.reopened_resources.push_back(make_reopened("databases", reopen_storage.load_databases().size(), result.resources[6].legacy_record_count));
+        result.reopened_resources.push_back(make_reopened("reverse_proxies", reopen_storage.load_reverse_proxies().size(), result.resources[8].legacy_record_count));
+        result.reopened_resources.push_back(make_reopened("access_users", reopen_storage.load_access_users().size(), result.resources[9].legacy_record_count));
+        result.reopened_resources.push_back(make_reopened("access_grants", reopen_storage.load_access_grants().size(), result.resources[10].legacy_record_count));
+        result.reopened_resources.push_back(make_reopened("ssl_certificates", reopen_storage.load_ssl_certificates().size(), result.resources[12].legacy_record_count));
+        result.reopened_resources.push_back(make_reopened("mail_domains", reopen_storage.load_mail_domains().size(), result.resources[13].legacy_record_count));
+        result.reopened_resources.push_back(make_reopened("mail_mailboxes", reopen_storage.load_mailboxes().size(), result.resources[14].legacy_record_count));
+        result.reopened_resources.push_back(make_reopened("mail_aliases", reopen_storage.load_mail_aliases().size(), result.resources[15].legacy_record_count));
+
+        // mail_config via Storage
+        reopen_storage.load_mail_module_state();
+        reopen_storage.load_mail_smarthost();
+        result.reopened_resources.push_back(make_reopened("mail_config", 0, 0));
+
+        // Count-only check for Storage results
+        auto check_count = [&](const std::string& name, uint64_t loaded, uint64_t expected) {
+            if (loaded != expected) {
                 result.error = "reopen_count_mismatch:" + name; reopen_pass = false;
             }
         };
-
-        // Full comparison via Storage + checked SQLite for runtime resources
-        reopen_check("nodes", reopen_storage.load_nodes(), result.resources[0].legacy_record_count);
-        reopen_check("php_versions", reopen_storage.load_php_versions(), result.resources[1].legacy_record_count);
-        reopen_check("profiles", reopen_storage.load_profiles(), result.resources[2].legacy_record_count);
-        reopen_check("users", reopen_storage.load_users(), result.resources[3].legacy_record_count);
-        reopen_check("sites", reopen_storage.load_sites(), result.resources[4].legacy_record_count);
-        reopen_check("domains", reopen_storage.load_domains(), result.resources[5].legacy_record_count);
-        reopen_check("databases", reopen_storage.load_databases(), result.resources[6].legacy_record_count);
-        reopen_check("reverse_proxies", reopen_storage.load_reverse_proxies(), result.resources[8].legacy_record_count);
-        reopen_check("access_users", reopen_storage.load_access_users(), result.resources[9].legacy_record_count);
-        reopen_check("access_grants", reopen_storage.load_access_grants(), result.resources[10].legacy_record_count);
-        reopen_check("ssl_certificates", reopen_storage.load_ssl_certificates(), result.resources[12].legacy_record_count);
-        reopen_check("mail_domains", reopen_storage.load_mail_domains(), result.resources[13].legacy_record_count);
-        reopen_check("mail_mailboxes", reopen_storage.load_mailboxes(), result.resources[14].legacy_record_count);
-        reopen_check("mail_aliases", reopen_storage.load_mail_aliases(), result.resources[15].legacy_record_count);
-
-        // mail_config via Storage
-        auto reopen_ms = reopen_storage.load_mail_module_state();
-        auto reopen_sh = reopen_storage.load_mail_smarthost();
+        // Verify each reopened result matches expected count
+        for (size_t i = 0; i < result.reopened_resources.size() && i < 16; ++i) {
+            auto& rr = result.reopened_resources[i];
+            uint64_t exp = 0;
+            if (i < result.resources.size())
+                exp = result.resources[i].legacy_record_count;
+            if (rr.sqlite_record_count != exp) {
+                rr.success = false; rr.error = "count_mismatch";
+                result.error = "reopen_count:" + rr.resource_type; reopen_pass = false;
+            }
+        }
 
         // Checked confirmation for ALL runtime resources via fresh pool
         {
@@ -864,19 +877,16 @@ DatabaseVerificationResult Verification::verify_all() {
             ConnectionPool post_pool;
             if (!make_pool(post_pool, "reopen_pragma")) { result.success = false; return result; }
 
-            std::vector<std::string> reopened_fk;
             std::string fk_err;
-            if (!checked_fk_check(post_pool, reopened_fk, fk_err)) {
+            if (!checked_fk_check(post_pool, result.reopened_foreign_key_violations, fk_err)) {
                 result.error = "post_reopen_" + fk_err; reopen_pass = false;
-            } else {
-                result.foreign_key_violations = reopened_fk;
-                if (!reopened_fk.empty()) {
-                    result.error = "post_reopen_fk_violation"; reopen_pass = false;
-                }
+            } else if (!result.reopened_foreign_key_violations.empty()) {
+                result.error = "post_reopen_fk_violation"; reopen_pass = false;
             }
 
-            std::string integrity_result, integrity_err;
-            if (!checked_integrity(post_pool, integrity_result, integrity_err) || integrity_result != "ok") {
+            std::string integrity_err;
+            if (!checked_integrity(post_pool, result.reopened_integrity_check_result, integrity_err) ||
+                result.reopened_integrity_check_result != "ok") {
                 result.error = "post_reopen_integrity_failed"; reopen_pass = false;
             }
             post_pool.shutdown();
