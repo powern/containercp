@@ -2,6 +2,7 @@
 #define CONTAINERCP_STORAGE_STORAGE_H
 
 #include "ConnectionPool.h"
+#include "SQLiteSnapshotReader.h"
 #include "SQLiteStorage.h"
 #include "access/AccessGrant.h"
 #include "access/AccessUser.h"
@@ -109,6 +110,22 @@ public:
     // explicit mode initialization failed, returns false and core
     // resource operations are no-ops (no silent TXT fallback).
     bool sqlite_ready() const;
+
+    // Checked loads — distinguish successful empty from query failure
+    CheckedSnapshot<node::Node> load_nodes_checked();
+    CheckedSnapshot<php::PhpVersion> load_php_versions_checked();
+    CheckedSnapshot<profile::Profile> load_profiles_checked();
+    CheckedSnapshot<user::User> load_users_checked();
+    CheckedSnapshot<site::Site> load_sites_checked();
+    CheckedSnapshot<domain::Domain> load_domains_checked();
+    CheckedSnapshot<database::Database> load_databases_checked();
+    CheckedSnapshot<proxy::ReverseProxy> load_reverse_proxies_checked();
+    CheckedSnapshot<access::AccessUser> load_access_users_checked();
+    CheckedSnapshot<access::AccessGrant> load_access_grants_checked();
+    CheckedSnapshot<ssl::SslCertificate> load_ssl_certificates_checked();
+    CheckedSnapshot<mail::MailDomain> load_mail_domains_checked();
+    CheckedSnapshot<mail::Mailbox> load_mailboxes_checked();
+    CheckedSnapshot<mail::MailAlias> load_mail_aliases_checked();
 
     // Transaction support (forward-looking — TXT backend returns false)
     bool begin_transaction();

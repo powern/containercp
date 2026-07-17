@@ -983,4 +983,20 @@ bool Storage::backup(const std::string& dest_path) {
     return false;  // TXT backend does not support backup
 }
 
+// ---- Checked loads ----
+CheckedSnapshot<node::Node> Storage::load_nodes_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_nodes(); }
+CheckedSnapshot<php::PhpVersion> Storage::load_php_versions_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_php_versions(); }
+CheckedSnapshot<profile::Profile> Storage::load_profiles_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_profiles(); }
+CheckedSnapshot<user::User> Storage::load_users_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_users(); }
+CheckedSnapshot<site::Site> Storage::load_sites_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_sites(); }
+CheckedSnapshot<domain::Domain> Storage::load_domains_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_domains(); }
+CheckedSnapshot<database::Database> Storage::load_databases_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_databases(); }
+CheckedSnapshot<proxy::ReverseProxy> Storage::load_reverse_proxies_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_reverse_proxies(); }
+CheckedSnapshot<access::AccessUser> Storage::load_access_users_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_access_users(); }
+CheckedSnapshot<access::AccessGrant> Storage::load_access_grants_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_access_grants(); }
+CheckedSnapshot<ssl::SslCertificate> Storage::load_ssl_certificates_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_ssl_certificates(); }
+CheckedSnapshot<mail::MailDomain> Storage::load_mail_domains_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_mail_domains(); }
+CheckedSnapshot<mail::Mailbox> Storage::load_mailboxes_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_mail_mailboxes(); }
+CheckedSnapshot<mail::MailAlias> Storage::load_mail_aliases_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_mail_aliases(); }
+
 } // namespace containercp::storage
