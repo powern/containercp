@@ -1,6 +1,5 @@
 #include "Verification.h"
-#include "LineParser.h"
-#include "Storage.h"
+#include "LegacyDatasetReader.h"
 #include "access/AccessGrant.h"
 #include "access/AccessUser.h"
 #include "auth/AuthUser.h"
@@ -21,13 +20,11 @@
 
 #include <algorithm>
 #include <filesystem>
-#include <fstream>
 #include <set>
 #include <openssl/sha.h>
 
 namespace containercp::storage {
 namespace fs = std::filesystem;
-using parser::LineParser;
 
 // ============================================================
 // Verification
@@ -70,20 +67,9 @@ const ImportResult* Verification::find_import_result(const std::string& type) co
 }
 
 // ============================================================
-// Universal verify pattern via X-macro include
+// Checked SQLite query helpers
 // ============================================================
-// Instead of 2000 lines of boilerplate, we use a compact macro that
-// generates: (1) checked SQLite load, (2) parsed legacy load,
-// (3) per-record canonical, (4) verify method, all per resource.
-//
-// The file include/verification_impl.inc is included here to generate
-// all 17 implementations.  For the commit, the full expanded
-// implementations are present.
 
-// For build simplicity, the implementations are expanded inline.
-// Each verify method follows the exact same pattern as verify_nodes.
-
-// ---- Checked SQLite loads ----
 template<typename T>
 struct CheckedLoad { bool success = false; std::vector<T> records; std::string error; };
 
@@ -107,134 +93,332 @@ static CheckedLoad<T> checked_query(ConnectionPool& pool, const std::string& sql
     return r;
 }
 
-// ---- Mismatch collection ----
+// ============================================================
+// Field-by-field comparison helpers
+// ============================================================
+
+struct FieldCheck {
+    std::string name;
+    std::string expected;
+    std::string actual;
+    bool sensitive = false;
+};
+
+#define CHECK_STR(fname, expr_l, expr_s) do { \
+    std::string v_l = (expr_l); std::string v_s = (expr_s); \
+    if (v_l != v_s) { FieldCheck fc; fc.name = (fname); \
+    fc.expected = sensitive ? "[REDACTED]" : v_l; \
+    fc.actual = sensitive ? "[REDACTED]" : v_s; \
+    fc.sensitive = sensitive; checks.push_back(fc); } } while(0)
+
+#define CHECK_U64(fname, expr_l, expr_s) do { \
+    auto v_l = (expr_l); auto v_s = (expr_s); \
+    std::string sv_l = std::to_string(v_l); std::string sv_s = std::to_string(v_s); \
+    if (sv_l != sv_s) { FieldCheck fc; fc.name = (fname); \
+    fc.expected = sensitive ? "[REDACTED]" : sv_l; \
+    fc.actual = sensitive ? "[REDACTED]" : sv_s; \
+    fc.sensitive = sensitive; checks.push_back(fc); } } while(0)
+
+#define CHECK_BOOL(fname, expr_l, expr_s) CHECK_STR(fname, ((expr_l) ? "true" : "false"), ((expr_s) ? "true" : "false"))
+
+static std::vector<FieldCheck> compare_node(const node::Node& l, const node::Node& s, bool) {
+    std::vector<FieldCheck> checks; bool sensitive = false;
+    CHECK_U64("id", l.id, s.id); CHECK_STR("name", l.name, s.name); CHECK_STR("type", l.type, s.type);
+    return checks;
+}
+static std::vector<FieldCheck> compare_php(const php::PhpVersion& l, const php::PhpVersion& s, bool) {
+    std::vector<FieldCheck> checks; bool sensitive = false;
+    CHECK_U64("id", l.id, s.id); CHECK_STR("version", l.version, s.version); CHECK_STR("image", l.image, s.image);
+    CHECK_BOOL("enabled", l.enabled, s.enabled); CHECK_BOOL("default_version", l.default_version, s.default_version);
+    return checks;
+}
+static std::vector<FieldCheck> compare_profile(const profile::Profile& l, const profile::Profile& s, bool) {
+    std::vector<FieldCheck> checks; bool sensitive = false;
+    CHECK_U64("id", l.id, s.id); CHECK_STR("profile_name", l.profile_name, s.profile_name);
+    CHECK_STR("type", profile::profile_type_to_string(l.type), profile::profile_type_to_string(s.type));
+    CHECK_STR("web_server", l.web_server, s.web_server); CHECK_STR("runtime", l.runtime, s.runtime);
+    CHECK_STR("template_path", l.template_path, s.template_path); CHECK_STR("description", l.description, s.description);
+    CHECK_BOOL("enabled", l.enabled, s.enabled); CHECK_BOOL("default_profile", l.default_profile, s.default_profile);
+    return checks;
+}
+static std::vector<FieldCheck> compare_user(const user::User& l, const user::User& s, bool) {
+    std::vector<FieldCheck> checks; bool sensitive = false;
+    CHECK_U64("id", l.id, s.id); CHECK_STR("username", l.username, s.username); CHECK_U64("uid", l.uid, s.uid);
+    CHECK_STR("home_directory", l.home_directory, s.home_directory); CHECK_STR("shell", l.shell, s.shell);
+    CHECK_BOOL("enabled", l.enabled, s.enabled);
+    return checks;
+}
+static std::vector<FieldCheck> compare_site(const site::Site& l, const site::Site& s, bool) {
+    std::vector<FieldCheck> checks; bool sensitive = false;
+    CHECK_U64("id", l.id, s.id); CHECK_STR("domain", l.domain, s.domain); CHECK_STR("owner", l.owner, s.owner);
+    CHECK_U64("node_id", l.node_id, s.node_id); CHECK_STR("web_server", l.web_server, s.web_server);
+    CHECK_BOOL("php_mail_enabled", l.php_mail_enabled, s.php_mail_enabled);
+    return checks;
+}
+static std::vector<FieldCheck> compare_domain(const domain::Domain& l, const domain::Domain& s, bool) {
+    std::vector<FieldCheck> checks; bool sensitive = false;
+    CHECK_U64("id", l.id, s.id); CHECK_STR("fqdn", l.fqdn, s.fqdn);
+    CHECK_U64("owner_id", l.owner_id, s.owner_id); CHECK_U64("site_id", l.site_id, s.site_id);
+    CHECK_STR("php_version", l.php_version, s.php_version); CHECK_BOOL("ssl_enabled", l.ssl_enabled, s.ssl_enabled);
+    CHECK_BOOL("enabled", l.enabled, s.enabled); CHECK_STR("type", l.type, s.type); CHECK_STR("target", l.target, s.target);
+    return checks;
+}
+static std::vector<FieldCheck> compare_database(const database::Database& l, const database::Database& s, bool) {
+    std::vector<FieldCheck> checks;
+    bool sensitive = false;
+    CHECK_U64("id", l.id, s.id); CHECK_STR("db_name", l.db_name, s.db_name); CHECK_STR("db_user", l.db_user, s.db_user);
+    sensitive = true; CHECK_STR("db_password", l.db_password, s.db_password); sensitive = false;
+    CHECK_STR("engine", l.engine, s.engine); CHECK_STR("version", l.version, s.version);
+    CHECK_U64("owner_id", l.owner_id, s.owner_id); CHECK_U64("site_id", l.site_id, s.site_id);
+    CHECK_BOOL("enabled", l.enabled, s.enabled);
+    return checks;
+}
+static std::vector<FieldCheck> compare_backup(const backup::Backup& l, const backup::Backup& s, bool) {
+    std::vector<FieldCheck> checks; bool sensitive = false;
+    CHECK_U64("id", l.id, s.id); CHECK_U64("site_id", l.site_id, s.site_id); CHECK_U64("owner_id", l.owner_id, s.owner_id);
+    CHECK_STR("filename", l.filename, s.filename); CHECK_STR("type", l.type, s.type); CHECK_U64("size", l.size, s.size);
+    CHECK_STR("created_at", l.created_at, s.created_at); CHECK_STR("status", l.status, s.status);
+    CHECK_STR("file_path", l.file_path, s.file_path); CHECK_STR("compression", l.compression, s.compression);
+    return checks;
+}
+static std::vector<FieldCheck> compare_proxy(const proxy::ReverseProxy& l, const proxy::ReverseProxy& s, bool) {
+    std::vector<FieldCheck> checks; bool sensitive = false;
+    CHECK_U64("id", l.id, s.id); CHECK_STR("domain", l.domain, s.domain); CHECK_U64("site_id", l.site_id, s.site_id);
+    CHECK_STR("provider", l.provider, s.provider); CHECK_STR("config_path", l.config_path, s.config_path);
+    CHECK_STR("upstream", l.upstream, s.upstream); CHECK_BOOL("enabled", l.enabled, s.enabled);
+    CHECK_STR("status", l.status, s.status);
+    return checks;
+}
+static std::vector<FieldCheck> compare_access_user(const access::AccessUser& l, const access::AccessUser& s, bool) {
+    std::vector<FieldCheck> checks;
+    bool sensitive = false;
+    CHECK_U64("id", l.id, s.id); CHECK_STR("username", l.username, s.username); CHECK_STR("auth_type", l.auth_type, s.auth_type);
+    sensitive = true; CHECK_STR("password_hash", l.password_hash, s.password_hash); sensitive = false;
+    CHECK_BOOL("enabled", l.enabled, s.enabled);
+    return checks;
+}
+static std::vector<FieldCheck> compare_access_grant(const access::AccessGrant& l, const access::AccessGrant& s, bool) {
+    std::vector<FieldCheck> checks; bool sensitive = false;
+    CHECK_U64("id", l.id, s.id); CHECK_U64("access_user_id", l.access_user_id, s.access_user_id);
+    CHECK_U64("site_id", l.site_id, s.site_id); CHECK_STR("permission", access::permission_to_string(l.permission), access::permission_to_string(s.permission));
+    return checks;
+}
+static std::vector<FieldCheck> compare_auth_user(const auth::AuthUser& l, const auth::AuthUser& s, bool) {
+    std::vector<FieldCheck> checks;
+    bool sensitive = false;
+    CHECK_U64("id", l.id, s.id); CHECK_STR("username", l.username, s.username);
+    sensitive = true; CHECK_STR("password_hash", l.password_hash, s.password_hash); sensitive = false;
+    CHECK_BOOL("must_change_password", l.must_change_password, s.must_change_password);
+    CHECK_BOOL("enabled", l.enabled, s.enabled); CHECK_STR("role", l.role, s.role);
+    return checks;
+}
+static std::vector<FieldCheck> compare_ssl(const ssl::SslCertificate& l, const ssl::SslCertificate& s, bool) {
+    std::vector<FieldCheck> checks;
+    bool sensitive = false;
+    CHECK_U64("id", l.id, s.id); CHECK_U64("domain_id", l.domain_id, s.domain_id); CHECK_STR("domain", l.domain, s.domain);
+    CHECK_STR("provider", l.provider, s.provider); CHECK_STR("certificate_path", l.certificate_path, s.certificate_path);
+    sensitive = true; CHECK_STR("key_path", l.key_path, s.key_path); sensitive = false;
+    CHECK_STR("chain_path", l.chain_path, s.chain_path); CHECK_STR("issued_at", l.issued_at, s.issued_at);
+    CHECK_STR("expires_at", l.expires_at, s.expires_at); CHECK_STR("renew_after", l.renew_after, s.renew_after);
+    CHECK_STR("status", l.status, s.status); CHECK_BOOL("auto_renew", l.auto_renew, s.auto_renew);
+    CHECK_BOOL("https_enabled", l.https_enabled, s.https_enabled); CHECK_BOOL("redirect_enabled", l.redirect_enabled, s.redirect_enabled);
+    CHECK_STR("domains", l.domains, s.domains); CHECK_STR("challenge_type", l.challenge_type, s.challenge_type);
+    CHECK_STR("last_error", l.last_error, s.last_error); CHECK_STR("last_validation", l.last_validation, s.last_validation);
+    CHECK_U64("renew_attempts", static_cast<uint64_t>(l.renew_attempts), static_cast<uint64_t>(s.renew_attempts));
+    CHECK_U64("version", static_cast<uint64_t>(l.version), static_cast<uint64_t>(s.version));
+    return checks;
+}
+static std::vector<FieldCheck> compare_mail_domain(const mail::MailDomain& l, const mail::MailDomain& s, bool) {
+    std::vector<FieldCheck> checks;
+    bool sensitive = false;
+    CHECK_U64("id", l.id, s.id); CHECK_U64("domain_id", l.domain_id, s.domain_id); CHECK_U64("site_id", l.site_id, s.site_id);
+    CHECK_STR("domain_name", l.domain_name, s.domain_name); CHECK_STR("mode", mail::mail_domain_mode_to_string(l.mode), mail::mail_domain_mode_to_string(s.mode));
+    CHECK_STR("relay_host", l.relay_host, s.relay_host); CHECK_STR("dkim_selector", l.dkim_selector, s.dkim_selector);
+    sensitive = true; CHECK_STR("dkim_private_key_path", l.dkim_private_key_path, s.dkim_private_key_path); sensitive = false;
+    CHECK_STR("dkim_public_key_dns", l.dkim_public_key_dns, s.dkim_public_key_dns);
+    CHECK_U64("max_mailboxes", l.max_mailboxes, s.max_mailboxes); CHECK_U64("max_aliases", l.max_aliases, s.max_aliases);
+    CHECK_STR("catch_all", l.catch_all, s.catch_all); CHECK_BOOL("enabled", l.enabled, s.enabled);
+    CHECK_STR("created_at", l.created_at, s.created_at); CHECK_STR("updated_at", l.updated_at, s.updated_at);
+    return checks;
+}
+static std::vector<FieldCheck> compare_mailbox(const mail::Mailbox& l, const mail::Mailbox& s, bool) {
+    std::vector<FieldCheck> checks;
+    bool sensitive = false;
+    CHECK_U64("id", l.id, s.id); CHECK_U64("domain_id", l.domain_id, s.domain_id); CHECK_STR("local_part", l.local_part, s.local_part);
+    sensitive = true; CHECK_STR("password_hash", l.password_hash, s.password_hash); sensitive = false;
+    CHECK_U64("quota_bytes", l.quota_bytes, s.quota_bytes); CHECK_U64("quota_messages", l.quota_messages, s.quota_messages);
+    CHECK_BOOL("enabled", l.enabled, s.enabled); CHECK_STR("display_name", l.display_name, s.display_name);
+    CHECK_STR("forward_to", l.forward_to, s.forward_to); CHECK_BOOL("spam_enabled", l.spam_enabled, s.spam_enabled);
+    CHECK_STR("last_login", l.last_login, s.last_login); CHECK_STR("created_at", l.created_at, s.created_at);
+    CHECK_STR("updated_at", l.updated_at, s.updated_at);
+    return checks;
+}
+static std::vector<FieldCheck> compare_mail_alias(const mail::MailAlias& l, const mail::MailAlias& s, bool) {
+    std::vector<FieldCheck> checks; bool sensitive = false;
+    CHECK_U64("id", l.id, s.id); CHECK_U64("domain_id", l.domain_id, s.domain_id);
+    CHECK_STR("source_local_part", l.source_local_part, s.source_local_part); CHECK_STR("destination", l.destination, s.destination);
+    CHECK_BOOL("enabled", l.enabled, s.enabled); CHECK_STR("created_at", l.created_at, s.created_at);
+    CHECK_STR("updated_at", l.updated_at, s.updated_at);
+    return checks;
+}
+
+// ---- Generic comparison helper using field adapters ----
 static constexpr int kMaxMismatches = 100;
 
 template<typename T>
-static void collect_mismatches(const std::string& type, const std::vector<T>& legacy,
-    const std::vector<T>& sqlite, std::vector<FieldMismatch>& mismatches,
-    std::function<std::string(const T&)> canon_rec)
-{
-    auto ls = legacy, ss = sqlite;
-    std::sort(ls.begin(), ls.end(), [](const T& a, const T& b) { return a.id < b.id; });
-    std::sort(ss.begin(), ss.end(), [](const T& a, const T& b) { return a.id < b.id; });
-    // Canonical records are used for checksum but NOT exposed in mismatches.
-    // Mismatch reports only show "[RECORD]" for the full record.
-    size_t li = 0, si = 0;
-    while (li < ls.size() && si < ss.size() && (int)mismatches.size() < kMaxMismatches) {
-        if (ls[li].id < ss[si].id) {
-            FieldMismatch fm; fm.resource_type = type; fm.record_id = ls[li].id;
-            fm.field = "(missing in sqlite)"; fm.expected = "[RECORD]"; mismatches.push_back(fm); ++li;
-        } else if (ss[si].id < ls[li].id) {
-            FieldMismatch fm; fm.resource_type = type; fm.record_id = ss[si].id;
-            fm.field = "(unexpected in sqlite)"; fm.actual = "[RECORD]"; mismatches.push_back(fm); ++si;
-        } else {
-            std::string lc = canon_rec(ls[li]), sc = canon_rec(ss[si]);
-            if (lc != sc) {
-                FieldMismatch fm; fm.resource_type = type; fm.record_id = ls[li].id;
-                fm.field = "(canonical)"; fm.expected = "[REDACTED]"; fm.actual = "[REDACTED]";
-                mismatches.push_back(fm);
-            }
-            ++li; ++si;
-        }
-    }
-    while (li < ls.size() && (int)mismatches.size() < kMaxMismatches) {
-        FieldMismatch fm; fm.resource_type = type; fm.record_id = ls[li].id;
-        fm.field = "(missing in sqlite)"; fm.expected = "[RECORD]"; mismatches.push_back(fm); ++li; }
-    while (si < ss.size() && (int)mismatches.size() < kMaxMismatches) {
-        FieldMismatch fm; fm.resource_type = type; fm.record_id = ss[si].id;
-        fm.field = "(unexpected in sqlite)"; fm.actual = "[RECORD]"; mismatches.push_back(fm); ++si; }
-}
-
-// ---- Generic comparison function ----
-template<typename T>
-static ResourceVerificationResult compare_resource(const std::string& type,
-    std::vector<T>&& legacy, std::vector<T>&& sqlite,
-    std::function<std::string(const std::vector<T>&)> canon_all,
-    std::function<std::string(const T&)> canon_one)
+static ResourceVerificationResult compare_resource(
+    const std::string& type,
+    std::vector<T>&& legacy,
+    std::vector<T>&& sqlite,
+    std::function<std::string(const std::vector<T>&)> canon_fn,
+    std::function<std::vector<FieldCheck>(const T&, const T&, bool)> field_fn,
+    std::function<bool(const T&)> transient_fn = nullptr)
 {
     ResourceVerificationResult r; r.resource_type = type;
-    std::string lc = canon_all(legacy), sc = canon_all(sqlite);
-    r.legacy_record_count = legacy.size(); r.sqlite_record_count = sqlite.size();
-    r.legacy_checksum = Verification::sha256(lc); r.sqlite_checksum = Verification::sha256(sc);
-    if (r.legacy_record_count != r.sqlite_record_count) {
-        r.success = false; r.status = VerificationStatus::Failed; return r; }
-    if (r.legacy_checksum != r.sqlite_checksum) {
-        collect_mismatches(type, legacy, sqlite, r.mismatches, canon_one);
-        r.success = false; r.status = VerificationStatus::Failed; return r; }
-    r.success = true; r.status = VerificationStatus::Passed; return r;
-}
 
-// ---- Common verify preamble (check import context) ----
-// These macros use `rv` for the local ResourceVerificationResult variable.
-#define VERIFY_PREAMBLE(type, rv) \
-    const ImportResult* ir = find_import_result(type); \
-    if (!ir) { ResourceVerificationResult rv; rv.success = false; rv.status = VerificationStatus::Failed; rv.error = "missing_import_result"; rv.resource_type = type; return rv; } \
-    if (ir->disposition == ImportDisposition::SkippedEmpty || ir->disposition == ImportDisposition::SkippedMissingOptional) { \
-        ResourceVerificationResult rv; rv.success = true; rv.status = VerificationStatus::Skipped; rv.resource_type = type; return rv; \
+    // Sort and canonicalize
+    auto legacy_sorted = legacy, sqlite_sorted = sqlite;
+    std::sort(legacy_sorted.begin(), legacy_sorted.end(), [](const T& a, const T& b) { return a.id < b.id; });
+    std::sort(sqlite_sorted.begin(), sqlite_sorted.end(), [](const T& a, const T& b) { return a.id < b.id; });
+
+    r.legacy_record_count = legacy_sorted.size();
+    r.sqlite_record_count = sqlite_sorted.size();
+    r.legacy_checksum = Verification::sha256(canon_fn(legacy_sorted));
+    r.sqlite_checksum = Verification::sha256(canon_fn(sqlite_sorted));
+
+    if (r.legacy_record_count != r.sqlite_record_count) {
+        r.success = false; r.status = VerificationStatus::Failed; return r;
     }
 
-#define PARSE_U64(tmp) do { if (!LineParser::parse_uint64(f[i], tmp, em)) { rv.success = false; rv.error = "invalid_integer"; return rv; } i++; } while(0)
-#define PARSE_BOOL(tmp) do { if (!LineParser::parse_bool(f[i], tmp, em)) { rv.success = false; rv.error = "invalid_boolean"; return rv; } i++; } while(0)
-#define PARSE_STR(tmp) do { tmp = f[i]; i++; } while(0)
-#define CHECK_FILE(name) \
-    std::string p = legacy_dir_ + name; \
-    if (p.size() < 5 || !fs::exists(p)) { rv.success = false; rv.error = "file_missing"; return rv; }
+    // Transient validation
+    if (transient_fn) {
+        for (const auto& rec : sqlite_sorted) {
+            if (!transient_fn(rec)) {
+                FieldMismatch fm; fm.resource_type = type; fm.record_id = rec.id;
+                fm.field = "(transient)"; fm.expected = "[VALID]"; fm.actual = "[INVALID]";
+                r.mismatches.push_back(fm);
+            }
+        }
+    }
 
-// ============================================================
-// Canonical implementations
-// ============================================================
+    // Checksum and field comparison
+    if (r.legacy_checksum != r.sqlite_checksum) {
+        size_t li = 0, si = 0;
+        bool any_sensitive = false;
+        while (li < legacy_sorted.size() && si < sqlite_sorted.size() &&
+               (int)r.mismatches.size() < kMaxMismatches) {
+            if (legacy_sorted[li].id < sqlite_sorted[si].id) {
+                FieldMismatch fm; fm.resource_type = type; fm.record_id = legacy_sorted[li].id;
+                fm.field = "(missing in sqlite)"; fm.expected = "[RECORD]"; r.mismatches.push_back(fm); ++li;
+            } else if (sqlite_sorted[si].id < legacy_sorted[li].id) {
+                FieldMismatch fm; fm.resource_type = type; fm.record_id = sqlite_sorted[si].id;
+                fm.field = "(unexpected in sqlite)"; fm.actual = "[RECORD]"; r.mismatches.push_back(fm); ++si;
+            } else {
+                auto fields = field_fn(legacy_sorted[li], sqlite_sorted[si], any_sensitive);
+                for (const auto& fc : fields) {
+                    FieldMismatch fm; fm.resource_type = type; fm.record_id = legacy_sorted[li].id;
+                    fm.field = fc.name; fm.expected = fc.expected; fm.actual = fc.actual;
+                    r.mismatches.push_back(fm);
+                    if (fc.sensitive) any_sensitive = true;
+                }
+                ++li; ++si;
+            }
+        }
+        while (li < legacy_sorted.size() && (int)r.mismatches.size() < kMaxMismatches) {
+            FieldMismatch fm; fm.resource_type = type; fm.record_id = legacy_sorted[li].id;
+            fm.field = "(missing in sqlite)"; fm.expected = "[RECORD]"; r.mismatches.push_back(fm); ++li; }
+        while (si < sqlite_sorted.size() && (int)r.mismatches.size() < kMaxMismatches) {
+            FieldMismatch fm; fm.resource_type = type; fm.record_id = sqlite_sorted[si].id;
+            fm.field = "(unexpected in sqlite)"; fm.actual = "[RECORD]"; r.mismatches.push_back(fm); ++si; }
 
+        r.success = false; r.status = VerificationStatus::Failed;
+        return r;
+    }
+
+    // Checksum match plus any transient failures
+    if (!r.mismatches.empty()) {
+        r.success = false; r.status = VerificationStatus::Failed; return r;
+    }
+    r.success = true; r.status = VerificationStatus::Passed;
+    return r;
+}
+
+// ---- Canonical serialization ----
+#define CANON_BEGIN(cls) std::string out; auto sorted = records; \
+    std::sort(sorted.begin(), sorted.end(), [](const cls& a, const cls& b) { return a.id < b.id; }); \
+    for (const auto& r : sorted) {
 #define CANON_FIELD_STR(field) Verification::append_field(out, r.field)
 #define CANON_FIELD_U64(field) Verification::append_field(out, r.field)
 #define CANON_FIELD_BOOL(field) Verification::append_field(out, r.field ? "true" : "false")
+#define CANON_END() } return out
 
-#define CANON_ALL(type, cls, fields) \
-    std::string Verification::canonical_##type(const std::vector<cls>& records) { \
-        std::string out; auto sorted = records; \
-        std::sort(sorted.begin(), sorted.end(), [](const cls& a, const cls& b) { return a.id < b.id; }); \
-        for (const auto& r : sorted) { fields; } return out; \
-    }
-
-#define CANON_ONE(type, cls, fields) \
-    static std::string canon_one_##type(const cls& r) { \
-        std::string out; fields; return out; \
-    }
-
-CANON_ALL(nodes, node::Node, CANON_FIELD_U64(id); CANON_FIELD_STR(name); CANON_FIELD_STR(type))
-CANON_ALL(php_versions, php::PhpVersion, CANON_FIELD_U64(id); CANON_FIELD_STR(version); CANON_FIELD_STR(image); CANON_FIELD_BOOL(enabled); CANON_FIELD_BOOL(default_version))
-CANON_ALL(profiles, profile::Profile, CANON_FIELD_U64(id); CANON_FIELD_STR(profile_name); Verification::append_field(out, profile::profile_type_to_string(r.type)); CANON_FIELD_STR(web_server); CANON_FIELD_STR(runtime); CANON_FIELD_STR(template_path); CANON_FIELD_STR(description); CANON_FIELD_BOOL(enabled); CANON_FIELD_BOOL(default_profile))
-CANON_ALL(users, user::User, CANON_FIELD_U64(id); CANON_FIELD_STR(username); CANON_FIELD_U64(uid); CANON_FIELD_STR(home_directory); CANON_FIELD_STR(shell); CANON_FIELD_BOOL(enabled))
-CANON_ALL(sites, site::Site, CANON_FIELD_U64(id); CANON_FIELD_STR(domain); CANON_FIELD_STR(owner); CANON_FIELD_U64(node_id); CANON_FIELD_STR(web_server); CANON_FIELD_BOOL(php_mail_enabled))
-CANON_ALL(domains, domain::Domain, CANON_FIELD_U64(id); CANON_FIELD_STR(fqdn); CANON_FIELD_U64(owner_id); CANON_FIELD_U64(site_id); CANON_FIELD_STR(php_version); CANON_FIELD_BOOL(ssl_enabled); CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(type); CANON_FIELD_STR(target))
-CANON_ALL(databases, database::Database, CANON_FIELD_U64(id); CANON_FIELD_STR(db_name); CANON_FIELD_STR(db_user); CANON_FIELD_STR(db_password); CANON_FIELD_STR(engine); CANON_FIELD_STR(version); CANON_FIELD_U64(owner_id); CANON_FIELD_U64(site_id); CANON_FIELD_BOOL(enabled))
-CANON_ALL(backups, backup::Backup, CANON_FIELD_U64(id); CANON_FIELD_U64(site_id); CANON_FIELD_U64(owner_id); CANON_FIELD_STR(filename); CANON_FIELD_STR(type); CANON_FIELD_U64(size); CANON_FIELD_STR(created_at); CANON_FIELD_STR(status); CANON_FIELD_STR(file_path); CANON_FIELD_STR(compression))
-CANON_ALL(reverse_proxies, proxy::ReverseProxy, CANON_FIELD_U64(id); CANON_FIELD_STR(domain); CANON_FIELD_U64(site_id); CANON_FIELD_STR(provider); CANON_FIELD_STR(config_path); CANON_FIELD_STR(upstream); CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(status))
-CANON_ALL(access_users, access::AccessUser, CANON_FIELD_U64(id); CANON_FIELD_STR(username); CANON_FIELD_STR(auth_type); CANON_FIELD_STR(password_hash); CANON_FIELD_BOOL(enabled))
-CANON_ALL(access_grants, access::AccessGrant, CANON_FIELD_U64(id); CANON_FIELD_U64(access_user_id); CANON_FIELD_U64(site_id); Verification::append_field(out, access::permission_to_string(r.permission)))
-CANON_ALL(auth_users, auth::AuthUser, CANON_FIELD_U64(id); CANON_FIELD_STR(username); CANON_FIELD_STR(password_hash); CANON_FIELD_BOOL(must_change_password); CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(role))
-CANON_ALL(ssl_certificates, ssl::SslCertificate, CANON_FIELD_U64(id); CANON_FIELD_U64(domain_id); CANON_FIELD_STR(domain); CANON_FIELD_STR(provider); CANON_FIELD_STR(certificate_path); CANON_FIELD_STR(key_path); CANON_FIELD_STR(chain_path); CANON_FIELD_STR(issued_at); CANON_FIELD_STR(expires_at); CANON_FIELD_STR(renew_after); CANON_FIELD_STR(status); CANON_FIELD_BOOL(auto_renew); CANON_FIELD_BOOL(https_enabled); CANON_FIELD_BOOL(redirect_enabled); CANON_FIELD_STR(domains); CANON_FIELD_STR(challenge_type); CANON_FIELD_STR(last_error); CANON_FIELD_STR(last_validation); CANON_FIELD_U64(renew_attempts); CANON_FIELD_U64(version))
-CANON_ALL(mail_domains, mail::MailDomain, CANON_FIELD_U64(id); CANON_FIELD_U64(domain_id); CANON_FIELD_U64(site_id); CANON_FIELD_STR(domain_name); Verification::append_field(out, mail::mail_domain_mode_to_string(r.mode)); CANON_FIELD_STR(relay_host); CANON_FIELD_STR(dkim_selector); CANON_FIELD_STR(dkim_private_key_path); CANON_FIELD_STR(dkim_public_key_dns); CANON_FIELD_U64(max_mailboxes); CANON_FIELD_U64(max_aliases); CANON_FIELD_STR(catch_all); CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(created_at); CANON_FIELD_STR(updated_at))
-CANON_ALL(mail_mailboxes, mail::Mailbox, CANON_FIELD_U64(id); CANON_FIELD_U64(domain_id); CANON_FIELD_STR(local_part); CANON_FIELD_STR(password_hash); CANON_FIELD_U64(quota_bytes); CANON_FIELD_U64(quota_messages); CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(display_name); CANON_FIELD_STR(forward_to); CANON_FIELD_BOOL(spam_enabled); CANON_FIELD_STR(last_login); CANON_FIELD_STR(created_at); CANON_FIELD_STR(updated_at))
-CANON_ALL(mail_aliases, mail::MailAlias, CANON_FIELD_U64(id); CANON_FIELD_U64(domain_id); CANON_FIELD_STR(source_local_part); CANON_FIELD_STR(destination); CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(created_at); CANON_FIELD_STR(updated_at))
-
-CANON_ONE(nodes, node::Node, CANON_FIELD_U64(id); CANON_FIELD_STR(name); CANON_FIELD_STR(type))
-CANON_ONE(php_versions, php::PhpVersion, CANON_FIELD_U64(id); CANON_FIELD_STR(version); CANON_FIELD_STR(image); CANON_FIELD_BOOL(enabled); CANON_FIELD_BOOL(default_version))
-CANON_ONE(profiles, profile::Profile, CANON_FIELD_U64(id); CANON_FIELD_STR(profile_name); Verification::append_field(out, profile::profile_type_to_string(r.type)); CANON_FIELD_STR(web_server); CANON_FIELD_STR(runtime); CANON_FIELD_STR(template_path); CANON_FIELD_STR(description); CANON_FIELD_BOOL(enabled); CANON_FIELD_BOOL(default_profile))
-CANON_ONE(users, user::User, CANON_FIELD_U64(id); CANON_FIELD_STR(username); CANON_FIELD_U64(uid); CANON_FIELD_STR(home_directory); CANON_FIELD_STR(shell); CANON_FIELD_BOOL(enabled))
-CANON_ONE(sites, site::Site, CANON_FIELD_U64(id); CANON_FIELD_STR(domain); CANON_FIELD_STR(owner); CANON_FIELD_U64(node_id); CANON_FIELD_STR(web_server); CANON_FIELD_BOOL(php_mail_enabled))
-CANON_ONE(domains, domain::Domain, CANON_FIELD_U64(id); CANON_FIELD_STR(fqdn); CANON_FIELD_U64(owner_id); CANON_FIELD_U64(site_id); CANON_FIELD_STR(php_version); CANON_FIELD_BOOL(ssl_enabled); CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(type); CANON_FIELD_STR(target))
-CANON_ONE(databases, database::Database, CANON_FIELD_U64(id); CANON_FIELD_STR(db_name); CANON_FIELD_STR(db_user); CANON_FIELD_STR(db_password); CANON_FIELD_STR(engine); CANON_FIELD_STR(version); CANON_FIELD_U64(owner_id); CANON_FIELD_U64(site_id); CANON_FIELD_BOOL(enabled))
-CANON_ONE(backups, backup::Backup, CANON_FIELD_U64(id); CANON_FIELD_U64(site_id); CANON_FIELD_U64(owner_id); CANON_FIELD_STR(filename); CANON_FIELD_STR(type); CANON_FIELD_U64(size); CANON_FIELD_STR(created_at); CANON_FIELD_STR(status); CANON_FIELD_STR(file_path); CANON_FIELD_STR(compression))
-CANON_ONE(reverse_proxies, proxy::ReverseProxy, CANON_FIELD_U64(id); CANON_FIELD_STR(domain); CANON_FIELD_U64(site_id); CANON_FIELD_STR(provider); CANON_FIELD_STR(config_path); CANON_FIELD_STR(upstream); CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(status))
-CANON_ONE(access_users, access::AccessUser, CANON_FIELD_U64(id); CANON_FIELD_STR(username); CANON_FIELD_STR(auth_type); CANON_FIELD_STR(password_hash); CANON_FIELD_BOOL(enabled))
-CANON_ONE(access_grants, access::AccessGrant, CANON_FIELD_U64(id); CANON_FIELD_U64(access_user_id); CANON_FIELD_U64(site_id); Verification::append_field(out, access::permission_to_string(r.permission)))
-CANON_ONE(auth_users, auth::AuthUser, CANON_FIELD_U64(id); CANON_FIELD_STR(username); CANON_FIELD_STR(password_hash); CANON_FIELD_BOOL(must_change_password); CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(role))
-CANON_ONE(ssl_certificates, ssl::SslCertificate, CANON_FIELD_U64(id); CANON_FIELD_U64(domain_id); CANON_FIELD_STR(domain); CANON_FIELD_STR(provider); CANON_FIELD_STR(certificate_path); CANON_FIELD_STR(key_path); CANON_FIELD_STR(chain_path); CANON_FIELD_STR(issued_at); CANON_FIELD_STR(expires_at); CANON_FIELD_STR(renew_after); CANON_FIELD_STR(status); CANON_FIELD_BOOL(auto_renew); CANON_FIELD_BOOL(https_enabled); CANON_FIELD_BOOL(redirect_enabled); CANON_FIELD_STR(domains); CANON_FIELD_STR(challenge_type); CANON_FIELD_STR(last_error); CANON_FIELD_STR(last_validation); CANON_FIELD_U64(renew_attempts); CANON_FIELD_U64(version))
-CANON_ONE(mail_domains, mail::MailDomain, CANON_FIELD_U64(id); CANON_FIELD_U64(domain_id); CANON_FIELD_U64(site_id); CANON_FIELD_STR(domain_name); Verification::append_field(out, mail::mail_domain_mode_to_string(r.mode)); CANON_FIELD_STR(relay_host); CANON_FIELD_STR(dkim_selector); CANON_FIELD_STR(dkim_private_key_path); CANON_FIELD_STR(dkim_public_key_dns); CANON_FIELD_U64(max_mailboxes); CANON_FIELD_U64(max_aliases); CANON_FIELD_STR(catch_all); CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(created_at); CANON_FIELD_STR(updated_at))
-CANON_ONE(mail_mailboxes, mail::Mailbox, CANON_FIELD_U64(id); CANON_FIELD_U64(domain_id); CANON_FIELD_STR(local_part); CANON_FIELD_STR(password_hash); CANON_FIELD_U64(quota_bytes); CANON_FIELD_U64(quota_messages); CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(display_name); CANON_FIELD_STR(forward_to); CANON_FIELD_BOOL(spam_enabled); CANON_FIELD_STR(last_login); CANON_FIELD_STR(created_at); CANON_FIELD_STR(updated_at))
-CANON_ONE(mail_aliases, mail::MailAlias, CANON_FIELD_U64(id); CANON_FIELD_U64(domain_id); CANON_FIELD_STR(source_local_part); CANON_FIELD_STR(destination); CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(created_at); CANON_FIELD_STR(updated_at))
-
+std::string Verification::canonical_nodes(const std::vector<node::Node>& records) {
+    CANON_BEGIN(node::Node); CANON_FIELD_U64(id); CANON_FIELD_STR(name); CANON_FIELD_STR(type); CANON_END(); }
+std::string Verification::canonical_php_versions(const std::vector<php::PhpVersion>& records) {
+    CANON_BEGIN(php::PhpVersion); CANON_FIELD_U64(id); CANON_FIELD_STR(version); CANON_FIELD_STR(image);
+    CANON_FIELD_BOOL(enabled); CANON_FIELD_BOOL(default_version); CANON_END(); }
+std::string Verification::canonical_profiles(const std::vector<profile::Profile>& records) {
+    CANON_BEGIN(profile::Profile); CANON_FIELD_U64(id); CANON_FIELD_STR(profile_name);
+    Verification::append_field(out, profile::profile_type_to_string(r.type));
+    CANON_FIELD_STR(web_server); CANON_FIELD_STR(runtime); CANON_FIELD_STR(template_path);
+    CANON_FIELD_STR(description); CANON_FIELD_BOOL(enabled); CANON_FIELD_BOOL(default_profile); CANON_END(); }
+std::string Verification::canonical_users(const std::vector<user::User>& records) {
+    CANON_BEGIN(user::User); CANON_FIELD_U64(id); CANON_FIELD_STR(username); CANON_FIELD_U64(uid);
+    CANON_FIELD_STR(home_directory); CANON_FIELD_STR(shell); CANON_FIELD_BOOL(enabled); CANON_END(); }
+std::string Verification::canonical_sites(const std::vector<site::Site>& records) {
+    CANON_BEGIN(site::Site); CANON_FIELD_U64(id); CANON_FIELD_STR(domain); CANON_FIELD_STR(owner);
+    CANON_FIELD_U64(node_id); CANON_FIELD_STR(web_server); CANON_FIELD_BOOL(php_mail_enabled); CANON_END(); }
+std::string Verification::canonical_domains(const std::vector<domain::Domain>& records) {
+    CANON_BEGIN(domain::Domain); CANON_FIELD_U64(id); CANON_FIELD_STR(fqdn); CANON_FIELD_U64(owner_id);
+    CANON_FIELD_U64(site_id); CANON_FIELD_STR(php_version); CANON_FIELD_BOOL(ssl_enabled);
+    CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(type); CANON_FIELD_STR(target); CANON_END(); }
+std::string Verification::canonical_databases(const std::vector<database::Database>& records) {
+    CANON_BEGIN(database::Database); CANON_FIELD_U64(id); CANON_FIELD_STR(db_name); CANON_FIELD_STR(db_user);
+    CANON_FIELD_STR(db_password); CANON_FIELD_STR(engine); CANON_FIELD_STR(version);
+    CANON_FIELD_U64(owner_id); CANON_FIELD_U64(site_id); CANON_FIELD_BOOL(enabled); CANON_END(); }
+std::string Verification::canonical_backups(const std::vector<backup::Backup>& records) {
+    CANON_BEGIN(backup::Backup); CANON_FIELD_U64(id); CANON_FIELD_U64(site_id); CANON_FIELD_U64(owner_id);
+    CANON_FIELD_STR(filename); CANON_FIELD_STR(type); CANON_FIELD_U64(size);
+    CANON_FIELD_STR(created_at); CANON_FIELD_STR(status); CANON_FIELD_STR(file_path);
+    CANON_FIELD_STR(compression); CANON_END(); }
+std::string Verification::canonical_reverse_proxies(const std::vector<proxy::ReverseProxy>& records) {
+    CANON_BEGIN(proxy::ReverseProxy); CANON_FIELD_U64(id); CANON_FIELD_STR(domain); CANON_FIELD_U64(site_id);
+    CANON_FIELD_STR(provider); CANON_FIELD_STR(config_path); CANON_FIELD_STR(upstream);
+    CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(status); CANON_END(); }
+std::string Verification::canonical_access_users(const std::vector<access::AccessUser>& records) {
+    CANON_BEGIN(access::AccessUser); CANON_FIELD_U64(id); CANON_FIELD_STR(username); CANON_FIELD_STR(auth_type);
+    CANON_FIELD_STR(password_hash); CANON_FIELD_BOOL(enabled); CANON_END(); }
+std::string Verification::canonical_access_grants(const std::vector<access::AccessGrant>& records) {
+    CANON_BEGIN(access::AccessGrant); CANON_FIELD_U64(id); CANON_FIELD_U64(access_user_id);
+    CANON_FIELD_U64(site_id); Verification::append_field(out, access::permission_to_string(r.permission)); CANON_END(); }
+std::string Verification::canonical_auth_users(const std::vector<auth::AuthUser>& records) {
+    CANON_BEGIN(auth::AuthUser); CANON_FIELD_U64(id); CANON_FIELD_STR(username); CANON_FIELD_STR(password_hash);
+    CANON_FIELD_BOOL(must_change_password); CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(role); CANON_END(); }
+std::string Verification::canonical_ssl_certificates(const std::vector<ssl::SslCertificate>& records) {
+    CANON_BEGIN(ssl::SslCertificate); CANON_FIELD_U64(id); CANON_FIELD_U64(domain_id); CANON_FIELD_STR(domain);
+    CANON_FIELD_STR(provider); CANON_FIELD_STR(certificate_path); CANON_FIELD_STR(key_path);
+    CANON_FIELD_STR(chain_path); CANON_FIELD_STR(issued_at); CANON_FIELD_STR(expires_at);
+    CANON_FIELD_STR(renew_after); CANON_FIELD_STR(status); CANON_FIELD_BOOL(auto_renew);
+    CANON_FIELD_BOOL(https_enabled); CANON_FIELD_BOOL(redirect_enabled); CANON_FIELD_STR(domains);
+    CANON_FIELD_STR(challenge_type); CANON_FIELD_STR(last_error); CANON_FIELD_STR(last_validation);
+    CANON_FIELD_U64(renew_attempts); CANON_FIELD_U64(version); CANON_END(); }
+std::string Verification::canonical_mail_domains(const std::vector<mail::MailDomain>& records) {
+    CANON_BEGIN(mail::MailDomain); CANON_FIELD_U64(id); CANON_FIELD_U64(domain_id); CANON_FIELD_U64(site_id);
+    CANON_FIELD_STR(domain_name); Verification::append_field(out, mail::mail_domain_mode_to_string(r.mode));
+    CANON_FIELD_STR(relay_host); CANON_FIELD_STR(dkim_selector); CANON_FIELD_STR(dkim_private_key_path);
+    CANON_FIELD_STR(dkim_public_key_dns); CANON_FIELD_U64(max_mailboxes); CANON_FIELD_U64(max_aliases);
+    CANON_FIELD_STR(catch_all); CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(created_at);
+    CANON_FIELD_STR(updated_at); CANON_END(); }
+std::string Verification::canonical_mail_mailboxes(const std::vector<mail::Mailbox>& records) {
+    CANON_BEGIN(mail::Mailbox); CANON_FIELD_U64(id); CANON_FIELD_U64(domain_id); CANON_FIELD_STR(local_part);
+    CANON_FIELD_STR(password_hash); CANON_FIELD_U64(quota_bytes); CANON_FIELD_U64(quota_messages);
+    CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(display_name); CANON_FIELD_STR(forward_to);
+    CANON_FIELD_BOOL(spam_enabled); CANON_FIELD_STR(last_login); CANON_FIELD_STR(created_at);
+    CANON_FIELD_STR(updated_at); CANON_END(); }
+std::string Verification::canonical_mail_aliases(const std::vector<mail::MailAlias>& records) {
+    CANON_BEGIN(mail::MailAlias); CANON_FIELD_U64(id); CANON_FIELD_U64(domain_id);
+    CANON_FIELD_STR(source_local_part); CANON_FIELD_STR(destination); CANON_FIELD_BOOL(enabled);
+    CANON_FIELD_STR(created_at); CANON_FIELD_STR(updated_at); CANON_END(); }
 std::string Verification::canonical_mail_config(const std::string& ms, const std::string& sh) {
     std::string out;
     append_field(out, std::string("module_state")); append_field(out, ms);
@@ -242,11 +426,7 @@ std::string Verification::canonical_mail_config(const std::string& ms, const std
     return out;
 }
 
-// ============================================================
-// SQLite load helpers
-// ============================================================
-
-// Row readers
+// ---- SQLite row readers ----
 static bool rd_node(SQLiteDB& db, node::Node& n) {
     n.id = static_cast<uint64_t>(db.column_int(0)); n.name = db.column_text(1); n.type = db.column_text(2); return true; }
 static bool rd_php(SQLiteDB& db, php::PhpVersion& pv) {
@@ -266,9 +446,9 @@ static bool rd_site(SQLiteDB& db, site::Site& s) {
     s.node_id = static_cast<uint64_t>(db.column_int(3)); s.web_server = db.column_text(4);
     s.php_mail_enabled = (db.column_int(5) != 0); s.php_mail_enabled_present = true; s.name = s.domain; return true; }
 static bool rd_domain(SQLiteDB& db, domain::Domain& d) {
-    d.id = static_cast<uint64_t>(db.column_int(0)); d.fqdn = db.column_text(1);
-    d.owner_id = static_cast<uint64_t>(db.column_int(2)); d.site_id = static_cast<uint64_t>(db.column_int(3));
-    d.php_version = db.column_text(4); d.ssl_enabled = (db.column_int(5) != 0); d.enabled = (db.column_int(6) != 0);
+    d.id = static_cast<uint64_t>(db.column_int(0)); d.fqdn = db.column_text(1); d.owner_id = static_cast<uint64_t>(db.column_int(2));
+    d.site_id = static_cast<uint64_t>(db.column_int(3)); d.php_version = db.column_text(4);
+    d.ssl_enabled = (db.column_int(5) != 0); d.enabled = (db.column_int(6) != 0);
     d.type = db.column_text(7); d.target = db.column_text(8); d.name = d.fqdn; return true; }
 static bool rd_db(SQLiteDB& db, database::Database& d) {
     d.id = static_cast<uint64_t>(db.column_int(0)); d.db_name = db.column_text(1); d.db_user = db.column_text(2);
@@ -286,18 +466,17 @@ static bool rd_proxy(SQLiteDB& db, proxy::ReverseProxy& p) {
     p.config_path = db.column_text(4); p.upstream = db.column_text(5); p.enabled = (db.column_int(6) != 0);
     p.status = db.column_text(7); p.name = p.domain; return true; }
 static bool rd_au(SQLiteDB& db, access::AccessUser& u) {
-    u.id = static_cast<uint64_t>(db.column_int(0)); u.username = db.column_text(1);
-    u.auth_type = db.column_text(2); u.password_hash = db.column_text(3);
-    u.enabled = (db.column_int(4) != 0); u.name = u.username; return true; }
+    u.id = static_cast<uint64_t>(db.column_int(0)); u.username = db.column_text(1); u.auth_type = db.column_text(2);
+    u.password_hash = db.column_text(3); u.enabled = (db.column_int(4) != 0); u.name = u.username; return true; }
 static bool rd_ag(SQLiteDB& db, access::AccessGrant& g) {
     g.id = static_cast<uint64_t>(db.column_int(0)); g.access_user_id = static_cast<uint64_t>(db.column_int(1));
     g.site_id = static_cast<uint64_t>(db.column_int(2));
     g.permission = access::permission_from_string(db.column_text(3));
     g.name = std::to_string(g.access_user_id) + "-" + std::to_string(g.site_id); return true; }
 static bool rd_authu(SQLiteDB& db, auth::AuthUser& u) {
-    u.id = static_cast<uint64_t>(db.column_int(0)); u.username = db.column_text(1);
-    u.password_hash = db.column_text(2); u.must_change_password = (db.column_int(3) != 0);
-    u.enabled = (db.column_int(4) != 0); u.role = db.column_text(5); u.name = u.username; return true; }
+    u.id = static_cast<uint64_t>(db.column_int(0)); u.username = db.column_text(1); u.password_hash = db.column_text(2);
+    u.must_change_password = (db.column_int(3) != 0); u.enabled = (db.column_int(4) != 0);
+    u.role = db.column_text(5); u.name = u.username; return true; }
 static bool rd_ssl(SQLiteDB& db, ssl::SslCertificate& c) {
     c.id = static_cast<uint64_t>(db.column_int(0)); c.domain_id = static_cast<uint64_t>(db.column_int(1));
     c.domain = db.column_text(2); c.provider = db.column_text(3); c.certificate_path = db.column_text(4);
@@ -330,435 +509,227 @@ static bool rd_ma(SQLiteDB& db, mail::MailAlias& a) {
     a.enabled = (db.column_int(4) != 0); a.created_at = db.column_text(5);
     a.updated_at = db.column_text(6); a.name = a.source_local_part; return true; }
 
-// ---- Macro: generate a verify_X method for a simple resource ----
-// Type name, class, SQL, reader, expected field count (for legacy parsing)
-#define VERIFY_SIMPLE(type, cls, sql, reader, fields_expr) \
+// ---- Checked SQLite load helpers ----
+#define LOAD_HELPER(type, cls, sql, reader) \
+    static ResourceVerificationResult load_##type(ConnectionPool& p, std::vector<cls>& out) { \
+        auto cr = checked_query<cls>(p, sql, reader); \
+        if (!cr.success) { ResourceVerificationResult r; r.success = false; r.error = "sqlite_load_failed"; r.diagnostics = cr.error; return r; } \
+        out = std::move(cr.records); ResourceVerificationResult r; r.success = true; return r; }
+
+LOAD_HELPER(nodes, node::Node, "SELECT id, name, type FROM nodes ORDER BY id", rd_node)
+LOAD_HELPER(php_versions, php::PhpVersion, "SELECT id, version, image, enabled, default_version FROM php_versions ORDER BY id", rd_php)
+LOAD_HELPER(profiles, profile::Profile, "SELECT id, profile_name, type, web_server, runtime, template_path, description, enabled, default_profile FROM profiles ORDER BY id", rd_profile)
+LOAD_HELPER(users, user::User, "SELECT id, username, uid, home_directory, shell, enabled FROM users ORDER BY id", rd_user)
+LOAD_HELPER(sites, site::Site, "SELECT id, domain, owner, node_id, web_server, php_mail_enabled FROM sites ORDER BY id", rd_site)
+LOAD_HELPER(domains, domain::Domain, "SELECT id, fqdn, owner_id, site_id, php_version, ssl_enabled, enabled, type, target FROM domains ORDER BY id", rd_domain)
+LOAD_HELPER(databases, database::Database, "SELECT id, db_name, db_user, db_password, engine, version, owner_id, site_id, enabled FROM databases ORDER BY id", rd_db)
+LOAD_HELPER(backups, backup::Backup, "SELECT id, site_id, owner_id, filename, type, size, created_at, status, file_path, compression FROM backups ORDER BY id", rd_backup)
+LOAD_HELPER(reverse_proxies, proxy::ReverseProxy, "SELECT id, domain, site_id, provider, config_path, upstream, enabled, status FROM reverse_proxies ORDER BY id", rd_proxy)
+LOAD_HELPER(access_users, access::AccessUser, "SELECT id, username, auth_type, password_hash, enabled FROM access_users ORDER BY id", rd_au)
+LOAD_HELPER(access_grants, access::AccessGrant, "SELECT id, access_user_id, site_id, permission FROM access_grants ORDER BY id", rd_ag)
+LOAD_HELPER(auth_users, auth::AuthUser, "SELECT id, username, password_hash, must_change_password, enabled, role FROM auth_users ORDER BY id", rd_authu)
+LOAD_HELPER(ssl_certificates, ssl::SslCertificate, "SELECT id, domain_id, domain, provider, certificate_path, key_path, chain_path, issued_at, expires_at, renew_after, status, auto_renew, https_enabled, redirect_enabled, domains, challenge_type, last_error, last_validation, renew_attempts, version FROM ssl_certificates ORDER BY id", rd_ssl)
+LOAD_HELPER(mail_domains, mail::MailDomain, "SELECT id, domain_id, site_id, domain_name, mode, relay_host, dkim_selector, dkim_private_key_path, dkim_public_key_dns, max_mailboxes, max_aliases, catch_all, enabled, created_at, updated_at FROM mail_domains ORDER BY id", rd_md)
+LOAD_HELPER(mail_mailboxes, mail::Mailbox, "SELECT id, domain_id, local_part, password_hash, quota_bytes, quota_messages, enabled, display_name, forward_to, spam_enabled, last_login, created_at, updated_at FROM mail_mailboxes ORDER BY id", rd_mb)
+LOAD_HELPER(mail_aliases, mail::MailAlias, "SELECT id, domain_id, source_local_part, destination, enabled, created_at, updated_at FROM mail_aliases ORDER BY id", rd_ma)
+
+// ---- Common verify helper using LegacyDatasetReader ----
+#define VERIFY_COMMON(type, cls, canon_fn, field_fn, transient_fn, reader_call, load_call, required) \
     ResourceVerificationResult Verification::verify_##type() { \
-        ResourceVerificationResult rv; \
-        VERIFY_PREAMBLE(#type, rv) \
-        std::vector<cls> legacy_records; \
-        { CHECK_FILE(#type ".db") \
-          std::set<uint64_t> ids; LineParser lp(fs::path(p), #type ".db"); std::string em; \
-          while (lp.next()) { if (lp.empty_line()) continue; auto f = lp.split(); int i = 0; \
-            if (f.size() != fields_expr) { rv.success = false; rv.error = "invalid_field_count"; rv.resource_type = #type; return rv; } \
-            cls rec; \
-            { uint64_t tmp; PARSE_U64(tmp); rec.id = tmp; } \
-            if (ids.count(rec.id)) { rv.success = false; rv.error = "duplicate_id"; rv.resource_type = #type; return rv; } \
-            ids.insert(rec.id); \
-            fields_##type(rec, f, i, em); \
-            legacy_records.push_back(std::move(rec)); \
-          } \
+        const ImportResult* ir = find_import_result(#type); \
+        if (!ir) { ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed; r.error = "missing_import_result"; r.resource_type = #type; return r; } \
+        if (ir->disposition == ImportDisposition::SkippedEmpty || ir->disposition == ImportDisposition::SkippedMissingOptional) { \
+            ResourceVerificationResult r; r.success = true; r.status = VerificationStatus::Skipped; r.resource_type = #type; return r; \
         } \
+        LegacyDatasetReader reader(legacy_dir_); \
+        auto dr = reader.reader_call; \
+        if (!dr.success) { ResourceVerificationResult r; r.success = false; r.error = dr.error; r.resource_type = #type; return r; } \
         std::vector<cls> sqlite_records; \
-        { auto cr = checked_query<cls>(pool_, sql, reader); \
-          if (!cr.success) { rv.success = false; rv.error = "sqlite_load_failed"; rv.resource_type = #type; return rv; } \
-          sqlite_records = std::move(cr.records); } \
-        return compare_resource<cls>(#type, std::move(legacy_records), std::move(sqlite_records), \
-            [this](const std::vector<cls>& v) { return canonical_##type(v); }, canon_one_##type); \
+        auto lr = load_call(pool_, sqlite_records); \
+        if (!lr.success) { lr.resource_type = #type; return lr; } \
+        return compare_resource<cls>(#type, std::move(dr.records), std::move(sqlite_records), \
+            [this](const std::vector<cls>& v) { return canon_fn(v); }, field_fn, transient_fn); \
     }
 
-// Field parsers per resource type
-#define fields_nodes(r, f, i, em) \
-    r.name = f[i++]; r.type = f[i++];
-#define fields_php_versions(r, f, i, em) \
-    r.version = f[i++]; r.image = f[i++]; PARSE_BOOL(r.enabled); PARSE_BOOL(r.default_version); r.name = r.version;
-#define fields_profiles(r, f, i, em) \
-    r.profile_name = f[i++]; r.type = profile::profile_type_from_string(f[i++]); \
-    r.web_server = f[i++]; r.runtime = f[i++]; r.template_path = f[i++]; r.description = f[i++]; \
-    PARSE_BOOL(r.enabled); PARSE_BOOL(r.default_profile); r.name = r.profile_name;
-#define fields_users(r, f, i, em) \
-    r.username = f[i++]; { uint64_t tmp; PARSE_U64(tmp); r.uid = tmp; } \
-    r.home_directory = f[i++]; r.shell = f[i++]; PARSE_BOOL(r.enabled); r.name = r.username;
-#define fields_sites(r, f, i, em) /* custom — see verify_sites */ (void)em
-#define fields_domains(r, f, i, em) \
-    r.fqdn = f[i++]; { uint64_t tmp; PARSE_U64(tmp); r.owner_id = tmp; } \
-    { uint64_t tmp; PARSE_U64(tmp); r.site_id = tmp; } \
-    r.php_version = f[i++]; PARSE_BOOL(r.ssl_enabled); PARSE_BOOL(r.enabled); \
-    r.type = (f.size() > i) ? f[i++] : std::string("primary"); \
-    r.target = (f.size() > i) ? f[i++] : std::string(); r.name = r.fqdn;
-#define fields_databases(r, f, i, em) \
-    r.db_name = f[i++]; r.db_user = f[i++]; r.db_password = f[i++]; r.engine = f[i++]; r.version = f[i++]; \
-    { uint64_t tmp; PARSE_U64(tmp); r.owner_id = tmp; } \
-    { uint64_t tmp; PARSE_U64(tmp); r.site_id = tmp; } \
-    PARSE_BOOL(r.enabled); r.name = r.db_name;
-#define fields_backups(r, f, i, em) \
-    { uint64_t tmp; PARSE_U64(tmp); r.site_id = tmp; } { uint64_t tmp; PARSE_U64(tmp); r.owner_id = tmp; } \
-    r.filename = f[i++]; r.type = f[i++]; { uint64_t tmp; PARSE_U64(tmp); r.size = tmp; } \
-    r.created_at = f[i++]; r.status = f[i++]; r.file_path = f[i++]; r.compression = f[i++]; r.name = r.filename;
-#define fields_reverse_proxies(r, f, i, em) \
-    r.domain = f[i++]; { uint64_t tmp; PARSE_U64(tmp); r.site_id = tmp; } \
-    r.provider = f[i++]; r.config_path = f[i++]; r.upstream = f[i++]; PARSE_BOOL(r.enabled); r.status = f[i++]; r.name = r.domain;
-#define fields_access_users(r, f, i, em) \
-    r.username = f[i++]; r.auth_type = f[i++]; r.password_hash = f[i++]; PARSE_BOOL(r.enabled); r.name = r.username;
-#define fields_access_grants(r, f, i, em) \
-    { uint64_t tmp; PARSE_U64(tmp); r.access_user_id = tmp; } { uint64_t tmp; PARSE_U64(tmp); r.site_id = tmp; } \
-    r.permission = access::permission_from_string(f[i++]); \
-    r.name = std::to_string(r.access_user_id) + "-" + std::to_string(r.site_id);
-#define fields_auth_users(r, f, i, em) \
-    r.username = f[i++]; r.password_hash = f[i++]; PARSE_BOOL(r.must_change_password); PARSE_BOOL(r.enabled); r.role = f[i++]; r.name = r.username;
-#define fields_mail_mailboxes(r, f, i, em) \
-    { uint64_t tmp; PARSE_U64(tmp); r.domain_id = tmp; } r.local_part = f[i++]; r.password_hash = f[i++]; \
-    { uint64_t tmp; PARSE_U64(tmp); r.quota_bytes = tmp; } { uint64_t tmp; PARSE_U64(tmp); r.quota_messages = tmp; } \
-    PARSE_BOOL(r.enabled); r.display_name = f[i++]; r.forward_to = f[i++]; PARSE_BOOL(r.spam_enabled); \
-    r.last_login = f[i++]; r.created_at = f[i++]; r.updated_at = f[i++]; r.name = r.local_part;
-#define fields_mail_aliases(r, f, i, em) \
-    { uint64_t tmp; PARSE_U64(tmp); r.domain_id = tmp; } r.source_local_part = f[i++]; r.destination = f[i++]; \
-    PARSE_BOOL(r.enabled); r.created_at = f[i++]; r.updated_at = f[i++]; r.name = r.source_local_part;
+#define FIELD_ADAPTOR(type, func) \
+    [](const type& a, const type& b, bool sens) { return func(a, b, sens); }
+#define TRANSIENT_NULL nullptr
 
-// Generate verify methods for simple (fixed-format) resources
-VERIFY_SIMPLE(nodes, node::Node, "SELECT id, name, type FROM nodes ORDER BY id", rd_node, 3)
-VERIFY_SIMPLE(php_versions, php::PhpVersion, "SELECT id, version, image, enabled, default_version FROM php_versions ORDER BY id", rd_php, 5)
-VERIFY_SIMPLE(users, user::User, "SELECT id, username, uid, home_directory, shell, enabled FROM users ORDER BY id", rd_user, 6)
-VERIFY_SIMPLE(domains, domain::Domain, "SELECT id, fqdn, owner_id, site_id, php_version, ssl_enabled, enabled, type, target FROM domains ORDER BY id", rd_domain, 9)
-VERIFY_SIMPLE(databases, database::Database, "SELECT id, db_name, db_user, db_password, engine, version, owner_id, site_id, enabled FROM databases ORDER BY id", rd_db, 9)
-VERIFY_SIMPLE(backups, backup::Backup, "SELECT id, site_id, owner_id, filename, type, size, created_at, status, file_path, compression FROM backups ORDER BY id", rd_backup, 10)
-VERIFY_SIMPLE(reverse_proxies, proxy::ReverseProxy, "SELECT id, domain, site_id, provider, config_path, upstream, enabled, status FROM reverse_proxies ORDER BY id", rd_proxy, 8)
-VERIFY_SIMPLE(access_users, access::AccessUser, "SELECT id, username, auth_type, password_hash, enabled FROM access_users ORDER BY id", rd_au, 5)
-VERIFY_SIMPLE(access_grants, access::AccessGrant, "SELECT id, access_user_id, site_id, permission FROM access_grants ORDER BY id", rd_ag, 4)
-VERIFY_SIMPLE(auth_users, auth::AuthUser, "SELECT id, username, password_hash, must_change_password, enabled, role FROM auth_users ORDER BY id", rd_authu, 6)
-VERIFY_SIMPLE(mail_mailboxes, mail::Mailbox, "SELECT id, domain_id, local_part, password_hash, quota_bytes, quota_messages, enabled, display_name, forward_to, spam_enabled, last_login, created_at, updated_at FROM mail_mailboxes ORDER BY id", rd_mb, 13)
-VERIFY_SIMPLE(mail_aliases, mail::MailAlias, "SELECT id, domain_id, source_local_part, destination, enabled, created_at, updated_at FROM mail_aliases ORDER BY id", rd_ma, 7)
+// ---- Transient validation ----
+static bool transient_php(const php::PhpVersion& pv) { return pv.name == pv.version; }
+static bool transient_profile(const profile::Profile& p) { return p.name == p.profile_name; }
+static bool transient_user(const user::User& u) { return u.name == u.username; }
+static bool transient_site(const site::Site& s) { return s.name == s.domain && s.php_mail_enabled_present; }
+static bool transient_domain(const domain::Domain& d) { return d.name == d.fqdn; }
+static bool transient_database(const database::Database& d) { return d.name == d.db_name; }
+static bool transient_proxy(const proxy::ReverseProxy& p) { return p.name == p.domain; }
+static bool transient_au(const access::AccessUser& u) { return u.name == u.username; }
+static bool transient_authu(const auth::AuthUser& u) { return u.name == u.username; }
+static bool transient_ssl(const ssl::SslCertificate& c) { return c.name == c.domain; }
+static bool transient_md(const mail::MailDomain& m) { return m.name == m.domain_name; }
+static bool transient_mb(const mail::Mailbox& mb) { return mb.name == mb.local_part; }
+static bool transient_ma(const mail::MailAlias& a) { return a.name == a.source_local_part; }
 
-// ---- Custom verify methods ----
+// ---- Per-resource verify methods ----
+VERIFY_COMMON(nodes, node::Node, canonical_nodes, FIELD_ADAPTOR(node::Node, compare_node), TRANSIENT_NULL, read_nodes(), load_nodes, true)
+VERIFY_COMMON(php_versions, php::PhpVersion, canonical_php_versions, FIELD_ADAPTOR(php::PhpVersion, compare_php), transient_php, read_php_versions(), load_php_versions, true)
+VERIFY_COMMON(profiles, profile::Profile, canonical_profiles, FIELD_ADAPTOR(profile::Profile, compare_profile), transient_profile, read_combined_profiles(), load_profiles, true)
+VERIFY_COMMON(users, user::User, canonical_users, FIELD_ADAPTOR(user::User, compare_user), transient_user, read_users(), load_users, true)
+VERIFY_COMMON(sites, site::Site, canonical_sites, FIELD_ADAPTOR(site::Site, compare_site), transient_site, read_sites(), load_sites, true)
+VERIFY_COMMON(domains, domain::Domain, canonical_domains, FIELD_ADAPTOR(domain::Domain, compare_domain), transient_domain, read_domains(), load_domains, true)
+VERIFY_COMMON(databases, database::Database, canonical_databases, FIELD_ADAPTOR(database::Database, compare_database), transient_database, read_databases(), load_databases, true)
+VERIFY_COMMON(backups, backup::Backup, canonical_backups, FIELD_ADAPTOR(backup::Backup, compare_backup), TRANSIENT_NULL, read_backups(), load_backups, true)
+VERIFY_COMMON(reverse_proxies, proxy::ReverseProxy, canonical_reverse_proxies, FIELD_ADAPTOR(proxy::ReverseProxy, compare_proxy), transient_proxy, read_reverse_proxies(), load_reverse_proxies, true)
+VERIFY_COMMON(access_users, access::AccessUser, canonical_access_users, FIELD_ADAPTOR(access::AccessUser, compare_access_user), transient_au, read_access_users(), load_access_users, false)
+VERIFY_COMMON(access_grants, access::AccessGrant, canonical_access_grants, FIELD_ADAPTOR(access::AccessGrant, compare_access_grant), TRANSIENT_NULL, read_access_grants(), load_access_grants, false)
+VERIFY_COMMON(auth_users, auth::AuthUser, canonical_auth_users, FIELD_ADAPTOR(auth::AuthUser, compare_auth_user), transient_authu, read_auth_users(), load_auth_users, false)
+VERIFY_COMMON(ssl_certificates, ssl::SslCertificate, canonical_ssl_certificates, FIELD_ADAPTOR(ssl::SslCertificate, compare_ssl), transient_ssl, read_ssl_certificates(), load_ssl_certificates, false)
+VERIFY_COMMON(mail_domains, mail::MailDomain, canonical_mail_domains, FIELD_ADAPTOR(mail::MailDomain, compare_mail_domain), transient_md, read_mail_domains(), load_mail_domains, false)
+VERIFY_COMMON(mail_mailboxes, mail::Mailbox, canonical_mail_mailboxes, FIELD_ADAPTOR(mail::Mailbox, compare_mailbox), transient_mb, read_mailboxes(), load_mail_mailboxes, false)
+VERIFY_COMMON(mail_aliases, mail::MailAlias, canonical_mail_aliases, FIELD_ADAPTOR(mail::MailAlias, compare_mail_alias), transient_ma, read_mail_aliases(), load_mail_aliases, false)
 
-// Sites: 5-field (legacy) or 6-field (current) format detection
-ResourceVerificationResult Verification::verify_sites() {
-    ResourceVerificationResult rv;
-    VERIFY_PREAMBLE("sites", rv)
-    std::vector<site::Site> legacy_records;
-    { CHECK_FILE("sites.db")
-      std::set<uint64_t> ids; std::set<std::string> domains;
-      LineParser lp(fs::path(p), "sites.db"); std::string em;
-      while (lp.next()) {
-        if (lp.empty_line()) continue;
-        int pipes = lp.count_pipes(); auto f = lp.split();
-        if (pipes >= 5) {
-            if (f.size() != 6) { rv.success = false; rv.error = "invalid_field_count"; rv.resource_type = "sites"; return rv; }
-            site::Site s; int i = 0; { uint64_t tmp; PARSE_U64(tmp); s.id = tmp; }
-            if (ids.count(s.id)) { rv.success = false; rv.error = "duplicate_id"; rv.resource_type = "sites"; return rv; } ids.insert(s.id);
-            s.domain = f[i++]; if (domains.count(s.domain)) { rv.success = false; rv.error = "duplicate_domain"; rv.resource_type = "sites"; return rv; } domains.insert(s.domain);
-            s.owner = f[i++]; { uint64_t tmp; PARSE_U64(tmp); s.node_id = tmp; } s.web_server = f[i++].empty() ? "apache" : f[i-1];
-            PARSE_BOOL(s.php_mail_enabled); s.php_mail_enabled_present = true; s.name = s.domain; legacy_records.push_back(std::move(s));
-        } else {
-            if (f.size() != 5) { rv.success = false; rv.error = "invalid_field_count"; rv.resource_type = "sites"; return rv; }
-            site::Site s; int i = 0; { uint64_t tmp; PARSE_U64(tmp); s.id = tmp; }
-            if (ids.count(s.id)) { rv.success = false; rv.error = "duplicate_id"; rv.resource_type = "sites"; return rv; } ids.insert(s.id);
-            s.domain = f[i++]; if (domains.count(s.domain)) { rv.success = false; rv.error = "duplicate_domain"; rv.resource_type = "sites"; return rv; } domains.insert(s.domain);
-            s.owner = f[i++]; { uint64_t tmp; PARSE_U64(tmp); s.node_id = tmp; } s.web_server = f[i++].empty() ? "apache" : f[i-1];
-            s.php_mail_enabled = false; s.php_mail_enabled_present = false; s.name = s.domain; legacy_records.push_back(std::move(s));
-        }
-      }
-    }
-    std::vector<site::Site> sqlite_records;
-    { auto cr = checked_query<site::Site>(pool_, "SELECT id, domain, owner, node_id, web_server, php_mail_enabled FROM sites ORDER BY id", rd_site);
-      if (!cr.success) { rv.success = false; rv.error = "sqlite_load_failed"; rv.resource_type = "sites"; return rv; }
-      sqlite_records = std::move(cr.records); }
-    return compare_resource<site::Site>("sites", std::move(legacy_records), std::move(sqlite_records),
-        [this](const std::vector<site::Site>& v) { return canonical_sites(v); }, canon_one_sites);
-}
-
-// Profiles: combined from profiles.db + template_profiles.db
-ResourceVerificationResult Verification::verify_profiles() {
-    ResourceVerificationResult rv;
-    const ImportResult* ir = find_import_result("profiles");
-    if (!ir) { rv.success = false; rv.status = VerificationStatus::Failed; rv.error = "missing_import_result"; rv.resource_type = "profiles"; return rv; }
-    if (ir->disposition == ImportDisposition::SkippedEmpty || ir->disposition == ImportDisposition::SkippedMissingOptional) {
-        rv.success = true; rv.status = VerificationStatus::Skipped; rv.resource_type = "profiles"; return rv; }
-
-    std::vector<profile::Profile> legacy_records;
-    std::set<uint64_t> ids; std::set<std::string> names; std::string em;
-
-    // Parse profiles.db (9-field)
-    { CHECK_FILE("profiles.db")
-      LineParser lp(fs::path(p), "profiles.db");
-      while (lp.next()) {
-        if (lp.empty_line()) continue; auto f = lp.split(); int i = 0;
-        if (f.size() != 9) { rv.success = false; rv.error = "invalid_field_count"; rv.resource_type = "profiles"; return rv; }
-        profile::Profile rec; { uint64_t tmp; PARSE_U64(tmp); rec.id = tmp; }
-        if (ids.count(rec.id)) { rv.success = false; rv.error = "duplicate_id"; rv.resource_type = "profiles"; return rv; } ids.insert(rec.id);
-        rec.profile_name = f[i++];
-        if (names.count(rec.profile_name)) { rv.success = false; rv.error = "duplicate_profile_name"; rv.resource_type = "profiles"; return rv; } names.insert(rec.profile_name);
-        rec.type = profile::profile_type_from_string(f[i++]); rec.web_server = f[i++]; rec.runtime = f[i++];
-        rec.template_path = f[i++]; rec.description = f[i++]; PARSE_BOOL(rec.enabled); PARSE_BOOL(rec.default_profile);
-        rec.name = rec.profile_name; legacy_records.push_back(std::move(rec));
-      }
-    }
-
-    // Parse template_profiles.db (8-field, optional)
-    std::string tpl_path = legacy_dir_ + "template_profiles.db";
-    if (fs::exists(tpl_path) && fs::file_size(tpl_path) > 0) {
-      LineParser lp(fs::path(tpl_path), "template_profiles.db");
-      while (lp.next()) {
-        if (lp.empty_line()) continue; auto f = lp.split(); int i = 0;
-        if (f.size() != 8) { rv.success = false; rv.error = "invalid_field_count"; rv.resource_type = "profiles"; return rv; }
-        profile::Profile rec; { uint64_t tmp; PARSE_U64(tmp); rec.id = tmp; }
-        if (ids.count(rec.id)) { rv.success = false; rv.error = "duplicate_id"; rv.resource_type = "profiles"; return rv; } ids.insert(rec.id);
-        rec.profile_name = f[i++];
-        if (names.count(rec.profile_name)) { rv.success = false; rv.error = "duplicate_profile_name"; rv.resource_type = "profiles"; return rv; } names.insert(rec.profile_name);
-        rec.type = profile::ProfileType::WEB_SERVER; rec.web_server = f[i++]; rec.runtime = f[i++];
-        rec.template_path = f[i++]; rec.description = f[i++]; PARSE_BOOL(rec.enabled); PARSE_BOOL(rec.default_profile);
-        rec.name = rec.profile_name; legacy_records.push_back(std::move(rec));
-      }
-    }
-
-    std::vector<profile::Profile> sqlite_records;
-    { auto cr = checked_query<profile::Profile>(pool_, "SELECT id, profile_name, type, web_server, runtime, template_path, description, enabled, default_profile FROM profiles ORDER BY id", rd_profile);
-      if (!cr.success) { rv.success = false; rv.error = "sqlite_load_failed"; rv.resource_type = "profiles"; return rv; }
-      sqlite_records = std::move(cr.records); }
-    return compare_resource<profile::Profile>("profiles", std::move(legacy_records), std::move(sqlite_records),
-        [this](const std::vector<profile::Profile>& v) { return canonical_profiles(v); }, canon_one_profiles);
-}
-
-// SSL certificates: 20-field current or legacy format
-ResourceVerificationResult Verification::verify_ssl_certificates() {
-    ResourceVerificationResult rv;
-    VERIFY_PREAMBLE("ssl_certificates", rv)
-    std::vector<ssl::SslCertificate> legacy_records;
-    { CHECK_FILE("ssl_certificates.db")
-      std::set<uint64_t> ids; LineParser lp(fs::path(p), "ssl_certificates.db"); std::string em;
-      while (lp.next()) {
-        if (lp.empty_line()) continue; auto f = lp.split(); int i = 0;
-        if (f.size() < 6) { rv.success = false; rv.error = "invalid_field_count"; rv.resource_type = "ssl_certificates"; return rv; }
-        ssl::SslCertificate c; { uint64_t tmp; PARSE_U64(tmp); c.id = tmp; }
-        if (ids.count(c.id)) { rv.success = false; rv.error = "duplicate_id"; rv.resource_type = "ssl_certificates"; return rv; } ids.insert(c.id);
-        { uint64_t tmp; PARSE_U64(tmp); c.domain_id = tmp; }
-        c.domain = f[i++]; c.provider = f[i++]; c.certificate_path = f[i++]; c.key_path = f[i++];
-        if (f.size() >= 20) {
-            if (f.size() > i) c.chain_path = f[i++];
-            if (f.size() > i) c.issued_at = f[i++];
-            if (f.size() > i) c.expires_at = f[i++];
-            if (f.size() > i) c.renew_after = f[i++];
-            if (f.size() > i) c.status = f[i++];
-            if (f.size() > i) { if (!LineParser::parse_bool(f[i++], c.auto_renew, em)) { rv.success = false; rv.error = "invalid_boolean"; rv.resource_type = "ssl_certificates"; return rv; } }
-            if (f.size() > i) { if (!LineParser::parse_bool(f[i++], c.https_enabled, em)) { rv.success = false; rv.error = "invalid_boolean"; rv.resource_type = "ssl_certificates"; return rv; } }
-            if (f.size() > i) { if (!LineParser::parse_bool(f[i++], c.redirect_enabled, em)) { rv.success = false; rv.error = "invalid_boolean"; rv.resource_type = "ssl_certificates"; return rv; } }
-            if (f.size() > i) c.domains = f[i++];
-            if (f.size() > i) c.challenge_type = f[i++];
-            if (f.size() > i) c.last_error = f[i++];
-            if (f.size() > i) c.last_validation = f[i++];
-            if (f.size() > i) { if (!LineParser::parse_int(f[i++], c.renew_attempts, em)) { rv.success = false; rv.error = "invalid_integer"; rv.resource_type = "ssl_certificates"; return rv; } }
-            if (f.size() > i) { if (!LineParser::parse_int(f[i++], c.version, em)) { rv.success = false; rv.error = "invalid_integer"; rv.resource_type = "ssl_certificates"; return rv; } }
-        } else {
-            if (f.size() > i) c.expires_at = f[i++];
-            if (f.size() > i) c.status = f[i++];
-            if (f.size() > i) { if (!LineParser::parse_bool(f[i++], c.https_enabled, em)) { rv.success = false; rv.error = "invalid_boolean"; rv.resource_type = "ssl_certificates"; return rv; } }
-            if (f.size() > i) { if (!LineParser::parse_bool(f[i++], c.auto_renew, em)) { rv.success = false; rv.error = "invalid_boolean"; rv.resource_type = "ssl_certificates"; return rv; } }
-            c.version = 0;
-        }
-        c.name = c.domain; legacy_records.push_back(std::move(c));
-      }
-    }
-    std::vector<ssl::SslCertificate> sqlite_records;
-    { auto cr = checked_query<ssl::SslCertificate>(pool_,
-        "SELECT id, domain_id, domain, provider, certificate_path, key_path, chain_path, "
-        "issued_at, expires_at, renew_after, status, auto_renew, https_enabled, redirect_enabled, "
-        "domains, challenge_type, last_error, last_validation, renew_attempts, version "
-        "FROM ssl_certificates ORDER BY id", rd_ssl);
-      if (!cr.success) { rv.success = false; rv.error = "sqlite_load_failed"; rv.resource_type = "ssl_certificates"; return rv; }
-      sqlite_records = std::move(cr.records); }
-    return compare_resource<ssl::SslCertificate>("ssl_certificates", std::move(legacy_records), std::move(sqlite_records),
-        [this](const std::vector<ssl::SslCertificate>& v) { return canonical_ssl_certificates(v); }, canon_one_ssl_certificates);
-}
-
-// Mail domains: 10-field legacy or 12-field current
-ResourceVerificationResult Verification::verify_mail_domains() {
-    ResourceVerificationResult rv;
-    VERIFY_PREAMBLE("mail_domains", rv)
-    std::vector<mail::MailDomain> legacy_records;
-    { CHECK_FILE("mail_domains.db")
-      std::set<uint64_t> ids; LineParser lp(fs::path(p), "mail_domains.db"); std::string em;
-      while (lp.next()) {
-        if (lp.empty_line()) continue; auto f = lp.split(); int i = 0;
-        if (f.size() < 10) { rv.success = false; rv.error = "invalid_field_count"; rv.resource_type = "mail_domains"; return rv; }
-        mail::MailDomain m; { uint64_t tmp; PARSE_U64(tmp); m.id = tmp; }
-        if (ids.count(m.id)) { rv.success = false; rv.error = "duplicate_id"; rv.resource_type = "mail_domains"; return rv; } ids.insert(m.id);
-        m.mode = mail::mail_domain_mode_from_string(f[i++]); m.domain_name = f[i++];
-        int pipes = lp.count_pipes();
-        if (pipes <= 9) {
-            if (!LineParser::parse_uint64(f[i++], m.domain_id, em)) { /* sentinel 0 */ }
-            if (f.size() > i && !LineParser::parse_bool(f[i++], m.enabled, em)) { rv.success = false; rv.error = "invalid_boolean"; rv.resource_type = "mail_domains"; return rv; }
-            if (f.size() > i) m.catch_all = f[i++];
-            if (f.size() > i) m.dkim_selector = f[i++];
-            if (f.size() > i) m.relay_host = f[i++];
-            if (f.size() > i) { uint64_t tmp; if (!LineParser::parse_uint64(f[i++], tmp, em)) { rv.success = false; rv.error = "invalid_integer"; rv.resource_type = "mail_domains"; return rv; } m.max_mailboxes = tmp; }
-            if (f.size() > i) { uint64_t tmp; if (!LineParser::parse_uint64(f[i++], tmp, em)) { rv.success = false; rv.error = "invalid_integer"; rv.resource_type = "mail_domains"; return rv; } m.max_aliases = tmp; }
-        } else {
-            { uint64_t tmp; if (!LineParser::parse_uint64(f[i++], tmp, em)) { rv.success = false; rv.error = "invalid_integer"; rv.resource_type = "mail_domains"; return rv; } m.domain_id = tmp; }
-            if (f.size() > i) { /* site_id — sentinel 0 */ uint64_t tmp; LineParser::parse_uint64(f[i++], tmp, em); }
-            if (f.size() > i && !LineParser::parse_bool(f[i++], m.enabled, em)) { rv.success = false; rv.error = "invalid_boolean"; rv.resource_type = "mail_domains"; return rv; }
-            if (f.size() > i) m.catch_all = f[i++];
-            if (f.size() > i) m.dkim_selector = f[i++];
-            if (f.size() > i) m.dkim_public_key_dns = f[i++];
-            if (f.size() > i) m.relay_host = f[i++];
-            if (f.size() > i) { uint64_t tmp; if (!LineParser::parse_uint64(f[i++], tmp, em)) { rv.success = false; rv.error = "invalid_integer"; rv.resource_type = "mail_domains"; return rv; } m.max_mailboxes = tmp; }
-            if (f.size() > i) { uint64_t tmp; if (!LineParser::parse_uint64(f[i++], tmp, em)) { rv.success = false; rv.error = "invalid_integer"; rv.resource_type = "mail_domains"; return rv; } m.max_aliases = tmp; }
-        }
-        m.name = m.domain_name; legacy_records.push_back(std::move(m));
-      }
-    }
-    std::vector<mail::MailDomain> sqlite_records;
-    { auto cr = checked_query<mail::MailDomain>(pool_, "SELECT id, domain_id, site_id, domain_name, mode, relay_host, dkim_selector, dkim_private_key_path, dkim_public_key_dns, max_mailboxes, max_aliases, catch_all, enabled, created_at, updated_at FROM mail_domains ORDER BY id", rd_md);
-      if (!cr.success) { rv.success = false; rv.error = "sqlite_load_failed"; rv.resource_type = "mail_domains"; return rv; }
-      sqlite_records = std::move(cr.records); }
-    return compare_resource<mail::MailDomain>("mail_domains", std::move(legacy_records), std::move(sqlite_records),
-        [this](const std::vector<mail::MailDomain>& v) { return canonical_mail_domains(v); }, canon_one_mail_domains);
-}
-
-// Mail config: two key-value pairs
+// ---- mail_config custom verify ----
 ResourceVerificationResult Verification::verify_mail_config() {
     const ImportResult* ir = find_import_result("mail_config");
     if (!ir) { ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed; r.error = "missing_import_result"; r.resource_type = "mail_config"; return r; }
     if (ir->disposition == ImportDisposition::SkippedEmpty || ir->disposition == ImportDisposition::SkippedMissingOptional) {
         ResourceVerificationResult r; r.success = true; r.status = VerificationStatus::Skipped; r.resource_type = "mail_config"; return r; }
+    ResourceVerificationResult r; r.resource_type = "mail_config";
 
-    std::string legacy_ms, legacy_sh;
-    std::string state_path = legacy_dir_ + "mail_state.db";
-    if (fs::exists(state_path)) { std::ifstream f(state_path); std::getline(f, legacy_ms); }
-    std::string smtp_path = legacy_dir_ + "mail_smarthost.db";
-    if (fs::exists(smtp_path)) { std::ifstream f(smtp_path); std::getline(f, legacy_sh); }
+    LegacyDatasetReader reader(legacy_dir_);
+    auto dr = reader.read_mail_config();
+    if (!dr.success) { r.error = dr.error; return r; }
 
-    std::string sqlite_ms, sqlite_sh;
+    // SQLite config via checked query
+    std::string module_state, smarthost;
     {
         ReadLease rl(pool_);
-        if (!rl.is_valid()) { ResourceVerificationResult r; r.success = false; r.error = "sqlite_load_failed"; r.resource_type = "mail_config"; return r; }
+        if (!rl.is_valid()) { r.error = "sqlite_load_failed"; return r; }
         if (!rl->prepare("SELECT value FROM mail_config WHERE key = 'module_state'")) {
-            ResourceVerificationResult r; r.success = false; r.error = "query_failed"; r.resource_type = "mail_config"; return r; }
-        if (rl->step()) sqlite_ms = rl->column_text(0);
+            r.error = "query_failed:module_state"; return r; }
+        if (rl->step()) module_state = rl->column_text(0);
         if (!rl->prepare("SELECT value FROM mail_config WHERE key = 'smarthost'")) {
-            ResourceVerificationResult r; r.success = false; r.error = "query_failed"; r.resource_type = "mail_config"; return r; }
-        if (rl->step()) sqlite_sh = rl->column_text(0);
+            r.error = "query_failed:smarthost"; return r; }
+        if (rl->step()) smarthost = rl->column_text(0);
     }
 
-    ResourceVerificationResult r; r.resource_type = "mail_config";
-    r.legacy_record_count = (legacy_ms.empty() ? 0 : 1) + (legacy_sh.empty() ? 0 : 1);
-    r.sqlite_record_count = (sqlite_ms.empty() ? 0 : 1) + (sqlite_sh.empty() ? 0 : 1);
-
-    std::string lc = canonical_mail_config(legacy_ms, legacy_sh);
-    std::string sc = canonical_mail_config(sqlite_ms, sqlite_sh);
-    r.legacy_checksum = sha256(lc); r.sqlite_checksum = sha256(sc);
+    r.legacy_record_count = (dr.module_state.empty() ? 0 : 1) + (dr.smarthost.empty() ? 0 : 1);
+    r.sqlite_record_count = (module_state.empty() ? 0 : 1) + (smarthost.empty() ? 0 : 1);
+    r.legacy_checksum = sha256(canonical_mail_config(dr.module_state, dr.smarthost));
+    r.sqlite_checksum = sha256(canonical_mail_config(module_state, smarthost));
 
     if (r.legacy_record_count != r.sqlite_record_count || r.legacy_checksum != r.sqlite_checksum) {
-        r.success = false; r.status = VerificationStatus::Failed; return r; }
+        // Field-by-field mail_config comparison
+        if (dr.module_state != module_state) {
+            FieldMismatch fm; fm.resource_type = "mail_config";
+            fm.field = "module_state"; fm.expected = "[REDACTED]"; fm.actual = "[REDACTED]";
+            r.mismatches.push_back(fm);
+        }
+        if (dr.smarthost != smarthost) {
+            FieldMismatch fm; fm.resource_type = "mail_config";
+            fm.field = "smarthost"; fm.expected = "[REDACTED]"; fm.actual = "[REDACTED]";
+            r.mismatches.push_back(fm);
+        }
+        r.success = false; r.status = VerificationStatus::Failed; return r;
+    }
     r.success = true; r.status = VerificationStatus::Passed; return r;
 }
 
 // ============================================================
-// verify_all — full pipeline
+// Shared PRAGMA helpers
+// ============================================================
+
+static bool checked_fk_check(ConnectionPool& pool, std::vector<std::string>& violations, std::string& error) {
+    ReadLease rl(pool);
+    if (!rl.is_valid()) { error = "fk_no_lease"; return false; }
+    if (!rl->prepare("PRAGMA foreign_key_check")) { error = "fk_prepare_failed"; return false; }
+    while (true) {
+        if (!rl->step()) {
+            if (rl->error_code() != 0) { error = "fk_step_failed"; return false; }
+            break;
+        }
+        violations.push_back(std::string("table=") + rl->column_text(0) +
+            " rowid=" + std::to_string(rl->column_int(1)));
+    }
+    return true;
+}
+
+static bool checked_integrity(ConnectionPool& pool, std::string& result, std::string& error) {
+    ReadLease rl(pool);
+    if (!rl.is_valid()) { error = "integrity_no_lease"; return false; }
+    if (!rl->prepare("PRAGMA integrity_check")) { error = "integrity_prepare_failed"; return false; }
+    if (!rl->step()) { error = "integrity_no_result"; return false; }
+    result = rl->column_text(0);
+    return true;
+}
+
+// ============================================================
+// verify_all — complete pipeline
 // ============================================================
 
 DatabaseVerificationResult Verification::verify_all() {
     DatabaseVerificationResult result;
 
-    // Step 0: Validate import context
-    if (!import_result_.success) {
-        result.error = "import_failed"; result.success = false; return result;
-    }
-    std::set<std::string> seen_types;
+    // Validate import context
+    const std::vector<std::string> kExpectedResources = {
+        "nodes", "php_versions", "profiles", "users", "sites", "domains",
+        "databases", "backups", "reverse_proxies", "access_users",
+        "access_grants", "auth_users", "ssl_certificates", "mail_domains",
+        "mail_mailboxes", "mail_aliases", "mail_config"
+    };
+    std::set<std::string> expected_set(kExpectedResources.begin(), kExpectedResources.end());
+    std::set<std::string> seen;
+
+    if (!import_result_.success) { result.error = "import_failed"; result.success = false; return result; }
     for (const auto& ir : import_result_.resources) {
-        if (ir.disposition == ImportDisposition::Failed) {
-            result.error = "incomplete_import_context:" + ir.resource_type;
-            result.success = false; return result;
-        }
-        if (seen_types.count(ir.resource_type)) {
-            result.error = "duplicate_import_result:" + ir.resource_type;
-            result.success = false; return result;
-        }
-        seen_types.insert(ir.resource_type);
+        if (ir.disposition == ImportDisposition::Failed) { result.error = "incomplete_import_context:" + ir.resource_type; result.success = false; return result; }
+        if (ir.resource_type == "template_profiles") { result.error = "unexpected_resource:template_profiles"; result.success = false; return result; }
+        if (seen.count(ir.resource_type)) { result.error = "duplicate_import_result:" + ir.resource_type; result.success = false; return result; }
+        if (!expected_set.count(ir.resource_type)) { result.error = "unknown_import_resource:" + ir.resource_type; result.success = false; return result; }
+        seen.insert(ir.resource_type);
+    }
+    for (const auto& exp : kExpectedResources) {
+        if (!seen.count(exp)) { result.error = "missing_import_result:" + exp; result.success = false; return result; }
     }
 
-    // Step 1: Initialize verification pool
-    if (!pool_.initialize(sqlite_path_)) {
-        result.error = "sqlite_open_failed"; result.success = false; return result;
-    }
-
-    // Verify schema is ready (run a simple table check)
+    // Initialize pool
+    if (!pool_.initialize(sqlite_path_)) { result.error = "sqlite_open_failed"; result.success = false; return result; }
     {
         ReadLease rl(pool_);
-        if (!rl.is_valid() || !rl->prepare("SELECT COUNT(*) FROM nodes")) {
-            result.error = "schema_not_ready"; result.success = false; return result;
-        }
+        if (!rl.is_valid() || !rl->prepare("SELECT COUNT(*) FROM nodes")) { result.error = "schema_not_ready"; result.success = false; return result; }
     }
 
-    // Step 2-6: Verify all logical resources
+    // Verify all resources
     auto add = [&](ResourceVerificationResult r) { result.resources.push_back(std::move(r)); };
-    add(verify_nodes());
-    add(verify_php_versions());
-    add(verify_profiles());
-    add(verify_users());
-    add(verify_sites());
-    add(verify_domains());
-    add(verify_databases());
-    add(verify_backups());
-    add(verify_reverse_proxies());
-    add(verify_access_users());
-    add(verify_access_grants());
-    add(verify_auth_users());
-    add(verify_ssl_certificates());
-    add(verify_mail_domains());
-    add(verify_mail_mailboxes());
-    add(verify_mail_aliases());
-    add(verify_mail_config());
+    add(verify_nodes()); add(verify_php_versions()); add(verify_profiles());
+    add(verify_users()); add(verify_sites()); add(verify_domains());
+    add(verify_databases()); add(verify_backups()); add(verify_reverse_proxies());
+    add(verify_access_users()); add(verify_access_grants()); add(verify_auth_users());
+    add(verify_ssl_certificates()); add(verify_mail_domains());
+    add(verify_mail_mailboxes()); add(verify_mail_aliases()); add(verify_mail_config());
 
     result.initial_verification_passed = true;
     for (const auto& res : result.resources) {
-        if (!res.success) {
-            result.initial_verification_passed = false;
-            result.error = "resource_verification_failed:" + res.resource_type;
-            break;
-        }
+        if (!res.success) { result.initial_verification_passed = false; result.error = "resource_verification_failed:" + res.resource_type; break; }
     }
 
-    // Step 7: Checked FK check
-    {
-        ReadLease rl(pool_);
-        if (!rl.is_valid()) {
-            result.error = "fk_check_no_lease"; result.success = false; return result;
-        }
-        if (!rl->prepare("PRAGMA foreign_key_check")) {
-            result.error = "fk_check_prepare_failed"; result.success = false; return result;
-        }
-        while (true) {
-            if (!rl->step()) {
-                if (rl->error_code() != 0) {
-                    result.error = "fk_check_step_failed";
-                    result.success = false; return result;
-                }
-                break; // DONE
-            }
-            result.foreign_key_violations.push_back(
-                std::string("table=") + rl->column_text(0) +
-                " rowid=" + std::to_string(rl->column_int(1)));
-        }
+    // FK check
+    if (!checked_fk_check(pool_, result.foreign_key_violations, result.error)) {
+        result.success = false; return result;
     }
 
-    // Step 8: Checked integrity check
-    {
-        ReadLease rl(pool_);
-        if (!rl.is_valid()) {
-            result.error = "integrity_check_no_lease"; result.success = false; return result;
-        }
-        if (!rl->prepare("PRAGMA integrity_check")) {
-            result.error = "integrity_check_prepare_failed"; result.success = false; return result;
-        }
-        if (!rl->step()) {
-            result.error = "integrity_check_no_result";
-            result.success = false; return result;
-        }
-        result.integrity_check_result = rl->column_text(0);
-        if (result.integrity_check_result != "ok") {
-            result.success = false; return result;
-        }
+    // Integrity check
+    if (!checked_integrity(pool_, result.integrity_check_result, result.error) || result.integrity_check_result != "ok") {
+        result.success = false; return result;
     }
 
-    if (!result.initial_verification_passed ||
-        !result.foreign_key_violations.empty() ||
-        result.integrity_check_result != "ok") {
-        result.success = false;
-        return result;
+    if (!result.initial_verification_passed || !result.foreign_key_violations.empty()) {
+        result.success = false; return result;
     }
 
-    // Step 9: Production reopen — use fresh ConnectionPool + SQLiteStorage
-    // (not Storage, which uses a directory-based path convention)
+    // Production reopen: shut down original pool, open fresh pool
+    pool_.shutdown();
+
     {
         ConnectionPool reopen_pool;
         if (!reopen_pool.initialize(sqlite_path_)) {
@@ -770,8 +741,7 @@ DatabaseVerificationResult Verification::verify_all() {
         bool reopen_pass = true;
         auto check_count = [&](const std::string& name, auto loaded, uint64_t expected) {
             if (loaded.size() != static_cast<size_t>(expected)) {
-                result.error = "reopen_count_mismatch:" + name;
-                reopen_pass = false;
+                result.error = "reopen_count_mismatch:" + name; reopen_pass = false;
             }
         };
         check_count("nodes", reopen_sqlite.load_nodes(), result.resources[0].legacy_record_count);
@@ -789,57 +759,76 @@ DatabaseVerificationResult Verification::verify_all() {
         check_count("mail_mailboxes", reopen_sqlite.load_mailboxes(), result.resources[14].legacy_record_count);
         check_count("mail_aliases", reopen_sqlite.load_mail_aliases(), result.resources[15].legacy_record_count);
 
-        // Importer-only tables via direct SQLite connection
+        // Importer-only tables via direct SQLite
         {
             ReadLease rl(reopen_pool);
-            if (rl.is_valid() && rl->prepare("SELECT COUNT(*) FROM backups") && rl->step()) {
-                if (static_cast<uint64_t>(rl->column_int(0)) != result.resources[7].legacy_record_count) {
-                    result.error = "reopen_backup_count_mismatch"; reopen_pass = false;
+            if (rl.is_valid()) {
+                if (rl->prepare("SELECT COUNT(*) FROM backups") && rl->step()) {
+                    if (static_cast<uint64_t>(rl->column_int(0)) != result.resources[7].legacy_record_count) {
+                        result.error = "reopen_backup_count_mismatch"; reopen_pass = false;
+                    }
                 }
-            }
-        }
-        {
-            ReadLease rl(reopen_pool);
-            if (rl.is_valid() && rl->prepare("SELECT COUNT(*) FROM auth_users") && rl->step()) {
-                if (static_cast<uint64_t>(rl->column_int(0)) != result.resources[11].legacy_record_count) {
-                    result.error = "reopen_auth_user_count_mismatch"; reopen_pass = false;
-                }
-            }
-        }
-
-        // Post-reopen FK check
-        {
-            ReadLease rl(reopen_pool);
-            if (rl.is_valid() && rl->prepare("PRAGMA foreign_key_check")) {
-                while (rl->step()) {
-                    result.foreign_key_violations.push_back(
-                        std::string("table=") + rl->column_text(0) +
-                        " rowid=" + std::to_string(rl->column_int(1)));
-                }
-                if (!result.foreign_key_violations.empty()) {
-                    result.error = "post_reopen_fk_violation"; reopen_pass = false;
+                if (rl->prepare("SELECT COUNT(*) FROM auth_users") && rl->step()) {
+                    if (static_cast<uint64_t>(rl->column_int(0)) != result.resources[11].legacy_record_count) {
+                        result.error = "reopen_auth_user_count_mismatch"; reopen_pass = false;
+                    }
                 }
             }
         }
 
-        // Post-reopen integrity check
+        // Post-reopen FK — use reopen_storage's internal pool
         {
-            ReadLease rl(reopen_pool);
-            if (rl.is_valid() && rl->prepare("PRAGMA integrity_check") && rl->step()) {
-                if (rl->column_text(0) != "ok") {
+            std::vector<std::string> post_violations;
+            std::string post_error;
+            // Storage doesn't expose its pool, so use a direct SQLite connection
+            SQLiteDB post_conn;
+            if (!post_conn.open(sqlite_path_)) {
+                result.error = "post_reopen_fk_conn_failed"; reopen_pass = false;
+            } else {
+                if (!post_conn.prepare("PRAGMA foreign_key_check")) {
+                    result.error = "post_reopen_fk_prepare_failed"; reopen_pass = false;
+                } else {
+                    while (true) {
+                        if (!post_conn.step()) {
+                            if (post_conn.error_code() != 0) {
+                                result.error = "post_reopen_fk_step_failed"; reopen_pass = false;
+                            }
+                            break;
+                        }
+                        result.foreign_key_violations.push_back(
+                            std::string("table=") + post_conn.column_text(0) +
+                            " rowid=" + std::to_string(post_conn.column_int(1)));
+                    }
+                    if (!result.foreign_key_violations.empty()) {
+                        result.error = "post_reopen_fk_violation"; reopen_pass = false;
+                    }
+                }
+                post_conn.close();
+            }
+        }
+
+        // Post-reopen integrity
+        {
+            SQLiteDB post_conn;
+            if (!post_conn.open(sqlite_path_)) {
+                result.error = "post_reopen_integrity_conn_failed"; reopen_pass = false;
+            } else {
+                if (!post_conn.prepare("PRAGMA integrity_check") || !post_conn.step()) {
                     result.error = "post_reopen_integrity_failed"; reopen_pass = false;
+                } else if (post_conn.column_text(0) != "ok") {
+                    result.error = "post_reopen_integrity_bad_result:" + post_conn.column_text(0);
+                    reopen_pass = false;
                 }
+                post_conn.close();
             }
         }
 
-        reopen_pool.shutdown();
         result.reopen_succeeded = true;
         result.reopened_verification_passed = reopen_pass;
-        if (!reopen_pass) {
-            result.success = false; return result;
-        }
+        if (!reopen_pass) { result.success = false; return result; }
     }
 
+    pool_.shutdown();
     result.success = true;
     return result;
 }
