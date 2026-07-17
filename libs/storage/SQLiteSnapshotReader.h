@@ -94,14 +94,20 @@ struct SQLiteSnapshotReader {
     // Actual row readers with validation
     static bool read_node_row(SQLiteDB& db, node::Node& n) {
         if (!read_uint64_col(db, 0, n.id)) return false;
-        n.name = db.column_text(1); n.type = db.column_text(2); return true; }
+        if (!read_string_col(db, 1, n.name)) return false;
+        if (!read_string_col(db, 2, n.type)) return false;
+        return true; }
     static bool read_profile_row(SQLiteDB& db, profile::Profile& p) {
         if (!read_uint64_col(db, 0, p.id)) return false;
-        p.profile_name = db.column_text(1);
+        if (!read_string_col(db, 1, p.profile_name)) return false;
         std::string ts = db.column_text(2); if (!valid_profile_type(ts)) return false;
         p.type = profile::profile_type_from_string(ts);
-        p.web_server = db.column_text(3); p.runtime = db.column_text(4); p.template_path = db.column_text(5);
-        p.description = db.column_text(6); p.enabled = (db.column_int(7) != 0); p.default_profile = (db.column_int(8) != 0);
+        if (!read_string_col(db, 3, p.web_server)) return false;
+        if (!read_string_col(db, 4, p.runtime)) return false;
+        if (!read_string_col(db, 5, p.template_path)) return false;
+        if (!read_string_col(db, 6, p.description)) return false;
+        if (!read_bool_col(db, 7, p.enabled)) return false;
+        if (!read_bool_col(db, 8, p.default_profile)) return false;
         p.name = p.profile_name; return true; }
     static bool read_ag_row(SQLiteDB& db, access::AccessGrant& g) {
         if (!read_uint64_col(db, 0, g.id)) return false;
@@ -114,15 +120,19 @@ struct SQLiteSnapshotReader {
         if (!read_uint64_col(db, 0, m.id)) return false;
         if (!read_uint64_col(db, 1, m.domain_id)) return false;
         if (!read_uint64_col(db, 2, m.site_id)) return false;
-        m.domain_name = db.column_text(3);
+        if (!read_string_col(db, 3, m.domain_name)) return false;
         std::string ms = db.column_text(4); if (!valid_mail_mode(ms)) return false;
         m.mode = mail::mail_domain_mode_from_string(ms);
-        m.relay_host = db.column_text(5); m.dkim_selector = db.column_text(6);
-        m.dkim_private_key_path = db.column_text(7); m.dkim_public_key_dns = db.column_text(8);
+        if (!read_string_col(db, 5, m.relay_host)) return false;
+        if (!read_string_col(db, 6, m.dkim_selector)) return false;
+        if (!read_string_col(db, 7, m.dkim_private_key_path)) return false;
+        if (!read_string_col(db, 8, m.dkim_public_key_dns)) return false;
         if (!read_uint64_col(db, 9, m.max_mailboxes)) return false;
         if (!read_uint64_col(db, 10, m.max_aliases)) return false;
-        m.catch_all = db.column_text(11); m.enabled = (db.column_int(12) != 0);
-        m.created_at = db.column_text(13); m.updated_at = db.column_text(14);
+        if (!read_string_col(db, 11, m.catch_all)) return false;
+        if (!read_bool_col(db, 12, m.enabled)) return false;
+        if (!read_string_col(db, 13, m.created_at)) return false;
+        if (!read_string_col(db, 14, m.updated_at)) return false;
         m.name = m.domain_name; return true; }
 
     static bool read_php_row(SQLiteDB& db, php::PhpVersion& pv) {
@@ -215,14 +225,17 @@ struct SQLiteSnapshotReader {
         if (!read_string_col(db, 4, c.certificate_path)) return false;
         if (!read_string_col(db, 5, c.key_path)) return false;
         if (!read_string_col(db, 6, c.chain_path)) return false;
-        c.issued_at = db.column_text(7); c.expires_at = db.column_text(8);
-        c.renew_after = db.column_text(9); c.status = db.column_text(10);
+        if (!read_string_col(db, 7, c.issued_at)) return false;
+        if (!read_string_col(db, 8, c.expires_at)) return false;
+        if (!read_string_col(db, 9, c.renew_after)) return false;
+        if (!read_string_col(db, 10, c.status)) return false;
         if (!read_bool_col(db, 11, c.auto_renew)) return false;
         if (!read_bool_col(db, 12, c.https_enabled)) return false;
         if (!read_bool_col(db, 13, c.redirect_enabled)) return false;
         if (!read_string_col(db, 14, c.domains)) return false;
-        c.challenge_type = db.column_text(15); c.last_error = db.column_text(16);
-        c.last_validation = db.column_text(17);
+        if (!read_string_col(db, 15, c.challenge_type)) return false;
+        if (!read_string_col(db, 16, c.last_error)) return false;
+        if (!read_string_col(db, 17, c.last_validation)) return false;
         c.renew_attempts = static_cast<int>(db.column_int(18));
         c.version = static_cast<int>(db.column_int(19));
         c.name = c.domain; return true; }
@@ -237,15 +250,18 @@ struct SQLiteSnapshotReader {
         if (!read_string_col(db, 7, mb.display_name, true)) return false;
         if (!read_string_col(db, 8, mb.forward_to, true)) return false;
         if (!read_bool_col(db, 9, mb.spam_enabled)) return false;
-        mb.last_login = db.column_text(10); mb.created_at = db.column_text(11);
-        mb.updated_at = db.column_text(12); mb.name = mb.local_part; return true; }
+        if (!read_string_col(db, 10, mb.last_login)) return false;
+        if (!read_string_col(db, 11, mb.created_at)) return false;
+        if (!read_string_col(db, 12, mb.updated_at)) return false;
+        mb.name = mb.local_part; return true; }
     static bool read_ma_row(SQLiteDB& db, mail::MailAlias& a) {
         if (!read_uint64_col(db, 0, a.id)) return false;
         if (!read_uint64_col(db, 1, a.domain_id)) return false;
         if (!read_string_col(db, 2, a.source_local_part)) return false;
         if (!read_string_col(db, 3, a.destination)) return false;
         if (!read_bool_col(db, 4, a.enabled)) return false;
-        a.created_at = db.column_text(5); a.updated_at = db.column_text(6);
+        if (!read_string_col(db, 5, a.created_at)) return false;
+        if (!read_string_col(db, 6, a.updated_at)) return false;
         a.name = a.source_local_part; return true; }
 
     SNAPSHOT_DEF(nodes, node::Node, "SELECT id, name, type FROM nodes ORDER BY id", read_node_row)
