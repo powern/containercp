@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <set>
 #include <sstream>
 #include <iomanip>
 #include <openssl/sha.h>
@@ -315,7 +316,7 @@ ArchiveResult LegacyArchive::create_archive(
     if (!safe_version(source_version)) { result.error = "invalid_source_version"; return result; }
     if (!safe_version(target_version)) { result.error = "invalid_target_version"; return result; }
 
-    // Complete Phase 9 check
+    // Complete Phase 9 check: summaries + per-resource validation
     if (!verification_result.success ||
         !verification_result.initial_verification_passed ||
         !verification_result.reopened_verification_passed ||
@@ -325,6 +326,24 @@ ArchiveResult LegacyArchive::create_archive(
         !verification_result.initial_foreign_key_violations.empty() ||
         !verification_result.reopened_foreign_key_violations.empty() ||
         verification_result.resources.size() != 17) {
+        result.error = "verification_not_passed"; return result;
+    }
+    // Validate each resource: name uniqueness, known name, success
+    {
+        static const std::set<std::string> kExpected = {
+            "nodes","php_versions","profiles","users","sites","domains","databases",
+            "backups","reverse_proxies","access_users","access_grants","auth_users",
+            "ssl_certificates","mail_domains","mail_mailboxes","mail_aliases","mail_config"
+        };
+        std::set<std::string> seen;
+        for (auto& res : verification_result.resources) {
+            if (!kExpected.count(res.resource_type)) { result.error = "verification_not_passed"; return result; }
+            if (seen.count(res.resource_type)) { result.error = "verification_not_passed"; return result; }
+            if (!res.success) { result.error = "verification_not_passed"; return result; }
+            seen.insert(res.resource_type);
+        }
+    }
+    if (verification_result.reopened_resources.size() != 17) {
         result.error = "verification_not_passed"; return result;
     }
 
