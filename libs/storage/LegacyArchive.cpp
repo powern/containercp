@@ -250,6 +250,8 @@ class ManifestParser {
                         else if (c >= 'A' && c <= 'F') cp = cp * 16 + (c - 'A' + 10);
                         else return false;
                     }
+                    // Reject lone surrogates (U+D800–U+DFFF)
+                    if (cp >= 0xD800 && cp <= 0xDFFF) return false;
                     if (cp <= 0x7F) out += static_cast<char>(cp);
                     else if (cp <= 0x7FF) { out += static_cast<char>(0xC0 | (cp>>6)); out += static_cast<char>(0x80 | (cp&0x3F)); }
                     else { out += static_cast<char>(0xE0 | (cp>>12)); out += static_cast<char>(0x80 | ((cp>>6)&0x3F)); out += static_cast<char>(0x80 | (cp&0x3F)); }
@@ -271,6 +273,9 @@ class ManifestParser {
         bool neg = false;
         if (peek() == '-') { neg = true; next(); }
         if (peek() < '0' || peek() > '9') return false;
+        // JSON disallows leading zeros
+        if (peek() == '0') { next(); out = 0; return true; }
+        // First digit is 1-9, accumulate remaining digits
         uint64_t val = 0;
         const uint64_t kMax = neg ? static_cast<uint64_t>(INT64_MAX) + 1 : INT64_MAX;
         while (peek() >= '0' && peek() <= '9') {
