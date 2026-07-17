@@ -607,3 +607,39 @@ Each key is updated independently — saving one does not erase the other.
 - No automatic TXT→SQLite data import.
 - No startup migration gate.
 - No TXT file deletion.
+
+## Phase 9 — Checked loads and snapshots
+
+### SQLiteSnapshotReader
+
+`libs/storage/SQLiteSnapshotReader.h` — checked typed snapshot API.
+
+```cpp
+template<typename T> struct CheckedSnapshot { bool success; std::vector<T> records; std::string error; };
+struct CheckedOptionalValue { bool success, present; std::string value, error; };
+```
+
+`read_nodes()`, `read_php_versions()`, ..., `read_mail_aliases()` — 16 checked typed loads.  
+`read_mail_config_key(key)` — checked key lookup with presence + final-DONE validation.
+
+Every `read_*()` validates: ReadLease, prepare, step/DONE, row conversion.  
+Empty table returns `success=true, records=[]`. Query failure returns `success=false`.
+
+### Row conversion validation
+
+- `read_uint64_col()`: rejects NULL and negative before cast to uint64
+- `read_profile_row()`: validates ProfileType string against known values
+- `read_ag_row()`: validates Permission string  
+- `read_md_row()`: validates MailDomainMode string
+- Invalid enum/negative/NULL → `row_convert_failed`
+
+### Storage checked loads
+
+14 `load_*_checked()` methods returning `CheckedSnapshot<T>`.  
+2 `load_mail_module_state_checked()` / `load_mail_smarthost_checked()` returning `CheckedOptionalValue`.  
+All delegate to `SQLiteSnapshotReader` internally.
+
+### StorageCanonicalizer
+
+`libs/storage/StorageCanonicalizer.h` — one authoritative canonical implementation for all 17 resource types + presence-aware `canonical_mail_config(bool,str,bool,str)`.  
+Used by: baseline capture, initial verification, skipped verification, reopen comparison.

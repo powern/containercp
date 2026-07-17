@@ -467,3 +467,12 @@ bool backup(const std::string& dest_path);
 With the current TXT backend, these all return `false`.
 They will delegate to `ConnectionPool` when Storage is switched
 to SQLite in Phase 11+.
+
+## Phase 9 — Checked production Storage loads
+
+14 `load_*_checked()` methods return `CheckedSnapshot<T>` (success + records + error).  
+2 `load_mail_module_state_checked()` / `load_mail_smarthost_checked()` return `CheckedOptionalValue` (success + present + value + error).
+
+All methods delegate to `SQLiteSnapshotReader` which performs checked typed queries.  
+Distinguish: successful empty table (`success=true, records=[]`) from query failure (`success=false`).  
+Used by `Verification::verify_all()` production reopen.
