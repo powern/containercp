@@ -106,8 +106,8 @@ bool LegacyArchive::safe_version(const std::string& v) {
     // Format: v<num>.<num>.<num>[-suffix]
     size_t pos = 1; // after 'v'
     auto parse_num = [&]() -> bool {
-        if (pos >= v.size() || !isdigit(v[pos])) return false;
-        while (pos < v.size() && isdigit(v[pos])) ++pos;
+        if (pos >= v.size() || (v[pos] < '0' || v[pos] > '9')) return false;
+        while (pos < v.size() && v[pos] >= '0' && v[pos] <= '9') ++pos;
         return true;
     };
     if (!parse_num()) return false;
@@ -121,7 +121,8 @@ bool LegacyArchive::safe_version(const std::string& v) {
         if (pos >= v.size()) return false;
         while (pos < v.size()) {
             char c = v[pos];
-            if (!isalnum(c) && c != '.' && c != '-') return false;
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))
+                && c != '.' && c != '-') return false;
             ++pos;
         }
     }
