@@ -80,8 +80,8 @@ public:
     static std::string sha256_file(const std::string& path);
     static std::string generate_uuid();
     static std::string timestamp_utc();
-    static bool valid_migration_id(const std::string& id);
     static bool safe_version(const std::string& v);
+    static bool valid_migration_id(const std::string& id);
     static std::string json_escape(const std::string& s);
     static uint64_t count_records(const std::string& source_dir,
                                    const std::string& filename);

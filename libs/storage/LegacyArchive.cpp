@@ -29,11 +29,15 @@ LegacyArchive::LegacyArchive(const std::string& source_directory,
 std::string LegacyArchive::generate_uuid() {
     std::random_device rd; std::mt19937 gen(rd());
     std::uniform_int_distribution<> dis(0, 15);
-    const char* hex = "0123456789abcdef"; std::string uuid;
+    const char* hex = "0123456789abcdef";
+    std::string uuid(36, '-');
     for (int i = 0; i < 36; ++i) {
-        if (i == 8 || i == 13 || i == 18 || i == 23) uuid += '-';
-        else uuid += hex[dis(gen)];
+        if (i == 8 || i == 13 || i == 18 || i == 23) continue;
+        uuid[i] = hex[dis(gen)];
     }
+    uuid[14] = '4'; // UUID v4 version
+    // Variant: position 19 = 8,9,a,b
+    uuid[19] = hex[8 + dis(gen) % 4];
     return uuid;
 }
 
@@ -62,21 +66,23 @@ bool LegacyArchive::valid_migration_id(const std::string& id) {
     if (id.size() != 36) return false;
     for (int i = 0; i < 36; ++i) {
         if (i == 8 || i == 13 || i == 18 || i == 23) { if (id[i] != '-') return false; }
-        else if (!isxdigit(id[i])) return false;
+        else if (id[i] >= '0' && id[i] <= '9') continue;
+        else if (id[i] >= 'a' && id[i] <= 'f') continue; // lowercase only
+        else return false;
     }
-    // Check for path separators / backslash / control chars
-    for (char c : id) if (c == '/' || c == '\\' || c < 0x20 || c == '.') return false;
+    if (id[14] != '4') return false; // UUID v4 version
+    char vc = id[19];
+    if (vc != '8' && vc != '9' && vc != 'a' && vc != 'b') return false; // variant
     return true;
 }
 
 bool LegacyArchive::safe_version(const std::string& v) {
     if (v.empty()) return false;
     for (char c : v) {
-        if (c == '/' || c == '\\' || c < 0x20 || c == '.') return false;
+        if (c == '/' || c == '\\' || c < 0x20 || c == ' ' || c == '\t') return false;
     }
-    // Must not contain ".." or leading/trailing whitespace
     if (v.find("..") != std::string::npos) return false;
-    if (!v.empty() && (v[0] == ' ' || v.back() == ' ')) return false;
+    if (v.front() == '.' || v.back() == '.' || v.front() == ' ' || v.back() == ' ') return false;
     return true;
 }
 
