@@ -70,6 +70,7 @@ public:
     static std::string timestamp_utc();
     static bool safe_version(const std::string& v);
     static bool valid_migration_id(const std::string& id);
+    static bool valid_timestamp(const std::string& ts);
     static std::string json_escape(const std::string& s);
     static RecordCountResult count_records(const std::string& source_dir,
                                            const std::string& filename);

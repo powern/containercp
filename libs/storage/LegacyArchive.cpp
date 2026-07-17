@@ -80,6 +80,27 @@ bool LegacyArchive::valid_migration_id(const std::string& id) {
     return true;
 }
 
+bool LegacyArchive::valid_timestamp(const std::string& ts) {
+    // Format: YYYYMMDDTHHMMSSZ — exactly 16 chars
+    if (ts.size() != 16) return false;
+    for (int i = 0; i < 16; ++i) {
+        if (i == 8) { if (ts[i] != 'T') return false; }
+        else if (i == 15) { if (ts[i] != 'Z') return false; }
+        else if (ts[i] < '0' || ts[i] > '9') return false;
+    }
+    int month = (ts[4]-'0')*10 + (ts[5]-'0');
+    if (month < 1 || month > 12) return false;
+    int day = (ts[6]-'0')*10 + (ts[7]-'0');
+    if (day < 1 || day > 31) return false;
+    int hour = (ts[9]-'0')*10 + (ts[10]-'0');
+    if (hour > 23) return false;
+    int min = (ts[11]-'0')*10 + (ts[12]-'0');
+    if (min > 59) return false;
+    int sec = (ts[13]-'0')*10 + (ts[14]-'0');
+    if (sec > 59) return false;
+    return true;
+}
+
 bool LegacyArchive::safe_version(const std::string& v) {
     if (v.empty() || v[0] != 'v') return false;
     // Format: v<num>.<num>.<num>[-suffix]
@@ -470,7 +491,9 @@ ArchiveResult LegacyArchive::create_archive(
         std::map<std::string, bool> bools;
         std::vector<ParsedFileEntry> file_entries;
         ManifestParser parser(json);
-        if (!parser.parse_manifest(strings, ints, bools, file_entries)) continue;
+        if (!parser.parse_manifest(strings, ints, bools, file_entries)) {
+            result.error = "existing_archive_corrupt"; return result;
+        }
         if (strings["migration_id"] == migration_id) {
             // Verify existing archive integrity
             if (verify_archive(e.path().string())) {
@@ -851,6 +874,14 @@ bool LegacyArchive::verify_archive(const std::string& archive_path,
     if (strings["verification_result"] != "success") return false;
     if (strings["initial_integrity_check"] != "ok") return false;
     if (strings["reopened_integrity_check"] != "ok") return false;
+    if (!valid_timestamp(strings["migration_timestamp"])) return false;
+    if (strings["source_directory"].empty()) return false;
+    // Verify archive_directory matches actual directory name
+    {
+        std::string ap_clean = ap;
+        while (!ap_clean.empty() && ap_clean.back() == '/') ap_clean.pop_back();
+        if (strings["archive_directory"] != ap_clean) return false;
+    }
 
     // Validate boolean
     if (!bools.count("checksum_match") || !bools["checksum_match"]) return false;
@@ -921,7 +952,7 @@ bool LegacyArchive::verify_archive(const std::string& archive_path,
         m.target_version = strings["target_version"];
         m.migration_timestamp = strings["migration_timestamp"];
         m.source_directory = strings["source_directory"];
-        m.archive_directory = ap;
+        m.archive_directory = strings["archive_directory"];
         m.checksum_match = bools["checksum_match"];
         m.initial_integrity_check = strings["initial_integrity_check"];
         m.reopened_integrity_check = strings["reopened_integrity_check"];
