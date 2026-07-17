@@ -280,3 +280,39 @@ Focused test result: ___________
 Full test result: ___________
 Remaining limitations: ___________
 Phase 10 readiness: ___________
+
+## COMPLETION STATUS (updates)
+
+### P10-C01 — Fix semantic version validation ✅
+- Commit: 608d0de
+- safe_version() now allows individual periods, rejects "..", slashes, backslashes, whitespace
+- Tests: safe_version test in test_migration.cpp
+
+### P10-C02 — Strict canonical UUID contract ✅  
+- Commit: 608d0de
+- valid_migration_id(): lowercase only, version nibble=4, variant 8/9/a/b
+- generate_uuid(): produces valid v4 UUIDs
+- Tests: UUID validation test in test_migration.cpp
+
+### P10-C03 — Make physical inventory truly shared ✅
+- Commit: 67fff0f
+- legacy_file_inventory() remains in LegacyArchive.h as inline function
+- Used by both archive creation and verification
+- Single authoritative list
+
+### P10-C04 — Preserve parse success separately from count ✅
+- Commits: ebe1ae1, 67fff0f
+- RecordCountResult with success/error/record_count
+- Parser failure returns success=false with safe error
+- Removed line-count heuristic
+
+### P10-C05 — Separate profiles physical record counts ✅
+- Commit: 67fff0f
+- profiles.db and template_profiles.db have separate physical counts
+
+### P10-C06 — Define mail config physical count semantics ✅
+- Commit: 67fff0f
+- mail_state.db: present+non-empty=1, otherwise 0
+- mail_smarthost.db: same semantics
+
+### P10-C07 through P10-C26 — IN PROGRESS

@@ -168,8 +168,24 @@ ArchiveResult LegacyArchive::create_archive(
         verification_result.initial_integrity_check_result != "ok" ||
         verification_result.reopened_integrity_check_result != "ok" ||
         !verification_result.initial_foreign_key_violations.empty() ||
-        !verification_result.reopened_foreign_key_violations.empty()) {
+        !verification_result.reopened_foreign_key_violations.empty() ||
+        verification_result.resources.size() != 17) {
         result.error = "verification_not_passed"; return result;
+    }
+
+    // Validate archive root
+    if (archive_root_.empty()) { result.error = "invalid_archive_root"; return result; }
+    {
+        std::error_code ec;
+        auto st = fs::symlink_status(archive_root_, ec);
+        if (ec) { result.error = "archive_root_inaccessible"; return result; }
+        if (fs::is_symlink(st)) { result.error = "archive_root_symlink_rejected"; return result; }
+        if (!fs::exists(st)) {
+            fs::create_directories(archive_root_, ec);
+            if (ec) { result.error = "archive_root_create_failed"; return result; }
+        } else if (!fs::is_directory(st)) {
+            result.error = "archive_root_not_directory"; return result;
+        }
     }
 
     migration_timestamp_ = timestamp_utc();
