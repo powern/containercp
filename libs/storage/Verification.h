@@ -60,6 +60,14 @@ struct DatabaseVerificationResult {
     std::string error;
 };
 
+// Checked optional-value query result
+struct CheckedOptionalValue {
+    bool success = false;
+    bool present = false;
+    std::string value;
+    std::string error;
+};
+
 // Migration verification for Phase 8 imported data.
 //
 // Compares canonical legacy data (parsed from TXT) against SQLite data
@@ -149,6 +157,28 @@ private:
         std::string legacy_checksum;
     };
     std::map<std::string, InitialEvidence> initial_evidence_;
+
+    // Typed expected datasets frozen after successful initial verification
+    struct TypedInitialEvidence {
+        std::vector<node::Node> nodes;
+        std::vector<php::PhpVersion> php_versions;
+        std::vector<profile::Profile> profiles;
+        std::vector<user::User> users;
+        std::vector<site::Site> sites;
+        std::vector<domain::Domain> domains;
+        std::vector<database::Database> databases;
+        std::vector<backup::Backup> backups;
+        std::vector<proxy::ReverseProxy> reverse_proxies;
+        std::vector<access::AccessUser> access_users;
+        std::vector<access::AccessGrant> access_grants;
+        std::vector<auth::AuthUser> auth_users;
+        std::vector<ssl::SslCertificate> ssl_certificates;
+        std::vector<mail::MailDomain> mail_domains;
+        std::vector<mail::Mailbox> mail_mailboxes;
+        std::vector<mail::MailAlias> mail_aliases;
+        std::string mail_module_state;
+        std::string mail_smarthost;
+    } typed_evidence_;
 
     std::string legacy_dir_;
     std::string sqlite_path_;

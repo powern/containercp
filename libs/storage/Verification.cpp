@@ -473,6 +473,7 @@ static bool rd_ma(SQLiteDB& db, mail::MailAlias& a) {
         auto cr = checked_query<cls>(p, sql, reader); \
         if (!cr.success) { ResourceVerificationResult r; r.success = false; r.error = "sqlite_load_failed"; r.diagnostics = cr.error; return r; } \
         out = std::move(cr.records); ResourceVerificationResult r; r.success = true; return r; }
+#define LOAD_HELPER_CALL(type, p, out) load_##type(p, out)
 
 LOAD_HELPER(nodes, node::Node, "SELECT id, name, type FROM nodes ORDER BY id", rd_node)
 LOAD_HELPER(php_versions, php::PhpVersion, "SELECT id, version, image, enabled, default_version FROM php_versions ORDER BY id", rd_php)
@@ -725,6 +726,49 @@ DatabaseVerificationResult Verification::verify_all() {
         initial_evidence_[res.resource_type] = ev;
     }
 
+    // Freeze typed evidence for reopened field comparison
+    {
+        auto& te = typed_evidence_;
+        if (initial_evidence_.count("nodes")) {
+            std::vector<node::Node> v; auto lr = LOAD_HELPER_CALL(nodes, pool_, v); if (lr.success) te.nodes = std::move(v); }
+        if (initial_evidence_.count("php_versions")) {
+            std::vector<php::PhpVersion> v; auto lr = LOAD_HELPER_CALL(php_versions, pool_, v); if (lr.success) te.php_versions = std::move(v); }
+        if (initial_evidence_.count("profiles")) {
+            std::vector<profile::Profile> v; auto lr = LOAD_HELPER_CALL(profiles, pool_, v); if (lr.success) te.profiles = std::move(v); }
+        if (initial_evidence_.count("users")) {
+            std::vector<user::User> v; auto lr = LOAD_HELPER_CALL(users, pool_, v); if (lr.success) te.users = std::move(v); }
+        if (initial_evidence_.count("sites")) {
+            std::vector<site::Site> v; auto lr = LOAD_HELPER_CALL(sites, pool_, v); if (lr.success) te.sites = std::move(v); }
+        if (initial_evidence_.count("domains")) {
+            std::vector<domain::Domain> v; auto lr = LOAD_HELPER_CALL(domains, pool_, v); if (lr.success) te.domains = std::move(v); }
+        if (initial_evidence_.count("databases")) {
+            std::vector<database::Database> v; auto lr = LOAD_HELPER_CALL(databases, pool_, v); if (lr.success) te.databases = std::move(v); }
+        if (initial_evidence_.count("backups")) {
+            std::vector<backup::Backup> v; auto lr = LOAD_HELPER_CALL(backups, pool_, v); if (lr.success) te.backups = std::move(v); }
+        if (initial_evidence_.count("reverse_proxies")) {
+            std::vector<proxy::ReverseProxy> v; auto lr = LOAD_HELPER_CALL(reverse_proxies, pool_, v); if (lr.success) te.reverse_proxies = std::move(v); }
+        if (initial_evidence_.count("access_users")) {
+            std::vector<access::AccessUser> v; auto lr = LOAD_HELPER_CALL(access_users, pool_, v); if (lr.success) te.access_users = std::move(v); }
+        if (initial_evidence_.count("access_grants")) {
+            std::vector<access::AccessGrant> v; auto lr = LOAD_HELPER_CALL(access_grants, pool_, v); if (lr.success) te.access_grants = std::move(v); }
+        if (initial_evidence_.count("auth_users")) {
+            std::vector<auth::AuthUser> v; auto lr = LOAD_HELPER_CALL(auth_users, pool_, v); if (lr.success) te.auth_users = std::move(v); }
+        if (initial_evidence_.count("ssl_certificates")) {
+            std::vector<ssl::SslCertificate> v; auto lr = LOAD_HELPER_CALL(ssl_certificates, pool_, v); if (lr.success) te.ssl_certificates = std::move(v); }
+        if (initial_evidence_.count("mail_domains")) {
+            std::vector<mail::MailDomain> v; auto lr = LOAD_HELPER_CALL(mail_domains, pool_, v); if (lr.success) te.mail_domains = std::move(v); }
+        if (initial_evidence_.count("mail_mailboxes")) {
+            std::vector<mail::Mailbox> v; auto lr = LOAD_HELPER_CALL(mail_mailboxes, pool_, v); if (lr.success) te.mail_mailboxes = std::move(v); }
+        if (initial_evidence_.count("mail_aliases")) {
+            std::vector<mail::MailAlias> v; auto lr = LOAD_HELPER_CALL(mail_aliases, pool_, v); if (lr.success) te.mail_aliases = std::move(v); }
+        { ReadLease rl(pool_);
+          if (rl.is_valid()) {
+              if (rl->prepare("SELECT value FROM mail_config WHERE key = 'module_state'") && rl->step()) te.mail_module_state = rl->column_text(0);
+              if (rl->prepare("SELECT value FROM mail_config WHERE key = 'smarthost'") && rl->step()) te.mail_smarthost = rl->column_text(0);
+          }
+        }
+    }
+
     // Production reopen: shut down original pool, use real Storage
     pool_.shutdown();
 
@@ -773,9 +817,9 @@ DatabaseVerificationResult Verification::verify_all() {
         };
 
         // Helper for one resource reopen comparison
-        #define REOPEN_ONE(name, storage_load, checked_load, canon_fn) \
+        #define REOPEN_ONE(name, storage_vec, typed_vec, checked_load, canon_fn, field_fn, transient_fn) \
         { \
-            auto storage_records = storage_load; \
+            auto storage_records = storage_vec; \
             std::string storage_checksum = sha256(canon_fn(storage_records)); \
             ConnectionPool cp; \
             bool checked_ok = false; std::string checked_checksum; \
@@ -787,22 +831,31 @@ DatabaseVerificationResult Verification::verify_all() {
                 if (checked_ok) checked_checksum = sha256(canon_fn(confirm_records)); \
             } \
             reopen_compare(name, storage_records.size(), storage_checksum, checked_ok, checked_checksum); \
+            /* If mismatch, add field comparison vs typed evidence */ \
+            auto& rr = result.reopened_resources.back(); \
+            if (!rr.success && !typed_vec.empty()) { \
+                auto fres = compare_resource<std::decay_t<decltype(*typed_vec.begin())>>( \
+                    name, std::vector<std::decay_t<decltype(*typed_vec.begin())>>(typed_vec), \
+                    std::move(storage_records), canon_fn, field_fn, transient_fn); \
+                rr.mismatches = std::move(fres.mismatches); \
+                rr.legacy_checksum = fres.legacy_checksum; \
+            } \
         }
 
-        REOPEN_ONE("nodes", reopen_storage.load_nodes(), load_nodes, [this](const std::vector<node::Node>& v) { return canonical_nodes(v); });
-        REOPEN_ONE("php_versions", reopen_storage.load_php_versions(), load_php_versions, [this](const std::vector<php::PhpVersion>& v) { return canonical_php_versions(v); });
-        REOPEN_ONE("profiles", reopen_storage.load_profiles(), load_profiles, [this](const std::vector<profile::Profile>& v) { return canonical_profiles(v); });
-        REOPEN_ONE("users", reopen_storage.load_users(), load_users, [this](const std::vector<user::User>& v) { return canonical_users(v); });
-        REOPEN_ONE("sites", reopen_storage.load_sites(), load_sites, [this](const std::vector<site::Site>& v) { return canonical_sites(v); });
-        REOPEN_ONE("domains", reopen_storage.load_domains(), load_domains, [this](const std::vector<domain::Domain>& v) { return canonical_domains(v); });
-        REOPEN_ONE("databases", reopen_storage.load_databases(), load_databases, [this](const std::vector<database::Database>& v) { return canonical_databases(v); });
-        REOPEN_ONE("reverse_proxies", reopen_storage.load_reverse_proxies(), load_reverse_proxies, [this](const std::vector<proxy::ReverseProxy>& v) { return canonical_reverse_proxies(v); });
-        REOPEN_ONE("access_users", reopen_storage.load_access_users(), load_access_users, [this](const std::vector<access::AccessUser>& v) { return canonical_access_users(v); });
-        REOPEN_ONE("access_grants", reopen_storage.load_access_grants(), load_access_grants, [this](const std::vector<access::AccessGrant>& v) { return canonical_access_grants(v); });
-        REOPEN_ONE("ssl_certificates", reopen_storage.load_ssl_certificates(), load_ssl_certificates, [this](const std::vector<ssl::SslCertificate>& v) { return canonical_ssl_certificates(v); });
-        REOPEN_ONE("mail_domains", reopen_storage.load_mail_domains(), load_mail_domains, [this](const std::vector<mail::MailDomain>& v) { return canonical_mail_domains(v); });
-        REOPEN_ONE("mail_mailboxes", reopen_storage.load_mailboxes(), load_mail_mailboxes, [this](const std::vector<mail::Mailbox>& v) { return canonical_mail_mailboxes(v); });
-        REOPEN_ONE("mail_aliases", reopen_storage.load_mail_aliases(), load_mail_aliases, [this](const std::vector<mail::MailAlias>& v) { return canonical_mail_aliases(v); });
+        REOPEN_ONE("nodes", reopen_storage.load_nodes(), typed_evidence_.nodes, load_nodes, [this](const std::vector<node::Node>& v) { return canonical_nodes(v); }, FIELD_ADAPTOR(node::Node, compare_node), TRANSIENT_NULL);
+        REOPEN_ONE("php_versions", reopen_storage.load_php_versions(), typed_evidence_.php_versions, load_php_versions, [this](const std::vector<php::PhpVersion>& v) { return canonical_php_versions(v); }, FIELD_ADAPTOR(php::PhpVersion, compare_php), transient_php);
+        REOPEN_ONE("profiles", reopen_storage.load_profiles(), typed_evidence_.profiles, load_profiles, [this](const std::vector<profile::Profile>& v) { return canonical_profiles(v); }, FIELD_ADAPTOR(profile::Profile, compare_profile), transient_profile);
+        REOPEN_ONE("users", reopen_storage.load_users(), typed_evidence_.users, load_users, [this](const std::vector<user::User>& v) { return canonical_users(v); }, FIELD_ADAPTOR(user::User, compare_user), transient_user);
+        REOPEN_ONE("sites", reopen_storage.load_sites(), typed_evidence_.sites, load_sites, [this](const std::vector<site::Site>& v) { return canonical_sites(v); }, FIELD_ADAPTOR(site::Site, compare_site), transient_site);
+        REOPEN_ONE("domains", reopen_storage.load_domains(), typed_evidence_.domains, load_domains, [this](const std::vector<domain::Domain>& v) { return canonical_domains(v); }, FIELD_ADAPTOR(domain::Domain, compare_domain), transient_domain);
+        REOPEN_ONE("databases", reopen_storage.load_databases(), typed_evidence_.databases, load_databases, [this](const std::vector<database::Database>& v) { return canonical_databases(v); }, FIELD_ADAPTOR(database::Database, compare_database), transient_database);
+        REOPEN_ONE("reverse_proxies", reopen_storage.load_reverse_proxies(), typed_evidence_.reverse_proxies, load_reverse_proxies, [this](const std::vector<proxy::ReverseProxy>& v) { return canonical_reverse_proxies(v); }, FIELD_ADAPTOR(proxy::ReverseProxy, compare_proxy), transient_proxy);
+        REOPEN_ONE("access_users", reopen_storage.load_access_users(), typed_evidence_.access_users, load_access_users, [this](const std::vector<access::AccessUser>& v) { return canonical_access_users(v); }, FIELD_ADAPTOR(access::AccessUser, compare_access_user), transient_au);
+        REOPEN_ONE("access_grants", reopen_storage.load_access_grants(), typed_evidence_.access_grants, load_access_grants, [this](const std::vector<access::AccessGrant>& v) { return canonical_access_grants(v); }, FIELD_ADAPTOR(access::AccessGrant, compare_access_grant), TRANSIENT_NULL);
+        REOPEN_ONE("ssl_certificates", reopen_storage.load_ssl_certificates(), typed_evidence_.ssl_certificates, load_ssl_certificates, [this](const std::vector<ssl::SslCertificate>& v) { return canonical_ssl_certificates(v); }, FIELD_ADAPTOR(ssl::SslCertificate, compare_ssl), transient_ssl);
+        REOPEN_ONE("mail_domains", reopen_storage.load_mail_domains(), typed_evidence_.mail_domains, load_mail_domains, [this](const std::vector<mail::MailDomain>& v) { return canonical_mail_domains(v); }, FIELD_ADAPTOR(mail::MailDomain, compare_mail_domain), transient_md);
+        REOPEN_ONE("mail_mailboxes", reopen_storage.load_mailboxes(), typed_evidence_.mail_mailboxes, load_mail_mailboxes, [this](const std::vector<mail::Mailbox>& v) { return canonical_mail_mailboxes(v); }, FIELD_ADAPTOR(mail::Mailbox, compare_mailbox), transient_mb);
+        REOPEN_ONE("mail_aliases", reopen_storage.load_mail_aliases(), typed_evidence_.mail_aliases, load_mail_aliases, [this](const std::vector<mail::MailAlias>& v) { return canonical_mail_aliases(v); }, FIELD_ADAPTOR(mail::MailAlias, compare_mail_alias), transient_ma);
 
         // mail_config
         {
