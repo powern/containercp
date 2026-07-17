@@ -775,7 +775,7 @@ DatabaseVerificationResult Verification::verify_all() {
         // Three-way reopen comparison: initial_evidence == Storage == checked pool
         auto reopen_compare = [&](const std::string& name,
             uint64_t storage_count, const std::string& storage_checksum,
-            bool checked_ok, const std::string& checked_checksum) {
+            bool storage_ok, bool checked_ok, const std::string& checked_checksum) {
             ResourceVerificationResult rr; rr.resource_type = name;
             rr.sqlite_record_count = storage_count;
             rr.sqlite_checksum = storage_checksum;
@@ -786,7 +786,10 @@ DatabaseVerificationResult Verification::verify_all() {
             rr.legacy_record_count = expected_count;
             rr.legacy_checksum = expected_checksum;
 
-            if (!checked_ok) {
+            if (!storage_ok) {
+                rr.success = false; rr.status = VerificationStatus::Failed;
+                rr.error = "reopen_storage_load_failed";
+            } else if (!checked_ok) {
                 rr.success = false; rr.status = VerificationStatus::Failed;
                 rr.error = "reopen_checked_load_failed";
             } else if (storage_count != expected_count) {
@@ -813,7 +816,7 @@ DatabaseVerificationResult Verification::verify_all() {
             std::string scs = storage_ok ? sha256(canon_fn(storage_snap.records)) : ""; \
             ConnectionPool cp; std::vector<std::decay_t<decltype(*storage_snap.records.begin())>> cr; bool checked_ok = false; \
             if (make_pool(cp, "reopen_" name)) { auto lr = load_fn(cp, cr); checked_ok = lr.success; cp.shutdown(); } \
-            reopen_compare(name, sc, scs, checked_ok, checked_ok ? sha256(canon_fn(cr)) : ""); \
+            reopen_compare(name, sc, scs, storage_ok, checked_ok, checked_ok ? sha256(canon_fn(cr)) : ""); \
             auto& rr = result.reopened_resources.back(); \
             rr.storage_checksum_alt = scs; \
             rr.checked_checksum_alt = checked_ok ? sha256(canon_fn(cr)) : ""; \
@@ -870,7 +873,7 @@ DatabaseVerificationResult Verification::verify_all() {
                     checked_checksum = sha256(canonical_mail_config(cms.present, cms.value, csh.present, csh.value));
                 }
             }
-            reopen_compare("mail_config", 0, storage_checksum, checked_ok, checked_checksum);
+            reopen_compare("mail_config", 0, storage_checksum, ms_snap.success && sh_snap.success, checked_ok, checked_checksum);
         }
 
         // Importer-only: backups, auth_users via direct SQLite (full field comparison)
@@ -883,7 +886,7 @@ DatabaseVerificationResult Verification::verify_all() {
                 auto blr = load_backups(io_pool, backup_records);
                 reopen_compare("backups", backup_records.size(),
                     blr.success ? sha256(canonical_backups(backup_records)) : "",
-                    blr.success, blr.success ? sha256(canonical_backups(backup_records)) : "");
+                    true, blr.success, blr.success ? sha256(canonical_backups(backup_records)) : "");
                 if (!blr.success && !typed_evidence_.backups.empty()) {
                     auto& rr = result.reopened_resources.back();
                     auto fres = compare_resource<backup::Backup>("backups",
@@ -901,7 +904,7 @@ DatabaseVerificationResult Verification::verify_all() {
                 auto alr = load_auth_users(io_pool, auth_records);
                 reopen_compare("auth_users", auth_records.size(),
                     alr.success ? sha256(canonical_auth_users(auth_records)) : "",
-                    alr.success, alr.success ? sha256(canonical_auth_users(auth_records)) : "");
+                    true, alr.success, alr.success ? sha256(canonical_auth_users(auth_records)) : "");
                 if (!result.reopened_resources.back().success && !typed_evidence_.auth_users.empty()) {
                     auto& rr = result.reopened_resources.back();
                     auto fres = compare_resource<auth::AuthUser>("auth_users",
