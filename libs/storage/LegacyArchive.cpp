@@ -453,8 +453,9 @@ ArchiveResult LegacyArchive::create_archive(
     }
 
 
-    // Durable copy with O_NOFOLLOW source open — no TOCTOU race
-    auto durable_copy = [&](const std::string& src, const std::string& dst, const std::string& fn) -> bool {
+    // Durable copy — destination verified against inventory SHA
+    auto durable_copy = [&](const std::string& src, const std::string& dst, const std::string& fn,
+                            const std::string& expected_sha) -> bool {
         // Open source with O_NOFOLLOW to reject symlinks atomically
         int src_fd = open(src.c_str(), O_RDONLY | O_NOFOLLOW);
         if (src_fd < 0) { result.error = "source_open_failed:" + fn; return false; }
@@ -468,26 +469,18 @@ ArchiveResult LegacyArchive::create_archive(
         time_t src_mtime = st.st_mtime;
         ino_t src_inode = st.st_ino;
 
-        // Compute source SHA from opened fd
-        unsigned char hash[SHA256_DIGEST_LENGTH]; SHA256_CTX ctx; SHA256_Init(&ctx);
-        char buf[65536]; uint64_t total_read = 0; bool read_ok = true;
+        // Fast-forward through source to verify size (no separate SHA pass)
+        uint64_t total_read = 0;
         while (true) {
+            char buf[65536];
             ssize_t n = read(src_fd, buf, sizeof(buf));
-            if (n < 0) { read_ok = false; break; }
+            if (n < 0) { close(src_fd); result.error = "source_read_failed:" + fn; return false; }
             if (n == 0) break;
-            SHA256_Update(&ctx, buf, n);
             total_read += n;
         }
-        if (!read_ok) { close(src_fd); result.error = "source_sha_failed:" + fn; return false; }
         if (total_read != src_size) { close(src_fd); result.error = "source_size_changed:" + fn; return false; }
-        SHA256_Final(hash, &ctx);
-        std::string src_sha; src_sha.reserve(64);
-        for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
-            src_sha += "0123456789abcdef"[(hash[i] >> 4) & 0xf];
-            src_sha += "0123456789abcdef"[hash[i] & 0xf];
-        }
 
-        // Seek back and copy
+        // Seek back for copy
         if (lseek(src_fd, 0, SEEK_SET) != 0) { close(src_fd); result.error = "source_seek_failed:" + fn; return false; }
 
         // Exclusive create destination
@@ -495,12 +488,12 @@ ArchiveResult LegacyArchive::create_archive(
         if (dst_fd < 0) { close(src_fd); result.error = "dest_create_failed:" + fn; return false; }
 
         // Stream copy
-        bool copy_ok = true;
+        char cbuf[65536]; bool copy_ok = true;
         while (true) {
-            ssize_t n = read(src_fd, buf, sizeof(buf));
+            ssize_t n = read(src_fd, cbuf, sizeof(cbuf));
             if (n < 0) { copy_ok = false; break; }
             if (n == 0) break;
-            ssize_t written = write(dst_fd, buf, n);
+            ssize_t written = write(dst_fd, cbuf, n);
             if (written < 0 || written != n) { copy_ok = false; break; }
         }
         close(src_fd);
@@ -510,10 +503,16 @@ ArchiveResult LegacyArchive::create_archive(
         if (fsync(dst_fd) != 0) { close(dst_fd); unlink(dst.c_str()); result.error = "archive_file_fsync_failed:" + fn; return false; }
         if (close(dst_fd) != 0) { unlink(dst.c_str()); result.error = "close_failed:" + fn; return false; }
 
-        // Verify destination from disk
+        // Verify destination SHA matches inventory snapshot (NOT recomputed source)
         std::string dst_sha = sha256_file(dst);
         if (dst_sha.empty()) { result.error = "dest_sha_failed:" + fn; return false; }
-        if (dst_sha != src_sha) { result.error = "checksum_mismatch:" + fn; return false; }
+        if (dst_sha != expected_sha) { result.error = "checksum_mismatch:" + fn; return false; }
+        // Also verify against freshly read source (detect source mutation during copy)
+        { int check_fd = open(src.c_str(), O_RDONLY); if (check_fd < 0) {
+            result.error = "source_recheck_failed:" + fn; return false; }
+          close(check_fd); }
+        std::string src_now = sha256_file(src);
+        if (src_now != expected_sha) { result.error = "source_changed_during_archive:" + fn; return false; }
 
         // Verify source unchanged (stat after fd is closed)
         struct stat st2;
@@ -527,7 +526,7 @@ ArchiveResult LegacyArchive::create_archive(
 
     for (auto& fe : file_entries) {
         if (!fe.present) continue;
-        if (!durable_copy(source_dir_ + fe.filename, temp_path + fe.filename, fe.filename))
+        if (!durable_copy(source_dir_ + fe.filename, temp_path + fe.filename, fe.filename, fe.sha256))
             return result;
     }
 
