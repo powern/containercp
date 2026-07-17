@@ -891,7 +891,7 @@ DatabaseVerificationResult Verification::verify_all() {
                     auto& rr = result.reopened_resources.back();
                     auto fres = compare_resource<backup::Backup>("backups",
                         std::vector<backup::Backup>(typed_evidence_.backups),
-                        backup_records,
+                        std::move(backup_records),
                         [this](const std::vector<backup::Backup>& v) { return canonical_backups(v); },
                         FIELD_ADAPTOR(backup::Backup, compare_backup), TRANSIENT_NULL);
                     rr.mismatches = std::move(fres.mismatches);
@@ -909,7 +909,7 @@ DatabaseVerificationResult Verification::verify_all() {
                     auto& rr = result.reopened_resources.back();
                     auto fres = compare_resource<auth::AuthUser>("auth_users",
                         std::vector<auth::AuthUser>(typed_evidence_.auth_users),
-                        auth_records,
+                        std::move(auth_records),
                         [this](const std::vector<auth::AuthUser>& v) { return canonical_auth_users(v); },
                         FIELD_ADAPTOR(auth::AuthUser, compare_auth_user), transient_authu);
                     rr.mismatches = std::move(fres.mismatches);
