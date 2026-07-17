@@ -603,37 +603,40 @@ ArchiveResult LegacyArchive::create_archive(
         std::error_code ec;
         fs::rename(temp_path, final_path, ec);
         if (ec) { result.error = "rename_failed"; return result; }
+    }
+
+    // After rename, temp_path no longer exists — any failure must quarantine final_path
+    temp_guard.release();
+
+    // Archive-root fsync after rename
+    {
         int dd = open(archive_root_.c_str(), O_RDONLY);
-        if (dd < 0) { result.error = "archive_root_fsync_open_failed"; return result; }
-        if (fsync(dd) != 0) { close(dd); result.error = "archive_root_fsync_failed"; return result; }
-        if (close(dd) != 0) { result.error = "archive_root_close_failed"; return result; }
+        if (dd < 0) goto quarantine;
+        if (fsync(dd) != 0) { close(dd); goto quarantine; }
+        if (close(dd) != 0) goto quarantine;
     }
 
     // Post-publication verification
-    if (!verify_archive(final_path)) {
+    if (verify_archive(final_path)) {
+        result.archive_path = final_path;
+        result.success = true;
+        return result;
+    }
+
+quarantine:
+    {
         std::string quarantine = archive_root_ + ".failed-" + archive_name + "/";
         std::error_code ec;
-        // Quarantine must not already exist
-        if (fs::exists(quarantine, ec)) {
-            result.error = "post_publish_verify_failed"; return result;
-        }
-        // Atomically move failed archive to quarantine
+        if (fs::exists(quarantine, ec)) { result.error = "post_publish_verify_failed"; return result; }
         fs::rename(final_path, quarantine, ec);
         if (ec) { result.error = "post_publish_verify_failed"; return result; }
-        // Verify final path no longer exists
         if (fs::exists(final_path, ec)) { result.error = "post_publish_verify_failed"; return result; }
-        // fsync archive root
         int qd = open(archive_root_.c_str(), O_RDONLY);
         if (qd < 0) { result.error = "archive_root_fsync_open_failed"; return result; }
         if (fsync(qd) != 0) { close(qd); result.error = "archive_root_fsync_failed"; return result; }
         if (close(qd) != 0) { result.error = "archive_root_close_failed"; return result; }
         result.error = "post_publish_verify_failed"; return result;
     }
-
-    result.archive_path = final_path;
-    temp_guard.release(); // publication succeeded, don't delete
-    result.success = true;
-    return result;
 }
 
 // ============================================================
