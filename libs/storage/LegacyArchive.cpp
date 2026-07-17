@@ -231,13 +231,17 @@ class ManifestParser {
         bool neg = false;
         if (peek() == '-') { neg = true; next(); }
         if (peek() < '0' || peek() > '9') return false;
-        out = 0;
+        uint64_t val = 0;
+        const uint64_t kMax = neg ? static_cast<uint64_t>(INT64_MAX) + 1 : INT64_MAX;
         while (peek() >= '0' && peek() <= '9') {
-            int64_t prev = out;
-            out = out * 10 + (next() - '0');
-            if (out < prev) return false; // overflow
+            int digit = next() - '0';
+            if (val > UINT64_MAX / 10) return false;
+            uint64_t next_val = val * 10 + digit;
+            if (next_val < val) return false;
+            if (next_val > kMax) return false;
+            val = next_val;
         }
-        if (neg) out = -out;
+        out = neg ? -static_cast<int64_t>(val) : static_cast<int64_t>(val);
         return true;
     }
 
@@ -388,12 +392,12 @@ ArchiveResult LegacyArchive::create_archive(
         result.error = "verification_not_passed"; return result;
     }
     // Validate each resource: name uniqueness, known name, success
+    static const std::set<std::string> kExpected = {
+        "nodes","php_versions","profiles","users","sites","domains","databases",
+        "backups","reverse_proxies","access_users","access_grants","auth_users",
+        "ssl_certificates","mail_domains","mail_mailboxes","mail_aliases","mail_config"
+    };
     {
-        static const std::set<std::string> kExpected = {
-            "nodes","php_versions","profiles","users","sites","domains","databases",
-            "backups","reverse_proxies","access_users","access_grants","auth_users",
-            "ssl_certificates","mail_domains","mail_mailboxes","mail_aliases","mail_config"
-        };
         std::set<std::string> seen;
         for (auto& res : verification_result.resources) {
             if (!kExpected.count(res.resource_type)) { result.error = "verification_not_passed"; return result; }
@@ -402,8 +406,18 @@ ArchiveResult LegacyArchive::create_archive(
             seen.insert(res.resource_type);
         }
     }
-    if (verification_result.reopened_resources.size() != 17) {
-        result.error = "verification_not_passed"; return result;
+    // Validate each reopened resource: same rules as initial resources
+    {
+        if (verification_result.reopened_resources.size() != 17) {
+            result.error = "verification_not_passed"; return result;
+        }
+        std::set<std::string> reopened_seen;
+        for (auto& rr : verification_result.reopened_resources) {
+            if (!kExpected.count(rr.resource_type)) { result.error = "verification_not_passed"; return result; }
+            if (reopened_seen.count(rr.resource_type)) { result.error = "verification_not_passed"; return result; }
+            if (!rr.success) { result.error = "verification_not_passed"; return result; }
+            reopened_seen.insert(rr.resource_type);
+        }
     }
 
     // Validate archive root

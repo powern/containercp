@@ -936,6 +936,7 @@ DatabaseVerificationResult Verification::verify_all() {
                 result.error = std::string("duplicate_reopened:") + rr.resource_type;
                 reopen_pass = false;
             }
+            if (!rr.success) { result.error = std::string("failed_reopened:") + rr.resource_type; reopen_pass = false; }
             reopened_seen.insert(rr.resource_type);
         }
         std::vector<std::string> required_reopened = {
