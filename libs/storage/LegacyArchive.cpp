@@ -122,6 +122,25 @@ std::string LegacyArchive::sha256_file(const std::string& path) {
     return out;
 }
 
+static std::string sha256_fd(int fd) {
+    if (fd < 0) return "";
+    unsigned char hash[SHA256_DIGEST_LENGTH]; SHA256_CTX ctx;
+    SHA256_Init(&ctx);
+    char buf[8192];
+    while (true) {
+        ssize_t n; do { n = read(fd, buf, sizeof(buf)); } while (n < 0 && errno == EINTR);
+        if (n < 0) return "";
+        if (n == 0) break;
+        SHA256_Update(&ctx, buf, n);
+    }
+    SHA256_Final(hash, &ctx); std::string out; out.reserve(64);
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
+        out += "0123456789abcdef"[(hash[i] >> 4) & 0xf];
+        out += "0123456789abcdef"[hash[i] & 0xf];
+    }
+    return out;
+}
+
 static uint64_t file_size_or_zero(const std::string& path) {
     std::error_code ec; auto sz = fs::file_size(path, ec); return ec ? 0 : sz;
 }
@@ -550,7 +569,7 @@ ArchiveResult LegacyArchive::create_archive(
         uint64_t total_read = 0;
         while (true) {
             char buf[65536];
-            ssize_t n = read(src_fd, buf, sizeof(buf));
+            ssize_t n; do { n = read(src_fd, buf, sizeof(buf)); } while (n < 0 && errno == EINTR);
             if (n < 0) { close(src_fd); result.error = "source_read_failed:" + fn; return false; }
             if (n == 0) break;
             total_read += n;
@@ -592,19 +611,19 @@ ArchiveResult LegacyArchive::create_archive(
         std::string dst_sha = sha256_file(dst);
         if (dst_sha.empty()) { result.error = "dest_sha_failed:" + fn; return false; }
         if (dst_sha != expected_sha) { result.error = "checksum_mismatch:" + fn; return false; }
-        // Also verify against freshly read source (detect source mutation during copy)
-        { int check_fd = open(src.c_str(), O_RDONLY); if (check_fd < 0) {
-            result.error = "source_recheck_failed:" + fn; return false; }
-          close(check_fd); }
-        std::string src_now = sha256_file(src);
-        if (src_now != expected_sha) { result.error = "source_changed_during_archive:" + fn; return false; }
-
-        // Verify source unchanged (stat after fd is closed)
-        struct stat st2;
-        if (stat(src.c_str(), &st2) != 0) { result.error = "source_recheck_failed:" + fn; return false; }
-        if (static_cast<uint64_t>(st2.st_size) != src_size ||
-            st2.st_mtime != src_mtime || st2.st_ino != src_inode) {
-            result.error = "source_changed_during_archive:" + fn; return false;
+        // Recheck source via O_NOFOLLOW fd: SHA + stat (no path-following)
+        {
+            int recheck_fd = open(src.c_str(), O_RDONLY | O_NOFOLLOW);
+            if (recheck_fd < 0) { result.error = "source_recheck_failed:" + fn; return false; }
+            std::string src_now = sha256_fd(recheck_fd);
+            if (src_now != expected_sha) { close(recheck_fd); result.error = "source_changed_during_archive:" + fn; return false; }
+            struct stat st2;
+            if (fstat(recheck_fd, &st2) != 0) { close(recheck_fd); result.error = "source_recheck_failed:" + fn; return false; }
+            close(recheck_fd);
+            if (static_cast<uint64_t>(st2.st_size) != src_size ||
+                st2.st_mtime != src_mtime || st2.st_ino != src_inode) {
+                result.error = "source_changed_during_archive:" + fn; return false;
+            }
         }
         return true;
     };
