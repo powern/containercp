@@ -117,8 +117,8 @@ public:
     std::string canonical_mail_domains(const std::vector<mail::MailDomain>& records);
     std::string canonical_mail_mailboxes(const std::vector<mail::Mailbox>& records);
     std::string canonical_mail_aliases(const std::vector<mail::MailAlias>& records);
-    std::string canonical_mail_config(const std::string& module_state,
-                                       const std::string& smarthost);
+    std::string canonical_mail_config(bool ms_present, const std::string& ms,
+                                       bool sh_present, const std::string& sh);
 
 private:
 

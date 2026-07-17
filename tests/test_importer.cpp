@@ -1,4 +1,5 @@
 #include "storage/LegacyImporter.h"
+#include "storage/SQLiteSnapshotReader.h"
 #include "storage/Verification.h"
 #include "storage/MigrationEngine.h"
 #include "storage/SchemaMigrations.h"
@@ -1458,4 +1459,58 @@ TEST_CASE("exactly 17 reopened results") {
     CHECK(db_result.reopened_resources.size() == 17);
     CHECK(db_result.reopened_verification_passed);
     cleanup(dir);
+}
+
+TEST_CASE("mail_config baseline fails on query error") {
+    auto dir = test_dir("vfy_mc_bl_fail");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "mail_state.db", "active\n");
+    write_file(dir + "nodes.db", "1|main|web\n");
+    write_file(dir + "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_file(dir + "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_file(dir + "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_file(dir + "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_file(dir + "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_file(dir + "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_file(dir + "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    ConnectionPool pool;
+    if (!pool.initialize(dir + "containercp.db")) { cleanup(dir); return; }
+    SQLiteDB migrator; migrator.open(dir + "containercp.db");
+    MigrationEngine eng; register_all_schema_migrations(eng); eng.migrate(migrator); migrator.close();
+    // Don't create mail_config table — baseline will fail
+    LegacyImporter imp(dir, pool);
+    auto r = imp.import_mail_config();
+    // Should fail because baseline capture fails (no mail_config table)
+    CHECK_FALSE(r.success);
+    pool.shutdown(); cleanup(dir);
+}
+
+TEST_CASE("CheckedOptionalValue absent vs present-empty") {
+    auto dir = test_dir("vfy_opv");
+    cleanup(dir); fs::create_directories(dir);
+    ConnectionPool pool; init_pool(pool, dir);
+    // Insert empty value key
+    { WriteGuard wg(pool); wg.db().exec("INSERT INTO mail_config(key,value) VALUES('test','')"); }
+    SQLiteSnapshotReader snap(pool);
+    // Absent key
+    auto r1 = snap.read_mail_config_key("nonexistent");
+    CHECK(r1.success); CHECK_FALSE(r1.present);
+    // Present empty key
+    auto r2 = snap.read_mail_config_key("test");
+    CHECK(r2.success); CHECK(r2.present); CHECK(r2.value.empty());
+    pool.shutdown(); cleanup(dir);
+}
+
+TEST_CASE("stray code is not present") {
+    // Verify that capture_baseline properly closes
+    auto dir = test_dir("vfy_stray");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "nodes.db", "1|main|web\n");
+    ConnectionPool pool; init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto r = imp.import_nodes();
+    CHECK(r.success);
+    CHECK(r.baseline.success);
+    pool.shutdown(); cleanup(dir);
 }

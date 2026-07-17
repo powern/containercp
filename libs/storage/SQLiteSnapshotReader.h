@@ -101,15 +101,17 @@ struct SQLiteSnapshotReader {
         CheckedOptionalValue r;
         ReadLease rl(pool_);
         if (!rl.is_valid()) { r.error = "no_lease"; return r; }
-        std::string sql = "SELECT value FROM mail_config WHERE key = ?";
-        if (!rl->prepare(sql)) { r.error = "prepare:" + key; return r; }
-        if (!rl->bind_text(1, key)) { r.error = "bind:" + key; return r; }
+        if (!rl->prepare("SELECT value FROM mail_config WHERE key = ?")) { r.error = "prepare_failed"; return r; }
+        if (!rl->bind_text(1, key)) { r.error = "bind_failed"; return r; }
         if (rl->step()) {
             r.present = true; r.value = rl->column_text(0);
-            if (rl->step()) { r.error = "unexpected_second_row:" + key; return r; }
+            if (rl->step()) {
+                if (rl->error_code() != 0) { r.error = "step_error_second"; return r; }
+                r.error = "unexpected_second_row"; return r;
+            }
+            if (rl->error_code() != 0) { r.error = "step_error_done"; return r; }
         } else {
-            if (rl->error_code() != 0) { r.error = "step_error:" + key; return r; }
-            // DONE — key absent
+            if (rl->error_code() != 0) { r.error = "step_error_first"; return r; }
         }
         r.success = true; return r;
     }

@@ -381,8 +381,8 @@ std::string Verification::canonical_mail_mailboxes(const std::vector<mail::Mailb
 { return StorageCanonicalizer::canonical_mail_mailboxes(records); }
 std::string Verification::canonical_mail_aliases(const std::vector<mail::MailAlias>& records)
 { return StorageCanonicalizer::canonical_mail_aliases(records); }
-std::string Verification::canonical_mail_config(const std::string& ms, const std::string& sh) {
-    return StorageCanonicalizer::canonical_mail_config(!ms.empty(), ms, !sh.empty(), sh);
+std::string Verification::canonical_mail_config(bool ms_present, const std::string& ms, bool sh_present, const std::string& sh) {
+    return StorageCanonicalizer::canonical_mail_config(ms_present, ms, sh_present, sh);
 }
 
 // ---- SQLite row readers ----
@@ -569,15 +569,11 @@ ResourceVerificationResult Verification::verify_mail_config() {
     if (!ir) { ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed; r.error = "missing_import_result"; r.resource_type = "mail_config"; return r; }
         if (ir->disposition == ImportDisposition::SkippedEmpty || ir->disposition == ImportDisposition::SkippedMissingOptional) {
         // Checked full-state mail_config baseline verification
-        std::string curr_ms, curr_sh;
-        { ReadLease rl(pool_);
-          if (!rl.is_valid()) { ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed; r.error = "baseline_load_failed"; r.resource_type = "mail_config"; return r; }
-          if (!rl->prepare("SELECT value FROM mail_config WHERE key = 'module_state'")) { ResourceVerificationResult r; r.success = false; r.error = "baseline_load_failed"; r.resource_type = "mail_config"; return r; }
-          if (rl->step()) curr_ms = rl->column_text(0);
-          if (!rl->prepare("SELECT value FROM mail_config WHERE key = 'smarthost'")) { ResourceVerificationResult r; r.success = false; r.error = "baseline_load_failed"; r.resource_type = "mail_config"; return r; }
-          if (rl->step()) curr_sh = rl->column_text(0);
-        }
-        std::string curr_checksum = sha256(canonical_mail_config(curr_ms, curr_sh));
+    SQLiteSnapshotReader snap(pool_);
+    auto curr_ms = snap.read_mail_config_key("module_state");
+    auto curr_sh = snap.read_mail_config_key("smarthost");
+    if (!curr_ms.success || !curr_sh.success) { ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed; r.error = "baseline_load_failed"; r.resource_type = "mail_config"; return r; }
+    std::string curr_checksum = sha256(canonical_mail_config(curr_ms.present, curr_ms.value, curr_sh.present, curr_sh.value));
         if (curr_checksum != ir->baseline.canonical_checksum) {
             ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed;
             r.error = "baseline_mismatch"; r.resource_type = "mail_config";
@@ -591,32 +587,24 @@ ResourceVerificationResult Verification::verify_mail_config() {
     auto dr = reader.read_mail_config();
     if (!dr.success) { r.error = dr.error; return r; }
 
-    // SQLite config via checked query
-    std::string module_state, smarthost;
-    {
-        ReadLease rl(pool_);
-        if (!rl.is_valid()) { r.error = "sqlite_load_failed"; return r; }
-        if (!rl->prepare("SELECT value FROM mail_config WHERE key = 'module_state'")) {
-            r.error = "query_failed:module_state"; return r; }
-        if (rl->step()) module_state = rl->column_text(0);
-        if (!rl->prepare("SELECT value FROM mail_config WHERE key = 'smarthost'")) {
-            r.error = "query_failed:smarthost"; return r; }
-        if (rl->step()) smarthost = rl->column_text(0);
-    }
+    SQLiteSnapshotReader snap(pool_);
+    auto ms_snap = snap.read_mail_config_key("module_state");
+    auto sh_snap = snap.read_mail_config_key("smarthost");
+    if (!ms_snap.success || !sh_snap.success) { r.error = "sqlite_load_failed"; return r; }
 
     r.legacy_record_count = (dr.module_state.empty() ? 0 : 1) + (dr.smarthost.empty() ? 0 : 1);
-    r.sqlite_record_count = (module_state.empty() ? 0 : 1) + (smarthost.empty() ? 0 : 1);
-    r.legacy_checksum = sha256(canonical_mail_config(dr.module_state, dr.smarthost));
-    r.sqlite_checksum = sha256(canonical_mail_config(module_state, smarthost));
+    r.sqlite_record_count = (ms_snap.present ? 1 : 0) + (sh_snap.present ? 1 : 0);
+    r.legacy_checksum = sha256(canonical_mail_config(!dr.module_state.empty(), dr.module_state, !dr.smarthost.empty(), dr.smarthost));
+    r.sqlite_checksum = sha256(canonical_mail_config(ms_snap.present, ms_snap.value, sh_snap.present, sh_snap.value));
 
     if (r.legacy_record_count != r.sqlite_record_count || r.legacy_checksum != r.sqlite_checksum) {
         // Field-by-field mail_config comparison
-        if (dr.module_state != module_state) {
+        if (dr.module_state != ms_snap.value) {
             FieldMismatch fm; fm.resource_type = "mail_config";
-            fm.field = "module_state"; fm.expected = "[REDACTED]"; fm.actual = "[REDACTED]";
+            fm.field = "module_state"; fm.expected = dr.module_state; fm.actual = ms_snap.value;
             r.mismatches.push_back(fm);
         }
-        if (dr.smarthost != smarthost) {
+        if (dr.smarthost != sh_snap.value) {
             FieldMismatch fm; fm.resource_type = "mail_config";
             fm.field = "smarthost"; fm.expected = "[REDACTED]"; fm.actual = "[REDACTED]";
             r.mismatches.push_back(fm);
@@ -908,23 +896,18 @@ DatabaseVerificationResult Verification::verify_all() {
         {
             auto storage_ms = reopen_storage.load_mail_module_state();
             auto storage_sh = reopen_storage.load_mail_smarthost();
-            std::string storage_checksum = sha256(canonical_mail_config(storage_ms, storage_sh));
+            bool ms_present = !storage_ms.empty(), sh_present = !storage_sh.empty();
+            std::string storage_checksum = sha256(canonical_mail_config(ms_present, storage_ms, sh_present, storage_sh));
             ConnectionPool cp;
             bool checked_ok = false; std::string checked_checksum;
             if (make_pool(cp, "reopen_mc")) {
-                std::string confirm_ms, confirm_sh;
-                ReadLease rl(cp);
-                if (!rl.is_valid()) { cp.shutdown(); }
-                else if (!rl->prepare("SELECT value FROM mail_config WHERE key = 'module_state'")) { cp.shutdown(); }
-                else {
-                    if (rl->step()) confirm_ms = rl->column_text(0);
-                    if (!rl->prepare("SELECT value FROM mail_config WHERE key = 'smarthost'")) { cp.shutdown(); }
-                    else {
-                        if (rl->step()) confirm_sh = rl->column_text(0);
-                        cp.shutdown();
-                        checked_ok = true;
-                        checked_checksum = sha256(canonical_mail_config(confirm_ms, confirm_sh));
-                    }
+                SQLiteSnapshotReader snap(cp);
+                auto ms_snap = snap.read_mail_config_key("module_state");
+                auto sh_snap = snap.read_mail_config_key("smarthost");
+                cp.shutdown();
+                if (ms_snap.success && sh_snap.success) {
+                    checked_ok = true;
+                    checked_checksum = sha256(canonical_mail_config(ms_snap.present, ms_snap.value, sh_snap.present, sh_snap.value));
                 }
             }
             reopen_compare("mail_config", 0, storage_checksum, checked_ok, checked_checksum);

@@ -159,8 +159,6 @@ ImportResult LegacyImporter::finish_import(
 // ============================================================
 
 #include "StorageCanonicalizer.h"
-
-#include "StorageCanonicalizer.h"
 #include "SQLiteSnapshotReader.h"
 
 ResourceBaseline LegacyImporter::capture_baseline(const std::string& type) {
@@ -202,6 +200,7 @@ ResourceBaseline LegacyImporter::capture_baseline(const std::string& type) {
     else if (type == "mail_config") {
         auto ms = snap.read_mail_config_key("module_state");
         auto sh = snap.read_mail_config_key("smarthost");
+        if (!ms.success || !sh.success) { bl.error = "baseline_capture_failed"; return bl; }
         bl.canonical_checksum = StorageCanonicalizer::sha256(
             StorageCanonicalizer::canonical_mail_config(ms.present, ms.value, sh.present, sh.value));
         bl.record_count = (ms.present ? 1 : 0) + (sh.present ? 1 : 0);
