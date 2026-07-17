@@ -3,6 +3,7 @@
 
 #include "ConnectionPool.h"
 #include "LegacyDatasetReader.h"
+#include "LegacyFileInventory.h"
 #include "SQLiteStorage.h"
 #include "access/AccessGrant.h"
 #include "access/AccessUser.h"
