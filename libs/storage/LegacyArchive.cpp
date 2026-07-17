@@ -10,6 +10,8 @@
 #include <openssl/sha.h>
 #include <ctime>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 namespace containercp::storage {
 namespace fs = std::filesystem;
@@ -267,27 +269,48 @@ ArchiveResult LegacyArchive::create_archive(
     }
     temp_owned_ = true;
 
-    // Copy files with durability
+    // Copy files with durable streaming
     auto durable_copy = [&](const std::string& src, const std::string& dst, const std::string& fn) -> bool {
-        if (fs::is_symlink(src)) { result.error = "source_symlink_rejected:" + fn; return false; }
-        // Read source
-        std::ifstream in(src, std::ios::binary); if (!in) { result.error = "copy_failed:" + fn; return false; }
-        std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        if (in.bad()) { result.error = "copy_failed:" + fn; return false; }
-        // Write exclusively
-        std::ofstream out(dst, std::ios::binary); if (!out) { result.error = "copy_failed:" + fn; return false; }
-        out.write(data.data(), data.size()); out.flush();
-        if (!out) { result.error = "copy_failed:" + fn; return false; }
-        out.close();
-        // fsync
-        FILE* fp = fopen(dst.c_str(), "rb+"); if (fp) { fsync(fileno(fp)); fclose(fp); }
-        // Verify destination checksum matches source
+        struct stat st; if (stat(src.c_str(), &st) != 0) { result.error = "source_stat_failed:" + fn; return false; }
+        if (fs::is_symlink(fs::symlink_status(src))) { result.error = "source_symlink_rejected:" + fn; return false; }
+        if (!S_ISREG(st.st_mode)) { result.error = "source_not_regular:" + fn; return false; }
+
+        uint64_t src_size = st.st_size;
+        time_t src_mtime = st.st_mtime;
+        ino_t src_inode = st.st_ino;
+
+        // Compute source SHA before copy
+        std::string src_sha = sha256_file(src);
+        if (src_sha.empty()) { result.error = "source_sha_failed:" + fn; return false; }
+
+        // Exclusive create destination
+        int dst_fd = open(dst.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0640);
+        if (dst_fd < 0) { result.error = "dest_create_failed:" + fn; return false; }
+
+        // Stream copy with 64KB buffer
+        std::ifstream in(src, std::ios::binary);
+        if (!in) { close(dst_fd); unlink(dst.c_str()); result.error = "copy_failed:" + fn; return false; }
+        char buf[65536]; bool ok = true;
+        while (in.read(buf, sizeof(buf)).gcount() > 0) {
+            ssize_t written = write(dst_fd, buf, in.gcount());
+            if (written < 0 || static_cast<size_t>(written) != in.gcount()) { ok = false; break; }
+        }
+        if (!ok || in.bad()) { close(dst_fd); unlink(dst.c_str()); result.error = "copy_failed:" + fn; return false; }
+
+        // fsync + close
+        if (fsync(dst_fd) != 0) { close(dst_fd); unlink(dst.c_str()); result.error = "archive_file_fsync_failed:" + fn; return false; }
+        if (close(dst_fd) != 0) { unlink(dst.c_str()); result.error = "close_failed:" + fn; return false; }
+
+        // Verify destination
         std::string dst_sha = sha256_file(dst);
         if (dst_sha.empty()) { result.error = "dest_sha_failed:" + fn; return false; }
-        std::string src_sha = sha256_file(src);
         if (dst_sha != src_sha) { result.error = "checksum_mismatch:" + fn; return false; }
-        // Check source unchanged
-        if (!file_unchanged(src, data.size(), src_sha)) {
+
+        // Verify source unchanged (size, mtime, inode)
+        struct stat st2;
+        if (stat(src.c_str(), &st2) != 0) { result.error = "source_recheck_failed:" + fn; return false; }
+        if (static_cast<uint64_t>(st2.st_size) != src_size ||
+            st2.st_mtime != src_mtime || st2.st_ino != src_inode) {
             result.error = "source_changed_during_archive:" + fn; return false;
         }
         return true;
@@ -356,10 +379,12 @@ ArchiveResult LegacyArchive::create_archive(
         mf.close();
         if (!mf) { result.error = "manifest_write_failed"; goto cleanup; }
         // fsync + rename
-        { FILE* fp = fopen(tmp.c_str(), "rb"); if (fp) { fsync(fileno(fp)); fclose(fp); } }
-        fs::rename(tmp, temp_path_ + "manifest.json");
+        { int fd = open(tmp.c_str(), O_RDONLY); if (fd < 0) { result.error = "manifest_fsync_open_failed"; goto cleanup; }
+          if (fsync(fd) != 0) { close(fd); result.error = "manifest_fsync_failed"; goto cleanup; } close(fd); }
+        { std::error_code ec; fs::rename(tmp, temp_path_ + "manifest.json", ec);
+          if (ec) { result.error = "manifest_local_rename_failed"; goto cleanup; } }
         // fsync temp dir
-        { FILE* dp = fopen(temp_path_.c_str(), "r"); if (dp) { fsync(fileno(dp)); fclose(dp); } }
+        { int dd = open(temp_path_.c_str(), O_RDONLY); if (dd >= 0) { fsync(dd); close(dd); } }
     }
 
     // Write SHA256SUMS with fsync
@@ -373,25 +398,37 @@ ArchiveResult LegacyArchive::create_archive(
         for (auto& s : sums) sf << s << "\n";
         sf.close();
         if (!sf) { result.error = "sha256sums_write_failed"; goto cleanup; }
-        { FILE* fp = fopen(tmp.c_str(), "rb"); if (fp) { fsync(fileno(fp)); fclose(fp); } }
-        fs::rename(tmp, temp_path_ + "SHA256SUMS");
-        { FILE* dp = fopen(temp_path_.c_str(), "r"); if (dp) { fsync(fileno(dp)); fclose(dp); } }
+        { int fd = open(tmp.c_str(), O_RDONLY); if (fd < 0) { result.error = "checksum_fsync_open_failed"; goto cleanup; }
+          if (fsync(fd) != 0) { close(fd); result.error = "checksum_file_fsync_failed"; goto cleanup; } close(fd); }
+        { std::error_code ec; fs::rename(tmp, temp_path_ + "SHA256SUMS", ec);
+          if (ec) { result.error = "checksum_local_rename_failed"; goto cleanup; } }
+        { int dd = open(temp_path_.c_str(), O_RDONLY); if (dd >= 0) { fsync(dd); close(dd); } }
     }
 
     // Pre-publication verification
     if (!verify_archive(temp_path_)) { result.error = "pre_publish_verify_failed"; goto cleanup; }
     if (!set_permissions(temp_path_)) { result.error = "archive_permissions_failed"; goto cleanup; }
 
-    // Atomic rename
+    // Atomic rename with fsync
     {
         std::error_code ec;
         fs::rename(temp_path_, final_path, ec);
         if (ec) { result.error = "rename_failed"; goto cleanup; }
-        { FILE* dp = fopen(archive_root_.c_str(), "r"); if (dp) { fsync(fileno(dp)); fclose(dp); } }
+        int dd = open(archive_root_.c_str(), O_RDONLY);
+        if (dd < 0) { result.error = "archive_root_fsync_open_failed"; return result; }
+        if (fsync(dd) != 0) { close(dd); result.error = "archive_root_fsync_failed"; return result; }
+        close(dd);
     }
 
     // Post-publication verification
-    if (!verify_archive(final_path)) { result.error = "post_publish_verify_failed"; return result; }
+    if (!verify_archive(final_path)) {
+        std::string quarantine = archive_root_ + ".failed-" + archive_name + "/";
+        std::error_code ec;
+        fs::rename(final_path, quarantine, ec);
+        int qd = open(archive_root_.c_str(), O_RDONLY);
+        if (qd >= 0) { fsync(qd); close(qd); }
+        result.error = "post_publish_verify_failed"; return result;
+    }
 
     result.archive_path = final_path;
     result.success = true;
