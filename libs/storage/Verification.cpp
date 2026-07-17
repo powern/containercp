@@ -858,15 +858,16 @@ DatabaseVerificationResult Verification::verify_all() {
         { auto snap = reopen_storage.load_mailboxes_checked(); REOPEN_ONE("mail_mailboxes", snap, te.mail_mailboxes, [this](const std::vector<mail::Mailbox>& v) { return canonical_mail_mailboxes(v); }, FIELD_ADAPTOR(mail::Mailbox, compare_mailbox), transient_mb, load_mail_mailboxes); }
         { auto snap = reopen_storage.load_mail_aliases_checked(); REOPEN_ONE("mail_aliases", snap, te.mail_aliases, [this](const std::vector<mail::MailAlias>& v) { return canonical_mail_aliases(v); }, FIELD_ADAPTOR(mail::MailAlias, compare_mail_alias), transient_ma, load_mail_aliases); }
 
-        // mail_config with checked presence
+        // mail_config with checked presence + correct logical count
         {
             auto ms_snap = reopen_storage.load_mail_module_state_checked();
             auto sh_snap = reopen_storage.load_mail_smarthost_checked();
+            uint64_t storage_count = (ms_snap.present ? 1 : 0) + (sh_snap.present ? 1 : 0);
             std::string storage_checksum = sha256(canonical_mail_config(
                 ms_snap.present, ms_snap.success ? ms_snap.value : "", 
                 sh_snap.present, sh_snap.success ? sh_snap.value : ""));
             ConnectionPool cp;
-            bool checked_ok = false; std::string checked_checksum;
+            bool checked_ok = false; std::string checked_checksum; uint64_t checked_count = 0;
             if (make_pool(cp, "reopen_mc")) {
                 SQLiteSnapshotReader snap(cp);
                 auto cms = snap.read_mail_config_key("module_state");
@@ -874,10 +875,12 @@ DatabaseVerificationResult Verification::verify_all() {
                 cp.shutdown();
                 if (cms.success && csh.success) {
                     checked_ok = true;
+                    checked_count = (cms.present ? 1 : 0) + (csh.present ? 1 : 0);
                     checked_checksum = sha256(canonical_mail_config(cms.present, cms.value, csh.present, csh.value));
                 }
             }
-            reopen_compare("mail_config", 0, storage_checksum, ms_snap.success && sh_snap.success, checked_ok, checked_checksum);
+            reopen_compare("mail_config", storage_count, storage_checksum,
+                ms_snap.success && sh_snap.success, checked_ok, checked_checksum);
         }
 
         // Importer-only: backups, auth_users via direct SQLite (full field comparison)

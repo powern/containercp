@@ -1633,3 +1633,57 @@ TEST_CASE("legacy mail_config empty file is present") {
     CHECK_FALSE(r.smarthost_present); // no file → absent
     cleanup(dir);
 }
+
+TEST_CASE("snapshot rejects invalid boolean") {
+    auto dir = test_dir("vfy_snap_bool");
+    cleanup(dir); fs::create_directories(dir);
+    ConnectionPool pool; init_pool(pool, dir);
+    WriteGuard wg(pool);
+    wg.db().exec("INSERT INTO users(id,username,uid,home_directory,shell,enabled) VALUES(1,'test',1000,'/home','/sh',99)");
+    SQLiteSnapshotReader snap(pool);
+    auto s = snap.read_users();
+    CHECK_FALSE(s.success); // enabled=99 → invalid boolean
+    pool.shutdown(); cleanup(dir);
+}
+
+TEST_CASE("snapshot rejects null mandatory string") {
+    auto dir = test_dir("vfy_snap_null");
+    cleanup(dir); fs::create_directories(dir);
+    ConnectionPool pool; init_pool(pool, dir);
+    WriteGuard wg(pool);
+    wg.db().exec("INSERT INTO users(id,username,uid,home_directory,shell,enabled) VALUES(1,NULL,1000,'/home','/sh',1)");
+    SQLiteSnapshotReader snap(pool);
+    auto s = snap.read_users();
+    CHECK_FALSE(s.success); // NULL username → row_convert_failed
+    pool.shutdown(); cleanup(dir);
+}
+
+TEST_CASE("mail_config logical count matches keys") {
+    auto dir = test_dir("vfy_mc_count");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "mail_state.db", "active\n");
+    write_file(dir + "mail_smarthost.db", "smtp:587\n");
+    write_file(dir + "nodes.db", "1|main|web\n");
+    write_file(dir + "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_file(dir + "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_file(dir + "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_file(dir + "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_file(dir + "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_file(dir + "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_file(dir + "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    ConnectionPool pool; init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto r = imp.import_all();
+    REQUIRE(r.success);
+    pool.shutdown();
+    Verification vfy(dir, dir + "containercp.db", r, dir);
+    auto result = vfy.verify_all();
+    CHECK(result.initial_verification_passed);
+    // mail_config should have record_count=2 in initial verification
+    bool found_mc = false;
+    for (auto& res : result.resources)
+        if (res.resource_type == "mail_config") { CHECK(res.legacy_record_count == 2); found_mc = true; }
+    CHECK(found_mc);
+    cleanup(dir);
+}
