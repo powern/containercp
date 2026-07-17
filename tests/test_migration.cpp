@@ -1335,7 +1335,7 @@ TEST_CASE("Archive fails without required files") {
     auto result = arch.create_archive("test-uuid", "v0.6.0", "v0.7.0", dvr);
     CHECK_FALSE(result.success);
     // Error should mention required file
-    CHECK(result.error.find("required") != std::string::npos);
+    CHECK(result.error == "required_file_missing");
 
     std::filesystem::remove_all(dir);
     std::filesystem::remove_all(arc_dir);
@@ -1432,4 +1432,28 @@ TEST_CASE("Archive source unchanged after copy") {
 
     std::filesystem::remove_all(dir);
     std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Archive validates migration UUID") {
+    auto dir = make_legacy_dir("arc_uuid");
+    auto arc_dir = make_legacy_dir("arc_uuidr");
+    DatabaseVerificationResult dvr; dvr.initial_verification_passed = true;
+    LegacyArchive arch(dir, arc_dir);
+    // Invalid UUID
+    CHECK_FALSE(arch.create_archive("bad", "v0.6.0", "v0.7.0", dvr).success);
+    CHECK_FALSE(arch.create_archive("", "v0.6.0", "v0.7.0", dvr).success);
+    // Path-like
+    CHECK_FALSE(arch.create_archive("aaaa/aaa/aaaa/aaaa/aaaa/aaaa/aaaa/aaaa", "v0.6.0", "v0.7.0", dvr).success);
+    std::string valid = "12345678-1234-4234-8234-1234567890ab";
+    CHECK(LegacyArchive::valid_migration_id(valid));
+    fs::remove_all(dir); fs::remove_all(arc_dir);
+}
+
+TEST_CASE("Archive rejects unsafe version strings") {
+    CHECK_FALSE(LegacyArchive::safe_version("../etc"));
+    CHECK_FALSE(LegacyArchive::safe_version("v1.0/evil"));
+    CHECK_FALSE(LegacyArchive::safe_version("v0..6"));
+    CHECK_FALSE(LegacyArchive::safe_version(" v0.6"));
+    CHECK(LegacyArchive::safe_version("v0.6.0"));
+    CHECK(LegacyArchive::safe_version("v1.0-rc1"));
 }
