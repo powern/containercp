@@ -1,4 +1,5 @@
 #include "storage/LegacyImporter.h"
+#include "storage/Verification.h"
 #include "storage/MigrationEngine.h"
 #include "storage/SchemaMigrations.h"
 #include "storage/ConnectionPool.h"
@@ -1082,8 +1083,104 @@ TEST_CASE("import_all_profiles with full fixture retains both") {
     LegacyImporter imp(dir, pool);
     auto r = imp.import_all_profiles();
     CHECK(r.success);
-    // Normal fixtures include both profiles.db and template_profiles.db
     auto loaded = SQLiteStorage(pool).load_profiles();
     CHECK(loaded.size() >= 2);
     cleanup(dir);
+}
+
+// ============================================================
+// Phase 9 — Verification tests
+// ============================================================
+
+TEST_CASE("SHA-256 test vector") {
+    CHECK(Verification::sha256("") ==
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    CHECK(Verification::sha256("abc") ==
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    CHECK(Verification::sha256("hello") ==
+        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+}
+
+TEST_CASE("canonical serialization is stable and deterministic") {
+    // Verify same data produces same hash
+    std::vector<node::Node> nodes;
+    node::Node n1, n2;
+    n1.id = 2; n1.name = "second"; n1.type = "web";
+    n2.id = 1; n2.name = "first"; n2.type = "local";
+    nodes.push_back(n1); nodes.push_back(n2);
+
+    Verification v("", "", ImportAllResult{});
+    std::string c1 = v.canonical_nodes(nodes);
+    std::string c2 = v.canonical_nodes(nodes);
+    CHECK(c1 == c2);
+
+    // Reordering input yields same output (sorted by ID)
+    std::vector<node::Node> reversed;
+    reversed.push_back(n2); reversed.push_back(n1);
+    CHECK(v.canonical_nodes(reversed) == c1);
+}
+
+TEST_CASE("empty and missing optional verification") {
+    auto dir = test_dir("vfy_skip");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "nodes.db", "1|main|web\n");
+    write_file(dir + "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_file(dir + "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_file(dir + "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_file(dir + "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_file(dir + "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_file(dir + "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_file(dir + "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    ConnectionPool pool; init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto import_result = imp.import_all();
+    REQUIRE(import_result.success);
+    Verification vfy(dir, dir + "import.db", import_result);
+    auto nodes_vfy = vfy.verify_nodes();
+    CHECK(nodes_vfy.success);
+    auto ssl_vfy = vfy.verify_ssl_certificates();
+    CHECK(ssl_vfy.success);
+    CHECK(ssl_vfy.status == VerificationStatus::Skipped);
+    cleanup(dir);
+}
+
+TEST_CASE("verification rejects count mismatch") {
+    auto dir = test_dir("vfy_cnt");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "nodes.db", "1|main|web\n2|second|local\n");
+    ConnectionPool pool;
+    init_pool(pool, dir);
+
+    // Import only 1 node (simulate incomplete import)
+    {
+        LegacyImporter imp(dir, pool);
+        std::vector<node::Node> partial;
+        node::Node n; n.id = 1; n.name = "main"; n.type = "web";
+        partial.push_back(n);
+        CHECK(SQLiteStorage(pool).try_save_nodes(partial));
+    }
+
+    // Create import result claiming both nodes were imported
+    ImportAllResult import_result;
+    ImportResult ir; ir.success = true; ir.disposition = ImportDisposition::Imported;
+    ir.resource_type = "nodes"; ir.record_count = 2;
+    import_result.resources.push_back(ir);
+    import_result.success = true;
+
+    Verification vfy(dir, dir + "import.db", import_result);
+    auto r = vfy.verify_nodes();
+    CHECK_FALSE(r.success);
+    CHECK(r.legacy_record_count == 2);
+    CHECK(r.sqlite_record_count == 1);
+
+    cleanup(dir);
+}
+
+TEST_CASE("verification rejects failed import result") {
+    ImportAllResult failed_result;
+    failed_result.success = false;
+    Verification vfy("/nonexistent", "/nonexistent/db", failed_result);
+    auto result = vfy.verify_all();
+    CHECK_FALSE(result.initial_verification_passed);
 }
