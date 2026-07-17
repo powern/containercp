@@ -146,6 +146,159 @@ LegacyArchive::RecordCountResult LegacyArchive::count_records(const std::string&
 }
 
 // ============================================================
+namespace {
+
+struct JsonError { const char* msg; int pos; };
+
+class ManifestParser {
+    const std::string& json_;
+    size_t pos_ = 0;
+
+    char peek() const { return pos_ < json_.size() ? json_[pos_] : '\0'; }
+    char next() { return pos_ < json_.size() ? json_[pos_++] : '\0'; }
+    void skip_ws() { while (peek() == ' ' || peek() == '\t' || peek() == '\n' || peek() == '\r') next(); }
+
+    JsonError error(const char* msg) { return {msg, static_cast<int>(pos_)}; }
+
+    // Parse JSON string with escaping
+    bool parse_string(std::string& out) {
+        if (next() != '"') return false;
+        out.clear();
+        while (peek() != '"' && peek() != '\0') {
+            if (peek() == '\\') { next();
+                switch (next()) {
+                case '"': out += '"'; break; case '\\': out += '\\'; break;
+                case '/': out += '/'; break; case 'n': out += '\n'; break;
+                case 'r': out += '\r'; break; case 't': out += '\t'; break;
+                case 'u': { // \uXXXX — accept 4 hex digits
+                    uint32_t cp = 0;
+                    for (int i = 0; i < 4; ++i) {
+                        char c = next();
+                        if (c >= '0' && c <= '9') cp = cp * 16 + (c - '0');
+                        else if (c >= 'a' && c <= 'f') cp = cp * 16 + (c - 'a' + 10);
+                        else if (c >= 'A' && c <= 'F') cp = cp * 16 + (c - 'A' + 10);
+                        else return false;
+                    }
+                    if (cp <= 0x7F) out += static_cast<char>(cp);
+                    else if (cp <= 0x7FF) { out += static_cast<char>(0xC0 | (cp>>6)); out += static_cast<char>(0x80 | (cp&0x3F)); }
+                    else { out += static_cast<char>(0xE0 | (cp>>12)); out += static_cast<char>(0x80 | ((cp>>6)&0x3F)); out += static_cast<char>(0x80 | (cp&0x3F)); }
+                    break;
+                }
+                default: return false;
+                }
+            } else if (peek() < 0x20) return false; // control character
+            else out += next();
+        }
+        if (next() != '"') return false;
+        return true;
+    }
+
+    // Parse integer
+    bool parse_int(int64_t& out) {
+        skip_ws();
+        if (peek() == '\0') return false;
+        bool neg = false;
+        if (peek() == '-') { neg = true; next(); }
+        if (peek() < '0' || peek() > '9') return false;
+        out = 0;
+        while (peek() >= '0' && peek() <= '9') {
+            int64_t prev = out;
+            out = out * 10 + (next() - '0');
+            if (out < prev) return false; // overflow
+        }
+        if (neg) out = -out;
+        return true;
+    }
+
+    // Parse boolean
+    bool parse_bool(bool& out) {
+        skip_ws();
+        if (json_.compare(pos_, 4, "true") == 0) { out = true; pos_ += 4; return true; }
+        if (json_.compare(pos_, 5, "false") == 0) { out = false; pos_ += 5; return true; }
+        return false;
+    }
+
+public:
+    explicit ManifestParser(const std::string& json) : json_(json) {}
+
+    // Parse the manifest object: returns true and fills map on success
+    bool parse_manifest(std::map<std::string, std::string>& strings,
+                        std::map<std::string, int64_t>& ints,
+                        std::map<std::string, bool>& bools,
+                        std::vector<std::map<std::string, std::string>>& file_entries)
+    {
+        skip_ws();
+        if (next() != '{') return false;
+
+        std::set<std::string> seen_keys;
+        while (true) {
+            skip_ws();
+            if (peek() == '}') { next(); break; }
+            if (peek() == ',') next();
+            skip_ws();
+
+            // Parse key
+            if (peek() != '"') return false;
+            std::string key;
+            if (!parse_string(key)) return false;
+            if (seen_keys.count(key)) return false; // duplicate key
+            seen_keys.insert(key);
+
+            skip_ws();
+            if (next() != ':') return false;
+            skip_ws();
+
+            // Parse value
+            if (key == "files") {
+                if (next() != '[') return false;
+                while (true) {
+                    skip_ws();
+                    if (peek() == ']') { next(); break; }
+                    if (peek() == ',') next();
+                    skip_ws();
+                    if (next() != '{') return false;
+                    std::map<std::string, std::string> file_entry;
+                    std::set<std::string> file_seen;
+                    while (true) {
+                        skip_ws();
+                        if (peek() == '}') { next(); break; }
+                        if (peek() == ',') next();
+                        skip_ws();
+                        std::string fk;
+                        if (!parse_string(fk)) return false;
+                        if (file_seen.count(fk)) return false;
+                        file_seen.insert(fk);
+                        skip_ws();
+                        if (next() != ':') return false;
+                        skip_ws();
+
+                        // File entry values: only string/number/bool fields
+                        if (peek() == '"') { std::string fv; if (!parse_string(fv)) return false; file_entry[fk] = fv; }
+                        else if (peek() == 't' || peek() == 'f') { bool b; if (!parse_bool(b)) return false; file_entry[fk] = b ? "true" : "false"; }
+                        else { int64_t n; if (!parse_int(n)) return false; file_entry[fk] = std::to_string(n); }
+                    }
+                    file_entries.push_back(file_entry);
+                }
+            } else if (peek() == '"') {
+                std::string val;
+                if (!parse_string(val)) return false;
+                strings[key] = val;
+            } else if (peek() == 't' || peek() == 'f') {
+                bool val;
+                if (!parse_bool(val)) return false;
+                bools[key] = val;
+            } else {
+                int64_t val;
+                if (!parse_int(val)) return false;
+                ints[key] = val;
+            }
+        }
+        skip_ws();
+        return pos_ == json_.size(); // no trailing garbage
+    }
+};
+
+} // namespace
 // create_archive
 // ============================================================
 
@@ -451,159 +604,6 @@ ArchiveResult LegacyArchive::create_archive(
 // Proper JSON parser for manifest validation
 // ============================================================
 
-namespace {
-
-struct JsonError { const char* msg; int pos; };
-
-class ManifestParser {
-    const std::string& json_;
-    size_t pos_ = 0;
-
-    char peek() const { return pos_ < json_.size() ? json_[pos_] : '\0'; }
-    char next() { return pos_ < json_.size() ? json_[pos_++] : '\0'; }
-    void skip_ws() { while (peek() == ' ' || peek() == '\t' || peek() == '\n' || peek() == '\r') next(); }
-
-    JsonError error(const char* msg) { return {msg, static_cast<int>(pos_)}; }
-
-    // Parse JSON string with escaping
-    bool parse_string(std::string& out) {
-        if (next() != '"') return false;
-        out.clear();
-        while (peek() != '"' && peek() != '\0') {
-            if (peek() == '\\') { next();
-                switch (next()) {
-                case '"': out += '"'; break; case '\\': out += '\\'; break;
-                case '/': out += '/'; break; case 'n': out += '\n'; break;
-                case 'r': out += '\r'; break; case 't': out += '\t'; break;
-                case 'u': { // \uXXXX — accept 4 hex digits
-                    uint32_t cp = 0;
-                    for (int i = 0; i < 4; ++i) {
-                        char c = next();
-                        if (c >= '0' && c <= '9') cp = cp * 16 + (c - '0');
-                        else if (c >= 'a' && c <= 'f') cp = cp * 16 + (c - 'a' + 10);
-                        else if (c >= 'A' && c <= 'F') cp = cp * 16 + (c - 'A' + 10);
-                        else return false;
-                    }
-                    if (cp <= 0x7F) out += static_cast<char>(cp);
-                    else if (cp <= 0x7FF) { out += static_cast<char>(0xC0 | (cp>>6)); out += static_cast<char>(0x80 | (cp&0x3F)); }
-                    else { out += static_cast<char>(0xE0 | (cp>>12)); out += static_cast<char>(0x80 | ((cp>>6)&0x3F)); out += static_cast<char>(0x80 | (cp&0x3F)); }
-                    break;
-                }
-                default: return false;
-                }
-            } else if (peek() < 0x20) return false; // control character
-            else out += next();
-        }
-        if (next() != '"') return false;
-        return true;
-    }
-
-    // Parse integer
-    bool parse_int(int64_t& out) {
-        skip_ws();
-        if (peek() == '\0') return false;
-        bool neg = false;
-        if (peek() == '-') { neg = true; next(); }
-        if (peek() < '0' || peek() > '9') return false;
-        out = 0;
-        while (peek() >= '0' && peek() <= '9') {
-            int64_t prev = out;
-            out = out * 10 + (next() - '0');
-            if (out < prev) return false; // overflow
-        }
-        if (neg) out = -out;
-        return true;
-    }
-
-    // Parse boolean
-    bool parse_bool(bool& out) {
-        skip_ws();
-        if (json_.compare(pos_, 4, "true") == 0) { out = true; pos_ += 4; return true; }
-        if (json_.compare(pos_, 5, "false") == 0) { out = false; pos_ += 5; return true; }
-        return false;
-    }
-
-public:
-    explicit ManifestParser(const std::string& json) : json_(json) {}
-
-    // Parse the manifest object: returns true and fills map on success
-    bool parse_manifest(std::map<std::string, std::string>& strings,
-                        std::map<std::string, int64_t>& ints,
-                        std::map<std::string, bool>& bools,
-                        std::vector<std::map<std::string, std::string>>& file_entries)
-    {
-        skip_ws();
-        if (next() != '{') return false;
-
-        std::set<std::string> seen_keys;
-        while (true) {
-            skip_ws();
-            if (peek() == '}') { next(); break; }
-            if (peek() == ',') next();
-            skip_ws();
-
-            // Parse key
-            if (peek() != '"') return false;
-            std::string key;
-            if (!parse_string(key)) return false;
-            if (seen_keys.count(key)) return false; // duplicate key
-            seen_keys.insert(key);
-
-            skip_ws();
-            if (next() != ':') return false;
-            skip_ws();
-
-            // Parse value
-            if (key == "files") {
-                if (next() != '[') return false;
-                while (true) {
-                    skip_ws();
-                    if (peek() == ']') { next(); break; }
-                    if (peek() == ',') next();
-                    skip_ws();
-                    if (next() != '{') return false;
-                    std::map<std::string, std::string> file_entry;
-                    std::set<std::string> file_seen;
-                    while (true) {
-                        skip_ws();
-                        if (peek() == '}') { next(); break; }
-                        if (peek() == ',') next();
-                        skip_ws();
-                        std::string fk;
-                        if (!parse_string(fk)) return false;
-                        if (file_seen.count(fk)) return false;
-                        file_seen.insert(fk);
-                        skip_ws();
-                        if (next() != ':') return false;
-                        skip_ws();
-
-                        // File entry values: only string/number/bool fields
-                        if (peek() == '"') { std::string fv; if (!parse_string(fv)) return false; file_entry[fk] = fv; }
-                        else if (peek() == 't' || peek() == 'f') { bool b; if (!parse_bool(b)) return false; file_entry[fk] = b ? "true" : "false"; }
-                        else { int64_t n; if (!parse_int(n)) return false; file_entry[fk] = std::to_string(n); }
-                    }
-                    file_entries.push_back(file_entry);
-                }
-            } else if (peek() == '"') {
-                std::string val;
-                if (!parse_string(val)) return false;
-                strings[key] = val;
-            } else if (peek() == 't' || peek() == 'f') {
-                bool val;
-                if (!parse_bool(val)) return false;
-                bools[key] = val;
-            } else {
-                int64_t val;
-                if (!parse_int(val)) return false;
-                ints[key] = val;
-            }
-        }
-        skip_ws();
-        return pos_ == json_.size(); // no trailing garbage
-    }
-};
-
-} // namespace
 
 bool LegacyArchive::verify_archive(const std::string& archive_path,
                                    ArchiveManifest* verified_manifest)
