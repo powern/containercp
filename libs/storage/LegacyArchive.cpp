@@ -595,12 +595,12 @@ ArchiveResult LegacyArchive::create_archive(
             while (written_total < n) {
                 ssize_t w;
                 do { w = write(dst_fd, cbuf + written_total, n - written_total); } while (w < 0 && errno == EINTR);
-                if (w < 0) { copy_ok = false; break; }
+                if (w <= 0) { copy_ok = false; break; }
                 written_total += w;
             }
             if (!copy_ok) break;
         }
-        close(src_fd);
+        if (close(src_fd) != 0) { copy_ok = false; }
         if (!copy_ok) { close(dst_fd); unlink(dst.c_str()); result.error = "copy_failed:" + fn; return false; }
 
         // fsync + close destination
