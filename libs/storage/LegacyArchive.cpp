@@ -331,14 +331,20 @@ public:
                 std::string val;
                 if (!parse_string(val)) return false;
                 strings[key] = val;
+                // String keys: only the 10 known string fields
+                static const char* kStr[] = {"manifest_version","migration_id","source_version","target_version","migration_timestamp","source_directory","archive_directory","verification_result","initial_integrity_check","reopened_integrity_check",nullptr};
+                bool known = false; for (int ki = 0; kStr[ki]; ++ki) if (kStr[ki] == key) { known = true; break; }
+                if (!known) return false;
             } else if (peek() == 't' || peek() == 'f') {
                 bool val;
                 if (!parse_bool(val)) return false;
                 bools[key] = val;
+                if (key != "checksum_match") return false;
             } else {
                 int64_t val;
                 if (!parse_int(val)) return false;
                 ints[key] = val;
+                if (key != "initial_fk_violations" && key != "reopened_fk_violations") return false;
             }
         }
         skip_ws();
