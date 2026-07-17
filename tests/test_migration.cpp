@@ -1457,3 +1457,60 @@ TEST_CASE("Archive rejects unsafe version strings") {
     CHECK(LegacyArchive::safe_version("v0.6.0"));
     CHECK(LegacyArchive::safe_version("v1.0-rc1"));
 }
+
+TEST_CASE("Archive naming contains source version and migration ID") {
+    auto dir = make_legacy_dir("arc_name");
+    write_txt(dir, "nodes.db", "1|main|web\n");
+    write_txt(dir, "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_txt(dir, "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_txt(dir, "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_txt(dir, "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_txt(dir, "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_txt(dir, "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_txt(dir, "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_txt(dir, "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    auto arc_dir = make_legacy_dir("arc_name_r");
+    DatabaseVerificationResult dvr; dvr.success = dvr.initial_verification_passed = dvr.reopened_verification_passed = dvr.reopen_succeeded = true;
+    dvr.initial_integrity_check_result = dvr.reopened_integrity_check_result = "ok";
+    std::string mid = "12345678-1234-4234-8234-1234567890ab";
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive(mid, "v0.6.0", "v0.7.0", dvr);
+    CHECK(result.success);
+    // Archive name contains source version and migration ID
+    CHECK(result.archive_path.find("v0.6.0") != std::string::npos);
+    CHECK(result.archive_path.find(mid) != std::string::npos);
+    // Manifest contains same migration ID
+    CHECK(result.manifest.migration_id == mid);
+    std::filesystem::remove_all(dir); std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Archive manifest does not contain secret values") {
+    auto dir = make_legacy_dir("arc_secret");
+    write_txt(dir, "nodes.db", "1|main|web\n");
+    write_txt(dir, "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_txt(dir, "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_txt(dir, "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_txt(dir, "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_txt(dir, "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_txt(dir, "databases.db", "1|db|user|secret_pw|mysql|8.0|1|1|1\n");
+    write_txt(dir, "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_txt(dir, "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    write_txt(dir, "mail_smarthost.db", "smtp:587:user:secret_pass\n");
+    auto arc_dir = make_legacy_dir("arc_sec_r");
+    DatabaseVerificationResult dvr; dvr.success = dvr.initial_verification_passed = dvr.reopened_verification_passed = dvr.reopen_succeeded = true;
+    dvr.initial_integrity_check_result = dvr.reopened_integrity_check_result = "ok";
+    std::string mid = "12345678-1234-4234-8234-1234567890ab";
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive(mid, "v0.6.0", "v0.7.0", dvr);
+    CHECK(result.success);
+    // Read manifest and verify no secrets
+    std::ifstream mf(result.archive_path + "manifest.json");
+    std::string content((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
+    CHECK(content.find("secret_pw") == std::string::npos);
+    CHECK(content.find("secret_pass") == std::string::npos);
+    // SHA256SUMS contains file hash (safe), not content
+    std::ifstream sf(result.archive_path + "SHA256SUMS");
+    std::string sums((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>());
+    CHECK(sums.find("secret_pw") == std::string::npos);
+    std::filesystem::remove_all(dir); std::filesystem::remove_all(arc_dir);
+}
