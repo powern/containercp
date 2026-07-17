@@ -815,6 +815,8 @@ DatabaseVerificationResult Verification::verify_all() {
             if (make_pool(cp, "reopen_" name)) { auto lr = load_fn(cp, cr); checked_ok = lr.success; cp.shutdown(); } \
             reopen_compare(name, sc, scs, checked_ok, checked_ok ? sha256(canon_fn(cr)) : ""); \
             auto& rr = result.reopened_resources.back(); \
+            rr.storage_checksum_alt = scs; \
+            rr.checked_checksum_alt = checked_ok ? sha256(canon_fn(cr)) : ""; \
             if (!rr.success) { \
                 auto f1 = compare_resource<std::decay_t<decltype(*storage_snap.records.begin())>>( \
                     name, std::vector<std::decay_t<decltype(*storage_snap.records.begin())>>(typed_field), \

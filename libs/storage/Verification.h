@@ -36,6 +36,8 @@ struct ResourceVerificationResult {
 
     std::string legacy_checksum;
     std::string sqlite_checksum;
+    std::string storage_checksum_alt;   // production Storage checksum (reopen)
+    std::string checked_checksum_alt;  // checked SQLite checksum (reopen)
 
     std::vector<FieldMismatch> mismatches;
 

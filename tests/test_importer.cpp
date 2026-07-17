@@ -1514,3 +1514,97 @@ TEST_CASE("stray code is not present") {
     CHECK(r.baseline.success);
     pool.shutdown(); cleanup(dir);
 }
+
+TEST_CASE("checked Storage failure detected in reopen") {
+    auto dir = test_dir("vfy_stor_fail");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "nodes.db", "1|main|web\n");
+    write_file(dir + "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_file(dir + "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_file(dir + "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_file(dir + "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_file(dir + "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_file(dir + "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_file(dir + "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    ConnectionPool pool; init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto r = imp.import_all();
+    REQUIRE(r.success);
+    pool.shutdown();
+    Verification vfy(dir, dir + "containercp.db", r, dir);
+    auto result = vfy.verify_all();
+    CHECK(result.initial_verification_passed);
+    CHECK(result.reopened_verification_passed);
+    // Storage checksums populated
+    for (const auto& rr : result.reopened_resources) {
+        if (rr.resource_type != "mail_config" && rr.resource_type != "backups" && rr.resource_type != "auth_users") {
+            CHECK(!rr.storage_checksum_alt.empty());
+        }
+    }
+    cleanup(dir);
+}
+
+TEST_CASE("checked snapshot validates enum") {
+    auto dir = test_dir("vfy_snap_enum");
+    cleanup(dir); fs::create_directories(dir);
+    ConnectionPool pool; init_pool(pool, dir);
+    // Insert malformed enum
+    WriteGuard wg(pool);
+    wg.db().exec("INSERT INTO profiles(id,profile_name,type,web_server,runtime,template_path,description,enabled,default_profile) VALUES(1,'test','BAD_ENUM','apache','','','',1,0)");
+    SQLiteSnapshotReader snap(pool);
+    auto s = snap.read_profiles();
+    CHECK_FALSE(s.success); // malformed enum → row_convert_failed
+    pool.shutdown(); cleanup(dir);
+}
+
+TEST_CASE("snapshot rejects negative integer") {
+    auto dir = test_dir("vfy_snap_neg");
+    cleanup(dir); fs::create_directories(dir);
+    ConnectionPool pool; init_pool(pool, dir);
+    WriteGuard wg(pool);
+    wg.db().exec("INSERT INTO nodes(id,name,type) VALUES(-1,'bad','web')");
+    SQLiteSnapshotReader snap(pool);
+    auto s = snap.read_nodes();
+    CHECK_FALSE(s.success); // negative id → row_convert_failed
+    pool.shutdown(); cleanup(dir);
+}
+
+TEST_CASE("snapshot valid empty table succeeds") {
+    auto dir = test_dir("vfy_snap_empty");
+    cleanup(dir); fs::create_directories(dir);
+    ConnectionPool pool; init_pool(pool, dir);
+    SQLiteSnapshotReader snap(pool);
+    auto s = snap.read_nodes();
+    CHECK(s.success); // empty table is valid
+    CHECK(s.records.empty());
+    pool.shutdown(); cleanup(dir);
+}
+
+TEST_CASE("absent vs present-empty mail_config checked") {
+    auto dir = test_dir("vfy_mc_presence");
+    cleanup(dir); fs::create_directories(dir);
+    ConnectionPool pool; init_pool(pool, dir);
+    WriteGuard wg(pool);
+    wg.db().exec("INSERT INTO mail_config(key,value) VALUES('module_state','')");
+    SQLiteSnapshotReader snap(pool);
+    auto absent = snap.read_mail_config_key("nonexistent");
+    CHECK(absent.success); CHECK_FALSE(absent.present);
+    auto present_empty = snap.read_mail_config_key("module_state");
+    CHECK(present_empty.success); CHECK(present_empty.present); CHECK(present_empty.value.empty());
+    pool.shutdown(); cleanup(dir);
+}
+
+TEST_CASE("legacy mail_config empty file is present") {
+    auto dir = test_dir("vfy_legacy_mc");
+    cleanup(dir); fs::create_directories(dir);
+    // Create empty mail_state.db file
+    { std::ofstream f(dir + "mail_state.db"); }
+    LegacyDatasetReader reader(dir);
+    auto r = reader.read_mail_config();
+    CHECK(r.success);
+    CHECK(r.module_state_present); // file exists → present
+    CHECK(r.module_state.empty()); // empty file → empty value
+    CHECK_FALSE(r.smarthost_present); // no file → absent
+    cleanup(dir);
+}
