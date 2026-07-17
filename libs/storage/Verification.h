@@ -67,7 +67,8 @@ class Verification {
 public:
     Verification(const std::string& legacy_directory,
                  const std::string& sqlite_path,
-                 const ImportAllResult& import_result);
+                 const ImportAllResult& import_result,
+                 const std::string& storage_directory = "");
 
     ResourceVerificationResult verify_nodes();
     ResourceVerificationResult verify_php_versions();
@@ -140,6 +141,7 @@ private:
 
     std::string legacy_dir_;
     std::string sqlite_path_;
+    std::string storage_dir_;
     ImportAllResult import_result_;
     ConnectionPool pool_;
 };

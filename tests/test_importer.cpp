@@ -28,9 +28,9 @@ static const char* kFixtureBase = TEST_FIXTURE_DIR "/v0.6.0";
 
 // Helper: create a pool with schema for importer tests
 static void init_pool(ConnectionPool& pool, const std::string& dir) {
-    REQUIRE(pool.initialize(dir + "import.db"));
+    REQUIRE(pool.initialize(dir + "containercp.db"));
     SQLiteDB migrator;
-    REQUIRE(migrator.open(dir + "import.db"));
+    REQUIRE(migrator.open(dir + "containercp.db"));
     MigrationEngine eng;
     register_all_schema_migrations(eng);
     REQUIRE(eng.migrate(migrator));
@@ -733,7 +733,7 @@ TEST_CASE("foreign_key_check clean after normal import") {
 
     // Run PRAGMA foreign_key_check
     SQLiteDB db;
-    REQUIRE(db.open(dir + "import.db"));
+    REQUIRE(db.open(dir + "containercp.db"));
     REQUIRE(db.exec("PRAGMA foreign_keys = ON"));
     REQUIRE(db.prepare("PRAGMA foreign_key_check"));
     int violations = 0;
@@ -756,7 +756,7 @@ TEST_CASE("integrity_check ok after normal import") {
     CHECK(imp.import_all().success);
 
     SQLiteDB db;
-    REQUIRE(db.open(dir + "import.db"));
+    REQUIRE(db.open(dir + "containercp.db"));
     REQUIRE(db.prepare("PRAGMA integrity_check"));
     bool ok = false;
     if (db.step()) {
@@ -1136,7 +1136,7 @@ TEST_CASE("empty and missing optional verification") {
     LegacyImporter imp(dir, pool);
     auto import_result = imp.import_all();
     REQUIRE(import_result.success);
-    Verification vfy(dir, dir + "import.db", import_result);
+    Verification vfy(dir, dir + "containercp.db", import_result);
     auto nodes_vfy = vfy.verify_nodes();
     CHECK(nodes_vfy.success);
     auto ssl_vfy = vfy.verify_ssl_certificates();
@@ -1168,7 +1168,7 @@ TEST_CASE("verification rejects count mismatch") {
     import_result.resources.push_back(ir);
     import_result.success = true;
 
-    Verification vfy(dir, dir + "import.db", import_result);
+    Verification vfy(dir, dir + "containercp.db", import_result);
     auto r = vfy.verify_nodes();
     CHECK_FALSE(r.success);
     CHECK(r.legacy_record_count == 2);
@@ -1209,7 +1209,7 @@ TEST_CASE("sensitive fields redacted from mismatches") {
     ir.resource_type = "access_users"; ir.record_count = 1;
     fake_result.resources.push_back(ir); fake_result.success = true;
 
-    Verification vfy(dir, dir + "import.db", fake_result);
+    Verification vfy(dir, dir + "containercp.db", fake_result);
     auto r = vfy.verify_access_users();
     CHECK_FALSE(r.success);
     // Mismatches must not contain the actual hash values
@@ -1242,7 +1242,7 @@ TEST_CASE("verification initializes its own pool") {
     import_pool.shutdown();
 
     // Verify uses its own pool (separate from import pool)
-    Verification vfy(dir, dir + "import.db", import_result);
+    Verification vfy(dir, dir + "containercp.db", import_result);
     auto result = vfy.verify_all();
     CHECK(result.initial_verification_passed);
     CHECK(result.success);
@@ -1267,7 +1267,7 @@ TEST_CASE("shared LineParser used consistently") {
     ir.resource_type = "nodes"; ir.record_count = 2;
     fake_result.resources.push_back(ir); fake_result.success = true;
 
-    Verification vfy(dir, dir + "import.db", fake_result);
+    Verification vfy(dir, dir + "containercp.db", fake_result);
     auto r = vfy.verify_nodes();
     CHECK(r.success);
     CHECK(r.legacy_record_count == 2);

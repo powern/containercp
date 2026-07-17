@@ -154,6 +154,19 @@ ImportResult LegacyImporter::finish_import(
 }
 
 // ============================================================
+// Baseline capture helpers
+// ============================================================
+
+uint64_t LegacyImporter::capture_baseline_count(const std::string& table) {
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return 0;
+    std::string sql = "SELECT COUNT(*) FROM " + table;
+    if (!rl->prepare(sql)) return 0;
+    if (rl->step()) return static_cast<uint64_t>(rl->column_int(0));
+    return 0;
+}
+
+// ============================================================
 // Line-by-line parsing utilities
 // ============================================================
 
@@ -250,6 +263,7 @@ LegacyImporter::ParseResult LegacyImporter::parse_profile_file(
 
 ImportResult LegacyImporter::import_nodes() {
     auto r = inspect_and_begin("nodes", "nodes.db", true);
+    r.pre_import_count = capture_baseline_count("nodes");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         auto dr = reader_.read_nodes();
         if (!dr.success) { r.error = dr.error; r.diagnostics = dr.diagnostics; return r; }
@@ -261,6 +275,7 @@ ImportResult LegacyImporter::import_nodes() {
 
 ImportResult LegacyImporter::import_php_versions() {
     auto r = inspect_and_begin("php_versions", "php_versions.db", true);
+    r.pre_import_count = capture_baseline_count("php_versions");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         auto dr = reader_.read_php_versions();
         if (!dr.success) { r.error = dr.error; r.diagnostics = dr.diagnostics; return r; }
@@ -272,6 +287,7 @@ ImportResult LegacyImporter::import_php_versions() {
 
 ImportResult LegacyImporter::import_profiles() {
     auto r = inspect_and_begin("profiles", "profiles.db", true);
+    r.pre_import_count = capture_baseline_count("profiles");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         auto dr = reader_.read_combined_profiles();
         if (!dr.success) { r.error = dr.error; r.diagnostics = dr.diagnostics; return r; }
@@ -283,6 +299,7 @@ ImportResult LegacyImporter::import_profiles() {
 
 ImportResult LegacyImporter::import_template_profiles() {
     auto r = inspect_and_begin("template_profiles", "template_profiles.db", false);
+    r.pre_import_count = capture_baseline_count("template_profiles");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         auto dr = reader_.read_combined_profiles();
         if (!dr.success) { r.error = dr.error; r.diagnostics = dr.diagnostics; return r; }
@@ -306,6 +323,7 @@ ImportResult LegacyImporter::import_template_profiles() {
 
 ImportResult LegacyImporter::import_all_profiles() {
     ImportResult r;
+    r.pre_import_count = capture_baseline_count("profiles");
     r.resource_type = "profiles";
     r.source_file = "profiles.db, template_profiles.db";
 
@@ -332,6 +350,7 @@ ImportResult LegacyImporter::import_all_profiles() {
 
 ImportResult LegacyImporter::import_users() {
     auto r = inspect_and_begin("users", "users.db", true);
+    r.pre_import_count = capture_baseline_count("users");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         auto dr = reader_.read_users();
         if (!dr.success) { r.error = dr.error; r.diagnostics = dr.diagnostics; return r; }
@@ -343,6 +362,7 @@ ImportResult LegacyImporter::import_users() {
 
 ImportResult LegacyImporter::import_sites() {
     auto r = inspect_and_begin("sites", "sites.db", true);
+    r.pre_import_count = capture_baseline_count("sites");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         std::vector<site::Site> sites;
         std::set<uint64_t> ids;
@@ -445,6 +465,7 @@ ImportResult LegacyImporter::import_sites() {
 
 ImportResult LegacyImporter::import_domains() {
     auto r = inspect_and_begin("domains", "domains.db", true);
+    r.pre_import_count = capture_baseline_count("domains");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         std::vector<domain::Domain> domains;
         std::set<uint64_t> ids;
@@ -513,6 +534,7 @@ ImportResult LegacyImporter::import_domains() {
 
 ImportResult LegacyImporter::import_databases() {
     auto r = inspect_and_begin("databases", "databases.db", true);
+    r.pre_import_count = capture_baseline_count("databases");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         std::vector<database::Database> databases;
         std::set<uint64_t> ids;
@@ -577,6 +599,7 @@ ImportResult LegacyImporter::import_databases() {
 
 ImportResult LegacyImporter::import_backups() {
     auto r = inspect_and_begin("backups", "backups.db", true);
+    r.pre_import_count = capture_baseline_count("backups");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         std::vector<backup::Backup> backups;
         std::set<uint64_t> ids;
@@ -665,6 +688,7 @@ ImportResult LegacyImporter::import_backups() {
 
 ImportResult LegacyImporter::import_reverse_proxies() {
     auto r = inspect_and_begin("reverse_proxies", "reverse_proxies.db", true);
+    r.pre_import_count = capture_baseline_count("reverse_proxies");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         std::vector<proxy::ReverseProxy> proxies;
         std::set<uint64_t> ids;
@@ -724,6 +748,7 @@ ImportResult LegacyImporter::import_reverse_proxies() {
 
 ImportResult LegacyImporter::import_access_users() {
     auto r = inspect_and_begin("access_users", "access_users.db", false);
+    r.pre_import_count = capture_baseline_count("access_users");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         std::vector<access::AccessUser> users;
         std::set<uint64_t> ids;
@@ -776,6 +801,7 @@ ImportResult LegacyImporter::import_access_users() {
 
 ImportResult LegacyImporter::import_access_grants() {
     auto r = inspect_and_begin("access_grants", "access_grants.db", false);
+    r.pre_import_count = capture_baseline_count("access_grants");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         std::vector<access::AccessGrant> grants;
         std::set<uint64_t> ids;
@@ -824,6 +850,7 @@ ImportResult LegacyImporter::import_access_grants() {
 
 ImportResult LegacyImporter::import_auth_users() {
     auto r = inspect_and_begin("auth_users", "auth_users.db", false);
+    r.pre_import_count = capture_baseline_count("auth_users");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         std::vector<auth::AuthUser> users;
         std::set<uint64_t> ids;
@@ -908,6 +935,7 @@ ImportResult LegacyImporter::import_auth_users() {
 
 ImportResult LegacyImporter::import_ssl_certificates() {
     auto r = inspect_and_begin("ssl_certificates", "ssl_certificates.db", false);
+    r.pre_import_count = capture_baseline_count("ssl_certificates");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         std::vector<ssl::SslCertificate> certs;
         std::set<uint64_t> ids;
@@ -1007,6 +1035,7 @@ ImportResult LegacyImporter::import_ssl_certificates() {
 
 ImportResult LegacyImporter::import_mail_domains() {
     auto r = inspect_and_begin("mail_domains", "mail_domains.db", false);
+    r.pre_import_count = capture_baseline_count("mail_domains");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         std::vector<mail::MailDomain> domains;
         std::set<uint64_t> ids;
@@ -1116,6 +1145,7 @@ ImportResult LegacyImporter::import_mail_domains() {
 
 ImportResult LegacyImporter::import_mail_mailboxes() {
     auto r = inspect_and_begin("mail_mailboxes", "mail_mailboxes.db", false);
+    r.pre_import_count = capture_baseline_count("mail_mailboxes");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         std::vector<mail::Mailbox> mailboxes;
         std::set<uint64_t> ids;
@@ -1193,6 +1223,7 @@ ImportResult LegacyImporter::import_mail_mailboxes() {
 
 ImportResult LegacyImporter::import_mail_aliases() {
     auto r = inspect_and_begin("mail_aliases", "mail_aliases.db", false);
+    r.pre_import_count = capture_baseline_count("mail_aliases");
     if (!r.success && r.disposition == ImportDisposition::Imported) {
         std::vector<mail::MailAlias> aliases;
         std::set<uint64_t> ids;
@@ -1244,6 +1275,7 @@ ImportResult LegacyImporter::import_mail_aliases() {
 
 ImportResult LegacyImporter::import_mail_config() {
     ImportResult r;
+    r.pre_import_count = capture_baseline_count("mail_config");
     r.resource_type = "mail_config";
     r.source_file = "mail_state.db, mail_smarthost.db";
 

@@ -25,9 +25,9 @@ static void tclean(const std::string& dir) {
 
 // Helper: create a pool with schema migration for direct SQLiteStorage tests.
 static void init_pool(containercp::storage::ConnectionPool& pool, const std::string& dir) {
-    REQUIRE(pool.initialize(dir + "test.db"));
+    REQUIRE(pool.initialize(dir + "containercp.db"));
     containercp::storage::SQLiteDB migrator;
-    REQUIRE(migrator.open(dir + "test.db"));
+    REQUIRE(migrator.open(dir + "containercp.db"));
     containercp::storage::MigrationEngine eng;
     containercp::storage::register_all_schema_migrations(eng);
     REQUIRE(eng.migrate(migrator));
@@ -374,7 +374,7 @@ TEST_CASE("TransactionGuard on shut-down pool then valid pool works") {
         }
 
         // Reinitialize — now TransactionGuard should work
-        REQUIRE(pool.initialize(dir + "test.db"));
+        REQUIRE(pool.initialize(dir + "containercp.db"));
         {
             containercp::storage::TransactionGuard txn(pool);
             CHECK(txn.is_active());
@@ -2071,7 +2071,7 @@ TEST_CASE("Shutdown then reinitialize still works") {
         init_pool(pool, dir);
         pool.shutdown();
 
-        CHECK(pool.initialize(dir + "test.db"));
+        CHECK(pool.initialize(dir + "containercp.db"));
 
         containercp::storage::WriteGuard wg(pool);
         CHECK(wg.is_valid());

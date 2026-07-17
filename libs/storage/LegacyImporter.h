@@ -42,6 +42,10 @@ struct ImportResult {
     uint64_t record_count = 0;
     std::string error;
     std::string diagnostics;
+
+    // Baseline captured just before import (for skipped-resource verification)
+    uint64_t pre_import_count = 0;
+    std::string pre_import_checksum;
 };
 
 struct ImportAllResult {
@@ -129,6 +133,10 @@ private:
         ImportResult r,
         bool write_ok,
         uint64_t count);
+
+    // Baseline capture helper — returns current SQLite record count for type.
+    // Uses a direct COUNT(*) query.
+    uint64_t capture_baseline_count(const std::string& table);
 
     std::string legacy_dir_;
     ConnectionPool& pool_;
