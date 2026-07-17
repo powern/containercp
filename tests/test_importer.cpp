@@ -1405,3 +1405,57 @@ TEST_CASE("reopen sensitive field redaction") {
     }
     cleanup(dir);
 }
+
+TEST_CASE("skipped resource retains baseline evidence") {
+    auto dir = test_dir("vfy_skip_ev");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "nodes.db", "1|main|web\n");
+    write_file(dir + "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_file(dir + "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_file(dir + "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_file(dir + "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_file(dir + "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_file(dir + "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_file(dir + "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    ConnectionPool pool; init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto result = imp.import_all();
+    REQUIRE(result.success);
+    pool.shutdown();
+    Verification vfy(dir, dir + "containercp.db", result, dir);
+    auto db_result = vfy.verify_all();
+    CHECK(db_result.initial_verification_passed);
+    for (const auto& res : db_result.resources) {
+        if (res.status == VerificationStatus::Skipped) {
+            CHECK(!res.legacy_checksum.empty());
+            CHECK(!res.sqlite_checksum.empty());
+        }
+    }
+    cleanup(dir);
+}
+
+TEST_CASE("exactly 17 reopened results") {
+    auto dir = test_dir("vfy_17reopen");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "nodes.db", "1|main|web\n");
+    write_file(dir + "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_file(dir + "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_file(dir + "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_file(dir + "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_file(dir + "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_file(dir + "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_file(dir + "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    ConnectionPool pool; init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto result = imp.import_all();
+    REQUIRE(result.success);
+    pool.shutdown();
+    Verification vfy(dir, dir + "containercp.db", result, dir);
+    auto db_result = vfy.verify_all();
+    CHECK(db_result.initial_verification_passed);
+    CHECK(db_result.reopened_resources.size() == 17);
+    CHECK(db_result.reopened_verification_passed);
+    cleanup(dir);
+}

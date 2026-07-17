@@ -556,7 +556,9 @@ LOAD_HELPER(mail_aliases, mail::MailAlias, "SELECT id, domain_id, source_local_p
                 ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed; r.error = "baseline_mismatch"; r.resource_type = #type; \
                 r.legacy_record_count = ir->baseline.record_count; r.sqlite_record_count = curr_count; \
                 r.legacy_checksum = ir->baseline.canonical_checksum; r.sqlite_checksum = curr_checksum; return r; } \
-            ResourceVerificationResult r; r.success = true; r.status = VerificationStatus::Skipped; r.resource_type = #type; return r; \
+            ResourceVerificationResult r; r.success = true; r.status = VerificationStatus::Skipped; r.resource_type = #type; \
+            r.legacy_record_count = ir->baseline.record_count; r.sqlite_record_count = curr_count; \
+            r.legacy_checksum = ir->baseline.canonical_checksum; r.sqlite_checksum = curr_checksum; return r; \
         } \
         LegacyDatasetReader reader(legacy_dir_); \
         auto dr = reader.reader_call; \
@@ -626,7 +628,9 @@ ResourceVerificationResult Verification::verify_mail_config() {
             ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed;
             r.error = "baseline_mismatch"; r.resource_type = "mail_config";
             r.legacy_checksum = ir->baseline.canonical_checksum; r.sqlite_checksum = curr_checksum; return r; }
-        ResourceVerificationResult r; r.success = true; r.status = VerificationStatus::Skipped; r.resource_type = "mail_config"; return r; }
+        ResourceVerificationResult r; r.success = true; r.status = VerificationStatus::Skipped; r.resource_type = "mail_config";
+        r.legacy_record_count = ir->baseline.record_count; r.sqlite_record_count = ir->baseline.record_count;
+        r.legacy_checksum = ir->baseline.canonical_checksum; r.sqlite_checksum = ir->baseline.canonical_checksum; return r; }
     ResourceVerificationResult r; r.resource_type = "mail_config";
 
     LegacyDatasetReader reader(legacy_dir_);
@@ -857,44 +861,57 @@ DatabaseVerificationResult Verification::verify_all() {
             if (make_pool(cp, "reopen_mc")) {
                 std::string confirm_ms, confirm_sh;
                 ReadLease rl(cp);
-                if (rl.is_valid()) {
-                    if (rl->prepare("SELECT value FROM mail_config WHERE key = 'module_state'") && rl->step()) confirm_ms = rl->column_text(0);
-                    if (rl->prepare("SELECT value FROM mail_config WHERE key = 'smarthost'") && rl->step()) confirm_sh = rl->column_text(0);
+                if (!rl.is_valid()) { cp.shutdown(); }
+                else if (!rl->prepare("SELECT value FROM mail_config WHERE key = 'module_state'")) { cp.shutdown(); }
+                else {
+                    if (rl->step()) confirm_ms = rl->column_text(0);
+                    if (!rl->prepare("SELECT value FROM mail_config WHERE key = 'smarthost'")) { cp.shutdown(); }
+                    else {
+                        if (rl->step()) confirm_sh = rl->column_text(0);
+                        cp.shutdown();
+                        checked_ok = true;
+                        checked_checksum = sha256(canonical_mail_config(confirm_ms, confirm_sh));
+                    }
                 }
-                cp.shutdown();
-                checked_ok = true;
-                checked_checksum = sha256(canonical_mail_config(confirm_ms, confirm_sh));
             }
             reopen_compare("mail_config", 0, storage_checksum, checked_ok, checked_checksum);
         }
 
-        // Importer-only: backups, auth_users
+        // Importer-only: backups, auth_users via direct SQLite (not Storage)
         {
-            auto storage_vec = reopen_storage.load_backups();
-            ConnectionPool cp;
-            bool checked_ok = false; std::string checked_cs;
-            if (make_pool(cp, "reopen_backups")) {
-                std::vector<backup::Backup> confirm_vec; auto cr = load_backups(cp, confirm_vec); cp.shutdown();
-                checked_ok = cr.success;
-                if (checked_ok) checked_cs = sha256(canonical_backups(confirm_vec));
+            ConnectionPool io_pool;
+            if (!make_pool(io_pool, "reopen_importer_only")) { result.success = false; return result; }
+            // backups
+            {
+                std::vector<backup::Backup> backup_records;
+                auto blr = load_backups(io_pool, backup_records);
+                reopen_compare("backups", backup_records.size(),
+                    blr.success ? sha256(canonical_backups(backup_records)) : "",
+                    blr.success, blr.success ? sha256(canonical_backups(backup_records)) : "");
             }
-            reopen_compare("backups", storage_vec.size(), sha256(canonical_backups(storage_vec)), checked_ok, checked_cs);
-        }
-        {
-            auto storage_vec = reopen_storage.load_auth_users();
-            ConnectionPool cp;
-            bool checked_ok = false; std::string checked_cs;
-            if (make_pool(cp, "reopen_auth")) {
-                std::vector<auth::AuthUser> confirm_vec; auto cr = load_auth_users(cp, confirm_vec); cp.shutdown();
-                checked_ok = cr.success;
-                if (checked_ok) checked_cs = sha256(canonical_auth_users(confirm_vec));
+            // auth_users
+            {
+                std::vector<auth::AuthUser> auth_records;
+                auto alr = load_auth_users(io_pool, auth_records);
+                reopen_compare("auth_users", auth_records.size(),
+                    alr.success ? sha256(canonical_auth_users(auth_records)) : "",
+                    alr.success, alr.success ? sha256(canonical_auth_users(auth_records)) : "");
             }
-            reopen_compare("auth_users", storage_vec.size(), sha256(canonical_auth_users(storage_vec)), checked_ok, checked_cs);
+            io_pool.shutdown();
         }
 
-        // Validate reopened inventory: exactly 17 resources
         std::set<std::string> reopened_seen;
-        for (const auto& rr : result.reopened_resources) reopened_seen.insert(rr.resource_type);
+        if (result.reopened_resources.size() != 17) {
+            result.error = "invalid_reopened_count:" + std::to_string(result.reopened_resources.size());
+            reopen_pass = false;
+        }
+        for (const auto& rr : result.reopened_resources) {
+            if (reopened_seen.count(rr.resource_type)) {
+                result.error = std::string("duplicate_reopened:") + rr.resource_type;
+                reopen_pass = false;
+            }
+            reopened_seen.insert(rr.resource_type);
+        }
         std::vector<std::string> required_reopened = {
             "nodes","php_versions","profiles","users","sites","domains","databases",
             "reverse_proxies","access_users","access_grants","ssl_certificates",
@@ -905,42 +922,10 @@ DatabaseVerificationResult Verification::verify_all() {
                 result.error = std::string("missing_reopened:") + r; reopen_pass = false;
             }
         }
-
-        // Importer-only tables via direct SQLite (full verification)
-        {
-            ConnectionPool io_pool;
-            if (!make_pool(io_pool, "reopen_importer_only")) { result.success = false; return result; }
-            {
-                ResourceVerificationResult rr; rr.resource_type = "backups";
-                std::vector<backup::Backup> backup_records;
-                auto blr = load_backups(io_pool, backup_records);
-                if (!blr.success || backup_records.size() != result.resources[7].legacy_record_count) {
-                    rr.success = false; rr.error = "count_mismatch";
-                    result.error = "reopen_backup"; reopen_pass = false;
-                } else {
-                    rr.sqlite_record_count = backup_records.size();
-                    rr.legacy_record_count = result.resources[7].legacy_record_count;
-                    rr.sqlite_checksum = sha256(canonical_backups(backup_records));
-                    rr.success = true;
-                }
-                result.reopened_resources.push_back(rr);
+        for (const auto& seen : reopened_seen) {
+            if (std::find(required_reopened.begin(), required_reopened.end(), seen) == required_reopened.end()) {
+                result.error = std::string("unknown_reopened:") + seen; reopen_pass = false;
             }
-            {
-                ResourceVerificationResult rr; rr.resource_type = "auth_users";
-                std::vector<auth::AuthUser> auth_records;
-                auto alr = load_auth_users(io_pool, auth_records);
-                if (!alr.success || auth_records.size() != result.resources[11].legacy_record_count) {
-                    rr.success = false; rr.error = "count_mismatch";
-                    result.error = "reopen_auth"; reopen_pass = false;
-                } else {
-                    rr.sqlite_record_count = auth_records.size();
-                    rr.legacy_record_count = result.resources[11].legacy_record_count;
-                    rr.sqlite_checksum = sha256(canonical_auth_users(auth_records));
-                    rr.success = true;
-                }
-                result.reopened_resources.push_back(rr);
-            }
-            io_pool.shutdown();
         }
 
         // Post-reopen FK and integrity via shared helpers on fresh pool
