@@ -61,6 +61,7 @@ public:
         const DatabaseVerificationResult& verification_result);
 
     bool verify_archive(const std::string& archive_path,
+                        const std::string* expected_manifest_archive_path = nullptr,
                         ArchiveManifest* verified_manifest = nullptr);
 
     bool set_permissions(const std::string& archive_path);

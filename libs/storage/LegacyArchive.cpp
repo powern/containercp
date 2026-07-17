@@ -287,7 +287,12 @@ class ManifestParser {
             if (next_val > kMax) return false;
             val = next_val;
         }
-        out = neg ? -static_cast<int64_t>(val) : static_cast<int64_t>(val);
+        if (neg) {
+            if (val == static_cast<uint64_t>(INT64_MAX) + 1) out = INT64_MIN;
+            else out = -static_cast<int64_t>(val);
+        } else {
+            out = static_cast<int64_t>(val);
+        }
         return true;
     }
 
@@ -379,6 +384,7 @@ public:
                     if (file_seen.size() != kRequired.size()) return false;
                     for (auto& r : kRequired) if (!file_seen.count(r)) return false;
                     pfe.valid = true;
+                    file_entries.push_back(std::move(pfe));
                 }
             } else if (peek() == '"') {
                 std::string val;
@@ -513,6 +519,7 @@ ArchiveResult LegacyArchive::create_archive(
 
     std::string archive_name = "legacy-" + source_version + "-" + migration_timestamp_ + "-" + migration_id;
     std::string final_path = archive_root_ + archive_name + "/";
+    std::string manifest_final_path = archive_root_ + archive_name; // no trailing slash
     std::string temp_path = archive_root_ + "." + archive_name + ".tmp/";
 
     if (fs::exists(final_path)) { result.error = "archive_exists"; return result; }
@@ -671,7 +678,7 @@ ArchiveResult LegacyArchive::create_archive(
         m.target_version = target_version;
         m.migration_timestamp = migration_timestamp_;
         m.source_directory = source_dir_;
-        m.archive_directory = final_path;
+        m.archive_directory = manifest_final_path;
         m.files = std::move(file_entries);
         m.checksum_match = true;
         m.initial_integrity_check = verification_result.initial_integrity_check_result;
@@ -753,7 +760,7 @@ ArchiveResult LegacyArchive::create_archive(
     }
 
     // Pre-publication verification
-    if (!verify_archive(temp_path)) { result.error = "pre_publish_verify_failed"; return result; }
+    if (!verify_archive(temp_path, &manifest_final_path)) { result.error = "pre_publish_verify_failed"; return result; }
     if (!set_permissions(temp_path)) { result.error = "archive_permissions_failed"; return result; }
 
     // Atomic rename with fsync
@@ -775,7 +782,7 @@ ArchiveResult LegacyArchive::create_archive(
     }
 
     // Post-publication verification
-    if (verify_archive(final_path)) {
+    if (verify_archive(final_path, &manifest_final_path)) {
         result.archive_path = final_path;
         result.success = true;
         return result;
@@ -805,6 +812,7 @@ quarantine:
 
 
 bool LegacyArchive::verify_archive(const std::string& archive_path,
+                                   const std::string* expected_manifest_archive_path,
                                    ArchiveManifest* verified_manifest)
 {
     std::string ap = archive_path;
@@ -882,11 +890,16 @@ bool LegacyArchive::verify_archive(const std::string& archive_path,
     if (strings["reopened_integrity_check"] != "ok") return false;
     if (!valid_timestamp(strings["migration_timestamp"])) return false;
     if (strings["source_directory"].empty()) return false;
-    // Verify archive_directory matches actual directory name
+    // Verify archive_directory matches expected path (or normalized archive_path)
     {
-        std::string ap_clean = ap;
-        while (!ap_clean.empty() && ap_clean.back() == '/') ap_clean.pop_back();
-        if (strings["archive_directory"] != ap_clean) return false;
+        std::string expected;
+        if (expected_manifest_archive_path) {
+            expected = *expected_manifest_archive_path;
+        } else {
+            expected = ap;
+            while (!expected.empty() && expected.back() == '/') expected.pop_back();
+        }
+        if (strings["archive_directory"] != expected) return false;
     }
 
     // Validate boolean
