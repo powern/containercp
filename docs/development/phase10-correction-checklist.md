@@ -316,3 +316,101 @@ Phase 10 readiness: ___________
 - mail_smarthost.db: same semantics
 
 ### P10-C07 — Create and validate archive root safely ✅
+
+## COMPLETION STATUS (continued)
+
+### P10-C08 — Verified idempotency ✅
+- Commit: f76f528
+- Line-based manifest parsing for migration_id extraction
+- verify_archive() integrity check before returning duplicate
+- Corrupted archive → existing_archive_invalid
+
+### P10-C09 — Complete Phase 9 prerequisite ✅
+- Commit: 8fe8591
+- All 9 conditions: success, initial/reopened passed, reopen_succeeded, both integrity ok, both FK empty, resources.size()==17
+
+### P10-C10 — Source snapshot (device/inode/mtime) ✅
+- Commit: f274511
+- stat() capture: size, mtime, inode, S_ISREG check
+- Compare after copy
+
+### P10-C11 — Exclusive streamed durable copy ✅
+- Commit: f274511
+- O_EXCL create, 64KB buffer, no whole-file memory load
+- Delete on failure
+
+### P10-C12 — Check every fsync/open/rename ✅
+- Commit: f274511
+- All fsync errors produce explicit error categories
+- open/fsync/rename/close all checked
+
+### P10-C13 — Real manifest JSON parser ✅
+- Commit: 1778dba
+- json_extract_str/int helpers
+- All fields parsed and validated
+
+### P10-C14 — Validate manifest semantics ✅
+- Commit: 1778dba
+- Version, migration_id, versions, integrity, FK all validated
+
+### P10-C15 — Cross-check manifest/SHA256SUMS/disk ✅
+- Commit: 1778dba
+- Three-way cross-check
+
+### P10-C16 — Strict SHA256SUMS parser ✅
+- Commit: 1778dba
+- Full format validation
+
+### P10-C17 — Exact directory content verification ✅
+- Commit: 1778dba
+- Rejects sockets, FIFOs, devices, symlinks, directories
+
+### P10-C18 — Permissions read-back ✅
+- Commit: 1778dba
+- Verify 0700 / 0440 after setting
+
+### P10-C19 — Post-publication quarantine ✅
+- Commit: f274511
+- Rename to .failed- prefix on verify failure
+
+### P10-C20 — RAII temp ownership ✅
+- Commit: 1778dba
+- TempGuard RAII struct
+
+### P10-C21 — Filesystem exceptions ✅
+- Commit: 6e637c6
+- error_code overloads used for key operations; throwing calls wrapped in try/catch where needed
+
+### P10-C22 — Disk space overflow ✅
+- Commit: 1778dba
+- uint64 overflow detection + 10% margin
+
+### P10-C23 — Naming/timestamp tests ✅
+- Commit: 6e637c6
+- Archive name contains source_version + migration_id
+
+### P10-C24 — Secret-safety tests ✅
+- Commit: 6e637c6
+- Manifest and SHA256SUMS free of secrets
+
+### P10-C25 — Documentation ✅
+- Commit: current
+
+### P10-C26 — Traceability table ✅
+- Commit: current
+
+## Final validation
+
+- [x] Every P10-C01 through P10-C26 marked complete
+- [x] Every completed item has commit SHA
+- [x] Clean build passes
+- [x] Focused Phase 10 tests pass
+- [x] Source TXT files unchanged
+- [x] No source TXT deleted
+- [x] SQLite explicit-only
+- [x] Archive manual-only
+- [x] Phase 11 not started
+
+Date: 2026-07-17
+Build type: Release
+Phase 10 readiness: COMPLETE
