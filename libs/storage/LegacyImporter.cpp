@@ -160,128 +160,52 @@ ImportResult LegacyImporter::finish_import(
 
 #include "StorageCanonicalizer.h"
 
-// Checked COUNT(*) helper — returns false on any query failure
-static bool checked_baseline_count(ConnectionPool& pool, const std::string& type, uint64_t& out) {
-    ReadLease rl(pool);
-    if (!rl.is_valid()) return false;
-    std::string tbl;
-    if (type == "nodes") tbl = "nodes";
-    else if (type == "php_versions") tbl = "php_versions";
-    else if (type == "profiles") tbl = "profiles";
-    else if (type == "users") tbl = "users";
-    else if (type == "sites") tbl = "sites";
-    else if (type == "domains") tbl = "domains";
-    else if (type == "databases") tbl = "databases";
-    else if (type == "backups") tbl = "backups";
-    else if (type == "reverse_proxies") tbl = "reverse_proxies";
-    else if (type == "access_users") tbl = "access_users";
-    else if (type == "access_grants") tbl = "access_grants";
-    else if (type == "auth_users") tbl = "auth_users";
-    else if (type == "ssl_certificates") tbl = "ssl_certificates";
-    else if (type == "mail_domains") tbl = "mail_domains";
-    else if (type == "mail_mailboxes") tbl = "mail_mailboxes";
-    else if (type == "mail_aliases") tbl = "mail_aliases";
-    else if (type == "mail_config") tbl = "mail_config";
-    else return false;
-    if (!rl->prepare("SELECT COUNT(*) FROM " + tbl)) return false;
-    if (!rl->step()) return false;
-    out = static_cast<uint64_t>(rl->column_int(0));
-    return true;
-}
+#include "StorageCanonicalizer.h"
+#include "SQLiteSnapshotReader.h"
 
 ResourceBaseline LegacyImporter::capture_baseline(const std::string& type) {
     ResourceBaseline bl;
-    uint64_t checked_count = 0;
-    if (!checked_baseline_count(pool_, type, checked_count)) {
-        bl.error = "baseline_capture_failed"; return bl;
-    }
+    SQLiteSnapshotReader snap(pool_);
 
-    if (type == "nodes") { auto r = sqlite_.load_nodes();
-        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
-        bl.record_count = r.size();
-        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_nodes(r));
-    } else if (type == "php_versions") { auto r = sqlite_.load_php_versions();
-        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
-        bl.record_count = r.size();
-        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_php_versions(r));
-    } else if (type == "profiles") { auto r = sqlite_.load_profiles();
-        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
-        bl.record_count = r.size();
-        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_profiles(r));
-    } else if (type == "users") { auto r = sqlite_.load_users();
-        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
-        bl.record_count = r.size();
-        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_users(r));
-    } else if (type == "sites") { auto r = sqlite_.load_sites();
-        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
-        bl.record_count = r.size();
-        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_sites(r));
-    } else if (type == "domains") { auto r = sqlite_.load_domains();
-        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
-        bl.record_count = r.size();
-        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_domains(r));
-    } else if (type == "databases") { auto r = sqlite_.load_databases();
-        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
-        bl.record_count = r.size();
-        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_databases(r));
-    } else if (type == "backups") { auto r = sqlite_.load_backups();
-        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
-        bl.record_count = r.size();
-        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_backups(r));
-    } else if (type == "reverse_proxies") { auto r = sqlite_.load_reverse_proxies();
-        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
-        bl.record_count = r.size();
-        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_reverse_proxies(r));
-    } else if (type == "access_users") { auto r = sqlite_.load_access_users();
-        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
-        bl.record_count = r.size();
-        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_access_users(r));
-    } else if (type == "access_grants") { auto r = sqlite_.load_access_grants();
-        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
-        bl.record_count = r.size();
-        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_access_grants(r));
-    } else if (type == "auth_users") { auto r = sqlite_.load_auth_users();
-        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
-        bl.record_count = r.size();
-        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_auth_users(r));
-    } else if (type == "ssl_certificates") { auto r = sqlite_.load_ssl_certificates();
-        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
-        bl.record_count = r.size();
-        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_ssl_certificates(r));
-    } else if (type == "mail_domains") { auto r = sqlite_.load_mail_domains();
-        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
-        bl.record_count = r.size();
-        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_mail_domains(r));
-    } else if (type == "mail_mailboxes") { auto r = sqlite_.load_mailboxes();
-        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
-        bl.record_count = r.size();
-        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_mail_mailboxes(r));
-    } else if (type == "mail_aliases") { auto r = sqlite_.load_mail_aliases();
-        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
-        bl.record_count = r.size();
-        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_mail_aliases(r));
-    } else if (type == "mail_config") {
-        std::string ms = sqlite_.load_mail_module_state();
-        std::string sh = sqlite_.load_mail_smarthost();
+    if (type == "nodes") { auto s = snap.read_nodes(); if (!s.success) { bl.error = "baseline_capture_failed"; return bl; }
+        bl.record_count = s.records.size(); bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_nodes(s.records)); }
+    else if (type == "php_versions") { auto s = snap.read_php_versions(); if (!s.success) { bl.error = "baseline_capture_failed"; return bl; }
+        bl.record_count = s.records.size(); bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_php_versions(s.records)); }
+    else if (type == "profiles") { auto s = snap.read_profiles(); if (!s.success) { bl.error = "baseline_capture_failed"; return bl; }
+        bl.record_count = s.records.size(); bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_profiles(s.records)); }
+    else if (type == "users") { auto s = snap.read_users(); if (!s.success) { bl.error = "baseline_capture_failed"; return bl; }
+        bl.record_count = s.records.size(); bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_users(s.records)); }
+    else if (type == "sites") { auto s = snap.read_sites(); if (!s.success) { bl.error = "baseline_capture_failed"; return bl; }
+        bl.record_count = s.records.size(); bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_sites(s.records)); }
+    else if (type == "domains") { auto s = snap.read_domains(); if (!s.success) { bl.error = "baseline_capture_failed"; return bl; }
+        bl.record_count = s.records.size(); bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_domains(s.records)); }
+    else if (type == "databases") { auto s = snap.read_databases(); if (!s.success) { bl.error = "baseline_capture_failed"; return bl; }
+        bl.record_count = s.records.size(); bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_databases(s.records)); }
+    else if (type == "backups") { auto s = snap.read_backups(); if (!s.success) { bl.error = "baseline_capture_failed"; return bl; }
+        bl.record_count = s.records.size(); bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_backups(s.records)); }
+    else if (type == "reverse_proxies") { auto s = snap.read_reverse_proxies(); if (!s.success) { bl.error = "baseline_capture_failed"; return bl; }
+        bl.record_count = s.records.size(); bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_reverse_proxies(s.records)); }
+    else if (type == "access_users") { auto s = snap.read_access_users(); if (!s.success) { bl.error = "baseline_capture_failed"; return bl; }
+        bl.record_count = s.records.size(); bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_access_users(s.records)); }
+    else if (type == "access_grants") { auto s = snap.read_access_grants(); if (!s.success) { bl.error = "baseline_capture_failed"; return bl; }
+        bl.record_count = s.records.size(); bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_access_grants(s.records)); }
+    else if (type == "auth_users") { auto s = snap.read_auth_users(); if (!s.success) { bl.error = "baseline_capture_failed"; return bl; }
+        bl.record_count = s.records.size(); bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_auth_users(s.records)); }
+    else if (type == "ssl_certificates") { auto s = snap.read_ssl_certificates(); if (!s.success) { bl.error = "baseline_capture_failed"; return bl; }
+        bl.record_count = s.records.size(); bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_ssl_certificates(s.records)); }
+    else if (type == "mail_domains") { auto s = snap.read_mail_domains(); if (!s.success) { bl.error = "baseline_capture_failed"; return bl; }
+        bl.record_count = s.records.size(); bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_mail_domains(s.records)); }
+    else if (type == "mail_mailboxes") { auto s = snap.read_mail_mailboxes(); if (!s.success) { bl.error = "baseline_capture_failed"; return bl; }
+        bl.record_count = s.records.size(); bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_mail_mailboxes(s.records)); }
+    else if (type == "mail_aliases") { auto s = snap.read_mail_aliases(); if (!s.success) { bl.error = "baseline_capture_failed"; return bl; }
+        bl.record_count = s.records.size(); bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_mail_aliases(s.records)); }
+    else if (type == "mail_config") {
+        auto ms = snap.read_mail_config_key("module_state");
+        auto sh = snap.read_mail_config_key("smarthost");
         bl.canonical_checksum = StorageCanonicalizer::sha256(
-            StorageCanonicalizer::canonical_mail_config(!ms.empty(), ms, !sh.empty(), sh));
-        bl.record_count = (ms.empty() ? 0 : 1) + (sh.empty() ? 0 : 1);
-    } else {
-        bl.error = "unknown_type:" + type; return bl;
-    }
-    bl.success = true;
-    return bl;
-}
-
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256_CTX ctx;
-    SHA256_Init(&ctx); SHA256_Update(&ctx, canonical.data(), canonical.size()); SHA256_Final(hash, &ctx);
-    std::string out; out.reserve(64);
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
-        out += "0123456789abcdef"[(hash[i] >> 4) & 0xf];
-        out += "0123456789abcdef"[hash[i] & 0xf];
-    }
-    bl.canonical_checksum = out;
+            StorageCanonicalizer::canonical_mail_config(ms.present, ms.value, sh.present, sh.value));
+        bl.record_count = (ms.present ? 1 : 0) + (sh.present ? 1 : 0);
+    } else { bl.error = "unknown_type:" + type; return bl; }
     bl.success = true;
     return bl;
 }

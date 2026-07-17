@@ -60,14 +60,6 @@ struct DatabaseVerificationResult {
     std::string error;
 };
 
-// Checked optional-value query result
-struct CheckedOptionalValue {
-    bool success = false;
-    bool present = false;
-    std::string value;
-    std::string error;
-};
-
 // Migration verification for Phase 8 imported data.
 //
 // Compares canonical legacy data (parsed from TXT) against SQLite data
