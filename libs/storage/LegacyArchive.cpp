@@ -118,7 +118,9 @@ LegacyArchive::RecordCountResult LegacyArchive::count_records(const std::string&
     LegacyDatasetReader reader(sd);
 
     std::string sp = sd + fn;
-    if (!fs::exists(sp) || fs::file_size(fs::path(sp)) == 0) { res.success = true; res.record_count = 0; return res; }
+    std::error_code ec;
+    if (!fs::exists(sp, ec) || ec) { res.success = true; res.record_count = 0; return res; }
+    if (fs::file_size(fs::path(sp), ec) == 0 && !ec) { res.success = true; res.record_count = 0; return res; }
 
     res.success = true;
 
@@ -316,6 +318,9 @@ ArchiveResult LegacyArchive::create_archive(
     if (!valid_migration_id(migration_id)) { result.error = "invalid_migration_id"; return result; }
     if (!safe_version(source_version)) { result.error = "invalid_source_version"; return result; }
     if (!safe_version(target_version)) { result.error = "invalid_target_version"; return result; }
+
+    // Top-level filesystem exception boundary
+    try {
 
     // Complete Phase 9 check: summaries + per-resource validation
     if (!verification_result.success ||
@@ -675,6 +680,8 @@ quarantine:
         if (close(qd) != 0) { result.error = "archive_root_close_failed"; return result; }
         result.error = "post_publish_verify_failed"; return result;
     }
+    } catch (const std::exception&) { result.error = "filesystem_exception"; return result; }
+      catch (...) { result.error = "filesystem_exception"; return result; }
 }
 
 // ============================================================
