@@ -445,10 +445,14 @@ ArchiveResult LegacyArchive::create_archive(
             if (total > UINT64_MAX - fe.size) { result.error = "archive_size_overflow"; return result; }
             total += fe.size;
         }
+        uint64_t margin = total / 10;
+        if (margin < 65536) margin = 65536; // minimum metadata overhead
+        if (margin > UINT64_MAX - total) { result.error = "archive_size_overflow"; return result; }
+        uint64_t needed = total + margin;
         std::error_code ec;
         auto space = fs::space(archive_root_, ec);
         if (ec) { result.error = "archive_space_check_failed"; return result; }
-        if (space.available < total + (total / 10)) { // 10% margin
+        if (space.available < needed) {
             result.error = "insufficient_archive_space"; return result;
         }
     }
