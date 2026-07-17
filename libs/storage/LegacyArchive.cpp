@@ -567,7 +567,10 @@ ArchiveResult LegacyArchive::create_archive(
         { std::error_code ec; fs::rename(tmp, temp_path + "manifest.json", ec);
           if (ec) { result.error = "manifest_local_rename_failed"; return result; } }
         // fsync temp dir
-        { int dd = open(temp_path.c_str(), O_RDONLY); if (dd >= 0) { fsync(dd); close(dd); } }
+        int dd = open(temp_path.c_str(), O_RDONLY);
+        if (dd < 0) { result.error = "temp_directory_fsync_open_failed"; return result; }
+        if (fsync(dd) != 0) { close(dd); result.error = "temp_directory_fsync_failed"; return result; }
+        if (close(dd) != 0) { result.error = "temp_directory_close_failed"; return result; }
     }
 
     // Write SHA256SUMS with fsync
@@ -585,7 +588,10 @@ ArchiveResult LegacyArchive::create_archive(
           if (fsync(fd) != 0) { close(fd); result.error = "checksum_file_fsync_failed"; return result; } close(fd); }
         { std::error_code ec; fs::rename(tmp, temp_path + "SHA256SUMS", ec);
           if (ec) { result.error = "checksum_local_rename_failed"; return result; } }
-        { int dd = open(temp_path.c_str(), O_RDONLY); if (dd >= 0) { fsync(dd); close(dd); } }
+        int dd = open(temp_path.c_str(), O_RDONLY);
+        if (dd < 0) { result.error = "temp_directory_fsync_open_failed"; return result; }
+        if (fsync(dd) != 0) { close(dd); result.error = "temp_directory_fsync_failed"; return result; }
+        if (close(dd) != 0) { result.error = "temp_directory_close_failed"; return result; }
     }
 
     // Pre-publication verification
@@ -600,7 +606,7 @@ ArchiveResult LegacyArchive::create_archive(
         int dd = open(archive_root_.c_str(), O_RDONLY);
         if (dd < 0) { result.error = "archive_root_fsync_open_failed"; return result; }
         if (fsync(dd) != 0) { close(dd); result.error = "archive_root_fsync_failed"; return result; }
-        close(dd);
+        if (close(dd) != 0) { result.error = "archive_root_close_failed"; return result; }
     }
 
     // Post-publication verification
@@ -609,7 +615,9 @@ ArchiveResult LegacyArchive::create_archive(
         std::error_code ec;
         fs::rename(final_path, quarantine, ec);
         int qd = open(archive_root_.c_str(), O_RDONLY);
-        if (qd >= 0) { fsync(qd); close(qd); }
+        if (qd < 0) { result.error = "archive_root_fsync_open_failed"; return result; }
+        if (fsync(qd) != 0) { close(qd); result.error = "archive_root_fsync_failed"; return result; }
+        if (close(qd) != 0) { result.error = "archive_root_close_failed"; return result; }
         result.error = "post_publish_verify_failed"; return result;
     }
 
