@@ -81,13 +81,30 @@ bool LegacyArchive::valid_migration_id(const std::string& id) {
 }
 
 bool LegacyArchive::safe_version(const std::string& v) {
-    if (v.empty()) return false;
-    for (char c : v) {
-        if (c == '/' || c == '\\' || c < 0x20 || c == ' ' || c == '\t') return false;
+    if (v.empty() || v[0] != 'v') return false;
+    // Format: v<num>.<num>.<num>[-suffix]
+    size_t pos = 1; // after 'v'
+    auto parse_num = [&]() -> bool {
+        if (pos >= v.size() || !isdigit(v[pos])) return false;
+        while (pos < v.size() && isdigit(v[pos])) ++pos;
+        return true;
+    };
+    if (!parse_num()) return false;
+    if (pos >= v.size() || v[pos] != '.') return false; ++pos;
+    if (!parse_num()) return false;
+    if (pos >= v.size() || v[pos] != '.') return false; ++pos;
+    if (!parse_num()) return false;
+    // Optional suffix: -alphanumeric
+    if (pos < v.size()) {
+        if (v[pos] != '-') return false; ++pos;
+        if (pos >= v.size()) return false;
+        while (pos < v.size()) {
+            char c = v[pos];
+            if (!isalnum(c) && c != '.' && c != '-') return false;
+            ++pos;
+        }
     }
-    if (v.find("..") != std::string::npos) return false;
-    if (v.front() == '.' || v.back() == '.' || v.front() == ' ' || v.back() == ' ') return false;
-    return true;
+    return pos == v.size();
 }
 
 std::string LegacyArchive::sha256_file(const std::string& path) {
