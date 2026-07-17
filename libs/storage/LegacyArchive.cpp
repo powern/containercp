@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <openssl/sha.h>
 #include <ctime>
+#include <cerrno>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -487,14 +488,22 @@ ArchiveResult LegacyArchive::create_archive(
         int dst_fd = open(dst.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0640);
         if (dst_fd < 0) { close(src_fd); result.error = "dest_create_failed:" + fn; return false; }
 
-        // Stream copy
+        // Stream copy with partial write + EINTR handling
         char cbuf[65536]; bool copy_ok = true;
         while (true) {
-            ssize_t n = read(src_fd, cbuf, sizeof(cbuf));
+            ssize_t n;
+            do { n = read(src_fd, cbuf, sizeof(cbuf)); } while (n < 0 && errno == EINTR);
             if (n < 0) { copy_ok = false; break; }
             if (n == 0) break;
-            ssize_t written = write(dst_fd, cbuf, n);
-            if (written < 0 || written != n) { copy_ok = false; break; }
+            // Write all bytes, handling partial writes and EINTR
+            ssize_t written_total = 0;
+            while (written_total < n) {
+                ssize_t w;
+                do { w = write(dst_fd, cbuf + written_total, n - written_total); } while (w < 0 && errno == EINTR);
+                if (w < 0) { copy_ok = false; break; }
+                written_total += w;
+            }
+            if (!copy_ok) break;
         }
         close(src_fd);
         if (!copy_ok) { close(dst_fd); unlink(dst.c_str()); result.error = "copy_failed:" + fn; return false; }
