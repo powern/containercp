@@ -686,6 +686,7 @@ bool LegacyArchive::verify_archive(const std::string& archive_path,
                                    ArchiveManifest* verified_manifest)
 {
     std::string ap = archive_path;
+    if (ap.empty()) return false;
     if (ap.back() != '/') ap += '/';
 
     // Root safety
