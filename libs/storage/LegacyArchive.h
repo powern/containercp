@@ -61,7 +61,6 @@ public:
         const DatabaseVerificationResult& verification_result);
 
     bool verify_archive(const std::string& archive_path,
-                        const std::string* expected_manifest_archive_path = nullptr,
                         ArchiveManifest* verified_manifest = nullptr);
 
     bool set_permissions(const std::string& archive_path);
@@ -80,6 +79,11 @@ private:
     std::string source_dir_;
     std::string archive_root_;
     std::string migration_timestamp_; // captured once
+
+    bool verify_archive_internal(const std::string& physical_archive_path,
+                                 const std::string* expected_manifest_archive_path,
+                                 ArchiveManifest* verified_manifest);
+    static std::string normalize_archive_identity_path(const std::string& path);
 };
 
 } // namespace containercp::storage

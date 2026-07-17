@@ -27,7 +27,8 @@ LegacyArchive::LegacyArchive(const std::string& source_directory,
     : source_dir_(source_directory), archive_root_(archive_root)
 {
     if (!source_dir_.empty() && source_dir_.back() != '/') source_dir_ += '/';
-    if (!archive_root_.empty() && archive_root_.back() != '/') archive_root_ += '/';
+    archive_root_ = normalize_archive_identity_path(archive_root);
+    if (!archive_root_.empty()) archive_root_ += '/';
 }
 
 std::string LegacyArchive::generate_uuid() {
@@ -142,6 +143,22 @@ std::string LegacyArchive::sha256_file(const std::string& path) {
         out += "0123456789abcdef"[hash[i] & 0xf];
     }
     return out;
+}
+
+std::string LegacyArchive::normalize_archive_identity_path(const std::string& path) {
+    if (path.empty()) return "";
+    fs::path p(path);
+    // Reject traversal before normalization
+    for (auto& c : p) { if (c == "..") return ""; }
+    p = p.lexically_normal();
+    if (p.empty()) return "";
+    // Reject traversal after normalization
+    for (auto& c : p) { if (c == "..") return ""; }
+    // Strip trailing separator
+    std::string result = p.string();
+    while (!result.empty() && (result.back() == '/' || result.back() == '\\'))
+        result.pop_back();
+    return result;
 }
 
 static std::string sha256_fd(int fd) {
@@ -678,7 +695,7 @@ ArchiveResult LegacyArchive::create_archive(
         m.target_version = target_version;
         m.migration_timestamp = migration_timestamp_;
         m.source_directory = source_dir_;
-        m.archive_directory = manifest_final_path;
+        m.archive_directory = normalize_archive_identity_path(manifest_final_path);
         m.files = std::move(file_entries);
         m.checksum_match = true;
         m.initial_integrity_check = verification_result.initial_integrity_check_result;
@@ -760,7 +777,7 @@ ArchiveResult LegacyArchive::create_archive(
     }
 
     // Pre-publication verification
-    if (!verify_archive(temp_path, &manifest_final_path)) { result.error = "pre_publish_verify_failed"; return result; }
+    if (!verify_archive_internal(temp_path, &manifest_final_path, nullptr)) { result.error = "pre_publish_verify_failed"; return result; }
     if (!set_permissions(temp_path)) { result.error = "archive_permissions_failed"; return result; }
 
     // Atomic rename with fsync
@@ -782,7 +799,7 @@ ArchiveResult LegacyArchive::create_archive(
     }
 
     // Post-publication verification
-    if (verify_archive(final_path, &manifest_final_path)) {
+    if (verify_archive_internal(final_path, &manifest_final_path, nullptr)) {
         result.archive_path = final_path;
         result.success = true;
         return result;
@@ -811,7 +828,7 @@ quarantine:
 // ============================================================
 
 
-bool LegacyArchive::verify_archive(const std::string& archive_path,
+bool LegacyArchive::verify_archive_internal(const std::string& archive_path,
                                    const std::string* expected_manifest_archive_path,
                                    ArchiveManifest* verified_manifest)
 {
@@ -896,8 +913,8 @@ bool LegacyArchive::verify_archive(const std::string& archive_path,
         if (expected_manifest_archive_path) {
             expected = *expected_manifest_archive_path;
         } else {
-            expected = ap;
-            while (!expected.empty() && expected.back() == '/') expected.pop_back();
+            expected = normalize_archive_identity_path(ap);
+            if (expected.empty()) return false;
         }
         if (strings["archive_directory"] != expected) return false;
     }
@@ -994,6 +1011,12 @@ bool LegacyArchive::verify_archive(const std::string& archive_path,
         *verified_manifest = std::move(m);
     }
     return true;
+}
+
+bool LegacyArchive::verify_archive(const std::string& archive_path,
+                                   ArchiveManifest* verified_manifest)
+{
+    return verify_archive_internal(archive_path, nullptr, verified_manifest);
 }
 
 // ============================================================
