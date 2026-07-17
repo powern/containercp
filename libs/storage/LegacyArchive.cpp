@@ -198,20 +198,16 @@ ArchiveResult LegacyArchive::create_archive(
         if (!e.is_directory(ec)) continue;
         std::string mp = e.path().string() + "/manifest.json";
         if (!fs::exists(mp)) continue;
-        // Parse migration_id from manifest line
-        std::ifstream mf(mp); std::string line;
-        bool found = false; std::string manifest_id;
-        while (std::getline(mf, line)) {
-            auto pos = line.find("\"migration_id\"");
-            if (pos == std::string::npos) continue;
-            auto start = line.find('\"', pos + 15);
-            auto end = line.find('\"', start + 1);
-            if (start != std::string::npos && end != std::string::npos)
-                manifest_id = line.substr(start + 1, end - start - 1);
-            found = true; break;
-        }
-        if (!found) continue;
-        if (manifest_id == migration_id) {
+        // Parse manifest with proper JSON parser
+        std::ifstream mf(mp);
+        std::string json((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
+        std::map<std::string, std::string> strings;
+        std::map<std::string, int64_t> ints;
+        std::map<std::string, bool> bools;
+        std::vector<std::map<std::string, std::string>> file_entries;
+        ManifestParser parser(json);
+        if (!parser.parse_manifest(strings, ints, bools, file_entries)) continue;
+        if (strings["migration_id"] == migration_id) {
             // Verify existing archive integrity
             if (verify_archive(e.path().string())) {
                 result.error = "migration_id_already_archived";
