@@ -120,8 +120,8 @@ LegacyArchive::RecordCountResult LegacyArchive::count_records(const std::string&
 
     res.success = true;
 
-    if (fn == "profiles.db") { std::ifstream f(sp); std::string l; while (std::getline(f, l)) if (!l.empty()) ++res.record_count; return res; }
-    if (fn == "template_profiles.db") { std::ifstream f(sp); std::string l; while (std::getline(f, l)) if (!l.empty()) ++res.record_count; return res; }
+    if (fn == "profiles.db") { auto dr = reader.read_profiles_only(); if (!dr.success) { res.error = "parse_failed"; res.success = false; return res; } res.record_count = dr.records.size(); return res; }
+    if (fn == "template_profiles.db") { auto dr = reader.read_templates_only(); if (!dr.success) { res.error = "parse_failed"; res.success = false; return res; } res.record_count = dr.records.size(); return res; }
 
     if (fn == "mail_state.db") { auto dr = reader.read_mail_config(); if (!dr.success) { res.error = "parse_failed"; res.success = false; return res; } res.record_count = dr.module_state_present ? 1 : 0; return res; }
     if (fn == "mail_smarthost.db") { auto dr = reader.read_mail_config(); if (!dr.success) { res.error = "parse_failed"; res.success = false; return res; } res.record_count = dr.smarthost_present ? 1 : 0; return res; }

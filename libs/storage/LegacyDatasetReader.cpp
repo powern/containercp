@@ -73,6 +73,60 @@ DatasetResult<php::PhpVersion> LegacyDatasetReader::read_php_versions() {
     return r;
 }
 
+// ---- read_profiles_only (profiles.db, 9-field) ----
+DatasetResult<profile::Profile> LegacyDatasetReader::read_profiles_only() {
+    DatasetResult<profile::Profile> r;
+    fs::path pp(legacy_dir_ + "profiles.db");
+    if (!fs::exists(pp)) { r.error = "file_missing"; return r; }
+    std::set<uint64_t> ids; std::string err;
+    LineParser lp(pp, "profiles.db");
+    while (lp.next()) {
+        if (lp.empty_line()) continue;
+        auto f = lp.split(); int i = 0;
+        if (f.size() != 9) { r.error = "invalid_field_count"; return r; }
+        profile::Profile rec;
+        { uint64_t tmp; if (!LineParser::parse_uint64(f[i++], tmp, err)) { r.error = "invalid_integer:" + err; return r; } rec.id = tmp; }
+        if (ids.count(rec.id)) { r.error = "duplicate_id"; return r; }
+        ids.insert(rec.id);
+        rec.profile_name = f[i++];
+        rec.type = profile::profile_type_from_string(f[i++]);
+        rec.web_server = f[i++]; rec.runtime = f[i++]; rec.template_path = f[i++]; rec.description = f[i++];
+        if (!LineParser::parse_bool(f[i++], rec.enabled, err)) { r.error = "invalid_boolean:" + err; return r; }
+        if (!LineParser::parse_bool(f[i++], rec.default_profile, err)) { r.error = "invalid_boolean:" + err; return r; }
+        rec.name = rec.profile_name;
+        r.records.push_back(std::move(rec));
+    }
+    r.success = true;
+    return r;
+}
+
+// ---- read_templates_only (template_profiles.db, 8-field) ----
+DatasetResult<profile::Profile> LegacyDatasetReader::read_templates_only() {
+    DatasetResult<profile::Profile> r;
+    fs::path tp(legacy_dir_ + "template_profiles.db");
+    if (!fs::exists(tp)) { r.error = "file_missing"; return r; }
+    std::set<uint64_t> ids; std::string err;
+    LineParser lp(tp, "template_profiles.db");
+    while (lp.next()) {
+        if (lp.empty_line()) continue;
+        auto f = lp.split(); int i = 0;
+        if (f.size() != 8) { r.error = "invalid_field_count"; return r; }
+        profile::Profile rec;
+        { uint64_t tmp; if (!LineParser::parse_uint64(f[i++], tmp, err)) { r.error = "invalid_integer:" + err; return r; } rec.id = tmp; }
+        if (ids.count(rec.id)) { r.error = "duplicate_id"; return r; }
+        ids.insert(rec.id);
+        rec.profile_name = f[i++];
+        rec.type = profile::ProfileType::WEB_SERVER;
+        rec.web_server = f[i++]; rec.runtime = f[i++]; rec.template_path = f[i++]; rec.description = f[i++];
+        if (!LineParser::parse_bool(f[i++], rec.enabled, err)) { r.error = "invalid_boolean:" + err; return r; }
+        if (!LineParser::parse_bool(f[i++], rec.default_profile, err)) { r.error = "invalid_boolean:" + err; return r; }
+        rec.name = rec.profile_name;
+        r.records.push_back(std::move(rec));
+    }
+    r.success = true;
+    return r;
+}
+
 // ---- read_combined_profiles (profiles.db + template_profiles.db) ----
 DatasetResult<profile::Profile> LegacyDatasetReader::read_combined_profiles() {
     DatasetResult<profile::Profile> r;

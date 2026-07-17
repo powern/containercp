@@ -46,6 +46,8 @@ public:
     DatasetResult<node::Node> read_nodes();
     DatasetResult<php::PhpVersion> read_php_versions();
     DatasetResult<profile::Profile> read_combined_profiles();
+    DatasetResult<profile::Profile> read_profiles_only();
+    DatasetResult<profile::Profile> read_templates_only();
     DatasetResult<user::User> read_users();
     DatasetResult<site::Site> read_sites();
     DatasetResult<domain::Domain> read_domains();
