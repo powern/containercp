@@ -452,27 +452,162 @@ ArchiveResult LegacyArchive::create_archive(
 }
 
 // ============================================================
-// verify_archive — strict manifest + SHA256SUMS + cross-check
+// Proper JSON parser for manifest validation
 // ============================================================
 
-// Simple JSON value extractor: finds "key": value in JSON text
-static std::string json_extract_str(const std::string& json, const std::string& key) {
-    auto pos = json.find("\"" + key + "\": \"");
-    if (pos == std::string::npos) return "";
-    pos += key.size() + 5; // skip past `"key": "`
-    auto end = json.find('\"', pos);
-    if (end == std::string::npos) return "";
-    return json.substr(pos, end - pos);
-}
+namespace {
 
-static int64_t json_extract_int(const std::string& json, const std::string& key) {
-    auto pos = json.find("\"" + key + "\": ");
-    if (pos == std::string::npos) return -999;
-    pos += key.size() + 4;
-    auto end = json.find_first_of(",\n}", pos);
-    std::string s = json.substr(pos, end - pos);
-    return std::stoll(s);
-}
+struct JsonError { const char* msg; int pos; };
+
+class ManifestParser {
+    const std::string& json_;
+    size_t pos_ = 0;
+
+    char peek() const { return pos_ < json_.size() ? json_[pos_] : '\0'; }
+    char next() { return pos_ < json_.size() ? json_[pos_++] : '\0'; }
+    void skip_ws() { while (peek() == ' ' || peek() == '\t' || peek() == '\n' || peek() == '\r') next(); }
+
+    JsonError error(const char* msg) { return {msg, static_cast<int>(pos_)}; }
+
+    // Parse JSON string with escaping
+    bool parse_string(std::string& out) {
+        if (next() != '"') return false;
+        out.clear();
+        while (peek() != '"' && peek() != '\0') {
+            if (peek() == '\\') { next();
+                switch (next()) {
+                case '"': out += '"'; break; case '\\': out += '\\'; break;
+                case '/': out += '/'; break; case 'n': out += '\n'; break;
+                case 'r': out += '\r'; break; case 't': out += '\t'; break;
+                case 'u': { // \uXXXX — accept 4 hex digits
+                    uint32_t cp = 0;
+                    for (int i = 0; i < 4; ++i) {
+                        char c = next();
+                        if (c >= '0' && c <= '9') cp = cp * 16 + (c - '0');
+                        else if (c >= 'a' && c <= 'f') cp = cp * 16 + (c - 'a' + 10);
+                        else if (c >= 'A' && c <= 'F') cp = cp * 16 + (c - 'A' + 10);
+                        else return false;
+                    }
+                    if (cp <= 0x7F) out += static_cast<char>(cp);
+                    else if (cp <= 0x7FF) { out += static_cast<char>(0xC0 | (cp>>6)); out += static_cast<char>(0x80 | (cp&0x3F)); }
+                    else { out += static_cast<char>(0xE0 | (cp>>12)); out += static_cast<char>(0x80 | ((cp>>6)&0x3F)); out += static_cast<char>(0x80 | (cp&0x3F)); }
+                    break;
+                }
+                default: return false;
+                }
+            } else if (peek() < 0x20) return false; // control character
+            else out += next();
+        }
+        if (next() != '"') return false;
+        return true;
+    }
+
+    // Parse integer
+    bool parse_int(int64_t& out) {
+        skip_ws();
+        if (peek() == '\0') return false;
+        bool neg = false;
+        if (peek() == '-') { neg = true; next(); }
+        if (peek() < '0' || peek() > '9') return false;
+        out = 0;
+        while (peek() >= '0' && peek() <= '9') {
+            int64_t prev = out;
+            out = out * 10 + (next() - '0');
+            if (out < prev) return false; // overflow
+        }
+        if (neg) out = -out;
+        return true;
+    }
+
+    // Parse boolean
+    bool parse_bool(bool& out) {
+        skip_ws();
+        if (json_.compare(pos_, 4, "true") == 0) { out = true; pos_ += 4; return true; }
+        if (json_.compare(pos_, 5, "false") == 0) { out = false; pos_ += 5; return true; }
+        return false;
+    }
+
+public:
+    explicit ManifestParser(const std::string& json) : json_(json) {}
+
+    // Parse the manifest object: returns true and fills map on success
+    bool parse_manifest(std::map<std::string, std::string>& strings,
+                        std::map<std::string, int64_t>& ints,
+                        std::map<std::string, bool>& bools,
+                        std::vector<std::map<std::string, std::string>>& file_entries)
+    {
+        skip_ws();
+        if (next() != '{') return false;
+
+        std::set<std::string> seen_keys;
+        while (true) {
+            skip_ws();
+            if (peek() == '}') { next(); break; }
+            if (peek() == ',') next();
+            skip_ws();
+
+            // Parse key
+            if (peek() != '"') return false;
+            std::string key;
+            if (!parse_string(key)) return false;
+            if (seen_keys.count(key)) return false; // duplicate key
+            seen_keys.insert(key);
+
+            skip_ws();
+            if (next() != ':') return false;
+            skip_ws();
+
+            // Parse value
+            if (key == "files") {
+                if (next() != '[') return false;
+                while (true) {
+                    skip_ws();
+                    if (peek() == ']') { next(); break; }
+                    if (peek() == ',') next();
+                    skip_ws();
+                    if (next() != '{') return false;
+                    std::map<std::string, std::string> file_entry;
+                    std::set<std::string> file_seen;
+                    while (true) {
+                        skip_ws();
+                        if (peek() == '}') { next(); break; }
+                        if (peek() == ',') next();
+                        skip_ws();
+                        std::string fk;
+                        if (!parse_string(fk)) return false;
+                        if (file_seen.count(fk)) return false;
+                        file_seen.insert(fk);
+                        skip_ws();
+                        if (next() != ':') return false;
+                        skip_ws();
+
+                        // File entry values: only string/number/bool fields
+                        if (peek() == '"') { std::string fv; if (!parse_string(fv)) return false; file_entry[fk] = fv; }
+                        else if (peek() == 't' || peek() == 'f') { bool b; if (!parse_bool(b)) return false; file_entry[fk] = b ? "true" : "false"; }
+                        else { int64_t n; if (!parse_int(n)) return false; file_entry[fk] = std::to_string(n); }
+                    }
+                    file_entries.push_back(file_entry);
+                }
+            } else if (peek() == '"') {
+                std::string val;
+                if (!parse_string(val)) return false;
+                strings[key] = val;
+            } else if (peek() == 't' || peek() == 'f') {
+                bool val;
+                if (!parse_bool(val)) return false;
+                bools[key] = val;
+            } else {
+                int64_t val;
+                if (!parse_int(val)) return false;
+                ints[key] = val;
+            }
+        }
+        skip_ws();
+        return pos_ == json_.size(); // no trailing garbage
+    }
+};
+
+} // namespace
 
 bool LegacyArchive::verify_archive(const std::string& archive_path,
                                    ArchiveManifest* verified_manifest)
@@ -526,72 +661,68 @@ bool LegacyArchive::verify_archive(const std::string& archive_path,
         if (sha256_file(ap + fn) != expected_hash) return false;
     }
 
-    // Parse manifest
+    // Parse manifest with proper JSON parser
     std::string mp = ap + "manifest.json";
     if (!fs::exists(mp) || !fs::is_regular_file(mp) || fs::is_symlink(fs::symlink_status(mp))) return false;
     std::string json;
     { std::ifstream mf(mp); json.assign(std::istreambuf_iterator<char>(mf), std::istreambuf_iterator<char>()); }
 
-    // Validate manifest fields
-    if (json_extract_str(json, "manifest_version") != "1.0") return false;
-    std::string mid = json_extract_str(json, "migration_id");
+    std::map<std::string, std::string> strings;
+    std::map<std::string, int64_t> ints;
+    std::map<std::string, bool> bools;
+    std::vector<std::map<std::string, std::string>> file_entries;
+
+    ManifestParser parser(json);
+    if (!parser.parse_manifest(strings, ints, bools, file_entries)) return false;
+
+    // Validate required string fields
+    if (strings["manifest_version"] != "1.0") return false;
+    std::string mid = strings["migration_id"];
     if (!valid_migration_id(mid)) return false;
-    if (!safe_version(json_extract_str(json, "source_version"))) return false;
-    if (!safe_version(json_extract_str(json, "target_version"))) return false;
-    if (json_extract_str(json, "verification_result") != "success") return false;
-    if (json.find("\"checksum_match\": true") == std::string::npos) return false;
+    if (!safe_version(strings["source_version"])) return false;
+    if (!safe_version(strings["target_version"])) return false;
+    if (strings["verification_result"] != "success") return false;
+    if (strings["initial_integrity_check"] != "ok") return false;
+    if (strings["reopened_integrity_check"] != "ok") return false;
 
-    // Validate integrity/FK fields
-    std::string initial_ik = json_extract_str(json, "initial_integrity_check");
-    std::string reopened_ik = json_extract_str(json, "reopened_integrity_check");
-    if (initial_ik != "ok" || reopened_ik != "ok") return false;
-    if (json_extract_int(json, "initial_fk_violations") != 0) return false;
-    if (json_extract_int(json, "reopened_fk_violations") != 0) return false;
+    // Validate boolean
+    if (!bools.count("checksum_match") || !bools["checksum_match"]) return false;
 
-    // Cross-check manifest file entries against SHA256SUMS and disk
-    // Parse file entries from JSON
-    auto fa = json.find("\"files\": [");
-    if (fa == std::string::npos) return false;
+    // Validate integers
+    if (!ints.count("initial_fk_violations") || ints["initial_fk_violations"] != 0) return false;
+    if (!ints.count("reopened_fk_violations") || ints["reopened_fk_violations"] != 0) return false;
 
-    // Count manifest entries and verify each against SHA256SUMS + disk
-    int manifest_count = 0;
-    bool any_required_missing = false;
-    for (auto& fi : legacy_file_inventory()) {
-        // Find this file in manifest JSON
-        std::string search = "\"filename\": \"" + fi.filename + "\"";
-        if (json.find(search) == std::string::npos) return false;
-        ++manifest_count;
-        // Check present flag
-        std::string present_search = search + ",\"size\":";
-        auto ps = json.find(present_search);
-        if (ps == std::string::npos) return false;
-        bool manifest_present = true;
+    // Cross-check file entries (19 total)
+    if (file_entries.size() != 19) return false;
+    std::set<std::string> manifest_filenames;
+    for (auto& fe : file_entries) {
+        std::string fn = fe["filename"];
+        if (fn.empty()) return false;
+        if (manifest_filenames.count(fn)) return false;
+        manifest_filenames.insert(fn);
 
-        // Extract "present" field
-        auto pflag = json.find("\"present\": true", ps);
-        bool is_present = (pflag != std::string::npos && pflag < json.find('}', ps));
-        bool is_absent = (json.find("\"present\": false", ps) != std::string::npos &&
-                          json.find("\"present\": false", ps) < json.find('}', ps));
+        bool present = (fe["present"] == "true");
+        bool optional = false;
+        for (auto& fi : legacy_file_inventory()) { if (fi.filename == fn) { optional = !fi.required; break; } }
 
-        std::string disk_path = ap + fi.filename;
+        std::string disk_path = ap + fn;
         bool disk_exists = fs::exists(disk_path) && fs::is_regular_file(disk_path) &&
                           !fs::is_symlink(fs::symlink_status(disk_path));
 
-        if (is_present) {
+        if (present) {
             if (!disk_exists) return false;
-            if (!sums_entries.count(fi.filename)) return false;
-            if (sha256_file(disk_path) != sums_entries[fi.filename]) return false;
-            // Check manifest SHA against disk
-            std::string msha = json_extract_str(json, "sha256\"");
-            // Simple check: the manifest hash should be findable around this file entry
+            if (!sums_entries.count(fn)) return false;
+            if (sha256_file(disk_path) != sums_entries[fn]) return false;
         } else {
             if (disk_exists) return false;
-            if (sums_entries.count(fi.filename)) return false;
+            if (sums_entries.count(fn)) return false;
+            if (!optional) return false; // required file must be present
         }
-        if (!is_present && fi.required) any_required_missing = true;
     }
-    if (any_required_missing) return false;
-    if (manifest_count != 19) return false;
+    // Verify all required files present in manifest
+    for (auto& fi : legacy_file_inventory()) {
+        if (fi.required && !manifest_filenames.count(fi.filename)) return false;
+    }
 
     // Exact directory content verification
     for (auto& e : fs::directory_iterator(ap)) {
@@ -611,10 +742,10 @@ bool LegacyArchive::verify_archive(const std::string& archive_path,
 
     if (verified_manifest) {
         ArchiveManifest m;
-        m.manifest_version = "1.0";
+        m.manifest_version = strings["manifest_version"];
         m.migration_id = mid;
         m.archive_directory = ap;
-        m.checksum_match = true;
+        m.checksum_match = bools["checksum_match"];
         *verified_manifest = std::move(m);
     }
     return true;
