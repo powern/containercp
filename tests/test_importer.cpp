@@ -1475,14 +1475,14 @@ TEST_CASE("mail_config baseline fails on query error") {
     write_file(dir + "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
     write_file(dir + "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
     ConnectionPool pool;
-    if (!pool.initialize(dir + "containercp.db")) { cleanup(dir); return; }
-    SQLiteDB migrator; migrator.open(dir + "containercp.db");
-    MigrationEngine eng; register_all_schema_migrations(eng); eng.migrate(migrator); migrator.close();
-    // Don't create mail_config table — baseline will fail
+    // Init and migrate, then DROP mail_config to cause baseline failure
+    REQUIRE(pool.initialize(dir + "containercp.db"));
+    { SQLiteDB migrator; migrator.open(dir + "containercp.db");
+      MigrationEngine eng; register_all_schema_migrations(eng); eng.migrate(migrator); migrator.close(); }
+    { WriteGuard wg(pool); wg.db().exec("DROP TABLE mail_config"); }
     LegacyImporter imp(dir, pool);
     auto r = imp.import_mail_config();
-    // Should fail because baseline capture fails (no mail_config table)
-    CHECK_FALSE(r.success);
+    CHECK_FALSE(r.success); // baseline capture fails because mail_config table missing
     pool.shutdown(); cleanup(dir);
 }
 

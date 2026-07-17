@@ -530,6 +530,7 @@ LegacyDatasetReader::MailConfigResult LegacyDatasetReader::read_mail_config() {
     if (fs::exists(state_path) && fs::file_size(state_path) > 0) {
         std::ifstream f(state_path);
         std::getline(f, r.module_state);
+        r.module_state_present = true;
         if (!r.module_state.empty() && r.module_state != "active" && r.module_state != "inactive") {
             r.error = "invalid_module_state"; return r;
         }
@@ -538,6 +539,7 @@ LegacyDatasetReader::MailConfigResult LegacyDatasetReader::read_mail_config() {
     if (fs::exists(smtp_path) && fs::file_size(smtp_path) > 0) {
         std::ifstream f(smtp_path);
         std::getline(f, r.smarthost);
+        r.smarthost_present = true;
     }
     r.success = true;
     return r;

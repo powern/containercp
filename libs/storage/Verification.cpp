@@ -592,9 +592,9 @@ ResourceVerificationResult Verification::verify_mail_config() {
     auto sh_snap = snap.read_mail_config_key("smarthost");
     if (!ms_snap.success || !sh_snap.success) { r.error = "sqlite_load_failed"; return r; }
 
-    r.legacy_record_count = (dr.module_state.empty() ? 0 : 1) + (dr.smarthost.empty() ? 0 : 1);
+    r.legacy_record_count = (dr.module_state_present ? 1 : 0) + (dr.smarthost_present ? 1 : 0);
     r.sqlite_record_count = (ms_snap.present ? 1 : 0) + (sh_snap.present ? 1 : 0);
-    r.legacy_checksum = sha256(canonical_mail_config(!dr.module_state.empty(), dr.module_state, !dr.smarthost.empty(), dr.smarthost));
+    r.legacy_checksum = sha256(canonical_mail_config(dr.module_state_present, dr.module_state, dr.smarthost_present, dr.smarthost));
     r.sqlite_checksum = sha256(canonical_mail_config(ms_snap.present, ms_snap.value, sh_snap.present, sh_snap.value));
 
     if (r.legacy_record_count != r.sqlite_record_count || r.legacy_checksum != r.sqlite_checksum) {
@@ -806,91 +806,72 @@ DatabaseVerificationResult Verification::verify_all() {
         };
 
         // Helper for one resource reopen comparison
-        #define REOPEN_ONE(name, storage_recs, checked_csum, typed_field, canon_fn, field_fn, transient_fn) \
+        #define REOPEN_ONE(name, storage_recs, checked_recs, checked_ok, typed_field, canon_fn, field_fn, transient_fn) \
         { \
-            reopen_compare(name, storage_recs.size(), sha256(canon_fn(storage_recs)), !checked_csum.empty(), checked_csum); \
+            reopen_compare(name, storage_recs.size(), sha256(canon_fn(storage_recs)), checked_ok, checked_ok ? sha256(canon_fn(checked_recs)) : ""); \
             auto& rr = result.reopened_resources.back(); \
             if (!rr.success) { \
-                auto fres = compare_resource<std::decay_t<decltype(*storage_recs.begin())>>( \
+                auto f1 = compare_resource<std::decay_t<decltype(*storage_recs.begin())>>( \
                     name, std::vector<std::decay_t<decltype(*storage_recs.begin())>>(typed_field), \
                     std::vector<std::decay_t<decltype(*storage_recs.begin())>>(storage_recs), \
                     canon_fn, field_fn, transient_fn); \
-                rr.mismatches = std::move(fres.mismatches); \
-                rr.legacy_checksum = fres.legacy_checksum; \
+                for (auto& m : f1.mismatches) m.source = "storage"; \
+                rr.mismatches = std::move(f1.mismatches); \
+                rr.legacy_checksum = f1.legacy_checksum; \
+                if (checked_ok) { \
+                    auto f2 = compare_resource<std::decay_t<decltype(*storage_recs.begin())>>( \
+                        name, std::vector<std::decay_t<decltype(*storage_recs.begin())>>(typed_field), \
+                        std::vector<std::decay_t<decltype(*storage_recs.begin())>>(checked_recs), \
+                        canon_fn, field_fn, transient_fn); \
+                    for (auto& m : f2.mismatches) m.source = "checked_sqlite"; \
+                    rr.mismatches.insert(rr.mismatches.end(), f2.mismatches.begin(), f2.mismatches.end()); \
+                } \
             } \
         }
 
         auto& te = typed_evidence_;
-        {
-            auto r = reopen_storage.load_nodes(); ConnectionPool cp; std::string cc;
-            if (make_pool(cp, "reopen_nodes")) { std::vector<node::Node> cr; auto lr = load_nodes(cp, cr); cc = lr.success ? sha256(canonical_nodes(cr)) : ""; cp.shutdown(); }
-            REOPEN_ONE("nodes", r, cc, te.nodes, [this](const std::vector<node::Node>& v) { return canonical_nodes(v); }, FIELD_ADAPTOR(node::Node, compare_node), TRANSIENT_NULL);
-        }
-        {
-            auto r = reopen_storage.load_php_versions(); ConnectionPool cp; std::string cc;
-            if (make_pool(cp, "reopen_php")) { std::vector<php::PhpVersion> cr; auto lr = load_php_versions(cp, cr); cc = lr.success ? sha256(canonical_php_versions(cr)) : ""; cp.shutdown(); }
-            REOPEN_ONE("php_versions", r, cc, te.php_versions, [this](const std::vector<php::PhpVersion>& v) { return canonical_php_versions(v); }, FIELD_ADAPTOR(php::PhpVersion, compare_php), transient_php);
-        }
-        {
-            auto r = reopen_storage.load_profiles(); ConnectionPool cp; std::string cc;
-            if (make_pool(cp, "reopen_profiles")) { std::vector<profile::Profile> cr; auto lr = load_profiles(cp, cr); cc = lr.success ? sha256(canonical_profiles(cr)) : ""; cp.shutdown(); }
-            REOPEN_ONE("profiles", r, cc, te.profiles, [this](const std::vector<profile::Profile>& v) { return canonical_profiles(v); }, FIELD_ADAPTOR(profile::Profile, compare_profile), transient_profile);
-        }
-        {
-            auto r = reopen_storage.load_users(); ConnectionPool cp; std::string cc;
-            if (make_pool(cp, "reopen_users")) { std::vector<user::User> cr; auto lr = load_users(cp, cr); cc = lr.success ? sha256(canonical_users(cr)) : ""; cp.shutdown(); }
-            REOPEN_ONE("users", r, cc, te.users, [this](const std::vector<user::User>& v) { return canonical_users(v); }, FIELD_ADAPTOR(user::User, compare_user), transient_user);
-        }
-        {
-            auto r = reopen_storage.load_sites(); ConnectionPool cp; std::string cc;
-            if (make_pool(cp, "reopen_sites")) { std::vector<site::Site> cr; auto lr = load_sites(cp, cr); cc = lr.success ? sha256(canonical_sites(cr)) : ""; cp.shutdown(); }
-            REOPEN_ONE("sites", r, cc, te.sites, [this](const std::vector<site::Site>& v) { return canonical_sites(v); }, FIELD_ADAPTOR(site::Site, compare_site), transient_site);
-        }
-        {
-            auto r = reopen_storage.load_domains(); ConnectionPool cp; std::string cc;
-            if (make_pool(cp, "reopen_domains")) { std::vector<domain::Domain> cr; auto lr = load_domains(cp, cr); cc = lr.success ? sha256(canonical_domains(cr)) : ""; cp.shutdown(); }
-            REOPEN_ONE("domains", r, cc, te.domains, [this](const std::vector<domain::Domain>& v) { return canonical_domains(v); }, FIELD_ADAPTOR(domain::Domain, compare_domain), transient_domain);
-        }
-        {
-            auto r = reopen_storage.load_databases(); ConnectionPool cp; std::string cc;
-            if (make_pool(cp, "reopen_databases")) { std::vector<database::Database> cr; auto lr = load_databases(cp, cr); cc = lr.success ? sha256(canonical_databases(cr)) : ""; cp.shutdown(); }
-            REOPEN_ONE("databases", r, cc, te.databases, [this](const std::vector<database::Database>& v) { return canonical_databases(v); }, FIELD_ADAPTOR(database::Database, compare_database), transient_database);
-        }
-        {
-            auto r = reopen_storage.load_reverse_proxies(); ConnectionPool cp; std::string cc;
-            if (make_pool(cp, "reopen_proxies")) { std::vector<proxy::ReverseProxy> cr; auto lr = load_reverse_proxies(cp, cr); cc = lr.success ? sha256(canonical_reverse_proxies(cr)) : ""; cp.shutdown(); }
-            REOPEN_ONE("reverse_proxies", r, cc, te.reverse_proxies, [this](const std::vector<proxy::ReverseProxy>& v) { return canonical_reverse_proxies(v); }, FIELD_ADAPTOR(proxy::ReverseProxy, compare_proxy), transient_proxy);
-        }
-        {
-            auto r = reopen_storage.load_access_users(); ConnectionPool cp; std::string cc;
-            if (make_pool(cp, "reopen_au")) { std::vector<access::AccessUser> cr; auto lr = load_access_users(cp, cr); cc = lr.success ? sha256(canonical_access_users(cr)) : ""; cp.shutdown(); }
-            REOPEN_ONE("access_users", r, cc, te.access_users, [this](const std::vector<access::AccessUser>& v) { return canonical_access_users(v); }, FIELD_ADAPTOR(access::AccessUser, compare_access_user), transient_au);
-        }
-        {
-            auto r = reopen_storage.load_access_grants(); ConnectionPool cp; std::string cc;
-            if (make_pool(cp, "reopen_ag")) { std::vector<access::AccessGrant> cr; auto lr = load_access_grants(cp, cr); cc = lr.success ? sha256(canonical_access_grants(cr)) : ""; cp.shutdown(); }
-            REOPEN_ONE("access_grants", r, cc, te.access_grants, [this](const std::vector<access::AccessGrant>& v) { return canonical_access_grants(v); }, FIELD_ADAPTOR(access::AccessGrant, compare_access_grant), TRANSIENT_NULL);
-        }
-        {
-            auto r = reopen_storage.load_ssl_certificates(); ConnectionPool cp; std::string cc;
-            if (make_pool(cp, "reopen_ssl")) { std::vector<ssl::SslCertificate> cr; auto lr = load_ssl_certificates(cp, cr); cc = lr.success ? sha256(canonical_ssl_certificates(cr)) : ""; cp.shutdown(); }
-            REOPEN_ONE("ssl_certificates", r, cc, te.ssl_certificates, [this](const std::vector<ssl::SslCertificate>& v) { return canonical_ssl_certificates(v); }, FIELD_ADAPTOR(ssl::SslCertificate, compare_ssl), transient_ssl);
-        }
-        {
-            auto r = reopen_storage.load_mail_domains(); ConnectionPool cp; std::string cc;
-            if (make_pool(cp, "reopen_md")) { std::vector<mail::MailDomain> cr; auto lr = load_mail_domains(cp, cr); cc = lr.success ? sha256(canonical_mail_domains(cr)) : ""; cp.shutdown(); }
-            REOPEN_ONE("mail_domains", r, cc, te.mail_domains, [this](const std::vector<mail::MailDomain>& v) { return canonical_mail_domains(v); }, FIELD_ADAPTOR(mail::MailDomain, compare_mail_domain), transient_md);
-        }
-        {
-            auto r = reopen_storage.load_mailboxes(); ConnectionPool cp; std::string cc;
-            if (make_pool(cp, "reopen_mb")) { std::vector<mail::Mailbox> cr; auto lr = load_mail_mailboxes(cp, cr); cc = lr.success ? sha256(canonical_mail_mailboxes(cr)) : ""; cp.shutdown(); }
-            REOPEN_ONE("mail_mailboxes", r, cc, te.mail_mailboxes, [this](const std::vector<mail::Mailbox>& v) { return canonical_mail_mailboxes(v); }, FIELD_ADAPTOR(mail::Mailbox, compare_mailbox), transient_mb);
-        }
-        {
-            auto r = reopen_storage.load_mail_aliases(); ConnectionPool cp; std::string cc;
-            if (make_pool(cp, "reopen_ma")) { std::vector<mail::MailAlias> cr; auto lr = load_mail_aliases(cp, cr); cc = lr.success ? sha256(canonical_mail_aliases(cr)) : ""; cp.shutdown(); }
-            REOPEN_ONE("mail_aliases", r, cc, te.mail_aliases, [this](const std::vector<mail::MailAlias>& v) { return canonical_mail_aliases(v); }, FIELD_ADAPTOR(mail::MailAlias, compare_mail_alias), transient_ma);
-        }
+        { auto r = reopen_storage.load_nodes(); ConnectionPool cp; std::vector<node::Node> cr; bool ok = false;
+            if (make_pool(cp, "reopen_nodes")) { auto lr = load_nodes(cp, cr); ok = lr.success; cp.shutdown(); }
+            REOPEN_ONE("nodes", r, cr, ok, te.nodes, [this](const std::vector<node::Node>& v) { return canonical_nodes(v); }, FIELD_ADAPTOR(node::Node, compare_node), TRANSIENT_NULL); }
+        { auto r = reopen_storage.load_php_versions(); ConnectionPool cp; std::vector<php::PhpVersion> cr; bool ok = false;
+            if (make_pool(cp, "reopen_php")) { auto lr = load_php_versions(cp, cr); ok = lr.success; cp.shutdown(); }
+            REOPEN_ONE("php_versions", r, cr, ok, te.php_versions, [this](const std::vector<php::PhpVersion>& v) { return canonical_php_versions(v); }, FIELD_ADAPTOR(php::PhpVersion, compare_php), transient_php); }
+        { auto r = reopen_storage.load_profiles(); ConnectionPool cp; std::vector<profile::Profile> cr; bool ok = false;
+            if (make_pool(cp, "reopen_profiles")) { auto lr = load_profiles(cp, cr); ok = lr.success; cp.shutdown(); }
+            REOPEN_ONE("profiles", r, cr, ok, te.profiles, [this](const std::vector<profile::Profile>& v) { return canonical_profiles(v); }, FIELD_ADAPTOR(profile::Profile, compare_profile), transient_profile); }
+        { auto r = reopen_storage.load_users(); ConnectionPool cp; std::vector<user::User> cr; bool ok = false;
+            if (make_pool(cp, "reopen_users")) { auto lr = load_users(cp, cr); ok = lr.success; cp.shutdown(); }
+            REOPEN_ONE("users", r, cr, ok, te.users, [this](const std::vector<user::User>& v) { return canonical_users(v); }, FIELD_ADAPTOR(user::User, compare_user), transient_user); }
+        { auto r = reopen_storage.load_sites(); ConnectionPool cp; std::vector<site::Site> cr; bool ok = false;
+            if (make_pool(cp, "reopen_sites")) { auto lr = load_sites(cp, cr); ok = lr.success; cp.shutdown(); }
+            REOPEN_ONE("sites", r, cr, ok, te.sites, [this](const std::vector<site::Site>& v) { return canonical_sites(v); }, FIELD_ADAPTOR(site::Site, compare_site), transient_site); }
+        { auto r = reopen_storage.load_domains(); ConnectionPool cp; std::vector<domain::Domain> cr; bool ok = false;
+            if (make_pool(cp, "reopen_domains")) { auto lr = load_domains(cp, cr); ok = lr.success; cp.shutdown(); }
+            REOPEN_ONE("domains", r, cr, ok, te.domains, [this](const std::vector<domain::Domain>& v) { return canonical_domains(v); }, FIELD_ADAPTOR(domain::Domain, compare_domain), transient_domain); }
+        { auto r = reopen_storage.load_databases(); ConnectionPool cp; std::vector<database::Database> cr; bool ok = false;
+            if (make_pool(cp, "reopen_databases")) { auto lr = load_databases(cp, cr); ok = lr.success; cp.shutdown(); }
+            REOPEN_ONE("databases", r, cr, ok, te.databases, [this](const std::vector<database::Database>& v) { return canonical_databases(v); }, FIELD_ADAPTOR(database::Database, compare_database), transient_database); }
+        { auto r = reopen_storage.load_reverse_proxies(); ConnectionPool cp; std::vector<proxy::ReverseProxy> cr; bool ok = false;
+            if (make_pool(cp, "reopen_proxies")) { auto lr = load_reverse_proxies(cp, cr); ok = lr.success; cp.shutdown(); }
+            REOPEN_ONE("reverse_proxies", r, cr, ok, te.reverse_proxies, [this](const std::vector<proxy::ReverseProxy>& v) { return canonical_reverse_proxies(v); }, FIELD_ADAPTOR(proxy::ReverseProxy, compare_proxy), transient_proxy); }
+        { auto r = reopen_storage.load_access_users(); ConnectionPool cp; std::vector<access::AccessUser> cr; bool ok = false;
+            if (make_pool(cp, "reopen_au")) { auto lr = load_access_users(cp, cr); ok = lr.success; cp.shutdown(); }
+            REOPEN_ONE("access_users", r, cr, ok, te.access_users, [this](const std::vector<access::AccessUser>& v) { return canonical_access_users(v); }, FIELD_ADAPTOR(access::AccessUser, compare_access_user), transient_au); }
+        { auto r = reopen_storage.load_access_grants(); ConnectionPool cp; std::vector<access::AccessGrant> cr; bool ok = false;
+            if (make_pool(cp, "reopen_ag")) { auto lr = load_access_grants(cp, cr); ok = lr.success; cp.shutdown(); }
+            REOPEN_ONE("access_grants", r, cr, ok, te.access_grants, [this](const std::vector<access::AccessGrant>& v) { return canonical_access_grants(v); }, FIELD_ADAPTOR(access::AccessGrant, compare_access_grant), TRANSIENT_NULL); }
+        { auto r = reopen_storage.load_ssl_certificates(); ConnectionPool cp; std::vector<ssl::SslCertificate> cr; bool ok = false;
+            if (make_pool(cp, "reopen_ssl")) { auto lr = load_ssl_certificates(cp, cr); ok = lr.success; cp.shutdown(); }
+            REOPEN_ONE("ssl_certificates", r, cr, ok, te.ssl_certificates, [this](const std::vector<ssl::SslCertificate>& v) { return canonical_ssl_certificates(v); }, FIELD_ADAPTOR(ssl::SslCertificate, compare_ssl), transient_ssl); }
+        { auto r = reopen_storage.load_mail_domains(); ConnectionPool cp; std::vector<mail::MailDomain> cr; bool ok = false;
+            if (make_pool(cp, "reopen_md")) { auto lr = load_mail_domains(cp, cr); ok = lr.success; cp.shutdown(); }
+            REOPEN_ONE("mail_domains", r, cr, ok, te.mail_domains, [this](const std::vector<mail::MailDomain>& v) { return canonical_mail_domains(v); }, FIELD_ADAPTOR(mail::MailDomain, compare_mail_domain), transient_md); }
+        { auto r = reopen_storage.load_mailboxes(); ConnectionPool cp; std::vector<mail::Mailbox> cr; bool ok = false;
+            if (make_pool(cp, "reopen_mb")) { auto lr = load_mail_mailboxes(cp, cr); ok = lr.success; cp.shutdown(); }
+            REOPEN_ONE("mail_mailboxes", r, cr, ok, te.mail_mailboxes, [this](const std::vector<mail::Mailbox>& v) { return canonical_mail_mailboxes(v); }, FIELD_ADAPTOR(mail::Mailbox, compare_mailbox), transient_mb); }
+        { auto r = reopen_storage.load_mail_aliases(); ConnectionPool cp; std::vector<mail::MailAlias> cr; bool ok = false;
+            if (make_pool(cp, "reopen_ma")) { auto lr = load_mail_aliases(cp, cr); ok = lr.success; cp.shutdown(); }
+            REOPEN_ONE("mail_aliases", r, cr, ok, te.mail_aliases, [this](const std::vector<mail::MailAlias>& v) { return canonical_mail_aliases(v); }, FIELD_ADAPTOR(mail::MailAlias, compare_mail_alias), transient_ma); }
 
         // mail_config
         {

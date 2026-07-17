@@ -60,10 +60,11 @@ public:
     DatasetResult<mail::Mailbox> read_mailboxes();
     DatasetResult<mail::MailAlias> read_mail_aliases();
 
-    // mail_config returns module_state and smarthost as separate strings
     struct MailConfigResult {
         bool success = false;
+        bool module_state_present = false;
         std::string module_state;
+        bool smarthost_present = false;
         std::string smarthost;
         std::string error;
     };

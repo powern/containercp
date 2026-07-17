@@ -19,6 +19,7 @@ enum class VerificationStatus {
 struct FieldMismatch {
     std::string resource_type;
     uint64_t record_id = 0;
+    std::string source;
     std::string field;
     std::string expected;
     std::string actual;
