@@ -15,68 +15,68 @@ deletion. SQLite remains explicit-only. Manual archive invocation only.
 
 ## Correction items
 
-### P10-C01 — Fix semantic version validation
-- [ ] fix
+### P10-C01 — Fix semantic version validation ✅
+- [x] fix
 - Problem: `safe_version()` rejects period characters, invalidating real versions like `v0.6.0`
 - Files: `libs/storage/LegacyArchive.h`, `libs/storage/LegacyArchive.cpp`
 - Implementation: allow individual semantic-version periods; reject "..", slashes, backslashes, whitespace, control chars
 - Criteria: `v0.6.0`, `v0.7.0` accepted; `../v0.6.0`, `v0..6`, `v0/6/0` rejected
 - Tests: safe_version() acceptance + rejection test suite
-- Commit SHA: ___________
+- Commit SHA: 608d0de
 
-### P10-C02 — Strict canonical UUID contract
-- [ ] fix
+### P10-C02 — Strict canonical UUID contract ✅
+- [x] fix
 - Problem: `valid_migration_id()` accepts uppercase, any UUID version; `generate_uuid()` doesn't set v4 bits
 - Files: `libs/storage/LegacyArchive.h`, `libs/storage/LegacyArchive.cpp`
 - Implementation: enforce lowercase UUID v4 (version nibble=4, variant y=8/9/a/b)
 - Criteria: generated UUID validates; canonical accepted; uppercase/wrong version rejected
 - Tests: UUID validation + generation test suite
-- Commit SHA: ___________
+- Commit SHA: 608d0de
 
-### P10-C03 — Make physical inventory truly shared
-- [ ] refactor
+### P10-C03 — Make physical inventory truly shared ✅
+- [x] refactor
 - Problem: `legacy_file_inventory()` lives in LegacyArchive.h only
 - Files: new `libs/storage/LegacyFileInventory.h`
 - Implementation: extract to neutral component; use from archive, importer, tests
 - Criteria: one authoritative list; archive has no private duplicate
 - Tests: inventory uniqueness and exact filenames test
-- Commit SHA: ___________
+- Commit SHA: 67fff0f
 
-### P10-C04 — Preserve parse success separately from count
-- [ ] fix
+### P10-C04 — Preserve parse success separately from count ✅
+- [x] fix
 - Problem: `count_records()` returns uint64_t only, conflating valid-empty and parse failure
 - Files: `libs/storage/LegacyArchive.h`, `libs/storage/LegacyArchive.cpp`
 - Implementation: `LegacyRecordCountResult` with success/error; remove line-count heuristic
 - Criteria: valid empty succeeds; malformed fails; no raw line-count fallback
 - Tests: empty valid, malformed required, malformed optional
-- Commit SHA: ___________
+- Commit SHA: ebe1ae1
 
-### P10-C05 — Separate profiles physical record counts
-- [ ] fix
+### P10-C05 — Separate profiles physical record counts ✅
+- [x] fix
 - Problem: both profiles.db and template_profiles.db get combined count from `read_combined_profiles()`
 - Files: `libs/storage/LegacyArchive.cpp`
 - Implementation: use per-file reader for physical counts; combined logical count optional
 - Criteria: profiles.db=2, template_profiles.db=1 reported separately
 - Tests: fixture with separate profile counts
-- Commit SHA: ___________
+- Commit SHA: 67fff0f
 
-### P10-C06 — Define mail config physical count semantics
-- [ ] fix
+### P10-C06 — Define mail config physical count semantics ✅
+- [x] fix
 - Problem: mail_state.db and mail_smarthost.db counts undocumented
 - Files: `libs/storage/LegacyArchive.cpp`, `docs/development/legacy-archive-api.md`
 - Implementation: define count=1 when non-empty, count=0 when empty present, count=0 when absent
 - Criteria: both missing, state present-empty, smarthost present-empty, both present with values
 - Tests: mail_config count test suite
-- Commit SHA: ___________
+- Commit SHA: 67fff0f
 
-### P10-C07 — Create and validate archive root safely
-- [ ] fix
+### P10-C07 — Create and validate archive root safely ✅
+- [x] fix
 - Problem: `directory_iterator(archive_root_)` may run before root exists and is safe
 - Files: `libs/storage/LegacyArchive.cpp`
 - Implementation: ensure root exists/is directory/not symlink; reject unsafe; handle errors
 - Criteria: missing root, symlink root, unreadable root, source==root detection
 - Tests: root safety test suite
-- Commit SHA: ___________
+- Commit SHA: 8fe8591
 
 ### P10-C08 — Implement verified idempotency
 - [ ] fix
@@ -87,14 +87,14 @@ deletion. SQLite remains explicit-only. Manual archive invocation only.
 - Tests: idempotency test suite
 - Commit SHA: ___________
 
-### P10-C09 — Complete Phase 9 prerequisite
-- [ ] fix
+### P10-C09 — Complete Phase 9 prerequisite ✅
+- [x] fix
 - Problem: checks are present but missing reopened inventory validation
 - Files: `libs/storage/LegacyArchive.cpp`
 - Implementation: add exact 17-resource reopened inventory validation
 - Criteria: all conditions enforced; missing/duplicate resource rejected
 - Tests: Phase 9 prerequisite test suite
-- Commit SHA: ___________
+- Commit SHA: 8fe8591
 
 ### P10-C10 — Capture a real source snapshot
 - [ ] fix
@@ -288,7 +288,7 @@ Phase 10 readiness: ___________
 - safe_version() now allows individual periods, rejects "..", slashes, backslashes, whitespace
 - Tests: safe_version test in test_migration.cpp
 
-### P10-C02 — Strict canonical UUID contract ✅  
+### P10-C02 — Strict canonical UUID contract ✅
 - Commit: 608d0de
 - valid_migration_id(): lowercase only, version nibble=4, variant 8/9/a/b
 - generate_uuid(): produces valid v4 UUIDs
@@ -315,4 +315,4 @@ Phase 10 readiness: ___________
 - mail_state.db: present+non-empty=1, otherwise 0
 - mail_smarthost.db: same semantics
 
-### P10-C07 through P10-C26 — IN PROGRESS
+### P10-C07 — Create and validate archive root safely ✅
