@@ -127,6 +127,10 @@ public:
     CheckedSnapshot<mail::Mailbox> load_mailboxes_checked();
     CheckedSnapshot<mail::MailAlias> load_mail_aliases_checked();
 
+    // Checked mail_config — presence-aware
+    CheckedOptionalValue load_mail_module_state_checked();
+    CheckedOptionalValue load_mail_smarthost_checked();
+
     // Transaction support (forward-looking — TXT backend returns false)
     bool begin_transaction();
     bool commit_transaction();

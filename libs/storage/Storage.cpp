@@ -999,4 +999,7 @@ CheckedSnapshot<mail::MailDomain> Storage::load_mail_domains_checked() { SQLiteS
 CheckedSnapshot<mail::Mailbox> Storage::load_mailboxes_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_mail_mailboxes(); }
 CheckedSnapshot<mail::MailAlias> Storage::load_mail_aliases_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_mail_aliases(); }
 
+CheckedOptionalValue Storage::load_mail_module_state_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_mail_config_key("module_state"); }
+CheckedOptionalValue Storage::load_mail_smarthost_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_mail_config_key("smarthost"); }
+
 } // namespace containercp::storage

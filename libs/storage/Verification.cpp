@@ -849,22 +849,23 @@ DatabaseVerificationResult Verification::verify_all() {
         { auto snap = reopen_storage.load_mailboxes_checked(); REOPEN_ONE("mail_mailboxes", snap, te.mail_mailboxes, [this](const std::vector<mail::Mailbox>& v) { return canonical_mail_mailboxes(v); }, FIELD_ADAPTOR(mail::Mailbox, compare_mailbox), transient_mb, load_mail_mailboxes); }
         { auto snap = reopen_storage.load_mail_aliases_checked(); REOPEN_ONE("mail_aliases", snap, te.mail_aliases, [this](const std::vector<mail::MailAlias>& v) { return canonical_mail_aliases(v); }, FIELD_ADAPTOR(mail::MailAlias, compare_mail_alias), transient_ma, load_mail_aliases); }
 
-        // mail_config
+        // mail_config with checked presence
         {
-            auto storage_ms = reopen_storage.load_mail_module_state();
-            auto storage_sh = reopen_storage.load_mail_smarthost();
-            bool ms_present = !storage_ms.empty(), sh_present = !storage_sh.empty();
-            std::string storage_checksum = sha256(canonical_mail_config(ms_present, storage_ms, sh_present, storage_sh));
+            auto ms_snap = reopen_storage.load_mail_module_state_checked();
+            auto sh_snap = reopen_storage.load_mail_smarthost_checked();
+            std::string storage_checksum = sha256(canonical_mail_config(
+                ms_snap.present, ms_snap.success ? ms_snap.value : "", 
+                sh_snap.present, sh_snap.success ? sh_snap.value : ""));
             ConnectionPool cp;
             bool checked_ok = false; std::string checked_checksum;
             if (make_pool(cp, "reopen_mc")) {
                 SQLiteSnapshotReader snap(cp);
-                auto ms_snap = snap.read_mail_config_key("module_state");
-                auto sh_snap = snap.read_mail_config_key("smarthost");
+                auto cms = snap.read_mail_config_key("module_state");
+                auto csh = snap.read_mail_config_key("smarthost");
                 cp.shutdown();
-                if (ms_snap.success && sh_snap.success) {
+                if (cms.success && csh.success) {
                     checked_ok = true;
-                    checked_checksum = sha256(canonical_mail_config(ms_snap.present, ms_snap.value, sh_snap.present, sh_snap.value));
+                    checked_checksum = sha256(canonical_mail_config(cms.present, cms.value, csh.present, csh.value));
                 }
             }
             reopen_compare("mail_config", 0, storage_checksum, checked_ok, checked_checksum);
