@@ -71,6 +71,13 @@ struct SQLiteSnapshotReader {
         out = static_cast<uint64_t>(v);
         return true;
     }
+    static bool read_int_col(SQLiteDB& db, int col, int& out) {
+        if (db.column_is_null(col)) return false;
+        int64_t v = db.column_int(col);
+        if (v < INT_MIN || v > INT_MAX) return false;
+        out = static_cast<int>(v);
+        return true;
+    }
     static bool read_bool_col(SQLiteDB& db, int col, bool& out) {
         if (db.column_is_null(col)) return false;
         int64_t v = db.column_int(col);
@@ -237,8 +244,8 @@ struct SQLiteSnapshotReader {
         if (!read_string_col(db, 15, c.challenge_type)) return false;
         if (!read_string_col(db, 16, c.last_error)) return false;
         if (!read_string_col(db, 17, c.last_validation)) return false;
-        c.renew_attempts = static_cast<int>(db.column_int(18));
-        c.version = static_cast<int>(db.column_int(19));
+        if (!read_int_col(db, 18, c.renew_attempts)) return false;
+        if (!read_int_col(db, 19, c.version)) return false;
         c.name = c.domain; return true; }
     static bool read_mb_row(SQLiteDB& db, mail::Mailbox& mb) {
         if (!read_uint64_col(db, 0, mb.id)) return false;
