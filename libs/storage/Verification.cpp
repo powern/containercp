@@ -1,4 +1,5 @@
 #include "Verification.h"
+#include "LineParser.h"
 #include "Storage.h"
 #include "access/AccessGrant.h"
 #include "access/AccessUser.h"
@@ -19,80 +20,14 @@
 #include "user/User.h"
 
 #include <algorithm>
-#include <cerrno>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <set>
-#include <sstream>
 #include <openssl/sha.h>
 
 namespace containercp::storage {
 namespace fs = std::filesystem;
-
-// ============================================================
-// LineParser (reused)
-// ============================================================
-namespace {
-
-struct LineParser {
-    std::string filename;
-    int line_number = 0;
-    std::ifstream file;
-    std::string current_line;
-    bool has_error = false;
-
-    LineParser(const fs::path& path, const std::string& fname)
-        : filename(fname), file(path) {}
-
-    bool next() {
-        if (has_error) return false;
-        if (!std::getline(file, current_line)) return false;
-        ++line_number; return true;
-    }
-    bool empty_line() const { return current_line.empty(); }
-    int count_pipes() const {
-        int n = 0; for (char c : current_line) if (c == '|') ++n; return n;
-    }
-    std::vector<std::string> split() const {
-        std::vector<std::string> fields; size_t start = 0;
-        while (true) {
-            size_t pos = current_line.find('|', start);
-            if (pos == std::string::npos) {
-                fields.push_back(current_line.substr(start)); break;
-            }
-            fields.push_back(current_line.substr(start, pos - start));
-            start = pos + 1;
-        }
-        return fields;
-    }
-    static bool parse_uint64(const std::string& s, uint64_t& out, std::string& err) {
-        if (s.empty()) { err = "empty field"; return false; }
-        if (s[0] == '-') { err = "negative value"; return false; }
-        errno = 0; char* end = nullptr;
-        unsigned long long val = std::strtoull(s.c_str(), &end, 10);
-        if (end == s.c_str()) { err = "no digits"; return false; }
-        if (*end != '\0') { err = "trailing characters"; return false; }
-        if (errno == ERANGE) { err = "overflow"; return false; }
-        out = static_cast<uint64_t>(val); return true;
-    }
-    static bool parse_int(const std::string& s, int& out, std::string& err) {
-        if (s.empty()) { err = "empty field"; return false; }
-        errno = 0; char* end = nullptr;
-        long val = std::strtol(s.c_str(), &end, 10);
-        if (end == s.c_str()) { err = "no digits"; return false; }
-        if (*end != '\0') { err = "trailing characters"; return false; }
-        if (errno == ERANGE || val < INT_MIN || val > INT_MAX) { err = "overflow"; return false; }
-        out = static_cast<int>(val); return true;
-    }
-    static bool parse_bool(const std::string& s, bool& out, std::string& err) {
-        if (s == "1") { out = true; return true; }
-        if (s == "0") { out = false; return true; }
-        err = "invalid boolean (expected 0 or 1)"; return false;
-    }
-};
-
-} // namespace
+using parser::LineParser;
 
 // ============================================================
 // Verification
@@ -183,19 +118,21 @@ static void collect_mismatches(const std::string& type, const std::vector<T>& le
     auto ls = legacy, ss = sqlite;
     std::sort(ls.begin(), ls.end(), [](const T& a, const T& b) { return a.id < b.id; });
     std::sort(ss.begin(), ss.end(), [](const T& a, const T& b) { return a.id < b.id; });
+    // Canonical records are used for checksum but NOT exposed in mismatches.
+    // Mismatch reports only show "[RECORD]" for the full record.
     size_t li = 0, si = 0;
     while (li < ls.size() && si < ss.size() && (int)mismatches.size() < kMaxMismatches) {
         if (ls[li].id < ss[si].id) {
             FieldMismatch fm; fm.resource_type = type; fm.record_id = ls[li].id;
-            fm.field = "(missing in sqlite)"; fm.expected = "[record]"; mismatches.push_back(fm); ++li;
+            fm.field = "(missing in sqlite)"; fm.expected = "[RECORD]"; mismatches.push_back(fm); ++li;
         } else if (ss[si].id < ls[li].id) {
             FieldMismatch fm; fm.resource_type = type; fm.record_id = ss[si].id;
-            fm.field = "(unexpected in sqlite)"; fm.actual = "[record]"; mismatches.push_back(fm); ++si;
+            fm.field = "(unexpected in sqlite)"; fm.actual = "[RECORD]"; mismatches.push_back(fm); ++si;
         } else {
             std::string lc = canon_rec(ls[li]), sc = canon_rec(ss[si]);
             if (lc != sc) {
                 FieldMismatch fm; fm.resource_type = type; fm.record_id = ls[li].id;
-                fm.field = "(canonical)"; fm.expected = lc; fm.actual = sc;
+                fm.field = "(canonical)"; fm.expected = "[REDACTED]"; fm.actual = "[REDACTED]";
                 mismatches.push_back(fm);
             }
             ++li; ++si;
@@ -203,10 +140,10 @@ static void collect_mismatches(const std::string& type, const std::vector<T>& le
     }
     while (li < ls.size() && (int)mismatches.size() < kMaxMismatches) {
         FieldMismatch fm; fm.resource_type = type; fm.record_id = ls[li].id;
-        fm.field = "(missing in sqlite)"; fm.expected = "[record]"; mismatches.push_back(fm); ++li; }
+        fm.field = "(missing in sqlite)"; fm.expected = "[RECORD]"; mismatches.push_back(fm); ++li; }
     while (si < ss.size() && (int)mismatches.size() < kMaxMismatches) {
         FieldMismatch fm; fm.resource_type = type; fm.record_id = ss[si].id;
-        fm.field = "(unexpected in sqlite)"; fm.actual = "[record]"; mismatches.push_back(fm); ++si; }
+        fm.field = "(unexpected in sqlite)"; fm.actual = "[RECORD]"; mismatches.push_back(fm); ++si; }
 }
 
 // ---- Generic comparison function ----
@@ -712,6 +649,37 @@ ResourceVerificationResult Verification::verify_mail_config() {
 DatabaseVerificationResult Verification::verify_all() {
     DatabaseVerificationResult result;
 
+    // Step 0: Validate import context
+    if (!import_result_.success) {
+        result.error = "import_failed"; result.success = false; return result;
+    }
+    std::set<std::string> seen_types;
+    for (const auto& ir : import_result_.resources) {
+        if (ir.disposition == ImportDisposition::Failed) {
+            result.error = "incomplete_import_context:" + ir.resource_type;
+            result.success = false; return result;
+        }
+        if (seen_types.count(ir.resource_type)) {
+            result.error = "duplicate_import_result:" + ir.resource_type;
+            result.success = false; return result;
+        }
+        seen_types.insert(ir.resource_type);
+    }
+
+    // Step 1: Initialize verification pool
+    if (!pool_.initialize(sqlite_path_)) {
+        result.error = "sqlite_open_failed"; result.success = false; return result;
+    }
+
+    // Verify schema is ready (run a simple table check)
+    {
+        ReadLease rl(pool_);
+        if (!rl.is_valid() || !rl->prepare("SELECT COUNT(*) FROM nodes")) {
+            result.error = "schema_not_ready"; result.success = false; return result;
+        }
+    }
+
+    // Step 2-6: Verify all logical resources
     auto add = [&](ResourceVerificationResult r) { result.resources.push_back(std::move(r)); };
     add(verify_nodes());
     add(verify_php_versions());
@@ -731,61 +699,145 @@ DatabaseVerificationResult Verification::verify_all() {
     add(verify_mail_aliases());
     add(verify_mail_config());
 
-    // FK check
-    {
-        ReadLease rl(pool_);
-        if (rl.is_valid() && rl->prepare("PRAGMA foreign_key_check")) {
-            while (rl->step()) {
-                result.foreign_key_violations.push_back(
-                    std::string("table=") + rl->column_text(0) + " rowid=" + std::to_string(rl->column_int(1)));
-            }
-        }
-    }
-
-    // Integrity check
-    {
-        ReadLease rl(pool_);
-        if (rl.is_valid() && rl->prepare("PRAGMA integrity_check")) {
-            if (rl->step()) result.integrity_check_result = rl->column_text(0);
-        }
-    }
-
     result.initial_verification_passed = true;
     for (const auto& res : result.resources) {
-        if (!res.success) { result.initial_verification_passed = false; result.error = "resource_verification_failed"; break; }
+        if (!res.success) {
+            result.initial_verification_passed = false;
+            result.error = "resource_verification_failed:" + res.resource_type;
+            break;
+        }
+    }
+
+    // Step 7: Checked FK check
+    {
+        ReadLease rl(pool_);
+        if (!rl.is_valid()) {
+            result.error = "fk_check_no_lease"; result.success = false; return result;
+        }
+        if (!rl->prepare("PRAGMA foreign_key_check")) {
+            result.error = "fk_check_prepare_failed"; result.success = false; return result;
+        }
+        while (true) {
+            if (!rl->step()) {
+                if (rl->error_code() != 0) {
+                    result.error = "fk_check_step_failed";
+                    result.success = false; return result;
+                }
+                break; // DONE
+            }
+            result.foreign_key_violations.push_back(
+                std::string("table=") + rl->column_text(0) +
+                " rowid=" + std::to_string(rl->column_int(1)));
+        }
+    }
+
+    // Step 8: Checked integrity check
+    {
+        ReadLease rl(pool_);
+        if (!rl.is_valid()) {
+            result.error = "integrity_check_no_lease"; result.success = false; return result;
+        }
+        if (!rl->prepare("PRAGMA integrity_check")) {
+            result.error = "integrity_check_prepare_failed"; result.success = false; return result;
+        }
+        if (!rl->step()) {
+            result.error = "integrity_check_no_result";
+            result.success = false; return result;
+        }
+        result.integrity_check_result = rl->column_text(0);
+        if (result.integrity_check_result != "ok") {
+            result.success = false; return result;
+        }
     }
 
     if (!result.initial_verification_passed ||
-        (!result.foreign_key_violations.empty()) ||
+        !result.foreign_key_violations.empty() ||
         result.integrity_check_result != "ok") {
         result.success = false;
         return result;
     }
 
-    // Production reopen
-    pool_.shutdown();
-
+    // Step 9: Production reopen — use fresh ConnectionPool + SQLiteStorage
+    // (not Storage, which uses a directory-based path convention)
     {
-        Storage storage(sqlite_path_, StorageOptions{CoreStorageBackend::SqlitePhase5});
-        if (!storage.sqlite_ready()) {
-            result.reopen_succeeded = false; result.error = "reopen_failed";
+        ConnectionPool reopen_pool;
+        if (!reopen_pool.initialize(sqlite_path_)) {
+            result.reopen_succeeded = false; result.error = "reopen_init_failed";
             result.success = false; return result;
         }
-        // Reload runtime SQLite-backed resources through normal Storage
-        auto nodes = storage.load_nodes();
-        auto php = storage.load_php_versions();
-        auto profiles = storage.load_profiles();
+        SQLiteStorage reopen_sqlite(reopen_pool);
 
-        size_t expected_nodes = result.resources[0].legacy_record_count;
-        size_t expected_profiles = result.resources[2].legacy_record_count;
+        bool reopen_pass = true;
+        auto check_count = [&](const std::string& name, auto loaded, uint64_t expected) {
+            if (loaded.size() != static_cast<size_t>(expected)) {
+                result.error = "reopen_count_mismatch:" + name;
+                reopen_pass = false;
+            }
+        };
+        check_count("nodes", reopen_sqlite.load_nodes(), result.resources[0].legacy_record_count);
+        check_count("php_versions", reopen_sqlite.load_php_versions(), result.resources[1].legacy_record_count);
+        check_count("profiles", reopen_sqlite.load_profiles(), result.resources[2].legacy_record_count);
+        check_count("users", reopen_sqlite.load_users(), result.resources[3].legacy_record_count);
+        check_count("sites", reopen_sqlite.load_sites(), result.resources[4].legacy_record_count);
+        check_count("domains", reopen_sqlite.load_domains(), result.resources[5].legacy_record_count);
+        check_count("databases", reopen_sqlite.load_databases(), result.resources[6].legacy_record_count);
+        check_count("reverse_proxies", reopen_sqlite.load_reverse_proxies(), result.resources[8].legacy_record_count);
+        check_count("access_users", reopen_sqlite.load_access_users(), result.resources[9].legacy_record_count);
+        check_count("access_grants", reopen_sqlite.load_access_grants(), result.resources[10].legacy_record_count);
+        check_count("ssl_certificates", reopen_sqlite.load_ssl_certificates(), result.resources[12].legacy_record_count);
+        check_count("mail_domains", reopen_sqlite.load_mail_domains(), result.resources[13].legacy_record_count);
+        check_count("mail_mailboxes", reopen_sqlite.load_mailboxes(), result.resources[14].legacy_record_count);
+        check_count("mail_aliases", reopen_sqlite.load_mail_aliases(), result.resources[15].legacy_record_count);
 
-        if (nodes.size() != expected_nodes || profiles.size() != expected_profiles) {
-            result.reopened_verification_passed = false;
-            result.error = "reopened_count_mismatch";
-            result.success = false; return result;
+        // Importer-only tables via direct SQLite connection
+        {
+            ReadLease rl(reopen_pool);
+            if (rl.is_valid() && rl->prepare("SELECT COUNT(*) FROM backups") && rl->step()) {
+                if (static_cast<uint64_t>(rl->column_int(0)) != result.resources[7].legacy_record_count) {
+                    result.error = "reopen_backup_count_mismatch"; reopen_pass = false;
+                }
+            }
         }
+        {
+            ReadLease rl(reopen_pool);
+            if (rl.is_valid() && rl->prepare("SELECT COUNT(*) FROM auth_users") && rl->step()) {
+                if (static_cast<uint64_t>(rl->column_int(0)) != result.resources[11].legacy_record_count) {
+                    result.error = "reopen_auth_user_count_mismatch"; reopen_pass = false;
+                }
+            }
+        }
+
+        // Post-reopen FK check
+        {
+            ReadLease rl(reopen_pool);
+            if (rl.is_valid() && rl->prepare("PRAGMA foreign_key_check")) {
+                while (rl->step()) {
+                    result.foreign_key_violations.push_back(
+                        std::string("table=") + rl->column_text(0) +
+                        " rowid=" + std::to_string(rl->column_int(1)));
+                }
+                if (!result.foreign_key_violations.empty()) {
+                    result.error = "post_reopen_fk_violation"; reopen_pass = false;
+                }
+            }
+        }
+
+        // Post-reopen integrity check
+        {
+            ReadLease rl(reopen_pool);
+            if (rl.is_valid() && rl->prepare("PRAGMA integrity_check") && rl->step()) {
+                if (rl->column_text(0) != "ok") {
+                    result.error = "post_reopen_integrity_failed"; reopen_pass = false;
+                }
+            }
+        }
+
+        reopen_pool.shutdown();
         result.reopen_succeeded = true;
-        result.reopened_verification_passed = true;
+        result.reopened_verification_passed = reopen_pass;
+        if (!reopen_pass) {
+            result.success = false; return result;
+        }
     }
 
     result.success = true;

@@ -1182,5 +1182,102 @@ TEST_CASE("verification rejects failed import result") {
     failed_result.success = false;
     Verification vfy("/nonexistent", "/nonexistent/db", failed_result);
     auto result = vfy.verify_all();
-    CHECK_FALSE(result.initial_verification_passed);
+    CHECK_FALSE(result.success);
+    CHECK(result.error == "import_failed");
+}
+
+TEST_CASE("sensitive fields redacted from mismatches") {
+    auto dir = test_dir("vfy_redact");
+    cleanup(dir); fs::create_directories(dir);
+    // Create a database with a different password_hash than legacy
+    write_file(dir + "access_users.db", "1|testuser|password|legacy_hash|1\n");
+    ConnectionPool pool; init_pool(pool, dir);
+    {
+        LegacyImporter imp(dir, pool);
+        auto r = imp.import_access_users();
+        CHECK(r.success);
+    }
+    // Tamper with SQLite
+    {
+        WriteGuard wg(pool);
+        if (wg.is_valid())
+            wg.db().exec("UPDATE access_users SET password_hash = 'tampered_hash' WHERE id = 1");
+    }
+    // Verify — should fail with mismatches but not expose secrets
+    ImportAllResult fake_result;
+    ImportResult ir; ir.success = true; ir.disposition = ImportDisposition::Imported;
+    ir.resource_type = "access_users"; ir.record_count = 1;
+    fake_result.resources.push_back(ir); fake_result.success = true;
+
+    Verification vfy(dir, dir + "import.db", fake_result);
+    auto r = vfy.verify_access_users();
+    CHECK_FALSE(r.success);
+    // Mismatches must not contain the actual hash values
+    for (const auto& mm : r.mismatches) {
+        CHECK(mm.expected.find("legacy_hash") == std::string::npos);
+        CHECK(mm.actual.find("tampered_hash") == std::string::npos);
+        CHECK(mm.actual.find("tampered") == std::string::npos);
+    }
+    cleanup(dir);
+}
+
+TEST_CASE("verification initializes its own pool") {
+    auto dir = test_dir("vfy_init_pool");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "nodes.db", "1|main|web\n");
+    write_file(dir + "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_file(dir + "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_file(dir + "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_file(dir + "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_file(dir + "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_file(dir + "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_file(dir + "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+
+    // Import using separate pool
+    ConnectionPool import_pool; init_pool(import_pool, dir);
+    LegacyImporter imp(dir, import_pool);
+    auto import_result = imp.import_all();
+    REQUIRE(import_result.success);
+    import_pool.shutdown();
+
+    // Verify uses its own pool (separate from import pool)
+    Verification vfy(dir, dir + "import.db", import_result);
+    auto result = vfy.verify_all();
+    CHECK(result.initial_verification_passed);
+    if (!result.success) {
+        MESSAGE("verify_all failed: error=" << result.error
+            << " reopen_succeeded=" << result.reopen_succeeded
+            << " reopened=" << result.reopened_verification_passed
+            << " fk_violations=" << result.foreign_key_violations.size()
+            << " integrity=" << result.integrity_check_result);
+    }
+    CHECK(result.success);
+    cleanup(dir);
+}
+
+TEST_CASE("shared LineParser used consistently") {
+    // Verify the importer and verifier agree on parsing simple data
+    auto dir = test_dir("vfy_shared_parser");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "nodes.db", "1|main|web\n2|second|local\n");
+    ConnectionPool pool; init_pool(pool, dir);
+    // Parse via importer (import and re-verify)
+    LegacyImporter imp(dir, pool);
+    CHECK(imp.import_nodes().success);
+    // Load via SQLiteStorage
+    auto imported = SQLiteStorage(pool).load_nodes();
+    CHECK(imported.size() == 2);
+
+    ImportAllResult fake_result;
+    ImportResult ir; ir.success = true; ir.disposition = ImportDisposition::Imported;
+    ir.resource_type = "nodes"; ir.record_count = 2;
+    fake_result.resources.push_back(ir); fake_result.success = true;
+
+    Verification vfy(dir, dir + "import.db", fake_result);
+    auto r = vfy.verify_nodes();
+    CHECK(r.success);
+    CHECK(r.legacy_record_count == 2);
+    CHECK(r.sqlite_record_count == 2);
+    cleanup(dir);
 }
