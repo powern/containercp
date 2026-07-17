@@ -887,11 +887,11 @@ DatabaseVerificationResult Verification::verify_all() {
                 reopen_compare("backups", backup_records.size(),
                     blr.success ? sha256(canonical_backups(backup_records)) : "",
                     true, blr.success, blr.success ? sha256(canonical_backups(backup_records)) : "");
-                if (!blr.success && !typed_evidence_.backups.empty()) {
+                if (!result.reopened_resources.back().success) {
                     auto& rr = result.reopened_resources.back();
                     auto fres = compare_resource<backup::Backup>("backups",
                         std::vector<backup::Backup>(typed_evidence_.backups),
-                        std::move(backup_records),
+                        backup_records,
                         [this](const std::vector<backup::Backup>& v) { return canonical_backups(v); },
                         FIELD_ADAPTOR(backup::Backup, compare_backup), TRANSIENT_NULL);
                     rr.mismatches = std::move(fres.mismatches);
@@ -905,11 +905,11 @@ DatabaseVerificationResult Verification::verify_all() {
                 reopen_compare("auth_users", auth_records.size(),
                     alr.success ? sha256(canonical_auth_users(auth_records)) : "",
                     true, alr.success, alr.success ? sha256(canonical_auth_users(auth_records)) : "");
-                if (!result.reopened_resources.back().success && !typed_evidence_.auth_users.empty()) {
+                if (!result.reopened_resources.back().success) {
                     auto& rr = result.reopened_resources.back();
                     auto fres = compare_resource<auth::AuthUser>("auth_users",
                         std::vector<auth::AuthUser>(typed_evidence_.auth_users),
-                        std::move(auth_records),
+                        auth_records,
                         [this](const std::vector<auth::AuthUser>& v) { return canonical_auth_users(v); },
                         FIELD_ADAPTOR(auth::AuthUser, compare_auth_user), transient_authu);
                     rr.mismatches = std::move(fres.mismatches);
