@@ -1687,3 +1687,130 @@ TEST_CASE("mail_config logical count matches keys") {
     CHECK(found_mc);
     cleanup(dir);
 }
+
+TEST_CASE("mail_config with 0 or 1 keys") {
+    auto dir = test_dir("vfy_mc_keys");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "nodes.db", "1|main|web\n");
+    write_file(dir + "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_file(dir + "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_file(dir + "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_file(dir + "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_file(dir + "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_file(dir + "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_file(dir + "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    // Only mail_state.db, no smarthost → 1 key
+    write_file(dir + "mail_state.db", "active\n");
+    ConnectionPool pool; init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto r = imp.import_all();
+    REQUIRE(r.success);
+    // mail_config should have record_count=1
+    for (auto& res : r.resources) {
+        if (res.resource_type == "mail_config") {
+            CHECK(res.record_count == 1);
+            return;
+        }
+    }
+    pool.shutdown();
+    // 0 keys: neither file exists
+    auto dir2 = test_dir("vfy_mc_zero");
+    cleanup(dir2); fs::create_directories(dir2);
+    write_file(dir2 + "nodes.db", "1|main|web\n");
+    write_file(dir2 + "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_file(dir2 + "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir2 + "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_file(dir2 + "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_file(dir2 + "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_file(dir2 + "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_file(dir2 + "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_file(dir2 + "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    ConnectionPool pool2; init_pool(pool2, dir2);
+    LegacyImporter imp2(dir2, pool2);
+    auto r2 = imp2.import_all();
+    REQUIRE(r2.success);
+    for (auto& res : r2.resources) {
+        if (res.resource_type == "mail_config") {
+            CHECK(res.record_count == 0);
+            return;
+        }
+    }
+    pool2.shutdown(); cleanup(dir); cleanup(dir2);
+}
+
+TEST_CASE("snapshot rejects NULL boolean") {
+    auto dir = test_dir("vfy_null_bool");
+    cleanup(dir); fs::create_directories(dir);
+    ConnectionPool pool; init_pool(pool, dir);
+    WriteGuard wg(pool);
+    wg.db().exec("INSERT INTO users(id,username,uid,home_directory,shell,enabled) VALUES(1,'test',1000,'/home','/sh',NULL)");
+    SQLiteSnapshotReader snap(pool);
+    auto s = snap.read_users();
+    CHECK_FALSE(s.success);
+    pool.shutdown(); cleanup(dir);
+}
+
+TEST_CASE("snapshot rejects invalid MailDomain enabled") {
+    auto dir = test_dir("vfy_md_bool");
+    cleanup(dir); fs::create_directories(dir);
+    ConnectionPool pool; init_pool(pool, dir);
+    WriteGuard wg(pool);
+    wg.db().exec("INSERT INTO mail_domains(id,domain_id,site_id,domain_name,mode,relay_host,dkim_selector,dkim_private_key_path,dkim_public_key_dns,max_mailboxes,max_aliases,catch_all,enabled) VALUES(1,0,0,'test.com','disabled','','','','',0,0,'',99)");
+    SQLiteSnapshotReader snap(pool);
+    auto s = snap.read_mail_domains();
+    CHECK_FALSE(s.success);
+    pool.shutdown(); cleanup(dir);
+}
+
+TEST_CASE("snapshot rejects NULL Node name") {
+    auto dir = test_dir("vfy_null_node");
+    cleanup(dir); fs::create_directories(dir);
+    ConnectionPool pool; init_pool(pool, dir);
+    WriteGuard wg(pool);
+    wg.db().exec("INSERT INTO nodes(id,name,type) VALUES(1,NULL,'web')");
+    SQLiteSnapshotReader snap(pool);
+    auto s = snap.read_nodes();
+    CHECK_FALSE(s.success);
+    pool.shutdown(); cleanup(dir);
+}
+
+TEST_CASE("snapshot rejects negative SSL integer") {
+    auto dir = test_dir("vfy_neg_ssl");
+    cleanup(dir); fs::create_directories(dir);
+    ConnectionPool pool; init_pool(pool, dir);
+    WriteGuard wg(pool);
+    wg.db().exec("INSERT INTO ssl_certificates(id,domain_id,domain,provider,certificate_path,key_path,chain_path,renew_attempts,version) VALUES(1,0,'t','p','c','k','h',-1,-1)");
+    SQLiteSnapshotReader snap(pool);
+    auto s = snap.read_ssl_certificates();
+    CHECK_FALSE(s.success);
+    pool.shutdown(); cleanup(dir);
+}
+
+TEST_CASE("importer-only resources have checked_checksum_alt") {
+    auto dir = test_dir("vfy_io_cs");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "nodes.db", "1|main|web\n");
+    write_file(dir + "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_file(dir + "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_file(dir + "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_file(dir + "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_file(dir + "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_file(dir + "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_file(dir + "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    ConnectionPool pool; init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto r = imp.import_all();
+    REQUIRE(r.success);
+    pool.shutdown();
+    Verification vfy(dir, dir + "containercp.db", r, dir);
+    auto result = vfy.verify_all();
+    CHECK(result.initial_verification_passed);
+    for (auto& rr : result.reopened_resources) {
+        if (rr.resource_type == "backups" || rr.resource_type == "auth_users") {
+            CHECK(!rr.checked_checksum_alt.empty());
+        }
+    }
+    cleanup(dir);
+}
