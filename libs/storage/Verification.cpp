@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <map>
 #include <set>
 #include <openssl/sha.h>
 
@@ -759,6 +760,14 @@ DatabaseVerificationResult Verification::verify_all() {
         result.success = false; return result;
     }
 
+    // Capture immutable initial evidence from successful verification
+    for (const auto& res : result.resources) {
+        InitialEvidence ev;
+        ev.legacy_record_count = res.legacy_record_count;
+        ev.legacy_checksum = res.legacy_checksum;
+        initial_evidence_[res.resource_type] = ev;
+    }
+
     // Production reopen: shut down original pool, use real Storage
     pool_.shutdown();
 
@@ -776,219 +785,75 @@ DatabaseVerificationResult Verification::verify_all() {
 
         bool reopen_pass = true;
 
-        // Reopen comparison: count + canonical checksum for each runtime resource
-        auto reopen_check = [&](const std::string& name, uint64_t count, uint64_t expected,
-            const std::string& storage_checksum, const std::string& checked_checksum) {
+        // Three-way reopen comparison: initial_evidence == Storage == checked pool
+        auto reopen_compare = [&](const std::string& name,
+            uint64_t storage_count, const std::string& storage_checksum,
+            bool checked_ok, const std::string& checked_checksum) {
             ResourceVerificationResult rr; rr.resource_type = name;
-            rr.sqlite_record_count = count; rr.legacy_record_count = expected;
+            rr.sqlite_record_count = storage_count;
             rr.sqlite_checksum = storage_checksum;
-            if (count != expected) { rr.success = false; rr.error = "count_mismatch"; }
-            else if (storage_checksum != checked_checksum) { rr.success = false; rr.error = "checksum_mismatch"; }
-            else { rr.success = true; }
+
+            // Check initial evidence
+            auto it = initial_evidence_.find(name);
+            uint64_t expected_count = (it != initial_evidence_.end()) ? it->second.legacy_record_count : 0;
+            std::string expected_checksum = (it != initial_evidence_.end()) ? it->second.legacy_checksum : "";
+            rr.legacy_record_count = expected_count;
+            rr.legacy_checksum = expected_checksum;
+
+            if (!checked_ok) {
+                rr.success = false; rr.error = "reopen_checked_load_failed";
+            } else if (storage_count != expected_count) {
+                rr.success = false; rr.error = "reopen_count_mismatch";
+            } else if (storage_checksum != expected_checksum) {
+                rr.success = false; rr.error = "reopen_initial_mismatch";
+            } else if (storage_checksum != checked_checksum) {
+                rr.success = false; rr.error = "reopen_checksum_mismatch";
+            } else {
+                rr.success = true;
+            }
             if (!rr.success) { result.error = "reopen_" + name; reopen_pass = false; }
             result.reopened_resources.push_back(rr);
         };
 
-        // Each resource: load via Storage, confirm via checked pool, compare checksums
-        auto check_resource = [&](const std::string& name, auto storage_vec, auto checked_vec_factory) {
-            uint64_t cnt = storage_vec.size();
-            ConnectionPool cp;
-            if (!make_pool(cp, "reopen_" + name)) return;
-            auto checked_vec = checked_vec_factory(cp);
-            cp.shutdown();
-            reopen_check(name, cnt, checked_vec.size(), "", "");
-        };
+        // Helper for one resource reopen comparison
+        #define REOPEN_ONE(name, storage_load, checked_load, canon_fn) \
+        { \
+            auto storage_records = storage_load; \
+            std::string storage_checksum = sha256(canon_fn(storage_records)); \
+            ConnectionPool cp; \
+            bool checked_ok = false; std::string checked_checksum; \
+            if (make_pool(cp, "reopen_" name)) { \
+                std::vector<std::decay_t<decltype(*storage_records.begin())>> confirm_records; \
+                auto cr = checked_load(cp, confirm_records); \
+                cp.shutdown(); \
+                checked_ok = cr.success; \
+                if (checked_ok) checked_checksum = sha256(canon_fn(confirm_records)); \
+            } \
+            reopen_compare(name, storage_records.size(), storage_checksum, checked_ok, checked_checksum); \
+        }
 
-        // For checksum comparison, we need canonical functions. Use simpler count-only.
-        // For each resource, just check Storage count matches checked pool count
-        auto check_count = [&](const std::string& name, auto storage_load, auto checked_load_fn, uint64_t expected) {
-            auto storage_records = storage_load;
-            if (storage_records.size() != static_cast<size_t>(expected)) {
-                ResourceVerificationResult rr; rr.resource_type = name;
-                rr.sqlite_record_count = storage_records.size(); rr.legacy_record_count = expected;
-                rr.success = false; rr.error = "reopen_count_mismatch";
-                result.error = std::string("reopen_") + name; reopen_pass = false;
-                result.reopened_resources.push_back(rr); return;
-            }
-            // Confirm via checked pool
-            ConnectionPool confirm_pool;
-            if (!make_pool(confirm_pool, std::string("reopen_") + name)) return;
-            std::vector<std::decay_t<decltype(*storage_records.begin())>> confirm_records;
-            auto cr = checked_load_fn(confirm_pool, confirm_records);
-            confirm_pool.shutdown();
-            if (!cr.success || confirm_records.size() != expected) {
-                ResourceVerificationResult rr; rr.resource_type = name;
-                rr.sqlite_record_count = storage_records.size(); rr.legacy_record_count = expected;
-                rr.success = false; rr.error = "reopen_confirm_failed";
-                result.error = std::string("reopen_confirm_") + name; reopen_pass = false;
-                result.reopened_resources.push_back(rr); return;
-            }
-            // Compute canonical checksums and compare
-            std::string storage_canon = canonical_nodes(storage_records); // placeholder — will fail for non-node
-            // For generic compare, compute checksum via storage_records canonical
-            // This is simplified: each resource needs its own canonical function
-            ResourceVerificationResult rr; rr.resource_type = name;
-            rr.sqlite_record_count = storage_records.size(); rr.legacy_record_count = expected;
-            rr.success = true;
-            result.reopened_resources.push_back(rr);
-        };
+        REOPEN_ONE("nodes", reopen_storage.load_nodes(), load_nodes, [this](const std::vector<node::Node>& v) { return canonical_nodes(v); });
+        REOPEN_ONE("php_versions", reopen_storage.load_php_versions(), load_php_versions, [this](const std::vector<php::PhpVersion>& v) { return canonical_php_versions(v); });
+        REOPEN_ONE("profiles", reopen_storage.load_profiles(), load_profiles, [this](const std::vector<profile::Profile>& v) { return canonical_profiles(v); });
+        REOPEN_ONE("users", reopen_storage.load_users(), load_users, [this](const std::vector<user::User>& v) { return canonical_users(v); });
+        REOPEN_ONE("sites", reopen_storage.load_sites(), load_sites, [this](const std::vector<site::Site>& v) { return canonical_sites(v); });
+        REOPEN_ONE("domains", reopen_storage.load_domains(), load_domains, [this](const std::vector<domain::Domain>& v) { return canonical_domains(v); });
+        REOPEN_ONE("databases", reopen_storage.load_databases(), load_databases, [this](const std::vector<database::Database>& v) { return canonical_databases(v); });
+        REOPEN_ONE("reverse_proxies", reopen_storage.load_reverse_proxies(), load_reverse_proxies, [this](const std::vector<proxy::ReverseProxy>& v) { return canonical_reverse_proxies(v); });
+        REOPEN_ONE("access_users", reopen_storage.load_access_users(), load_access_users, [this](const std::vector<access::AccessUser>& v) { return canonical_access_users(v); });
+        REOPEN_ONE("access_grants", reopen_storage.load_access_grants(), load_access_grants, [this](const std::vector<access::AccessGrant>& v) { return canonical_access_grants(v); });
+        REOPEN_ONE("ssl_certificates", reopen_storage.load_ssl_certificates(), load_ssl_certificates, [this](const std::vector<ssl::SslCertificate>& v) { return canonical_ssl_certificates(v); });
+        REOPEN_ONE("mail_domains", reopen_storage.load_mail_domains(), load_mail_domains, [this](const std::vector<mail::MailDomain>& v) { return canonical_mail_domains(v); });
+        REOPEN_ONE("mail_mailboxes", reopen_storage.load_mailboxes(), load_mail_mailboxes, [this](const std::vector<mail::Mailbox>& v) { return canonical_mail_mailboxes(v); });
+        REOPEN_ONE("mail_aliases", reopen_storage.load_mail_aliases(), load_mail_aliases, [this](const std::vector<mail::MailAlias>& v) { return canonical_mail_aliases(v); });
 
-        // For now, use direct count + checksum comparison per resource type
-        // Nodes
-        {
-            auto storage_records = reopen_storage.load_nodes();
-            ConnectionPool cp;
-            if (make_pool(cp, "reopen_nodes")) {
-                std::vector<node::Node> confirm_records;
-                auto cr = load_nodes(cp, confirm_records);
-                cp.shutdown();
-                reopen_check("nodes", storage_records.size(), result.resources[0].legacy_record_count,
-                    sha256(canonical_nodes(storage_records)),
-                    cr.success ? sha256(canonical_nodes(confirm_records)) : "");
-            }
-        }
-        // php_versions
-        {
-            auto storage_records = reopen_storage.load_php_versions();
-            ConnectionPool cp;
-            if (make_pool(cp, "reopen_php")) {
-                std::vector<php::PhpVersion> confirm_records;
-                auto cr = load_php_versions(cp, confirm_records);
-                cp.shutdown();
-                reopen_check("php_versions", storage_records.size(), result.resources[1].legacy_record_count,
-                    sha256(canonical_php_versions(storage_records)),
-                    cr.success ? sha256(canonical_php_versions(confirm_records)) : "");
-            }
-        }
-        // profiles
-        {
-            auto storage_records = reopen_storage.load_profiles();
-            ConnectionPool cp;
-            if (make_pool(cp, "reopen_profiles")) {
-                std::vector<profile::Profile> confirm_records;
-                auto cr = load_profiles(cp, confirm_records);
-                cp.shutdown();
-                reopen_check("profiles", storage_records.size(), result.resources[2].legacy_record_count,
-                    sha256(canonical_profiles(storage_records)),
-                    cr.success ? sha256(canonical_profiles(confirm_records)) : "");
-            }
-        }
-        // users
-        {
-            auto storage_records = reopen_storage.load_users();
-            ConnectionPool cp;
-            if (make_pool(cp, "reopen_users")) {
-                std::vector<user::User> confirm_records; auto cr = load_users(cp, confirm_records); cp.shutdown();
-                reopen_check("users", storage_records.size(), result.resources[3].legacy_record_count,
-                    sha256(canonical_users(storage_records)), cr.success ? sha256(canonical_users(confirm_records)) : "");
-            }
-        }
-        // sites
-        {
-            auto storage_records = reopen_storage.load_sites();
-            ConnectionPool cp;
-            if (make_pool(cp, "reopen_sites")) {
-                std::vector<site::Site> confirm_records; auto cr = load_sites(cp, confirm_records); cp.shutdown();
-                reopen_check("sites", storage_records.size(), result.resources[4].legacy_record_count,
-                    sha256(canonical_sites(storage_records)), cr.success ? sha256(canonical_sites(confirm_records)) : "");
-            }
-        }
-        // domains
-        {
-            auto storage_records = reopen_storage.load_domains();
-            ConnectionPool cp;
-            if (make_pool(cp, "reopen_domains")) {
-                std::vector<domain::Domain> confirm_records; auto cr = load_domains(cp, confirm_records); cp.shutdown();
-                reopen_check("domains", storage_records.size(), result.resources[5].legacy_record_count,
-                    sha256(canonical_domains(storage_records)), cr.success ? sha256(canonical_domains(confirm_records)) : "");
-            }
-        }
-        // databases
-        {
-            auto storage_records = reopen_storage.load_databases();
-            ConnectionPool cp;
-            if (make_pool(cp, "reopen_databases")) {
-                std::vector<database::Database> confirm_records; auto cr = load_databases(cp, confirm_records); cp.shutdown();
-                reopen_check("databases", storage_records.size(), result.resources[6].legacy_record_count,
-                    sha256(canonical_databases(storage_records)), cr.success ? sha256(canonical_databases(confirm_records)) : "");
-            }
-        }
-        // reverse_proxies
-        {
-            auto storage_records = reopen_storage.load_reverse_proxies();
-            ConnectionPool cp;
-            if (make_pool(cp, "reopen_proxies")) {
-                std::vector<proxy::ReverseProxy> confirm_records; auto cr = load_reverse_proxies(cp, confirm_records); cp.shutdown();
-                reopen_check("reverse_proxies", storage_records.size(), result.resources[8].legacy_record_count,
-                    sha256(canonical_reverse_proxies(storage_records)), cr.success ? sha256(canonical_reverse_proxies(confirm_records)) : "");
-            }
-        }
-        // access_users
-        {
-            auto storage_records = reopen_storage.load_access_users();
-            ConnectionPool cp;
-            if (make_pool(cp, "reopen_au")) {
-                std::vector<access::AccessUser> confirm_records; auto cr = load_access_users(cp, confirm_records); cp.shutdown();
-                reopen_check("access_users", storage_records.size(), result.resources[9].legacy_record_count,
-                    sha256(canonical_access_users(storage_records)), cr.success ? sha256(canonical_access_users(confirm_records)) : "");
-            }
-        }
-        // access_grants
-        {
-            auto storage_records = reopen_storage.load_access_grants();
-            ConnectionPool cp;
-            if (make_pool(cp, "reopen_ag")) {
-                std::vector<access::AccessGrant> confirm_records; auto cr = load_access_grants(cp, confirm_records); cp.shutdown();
-                reopen_check("access_grants", storage_records.size(), result.resources[10].legacy_record_count,
-                    sha256(canonical_access_grants(storage_records)), cr.success ? sha256(canonical_access_grants(confirm_records)) : "");
-            }
-        }
-        // ssl_certificates
-        {
-            auto storage_records = reopen_storage.load_ssl_certificates();
-            ConnectionPool cp;
-            if (make_pool(cp, "reopen_ssl")) {
-                std::vector<ssl::SslCertificate> confirm_records; auto cr = load_ssl_certificates(cp, confirm_records); cp.shutdown();
-                reopen_check("ssl_certificates", storage_records.size(), result.resources[12].legacy_record_count,
-                    sha256(canonical_ssl_certificates(storage_records)), cr.success ? sha256(canonical_ssl_certificates(confirm_records)) : "");
-            }
-        }
-        // mail_domains
-        {
-            auto storage_records = reopen_storage.load_mail_domains();
-            ConnectionPool cp;
-            if (make_pool(cp, "reopen_md")) {
-                std::vector<mail::MailDomain> confirm_records; auto cr = load_mail_domains(cp, confirm_records); cp.shutdown();
-                reopen_check("mail_domains", storage_records.size(), result.resources[13].legacy_record_count,
-                    sha256(canonical_mail_domains(storage_records)), cr.success ? sha256(canonical_mail_domains(confirm_records)) : "");
-            }
-        }
-        // mail_mailboxes
-        {
-            auto storage_records = reopen_storage.load_mailboxes();
-            ConnectionPool cp;
-            if (make_pool(cp, "reopen_mb")) {
-                std::vector<mail::Mailbox> confirm_records; auto cr = load_mail_mailboxes(cp, confirm_records); cp.shutdown();
-                reopen_check("mail_mailboxes", storage_records.size(), result.resources[14].legacy_record_count,
-                    sha256(canonical_mail_mailboxes(storage_records)), cr.success ? sha256(canonical_mail_mailboxes(confirm_records)) : "");
-            }
-        }
-        // mail_aliases
-        {
-            auto storage_records = reopen_storage.load_mail_aliases();
-            ConnectionPool cp;
-            if (make_pool(cp, "reopen_ma")) {
-                std::vector<mail::MailAlias> confirm_records; auto cr = load_mail_aliases(cp, confirm_records); cp.shutdown();
-                reopen_check("mail_aliases", storage_records.size(), result.resources[15].legacy_record_count,
-                    sha256(canonical_mail_aliases(storage_records)), cr.success ? sha256(canonical_mail_aliases(confirm_records)) : "");
-            }
-        }
         // mail_config
         {
             auto storage_ms = reopen_storage.load_mail_module_state();
             auto storage_sh = reopen_storage.load_mail_smarthost();
             std::string storage_checksum = sha256(canonical_mail_config(storage_ms, storage_sh));
             ConnectionPool cp;
+            bool checked_ok = false; std::string checked_checksum;
             if (make_pool(cp, "reopen_mc")) {
                 std::string confirm_ms, confirm_sh;
                 ReadLease rl(cp);
@@ -997,7 +862,47 @@ DatabaseVerificationResult Verification::verify_all() {
                     if (rl->prepare("SELECT value FROM mail_config WHERE key = 'smarthost'") && rl->step()) confirm_sh = rl->column_text(0);
                 }
                 cp.shutdown();
-                reopen_check("mail_config", 0, 0, storage_checksum, sha256(canonical_mail_config(confirm_ms, confirm_sh)));
+                checked_ok = true;
+                checked_checksum = sha256(canonical_mail_config(confirm_ms, confirm_sh));
+            }
+            reopen_compare("mail_config", 0, storage_checksum, checked_ok, checked_checksum);
+        }
+
+        // Importer-only: backups, auth_users
+        {
+            auto storage_vec = reopen_storage.load_backups();
+            ConnectionPool cp;
+            bool checked_ok = false; std::string checked_cs;
+            if (make_pool(cp, "reopen_backups")) {
+                std::vector<backup::Backup> confirm_vec; auto cr = load_backups(cp, confirm_vec); cp.shutdown();
+                checked_ok = cr.success;
+                if (checked_ok) checked_cs = sha256(canonical_backups(confirm_vec));
+            }
+            reopen_compare("backups", storage_vec.size(), sha256(canonical_backups(storage_vec)), checked_ok, checked_cs);
+        }
+        {
+            auto storage_vec = reopen_storage.load_auth_users();
+            ConnectionPool cp;
+            bool checked_ok = false; std::string checked_cs;
+            if (make_pool(cp, "reopen_auth")) {
+                std::vector<auth::AuthUser> confirm_vec; auto cr = load_auth_users(cp, confirm_vec); cp.shutdown();
+                checked_ok = cr.success;
+                if (checked_ok) checked_cs = sha256(canonical_auth_users(confirm_vec));
+            }
+            reopen_compare("auth_users", storage_vec.size(), sha256(canonical_auth_users(storage_vec)), checked_ok, checked_cs);
+        }
+
+        // Validate reopened inventory: exactly 17 resources
+        std::set<std::string> reopened_seen;
+        for (const auto& rr : result.reopened_resources) reopened_seen.insert(rr.resource_type);
+        std::vector<std::string> required_reopened = {
+            "nodes","php_versions","profiles","users","sites","domains","databases",
+            "reverse_proxies","access_users","access_grants","ssl_certificates",
+            "mail_domains","mail_mailboxes","mail_aliases","mail_config","backups","auth_users"
+        };
+        for (const auto& r : required_reopened) {
+            if (!reopened_seen.count(r)) {
+                result.error = std::string("missing_reopened:") + r; reopen_pass = false;
             }
         }
 

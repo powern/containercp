@@ -4,6 +4,7 @@
 #include "ConnectionPool.h"
 #include "LegacyImporter.h"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -141,6 +142,13 @@ private:
 
     // Find the import disposition for a resource type
     const ImportResult* find_import_result(const std::string& type) const;
+
+    // Immutable initial evidence captured after successful verification
+    struct InitialEvidence {
+        uint64_t legacy_record_count = 0;
+        std::string legacy_checksum;
+    };
+    std::map<std::string, InitialEvidence> initial_evidence_;
 
     std::string legacy_dir_;
     std::string sqlite_path_;
