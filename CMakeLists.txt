@@ -95,6 +95,7 @@ set(CONTAINERCP_SOURCES
     libs/storage/ConnectionPool.cpp
     libs/storage/MigrationEngine.cpp
     libs/storage/LegacyImporter.cpp
+    libs/storage/LegacyDatasetReader.cpp
     libs/storage/Verification.cpp
     libs/storage/SchemaMigrations.cpp
     libs/storage/SQLiteStorage.cpp

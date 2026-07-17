@@ -1245,13 +1245,6 @@ TEST_CASE("verification initializes its own pool") {
     Verification vfy(dir, dir + "import.db", import_result);
     auto result = vfy.verify_all();
     CHECK(result.initial_verification_passed);
-    if (!result.success) {
-        MESSAGE("verify_all failed: error=" << result.error
-            << " reopen_succeeded=" << result.reopen_succeeded
-            << " reopened=" << result.reopened_verification_passed
-            << " fk_violations=" << result.foreign_key_violations.size()
-            << " integrity=" << result.integrity_check_result);
-    }
     CHECK(result.success);
     cleanup(dir);
 }

@@ -2,6 +2,7 @@
 #define CONTAINERCP_STORAGE_LEGACY_IMPORTER_H
 
 #include "ConnectionPool.h"
+#include "LegacyDatasetReader.h"
 #include "SQLiteStorage.h"
 #include "access/AccessGrant.h"
 #include "access/AccessUser.h"
@@ -132,6 +133,7 @@ private:
     std::string legacy_dir_;
     ConnectionPool& pool_;
     SQLiteStorage sqlite_;
+    LegacyDatasetReader reader_;
 };
 
 } // namespace containercp::storage

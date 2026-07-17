@@ -2,6 +2,7 @@
 #define CONTAINERCP_STORAGE_LINE_PARSER_H
 
 #include <cerrno>
+#include <climits>
 #include <cstring>
 #include <filesystem>
 #include <fstream>

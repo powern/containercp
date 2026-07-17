@@ -63,6 +63,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/storage/ConnectionPool.cpp
     ${CMAKE_SOURCE_DIR}/libs/storage/MigrationEngine.cpp
     ${CMAKE_SOURCE_DIR}/libs/storage/LegacyImporter.cpp
+    ${CMAKE_SOURCE_DIR}/libs/storage/LegacyDatasetReader.cpp
     ${CMAKE_SOURCE_DIR}/libs/storage/Verification.cpp
     ${CMAKE_SOURCE_DIR}/libs/storage/SchemaMigrations.cpp
     ${CMAKE_SOURCE_DIR}/libs/storage/SQLiteStorage.cpp

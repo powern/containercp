@@ -17,6 +17,7 @@ LegacyImporter::LegacyImporter(const std::string& legacy_directory, ConnectionPo
     : legacy_dir_(legacy_directory)
     , pool_(pool)
     , sqlite_(pool)
+    , reader_(legacy_directory)
 {
     if (!legacy_dir_.empty() && legacy_dir_.back() != '/') {
         legacy_dir_ += '/';
@@ -250,37 +251,10 @@ LegacyImporter::ParseResult LegacyImporter::parse_profile_file(
 ImportResult LegacyImporter::import_nodes() {
     auto r = inspect_and_begin("nodes", "nodes.db", true);
     if (!r.success && r.disposition == ImportDisposition::Imported) {
-        std::vector<node::Node> nodes;
-        std::set<uint64_t> ids;
-        LineParser lp(fs::path(legacy_dir_ + "nodes.db"), "nodes.db");
-        while (lp.next()) {
-            if (lp.empty_line()) continue;
-            auto f = lp.split();
-            if (f.size() != 3) {
-                r.error = "invalid_field_count";
-                r.diagnostics = "nodes.db:" + std::to_string(lp.line_number)
-                    + ": expected 3 fields, got " + std::to_string(f.size());
-                return r;
-            }
-            node::Node n;
-            std::string err;
-            if (!LineParser::parse_uint64(f[0], n.id, err)) {
-                r.error = "invalid_integer";
-                r.diagnostics = "nodes.db:" + std::to_string(lp.line_number) + ": id: " + err;
-                return r;
-            }
-            if (ids.count(n.id)) {
-                r.error = "duplicate_id";
-                r.diagnostics = "nodes.db:" + std::to_string(lp.line_number) + ": duplicate id";
-                return r;
-            }
-            ids.insert(n.id);
-            n.name = f[1];
-            n.type = f[2];
-            nodes.push_back(std::move(n));
-        }
-        bool ok = sqlite_.try_save_nodes(nodes);
-        r = finish_import(std::move(r), ok, nodes.size());
+        auto dr = reader_.read_nodes();
+        if (!dr.success) { r.error = dr.error; r.diagnostics = dr.diagnostics; return r; }
+        bool ok = sqlite_.try_save_nodes(dr.records);
+        r = finish_import(std::move(r), ok, dr.records.size());
     }
     return r;
 }
@@ -288,48 +262,10 @@ ImportResult LegacyImporter::import_nodes() {
 ImportResult LegacyImporter::import_php_versions() {
     auto r = inspect_and_begin("php_versions", "php_versions.db", true);
     if (!r.success && r.disposition == ImportDisposition::Imported) {
-        std::vector<php::PhpVersion> versions;
-        std::set<uint64_t> ids;
-        LineParser lp(fs::path(legacy_dir_ + "php_versions.db"), "php_versions.db");
-        while (lp.next()) {
-            if (lp.empty_line()) continue;
-            auto f = lp.split();
-            if (f.size() != 5) {
-                r.error = "invalid_field_count";
-                r.diagnostics = "php_versions.db:" + std::to_string(lp.line_number)
-                    + ": expected 5 fields, got " + std::to_string(f.size());
-                return r;
-            }
-            php::PhpVersion pv;
-            std::string err;
-            if (!LineParser::parse_uint64(f[0], pv.id, err)) {
-                r.error = "invalid_integer";
-                r.diagnostics = "php_versions.db:" + std::to_string(lp.line_number) + ": id: " + err;
-                return r;
-            }
-            if (ids.count(pv.id)) {
-                r.error = "duplicate_id";
-                r.diagnostics = "php_versions.db:" + std::to_string(lp.line_number) + ": duplicate id";
-                return r;
-            }
-            ids.insert(pv.id);
-            pv.version = f[1];
-            pv.image = f[2];
-            if (!LineParser::parse_bool(f[3], pv.enabled, err)) {
-                r.error = "invalid_boolean";
-                r.diagnostics = "php_versions.db:" + std::to_string(lp.line_number) + ": enabled: " + err;
-                return r;
-            }
-            if (!LineParser::parse_bool(f[4], pv.default_version, err)) {
-                r.error = "invalid_boolean";
-                r.diagnostics = "php_versions.db:" + std::to_string(lp.line_number) + ": default: " + err;
-                return r;
-            }
-            pv.name = pv.version;
-            versions.push_back(std::move(pv));
-        }
-        bool ok = sqlite_.try_save_php_versions(versions);
-        r = finish_import(std::move(r), ok, versions.size());
+        auto dr = reader_.read_php_versions();
+        if (!dr.success) { r.error = dr.error; r.diagnostics = dr.diagnostics; return r; }
+        bool ok = sqlite_.try_save_php_versions(dr.records);
+        r = finish_import(std::move(r), ok, dr.records.size());
     }
     return r;
 }
@@ -337,18 +273,10 @@ ImportResult LegacyImporter::import_php_versions() {
 ImportResult LegacyImporter::import_profiles() {
     auto r = inspect_and_begin("profiles", "profiles.db", true);
     if (!r.success && r.disposition == ImportDisposition::Imported) {
-        std::vector<profile::Profile> profiles;
-        std::set<uint64_t> ids;
-        std::set<std::string> names;
-        ParseResult pr = parse_profile_file(
-            legacy_dir_ + "profiles.db", "profiles.db", false, profiles, ids, names);
-        if (!pr.success) {
-            r.error = pr.error;
-            r.diagnostics = pr.diagnostics;
-            return r;
-        }
-        bool ok = sqlite_.try_save_profiles(profiles);
-        r = finish_import(std::move(r), ok, profiles.size());
+        auto dr = reader_.read_combined_profiles();
+        if (!dr.success) { r.error = dr.error; r.diagnostics = dr.diagnostics; return r; }
+        bool ok = sqlite_.try_save_profiles(dr.records);
+        r = finish_import(std::move(r), ok, dr.records.size());
     }
     return r;
 }
@@ -356,238 +284,59 @@ ImportResult LegacyImporter::import_profiles() {
 ImportResult LegacyImporter::import_template_profiles() {
     auto r = inspect_and_begin("template_profiles", "template_profiles.db", false);
     if (!r.success && r.disposition == ImportDisposition::Imported) {
-        // Parse template_profiles.db first
-        std::vector<profile::Profile> template_records;
-        std::set<uint64_t> template_ids;
-        std::set<std::string> template_names;
-        ParseResult pr = parse_profile_file(
-            legacy_dir_ + "template_profiles.db", "template_profiles.db",
-            true, template_records, template_ids, template_names);
-        if (!pr.success) {
-            r.error = pr.error;
-            r.diagnostics = pr.diagnostics;
-            return r;
-        }
-
-        // Load existing profiles from SQLite (standalone use: merge safely)
+        auto dr = reader_.read_combined_profiles();
+        if (!dr.success) { r.error = dr.error; r.diagnostics = dr.diagnostics; return r; }
+        // For standalone template import, filter to just the template records
+        // by loading existing profiles and merging
         std::vector<profile::Profile> existing = sqlite_.load_profiles();
-        std::set<uint64_t> combined_ids;
-        std::set<std::string> combined_names;
-
-        // Build combined set from existing rows first
-        for (const auto& p : existing) {
-            combined_ids.insert(p.id);
-            combined_names.insert(p.profile_name);
-        }
-
-        // Check template records against existing — reject cross-file collisions
-        for (const auto& tp : template_records) {
-            if (combined_ids.count(tp.id)) {
-                r.error = "duplicate_id";
-                r.diagnostics = "template_profiles.db: id " + std::to_string(tp.id)
-                    + " collides with existing profile";
-                return r;
+        for (const auto& tp : dr.records) {
+            bool found = false;
+            for (const auto& ep : existing) {
+                if (ep.id == tp.id) { found = true; break; }
             }
-            if (combined_names.count(tp.profile_name)) {
-                r.error = "duplicate_profile_name";
-                r.diagnostics = "template_profiles.db: profile_name '"
-                    + tp.profile_name + "' collides with existing profile";
-                return r;
+            if (!found) {
+                existing.push_back(tp);
             }
-            combined_ids.insert(tp.id);
-            combined_names.insert(tp.profile_name);
         }
-
-        // Merge: existing + new
-        std::vector<profile::Profile> merged = std::move(existing);
-        merged.insert(merged.end(),
-            std::make_move_iterator(template_records.begin()),
-            std::make_move_iterator(template_records.end()));
-
-        bool ok = sqlite_.try_save_profiles(merged);
-        r = finish_import(std::move(r), ok, merged.size());
+        bool ok = sqlite_.try_save_profiles(existing);
+        r = finish_import(std::move(r), ok, existing.size());
     }
     return r;
 }
 
 ImportResult LegacyImporter::import_all_profiles() {
-    // Combined profiles import: parse both files before one atomic save.
     ImportResult r;
     r.resource_type = "profiles";
     r.source_file = "profiles.db, template_profiles.db";
 
-    // Inspect profiles.db (required)
-    FileState st_profiles = inspect_file("profiles.db");
-    switch (st_profiles) {
-    case FileState::Missing:
-        r.success = false; r.disposition = ImportDisposition::Failed;
-        r.error = "file_missing"; r.diagnostics = "Required file not found: profiles.db";
-        return r;
-    case FileState::Unreadable:
-        r.success = false; r.disposition = ImportDisposition::Failed;
-        r.error = "file_unreadable"; r.diagnostics = "Cannot read: profiles.db";
-        return r;
-    case FileState::InvalidType:
-        r.success = false; r.disposition = ImportDisposition::Failed;
-        r.error = "invalid_file_type"; r.diagnostics = "Not a regular file: profiles.db";
-        return r;
-    case FileState::ReadError:
-        r.success = false; r.disposition = ImportDisposition::Failed;
-        r.error = "file_read_error"; r.diagnostics = "I/O error: profiles.db";
-        return r;
-    case FileState::Empty:
-        // Empty required file — still proceed but with zero records
-        break;
-    default: break;
-    }
+    auto check = [&](const std::string& fn) -> bool {
+        auto fi = reader_.check_file(fn);
+        if (!fi.exists) { r.success = false; r.disposition = ImportDisposition::Failed;
+            r.error = "file_missing"; r.diagnostics = fn + " not found"; return false; }
+        return true;
+    };
+    if (!check("profiles.db")) return r;
 
-    // Inspect template_profiles.db (optional)
-    FileState st_template = inspect_file("template_profiles.db");
-    bool have_template = (st_template == FileState::RegularReadable);
-    bool template_empty = (st_template == FileState::Empty);
+    auto dr = reader_.read_combined_profiles();
+    if (!dr.success) { r.error = dr.error; r.diagnostics = dr.diagnostics; return r; }
 
-    if (st_template == FileState::Unreadable || st_template == FileState::InvalidType ||
-        st_template == FileState::ReadError) {
-        r.success = false; r.disposition = ImportDisposition::Failed;
-        r.error = st_template == FileState::Unreadable ? "file_unreadable" :
-                  st_template == FileState::InvalidType ? "invalid_file_type" : "file_read_error";
-        r.diagnostics = std::string("template_profiles.db: ") +
-            (st_template == FileState::Unreadable ? "unreadable" :
-             st_template == FileState::InvalidType ? "not a file" : "read error");
-        return r;
-    }
-
-    // Parse profiles.db
-    std::vector<profile::Profile> combined;
-    std::set<uint64_t> combined_ids;
-    std::set<std::string> combined_names;
-    {
-        ParseResult pr = parse_profile_file(
-            legacy_dir_ + "profiles.db", "profiles.db", false,
-            combined, combined_ids, combined_names);
-        if (!pr.success) {
-            r.error = pr.error; r.diagnostics = pr.diagnostics;
-            return r;
-        }
-    }
-
-    // Parse template_profiles.db if present and non-empty
-    if (have_template) {
-        std::vector<profile::Profile> template_records;
-        std::set<uint64_t> template_ids;
-        std::set<std::string> template_names;
-        ParseResult pr = parse_profile_file(
-            legacy_dir_ + "template_profiles.db", "template_profiles.db", true,
-            template_records, template_ids, template_names);
-        if (!pr.success) {
-            r.error = pr.error; r.diagnostics = pr.diagnostics;
-            return r;
-        }
-
-        // Check cross-file collisions against existing combined set
-        for (const auto& tp : template_records) {
-            if (combined_ids.count(tp.id)) {
-                r.error = "duplicate_id";
-                r.diagnostics = "Cross-file duplicate id " + std::to_string(tp.id)
-                    + " in template_profiles.db (already in profiles.db)";
-                return r;
-            }
-            if (combined_names.count(tp.profile_name)) {
-                r.error = "duplicate_profile_name";
-                r.diagnostics = "Cross-file duplicate profile_name '"
-                    + tp.profile_name + "' in template_profiles.db (already in profiles.db)";
-                return r;
-            }
-        }
-
-        // Merge template records into combined
-        combined.insert(combined.end(),
-            std::make_move_iterator(template_records.begin()),
-            std::make_move_iterator(template_records.end()));
-    }
-
-    // One atomic checked save
-    bool ok = sqlite_.try_save_profiles(combined);
-    uint64_t count = combined.size();
-
+    bool ok = sqlite_.try_save_profiles(dr.records);
     if (!ok) {
         r.success = false; r.disposition = ImportDisposition::Failed;
-        r.error = "sqlite_write_failed";
-        r.diagnostics = "profiles: combined persistence failed";
-        r.record_count = 0;
-        return r;
+        r.error = "sqlite_write_failed"; r.record_count = 0; return r;
     }
-
-    // Determine disposition
-    if (count == 0 && template_empty) {
-        r.success = true; r.disposition = ImportDisposition::SkippedEmpty;
-        r.record_count = 0;
-        return r;
-    }
-    if (count == 0 && !have_template && st_profiles == FileState::Empty) {
-        r.success = true; r.disposition = ImportDisposition::SkippedEmpty;
-        r.record_count = 0;
-        return r;
-    }
-
     r.success = true; r.disposition = ImportDisposition::Imported;
-    r.record_count = count;
+    r.record_count = dr.records.size();
     return r;
 }
 
 ImportResult LegacyImporter::import_users() {
     auto r = inspect_and_begin("users", "users.db", true);
     if (!r.success && r.disposition == ImportDisposition::Imported) {
-        std::vector<user::User> users;
-        std::set<uint64_t> ids;
-        std::set<std::string> usernames;
-        LineParser lp(fs::path(legacy_dir_ + "users.db"), "users.db");
-        while (lp.next()) {
-            if (lp.empty_line()) continue;
-            auto f = lp.split();
-            if (f.size() != 6) {
-                r.error = "invalid_field_count";
-                r.diagnostics = "users.db:" + std::to_string(lp.line_number)
-                    + ": expected 6 fields, got " + std::to_string(f.size());
-                return r;
-            }
-            user::User u;
-            std::string err;
-            if (!LineParser::parse_uint64(f[0], u.id, err)) {
-                r.error = "invalid_integer";
-                r.diagnostics = "users.db:" + std::to_string(lp.line_number) + ": id: " + err;
-                return r;
-            }
-            if (ids.count(u.id)) {
-                r.error = "duplicate_id";
-                r.diagnostics = "users.db:" + std::to_string(lp.line_number) + ": duplicate id";
-                return r;
-            }
-            ids.insert(u.id);
-            u.username = f[1];
-            if (usernames.count(u.username)) {
-                r.error = "duplicate_username";
-                r.diagnostics = "users.db:" + std::to_string(lp.line_number) + ": duplicate username";
-                return r;
-            }
-            usernames.insert(u.username);
-            if (!LineParser::parse_uint64(f[2], u.uid, err)) {
-                r.error = "invalid_integer";
-                r.diagnostics = "users.db:" + std::to_string(lp.line_number) + ": uid: " + err;
-                return r;
-            }
-            u.home_directory = f[3];
-            u.shell = f[4];
-            if (!LineParser::parse_bool(f[5], u.enabled, err)) {
-                r.error = "invalid_boolean";
-                r.diagnostics = "users.db:" + std::to_string(lp.line_number) + ": enabled: " + err;
-                return r;
-            }
-            u.name = u.username;
-            users.push_back(std::move(u));
-        }
-        bool ok = sqlite_.try_save_users(users);
-        r = finish_import(std::move(r), ok, users.size());
+        auto dr = reader_.read_users();
+        if (!dr.success) { r.error = dr.error; r.diagnostics = dr.diagnostics; return r; }
+        bool ok = sqlite_.try_save_users(dr.records);
+        r = finish_import(std::move(r), ok, dr.records.size());
     }
     return r;
 }
