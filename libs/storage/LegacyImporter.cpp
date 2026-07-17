@@ -2,6 +2,8 @@
 #include "LineParser.h"
 #include "profile/ProfileType.h"
 #include "mail/MailModuleState.h"
+#include "StorageCanonicalizer.h"
+#include "SQLiteSnapshotReader.h"
 
 #include <fstream>
 #include <sstream>
@@ -157,9 +159,6 @@ ImportResult LegacyImporter::finish_import(
 // Baseline capture — uses typed SQLiteStorage loads and
 // Verification's canonical format for consistent checksums.
 // ============================================================
-
-#include "StorageCanonicalizer.h"
-#include "SQLiteSnapshotReader.h"
 
 ResourceBaseline LegacyImporter::capture_baseline(const std::string& type) {
     ResourceBaseline bl;
