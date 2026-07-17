@@ -802,7 +802,11 @@ DatabaseVerificationResult Verification::verify_all() {
                 rr.success = false; rr.status = VerificationStatus::Failed;
                 rr.error = "reopen_checksum_mismatch";
             } else {
-                rr.success = true; rr.status = VerificationStatus::Passed;
+                rr.success = true;
+                auto orig = find_import_result(name);
+                bool was_skipped = orig && (orig->disposition == ImportDisposition::SkippedEmpty ||
+                                            orig->disposition == ImportDisposition::SkippedMissingOptional);
+                rr.status = was_skipped ? VerificationStatus::Skipped : VerificationStatus::Passed;
             }
             if (!rr.success) { result.error = "reopen_" + name; reopen_pass = false; }
             result.reopened_resources.push_back(rr);
