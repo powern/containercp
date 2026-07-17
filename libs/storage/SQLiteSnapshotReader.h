@@ -52,7 +52,7 @@ struct SQLiteSnapshotReader {
         if (!rl->prepare(sql)) { r.error = "prepare_failed"; return r; } \
         while (true) { \
             if (!rl->step()) { \
-                if (rl->error_code() != 0) { r.error = "step_failed:" + rl->error_message(); return r; } \
+                if (rl->error_code() != 0) { r.error = "step_failed"; return r; } \
                 break; \
             } \
             cls rec; \
