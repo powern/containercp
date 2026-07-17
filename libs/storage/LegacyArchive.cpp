@@ -397,7 +397,16 @@ ArchiveResult LegacyArchive::create_archive(
     if (fs::exists(final_path)) { result.error = "archive_exists"; return result; }
     if (fs::exists(temp_path)) { result.error = "temporary_archive_exists"; return result; }
 
-    // RAII temp directory cleanup
+    // Create temp directory exclusively before activating guard
+    {
+        std::error_code ec;
+        if (!fs::create_directory(temp_path, ec)) {
+            if (ec) { result.error = "temp_dir_failed"; return result; }
+            result.error = "temporary_archive_exists"; return result;
+        }
+    }
+
+    // RAII cleanup — active only after this invocation created the directory
     struct TempGuard {
         std::string path; bool owned;
         TempGuard(const std::string& p) : path(p), owned(true) {}
@@ -405,7 +414,6 @@ ArchiveResult LegacyArchive::create_archive(
         void release() { owned = false; }
     };
     TempGuard temp_guard(temp_path);
-    (void)temp_guard; // used implicitly via destruction
 
     // Build inventory from shared inventory
     std::vector<ArchiveFileEntry> file_entries;
@@ -444,13 +452,6 @@ ArchiveResult LegacyArchive::create_archive(
         }
     }
 
-    // Create temp directory
-    {
-        std::error_code ec;
-        fs::create_directories(temp_path, ec);
-        if (ec) { result.error = "temp_dir_failed"; return result; }
-    }
-    ;
 
     // Copy files with durable streaming
     auto durable_copy = [&](const std::string& src, const std::string& dst, const std::string& fn) -> bool {
