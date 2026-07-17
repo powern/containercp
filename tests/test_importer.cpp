@@ -1329,3 +1329,79 @@ TEST_CASE("baseline checksum detects changed state") {
     pool.shutdown();
     cleanup(dir);
 }
+
+TEST_CASE("reopen comparison checks count and checksum") {
+    auto dir = test_dir("vfy_reopen_ck");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "nodes.db", "1|main|web\n2|second|local\n");
+    write_file(dir + "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_file(dir + "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_file(dir + "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_file(dir + "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_file(dir + "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_file(dir + "backups.db", "1|1|1|backup.tar.gz|full|1000|2024-01-01|completed|/path|gzip\n");
+    write_file(dir + "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    ConnectionPool pool; init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto import_result = imp.import_all();
+    REQUIRE(import_result.success);
+    pool.shutdown();
+
+    Verification vfy(dir, dir + "containercp.db", import_result, dir);
+    auto result = vfy.verify_all();
+    CHECK(result.initial_verification_passed);
+    CHECK(result.reopen_succeeded);
+    // Check reopened results exist and have correct counts
+    for (const auto& rr : result.reopened_resources) {
+        CHECK(rr.success);
+    }
+    CHECK(result.reopened_verification_passed);
+    CHECK(result.reopened_integrity_check_result == "ok");
+    cleanup(dir);
+}
+
+TEST_CASE("reopen sensitive field redaction") {
+    auto dir = test_dir("vfy_reopen_sens");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "nodes.db", "1|main|web\n");
+    write_file(dir + "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_file(dir + "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_file(dir + "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_file(dir + "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_file(dir + "databases.db", "1|db|user|secret_pass|mysql|8.0|1|1|1\n");
+    write_file(dir + "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_file(dir + "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    write_file(dir + "access_users.db", "1|testuser|password|secret_hash|1\n");
+    ConnectionPool pool; init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto import_result = imp.import_all();
+    REQUIRE(import_result.success);
+    pool.shutdown();
+
+    // Tamper with a sensitive field
+    {
+        ConnectionPool tp; tp.initialize(dir + "containercp.db");
+        WriteGuard wg(tp);
+        if (wg.is_valid())
+            wg.db().exec("UPDATE databases SET db_password = 'tampered' WHERE id = 1");
+        tp.shutdown();
+    }
+
+    Verification vfy(dir, dir + "containercp.db", import_result, dir);
+    auto result = vfy.verify_all();
+    // Initial verification should fail (tampered database)
+    CHECK_FALSE(result.initial_verification_passed);
+    // The database verification should detect the mismatch
+    if (!result.resources.empty()) {
+        auto& db_result = result.resources[6]; // databases
+        CHECK_FALSE(db_result.success);
+        // Check that the secret value is not exposed in mismatches
+        for (const auto& mm : db_result.mismatches) {
+            CHECK(mm.expected.find("secret_pass") == std::string::npos);
+            CHECK(mm.actual.find("tampered") == std::string::npos);
+        }
+    }
+    cleanup(dir);
+}
