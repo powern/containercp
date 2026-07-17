@@ -692,7 +692,7 @@ bool LegacyArchive::verify_archive(const std::string& archive_path,
     if (!ints.count("initial_fk_violations") || ints["initial_fk_violations"] != 0) return false;
     if (!ints.count("reopened_fk_violations") || ints["reopened_fk_violations"] != 0) return false;
 
-    // Cross-check file entries (19 total)
+    // Cross-check file entries (19 total) — verify SHA, size, record_count, optional
     if (file_entries.size() != 19) return false;
     std::set<std::string> manifest_filenames;
     for (auto& fe : file_entries) {
@@ -702,8 +702,12 @@ bool LegacyArchive::verify_archive(const std::string& archive_path,
         manifest_filenames.insert(fn);
 
         bool present = (fe["present"] == "true");
+        std::string manifest_sha = fe["sha256"];
         bool optional = false;
         for (auto& fi : legacy_file_inventory()) { if (fi.filename == fn) { optional = !fi.required; break; } }
+
+        // Validate optional flag matches inventory
+        if (fe["optional"] != (optional ? "true" : "false")) return false;
 
         std::string disk_path = ap + fn;
         bool disk_exists = fs::exists(disk_path) && fs::is_regular_file(disk_path) &&
@@ -711,12 +715,39 @@ bool LegacyArchive::verify_archive(const std::string& archive_path,
 
         if (present) {
             if (!disk_exists) return false;
+
+            // Verify manifest SHA matches SHA256SUMS
             if (!sums_entries.count(fn)) return false;
-            if (sha256_file(disk_path) != sums_entries[fn]) return false;
+            if (manifest_sha != sums_entries[fn]) return false;
+
+            // Verify manifest SHA matches actual disk
+            std::string disk_sha = sha256_file(disk_path);
+            if (disk_sha.empty()) return false;
+            if (manifest_sha != disk_sha) return false;
+
+            // Verify manifest size matches actual disk
+            uint64_t disk_size = 0;
+            { std::error_code ec; disk_size = fs::file_size(disk_path, ec); if (ec) return false; }
+            uint64_t manifest_size = 0;
+            { const std::string& s = fe["size"]; for (char c : s) {
+                if (c < '0' || c > '9') return false;
+                uint64_t prev = manifest_size;
+                manifest_size = manifest_size * 10 + (c - '0');
+                if (manifest_size < prev) return false; // overflow
+            }}
+            if (manifest_size != disk_size) return false;
+
+            // Validate record_count is numeric and non-negative
+            { const std::string& rc = fe["record_count"]; if (rc.empty()) return false;
+              for (char c : rc) if (c < '0' || c > '9') return false; }
         } else {
             if (disk_exists) return false;
             if (sums_entries.count(fn)) return false;
-            if (!optional) return false; // required file must be present
+            if (!optional) return false;
+            // Absent entry must have empty SHA, zero size, zero record_count
+            if (!manifest_sha.empty()) return false;
+            if (fe["size"] != "0") return false;
+            if (fe["record_count"] != "0") return false;
         }
     }
     // Verify all required files present in manifest
