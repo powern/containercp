@@ -325,6 +325,9 @@ public:
                             else pfe.present = b;
                         } else { return false; } // unknown field
                     }
+                    static const std::set<std::string> kRequired = {"filename","sha256","size","record_count","optional","present"};
+                    if (file_seen.size() != kRequired.size()) return false;
+                    for (auto& r : kRequired) if (!file_seen.count(r)) return false;
                     pfe.valid = true;
                 }
             } else if (peek() == '"') {
