@@ -154,90 +154,142 @@ ImportResult LegacyImporter::finish_import(
 }
 
 // ============================================================
-// Baseline capture — fail-closed, per-resource
+// Baseline capture — uses typed SQLiteStorage loads and
+// Verification's canonical format for consistent checksums.
 // ============================================================
 
+#include "Verification.h"
+#include <algorithm>
 #include <openssl/sha.h>
 
-static std::string baseline_sha256(const std::string& data) {
+ResourceBaseline LegacyImporter::capture_baseline(const std::string& type) {
+    ResourceBaseline bl;
+    std::string canonical;
+
+    #define BL_CANON_FIELD_STR(field) Verification::append_field(canonical, field)
+    #define BL_CANON_FIELD_U64(field) Verification::append_field(canonical, field)
+    #define BL_CANON_FIELD_BOOL(field) Verification::append_field(canonical, field ? "true" : "false")
+
+    if (type == "nodes") { auto r = sqlite_.load_nodes();
+        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
+        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.name); BL_CANON_FIELD_STR(v.type); }
+        bl.record_count = r.size();
+    } else if (type == "php_versions") { auto r = sqlite_.load_php_versions();
+        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
+        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.version); BL_CANON_FIELD_STR(v.image); BL_CANON_FIELD_BOOL(v.enabled); BL_CANON_FIELD_BOOL(v.default_version); }
+        bl.record_count = r.size();
+    } else if (type == "profiles") { auto r = sqlite_.load_profiles();
+        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
+        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.profile_name);
+            Verification::append_field(canonical, profile::profile_type_to_string(v.type));
+            BL_CANON_FIELD_STR(v.web_server); BL_CANON_FIELD_STR(v.runtime); BL_CANON_FIELD_STR(v.template_path);
+            BL_CANON_FIELD_STR(v.description); BL_CANON_FIELD_BOOL(v.enabled); BL_CANON_FIELD_BOOL(v.default_profile); }
+        bl.record_count = r.size();
+    } else if (type == "users") { auto r = sqlite_.load_users();
+        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
+        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.username); BL_CANON_FIELD_U64(v.uid);
+            BL_CANON_FIELD_STR(v.home_directory); BL_CANON_FIELD_STR(v.shell); BL_CANON_FIELD_BOOL(v.enabled); }
+        bl.record_count = r.size();
+    } else if (type == "sites") { auto r = sqlite_.load_sites();
+        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
+        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.domain); BL_CANON_FIELD_STR(v.owner);
+            BL_CANON_FIELD_U64(v.node_id); BL_CANON_FIELD_STR(v.web_server); BL_CANON_FIELD_BOOL(v.php_mail_enabled); }
+        bl.record_count = r.size();
+    } else if (type == "domains") { auto r = sqlite_.load_domains();
+        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
+        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.fqdn); BL_CANON_FIELD_U64(v.owner_id);
+            BL_CANON_FIELD_U64(v.site_id); BL_CANON_FIELD_STR(v.php_version); BL_CANON_FIELD_BOOL(v.ssl_enabled);
+            BL_CANON_FIELD_BOOL(v.enabled); BL_CANON_FIELD_STR(v.type); BL_CANON_FIELD_STR(v.target); }
+        bl.record_count = r.size();
+    } else if (type == "databases") { auto r = sqlite_.load_databases();
+        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
+        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.db_name); BL_CANON_FIELD_STR(v.db_user);
+            BL_CANON_FIELD_STR(v.db_password); BL_CANON_FIELD_STR(v.engine); BL_CANON_FIELD_STR(v.version);
+            BL_CANON_FIELD_U64(v.owner_id); BL_CANON_FIELD_U64(v.site_id); BL_CANON_FIELD_BOOL(v.enabled); }
+        bl.record_count = r.size();
+    } else if (type == "backups") { auto r = sqlite_.load_backups();
+        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
+        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_U64(v.site_id); BL_CANON_FIELD_U64(v.owner_id);
+            BL_CANON_FIELD_STR(v.filename); BL_CANON_FIELD_STR(v.type); BL_CANON_FIELD_U64(v.size);
+            BL_CANON_FIELD_STR(v.created_at); BL_CANON_FIELD_STR(v.status); BL_CANON_FIELD_STR(v.file_path);
+            BL_CANON_FIELD_STR(v.compression); }
+        bl.record_count = r.size();
+    } else if (type == "reverse_proxies") { auto r = sqlite_.load_reverse_proxies();
+        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
+        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.domain); BL_CANON_FIELD_U64(v.site_id);
+            BL_CANON_FIELD_STR(v.provider); BL_CANON_FIELD_STR(v.config_path); BL_CANON_FIELD_STR(v.upstream);
+            BL_CANON_FIELD_BOOL(v.enabled); BL_CANON_FIELD_STR(v.status); }
+        bl.record_count = r.size();
+    } else if (type == "access_users") { auto r = sqlite_.load_access_users();
+        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
+        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.username); BL_CANON_FIELD_STR(v.auth_type);
+            BL_CANON_FIELD_STR(v.password_hash); BL_CANON_FIELD_BOOL(v.enabled); }
+        bl.record_count = r.size();
+    } else if (type == "access_grants") { auto r = sqlite_.load_access_grants();
+        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
+        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_U64(v.access_user_id); BL_CANON_FIELD_U64(v.site_id);
+            Verification::append_field(canonical, access::permission_to_string(v.permission)); }
+        bl.record_count = r.size();
+    } else if (type == "auth_users") { auto r = sqlite_.load_auth_users();
+        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
+        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.username); BL_CANON_FIELD_STR(v.password_hash);
+            BL_CANON_FIELD_BOOL(v.must_change_password); BL_CANON_FIELD_BOOL(v.enabled); BL_CANON_FIELD_STR(v.role); }
+        bl.record_count = r.size();
+    } else if (type == "ssl_certificates") { auto r = sqlite_.load_ssl_certificates();
+        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
+        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_U64(v.domain_id); BL_CANON_FIELD_STR(v.domain);
+            BL_CANON_FIELD_STR(v.provider); BL_CANON_FIELD_STR(v.certificate_path); BL_CANON_FIELD_STR(v.key_path);
+            BL_CANON_FIELD_STR(v.chain_path); BL_CANON_FIELD_STR(v.issued_at); BL_CANON_FIELD_STR(v.expires_at);
+            BL_CANON_FIELD_STR(v.renew_after); BL_CANON_FIELD_STR(v.status); BL_CANON_FIELD_BOOL(v.auto_renew);
+            BL_CANON_FIELD_BOOL(v.https_enabled); BL_CANON_FIELD_BOOL(v.redirect_enabled); BL_CANON_FIELD_STR(v.domains);
+            BL_CANON_FIELD_STR(v.challenge_type); BL_CANON_FIELD_STR(v.last_error); BL_CANON_FIELD_STR(v.last_validation);
+            BL_CANON_FIELD_U64(static_cast<uint64_t>(v.renew_attempts)); BL_CANON_FIELD_U64(static_cast<uint64_t>(v.version)); }
+        bl.record_count = r.size();
+    } else if (type == "mail_domains") { auto r = sqlite_.load_mail_domains();
+        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
+        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_U64(v.domain_id); BL_CANON_FIELD_U64(v.site_id);
+            BL_CANON_FIELD_STR(v.domain_name); Verification::append_field(canonical, mail::mail_domain_mode_to_string(v.mode));
+            BL_CANON_FIELD_STR(v.relay_host); BL_CANON_FIELD_STR(v.dkim_selector); BL_CANON_FIELD_STR(v.dkim_private_key_path);
+            BL_CANON_FIELD_STR(v.dkim_public_key_dns); BL_CANON_FIELD_U64(v.max_mailboxes); BL_CANON_FIELD_U64(v.max_aliases);
+            BL_CANON_FIELD_STR(v.catch_all); BL_CANON_FIELD_BOOL(v.enabled); BL_CANON_FIELD_STR(v.created_at);
+            BL_CANON_FIELD_STR(v.updated_at); }
+        bl.record_count = r.size();
+    } else if (type == "mail_mailboxes") { auto r = sqlite_.load_mailboxes();
+        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
+        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_U64(v.domain_id); BL_CANON_FIELD_STR(v.local_part);
+            BL_CANON_FIELD_STR(v.password_hash); BL_CANON_FIELD_U64(v.quota_bytes); BL_CANON_FIELD_U64(v.quota_messages);
+            BL_CANON_FIELD_BOOL(v.enabled); BL_CANON_FIELD_STR(v.display_name); BL_CANON_FIELD_STR(v.forward_to);
+            BL_CANON_FIELD_BOOL(v.spam_enabled); BL_CANON_FIELD_STR(v.last_login); BL_CANON_FIELD_STR(v.created_at);
+            BL_CANON_FIELD_STR(v.updated_at); }
+        bl.record_count = r.size();
+    } else if (type == "mail_aliases") { auto r = sqlite_.load_mail_aliases();
+        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
+        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_U64(v.domain_id); BL_CANON_FIELD_STR(v.source_local_part);
+            BL_CANON_FIELD_STR(v.destination); BL_CANON_FIELD_BOOL(v.enabled); BL_CANON_FIELD_STR(v.created_at);
+            BL_CANON_FIELD_STR(v.updated_at); }
+        bl.record_count = r.size();
+    } else if (type == "mail_config") {
+        std::string ms = sqlite_.load_mail_module_state();
+        std::string sh = sqlite_.load_mail_smarthost();
+        Verification::append_field(canonical, std::string("module_state"));
+        Verification::append_field(canonical, ms);
+        Verification::append_field(canonical, std::string("smarthost"));
+        Verification::append_field(canonical, sh);
+        bl.record_count = (ms.empty() ? 0 : 1) + (sh.empty() ? 0 : 1);
+    } else {
+        bl.error = "unknown_type:" + type;
+        return bl;
+    }
+
     unsigned char hash[SHA256_DIGEST_LENGTH];
     SHA256_CTX ctx;
-    SHA256_Init(&ctx); SHA256_Update(&ctx, data.data(), data.size()); SHA256_Final(hash, &ctx);
+    SHA256_Init(&ctx); SHA256_Update(&ctx, canonical.data(), canonical.size()); SHA256_Final(hash, &ctx);
     std::string out; out.reserve(64);
     for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
         out += "0123456789abcdef"[(hash[i] >> 4) & 0xf];
         out += "0123456789abcdef"[hash[i] & 0xf];
     }
-    return out;
-}
-
-// Serialize all rows from a SELECT query into a canonical checksum stream
-static std::string serialize_rows(ReadLease& rl) {
-    std::string out;
-    while (true) {
-        if (!rl->step()) break; // DONE or error
-        for (int c = 0; c < rl->column_count(); ++c) {
-            std::string val = rl->column_text(c);
-            uint64_t len = val.size();
-            for (int i = 7; i >= 0; --i)
-                out += static_cast<char>((len >> (i * 8)) & 0xff);
-            out += val;
-        }
-    }
-    return out;
-}
-
-ResourceBaseline LegacyImporter::capture_baseline(const std::string& type) {
-    ResourceBaseline bl;
-    ReadLease rl(pool_);
-    if (!rl.is_valid()) { bl.error = "no_lease"; return bl; }
-
-    std::string sql;
-    if (type == "nodes") sql = "SELECT id, name, type FROM nodes ORDER BY id";
-    else if (type == "php_versions") sql = "SELECT id, version, image, enabled, default_version FROM php_versions ORDER BY id";
-    else if (type == "profiles") sql = "SELECT id, profile_name, type, web_server, runtime, template_path, description, enabled, default_profile FROM profiles ORDER BY id";
-    else if (type == "users") sql = "SELECT id, username, uid, home_directory, shell, enabled FROM users ORDER BY id";
-    else if (type == "sites") sql = "SELECT id, domain, owner, node_id, web_server, php_mail_enabled FROM sites ORDER BY id";
-    else if (type == "domains") sql = "SELECT id, fqdn, owner_id, site_id, php_version, ssl_enabled, enabled, type, target FROM domains ORDER BY id";
-    else if (type == "databases") sql = "SELECT id, db_name, db_user, db_password, engine, version, owner_id, site_id, enabled FROM databases ORDER BY id";
-    else if (type == "backups") sql = "SELECT id, site_id, owner_id, filename, type, size, created_at, status, file_path, compression FROM backups ORDER BY id";
-    else if (type == "reverse_proxies") sql = "SELECT id, domain, site_id, provider, config_path, upstream, enabled, status FROM reverse_proxies ORDER BY id";
-    else if (type == "access_users") sql = "SELECT id, username, auth_type, password_hash, enabled FROM access_users ORDER BY id";
-    else if (type == "access_grants") sql = "SELECT id, access_user_id, site_id, permission FROM access_grants ORDER BY id";
-    else if (type == "auth_users") sql = "SELECT id, username, password_hash, must_change_password, enabled, role FROM auth_users ORDER BY id";
-    else if (type == "ssl_certificates") sql = "SELECT id, domain_id, domain, provider, certificate_path, key_path, chain_path, issued_at, expires_at, renew_after, status, auto_renew, https_enabled, redirect_enabled, domains, challenge_type, last_error, last_validation, renew_attempts, version FROM ssl_certificates ORDER BY id";
-    else if (type == "mail_domains") sql = "SELECT id, domain_id, site_id, domain_name, mode, relay_host, dkim_selector, dkim_private_key_path, dkim_public_key_dns, max_mailboxes, max_aliases, catch_all, enabled, created_at, updated_at FROM mail_domains ORDER BY id";
-    else if (type == "mail_mailboxes") sql = "SELECT id, domain_id, local_part, password_hash, quota_bytes, quota_messages, enabled, display_name, forward_to, spam_enabled, last_login, created_at, updated_at FROM mail_mailboxes ORDER BY id";
-    else if (type == "mail_aliases") sql = "SELECT id, domain_id, source_local_part, destination, enabled, created_at, updated_at FROM mail_aliases ORDER BY id";
-    else if (type == "mail_config") sql = "SELECT key, value FROM mail_config ORDER BY key";
-    else { bl.error = "unknown_type:" + type; return bl; }
-
-    if (!rl->prepare(sql)) { bl.error = "prepare_failed"; return bl; }
-    std::string serialized = serialize_rows(rl);
-    if (rl->error_code() != 0) { bl.error = "step_failed"; return bl; }
-
-    // Count by reading the serialized row markers
-    // Count how many records were serialized by counting 'id' field prefixes
-    // Actually, compute count from a separate query or use step count
-    // Count via serialized row count
-    // Count the number of id fields: count non-empty column_text(0) calls
-    // Re-use same rl — the serialized session is done, prepare a count query
-    // Use a direct per-type count via the serialized record boundary detection
-    // Count records by dividing serialized size by typical record size — not reliable
-    // Instead, use the fact that each id is a uint64_t serialized
-    // A simpler approach: recount from the serialized stream by looking at ID markers
-    // Actually, just use the serialized row count from step() calls
-    // The serialize_rows function loops until step() returns false
-    // We can't count in serialize_rows without modifying it
-    // For now, use a hardcoded per-type count approach via step counting
-    // Re-run the same query but just count steps
-    if (!rl->prepare(sql)) { bl.error = "count_prepare_failed"; return bl; }
-    uint64_t count = 0;
-    while (rl->step()) ++count;
-    if (rl->error_code() != 0) { bl.error = "count_step_failed"; return bl; }
-    bl.record_count = count;
-
-    bl.canonical_checksum = baseline_sha256(serialized);
+    bl.canonical_checksum = out;
     bl.success = true;
     return bl;
 }
