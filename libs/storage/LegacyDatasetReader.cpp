@@ -527,19 +527,21 @@ DatasetResult<mail::MailAlias> LegacyDatasetReader::read_mail_aliases() {
 LegacyDatasetReader::MailConfigResult LegacyDatasetReader::read_mail_config() {
     MailConfigResult r;
     fs::path state_path(legacy_dir_ + "mail_state.db");
-    if (fs::exists(state_path) && fs::file_size(state_path) > 0) {
-        std::ifstream f(state_path);
-        std::getline(f, r.module_state);
+    if (fs::exists(state_path)) {
         r.module_state_present = true;
-        if (!r.module_state.empty() && r.module_state != "active" && r.module_state != "inactive") {
-            r.error = "invalid_module_state"; return r;
+        if (fs::file_size(state_path) > 0) {
+            std::ifstream f(state_path); std::getline(f, r.module_state);
+            if (!r.module_state.empty() && r.module_state != "active" && r.module_state != "inactive") {
+                r.error = "invalid_module_state"; return r;
+            }
         }
     }
     fs::path smtp_path(legacy_dir_ + "mail_smarthost.db");
-    if (fs::exists(smtp_path) && fs::file_size(smtp_path) > 0) {
-        std::ifstream f(smtp_path);
-        std::getline(f, r.smarthost);
+    if (fs::exists(smtp_path)) {
         r.smarthost_present = true;
+        if (fs::file_size(smtp_path) > 0) {
+            std::ifstream f(smtp_path); std::getline(f, r.smarthost);
+        }
     }
     r.success = true;
     return r;
