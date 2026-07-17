@@ -252,11 +252,12 @@ public:
         if (next() != '{') return false;
 
         std::set<std::string> seen_keys;
+        bool first = true;
         while (true) {
             skip_ws();
-            if (peek() == '}') { next(); break; }
-            if (peek() == ',') next();
-            skip_ws();
+            if (peek() == '}') { if (first) { next(); break; } else { next(); break; } }
+            if (!first) { if (peek() != ',') return false; next(); skip_ws(); }
+            first = false;
 
             // Parse key
             if (peek() != '"') return false;
@@ -272,19 +273,21 @@ public:
             // Parse value
             if (key == "files") {
                 if (next() != '[') return false;
+                bool fa_first = true;
                 while (true) {
                     skip_ws();
                     if (peek() == ']') { next(); break; }
-                    if (peek() == ',') next();
-                    skip_ws();
+                    if (!fa_first) { if (peek() != ',') return false; next(); skip_ws(); }
+                    fa_first = false;
                     if (next() != '{') return false;
                     std::map<std::string, std::string> file_entry;
                     std::set<std::string> file_seen;
+                    bool fe_first = true;
                     while (true) {
                         skip_ws();
                         if (peek() == '}') { next(); break; }
-                        if (peek() == ',') next();
-                        skip_ws();
+                        if (!fe_first) { if (peek() != ',') return false; next(); skip_ws(); }
+                        fe_first = false;
                         std::string fk;
                         if (!parse_string(fk)) return false;
                         if (file_seen.count(fk)) return false;
