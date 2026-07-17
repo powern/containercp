@@ -1264,3 +1264,172 @@ TEST_CASE("MigrationEngine out-of-order registration works") {
     }
     mig_cleanup(path);
 }
+
+// ============================================================
+// Phase 10 — Legacy Archive tests
+// ============================================================
+
+static std::string make_legacy_dir(const std::string& name) {
+    auto d = std::filesystem::temp_directory_path() / name;
+    std::filesystem::create_directories(d);
+    return d.string() + "/";
+}
+
+static void write_txt(const std::string& dir, const std::string& fn, const std::string& content) {
+    std::ofstream f(dir + fn); f << content;
+}
+
+#include "storage/LegacyArchive.h"
+using namespace containercp::storage;
+
+TEST_CASE("Archive respects required and optional files") {
+    auto dir = make_legacy_dir("arc_opt");
+    write_txt(dir, "nodes.db", "1|main|web\n");
+    write_txt(dir, "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_txt(dir, "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_txt(dir, "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_txt(dir, "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_txt(dir, "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_txt(dir, "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_txt(dir, "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_txt(dir, "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    // template_profiles.db intentionally absent (optional)
+
+    auto arc_dir = make_legacy_dir("arc_root");
+    DatabaseVerificationResult dvr; dvr.initial_verification_passed = true;
+
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive("test-uuid-1234", "v0.6.0", "v0.7.0", dvr);
+    CHECK(result.success);
+    CHECK(!result.archive_path.empty());
+    CHECK(std::filesystem::exists(result.archive_path + "manifest.json"));
+    CHECK(std::filesystem::exists(result.archive_path + "SHA256SUMS"));
+
+    // template_profiles.db should be in manifest as optional+absent
+    bool found_tpl = false;
+    for (auto& f : result.manifest.files) {
+        if (f.filename == "template_profiles.db") {
+            found_tpl = true;
+            CHECK(f.optional);
+            CHECK_FALSE(f.present);
+        }
+    }
+    CHECK(found_tpl);
+
+    // Verify archive
+    CHECK(arch.verify_archive(result.archive_path));
+
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Archive fails without required files") {
+    auto dir = make_legacy_dir("arc_missing");
+    write_txt(dir, "nodes.db", "1|main|web\n");
+    // Missing php_versions.db (required)
+
+    auto arc_dir = make_legacy_dir("arc_root2");
+    DatabaseVerificationResult dvr; dvr.initial_verification_passed = true;
+
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive("test-uuid", "v0.6.0", "v0.7.0", dvr);
+    CHECK_FALSE(result.success);
+    // Error should mention required file
+    CHECK(result.error.find("required") != std::string::npos);
+
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Archive fails if verification not passed") {
+    auto dir = make_legacy_dir("arc_failv");
+    auto arc_dir = make_legacy_dir("arc_root3");
+    DatabaseVerificationResult dvr; dvr.initial_verification_passed = false;
+
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive("test-uuid", "v0.6.0", "v0.7.0", dvr);
+    CHECK_FALSE(result.success);
+    CHECK(result.error == "verification_not_passed");
+
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Archive rejects symlink source") {
+    auto dir = make_legacy_dir("arc_sym");
+    write_txt(dir, "actual.db", "1|main|web\n");
+    std::filesystem::create_symlink(dir + "actual.db", dir + "nodes.db");
+    write_txt(dir, "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_txt(dir, "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_txt(dir, "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_txt(dir, "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_txt(dir, "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_txt(dir, "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_txt(dir, "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_txt(dir, "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    auto arc_dir = make_legacy_dir("arc_root4");
+    DatabaseVerificationResult dvr; dvr.initial_verification_passed = true;
+
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive("test-uuid", "v0.6.0", "v0.7.0", dvr);
+    CHECK_FALSE(result.success);
+    CHECK(result.error.find("symlink") != std::string::npos);
+
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Archive verify fails on modified file") {
+    auto dir = make_legacy_dir("arc_mod");
+    write_txt(dir, "nodes.db", "1|main|web\n");
+    write_txt(dir, "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_txt(dir, "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_txt(dir, "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_txt(dir, "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_txt(dir, "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_txt(dir, "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_txt(dir, "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_txt(dir, "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    auto arc_dir = make_legacy_dir("arc_root5");
+    DatabaseVerificationResult dvr; dvr.initial_verification_passed = true;
+
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive("test-uuid", "v0.6.0", "v0.7.0", dvr);
+    REQUIRE(result.success);
+
+    // Tamper with archived file
+    write_txt(result.archive_path, "nodes.db", "CORRUPTED\n");
+    CHECK_FALSE(arch.verify_archive(result.archive_path));
+
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Archive source unchanged after copy") {
+    auto dir = make_legacy_dir("arc_unchg");
+    write_txt(dir, "nodes.db", "1|main|web\n");
+    write_txt(dir, "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_txt(dir, "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_txt(dir, "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_txt(dir, "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_txt(dir, "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_txt(dir, "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_txt(dir, "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
+    write_txt(dir, "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+
+    auto before_sha = LegacyArchive::sha256_file(dir + "nodes.db");
+    auto before_size = std::filesystem::file_size(dir + "nodes.db");
+
+    auto arc_dir = make_legacy_dir("arc_root6");
+    DatabaseVerificationResult dvr; dvr.initial_verification_passed = true;
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive("test-uuid", "v0.6.0", "v0.7.0", dvr);
+    REQUIRE(result.success);
+
+    // Source must be unchanged
+    CHECK(LegacyArchive::sha256_file(dir + "nodes.db") == before_sha);
+    CHECK(std::filesystem::file_size(dir + "nodes.db") == before_size);
+
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
