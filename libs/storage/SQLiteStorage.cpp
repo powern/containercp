@@ -83,8 +83,8 @@ static bool replace_all(
 
 // --- Nodes ---
 
-void SQLiteStorage::save_nodes(const std::vector<node::Node>& nodes) {
-    replace_all(pool_, "DELETE FROM nodes",
+bool SQLiteStorage::try_save_nodes(const std::vector<node::Node>& nodes) {
+    return replace_all(pool_, "DELETE FROM nodes",
         [&](SQLiteDB& db) -> bool {
             for (const auto& n : nodes) {
                 if (!db.prepare(
@@ -99,6 +99,10 @@ void SQLiteStorage::save_nodes(const std::vector<node::Node>& nodes) {
             }
             return true;
         });
+}
+
+void SQLiteStorage::save_nodes(const std::vector<node::Node>& nodes) {
+    (void)try_save_nodes(nodes);
 }
 
 std::vector<node::Node> SQLiteStorage::load_nodes() {
@@ -118,8 +122,8 @@ std::vector<node::Node> SQLiteStorage::load_nodes() {
 
 // --- PHP versions ---
 
-void SQLiteStorage::save_php_versions(const std::vector<php::PhpVersion>& versions) {
-    replace_all(pool_, "DELETE FROM php_versions",
+bool SQLiteStorage::try_save_php_versions(const std::vector<php::PhpVersion>& versions) {
+    return replace_all(pool_, "DELETE FROM php_versions",
         [&](SQLiteDB& db) -> bool {
             for (const auto& pv : versions) {
                 if (!db.prepare(
@@ -137,6 +141,10 @@ void SQLiteStorage::save_php_versions(const std::vector<php::PhpVersion>& versio
             }
             return true;
         });
+}
+
+void SQLiteStorage::save_php_versions(const std::vector<php::PhpVersion>& versions) {
+    (void)try_save_php_versions(versions);
 }
 
 std::vector<php::PhpVersion> SQLiteStorage::load_php_versions() {
@@ -160,8 +168,8 @@ std::vector<php::PhpVersion> SQLiteStorage::load_php_versions() {
 
 // --- Profiles ---
 
-void SQLiteStorage::save_profiles(const std::vector<profile::Profile>& profiles) {
-    replace_all(pool_, "DELETE FROM profiles",
+bool SQLiteStorage::try_save_profiles(const std::vector<profile::Profile>& profiles) {
+    return replace_all(pool_, "DELETE FROM profiles",
         [&](SQLiteDB& db) -> bool {
             for (const auto& p : profiles) {
                 if (!db.prepare(
@@ -185,6 +193,10 @@ void SQLiteStorage::save_profiles(const std::vector<profile::Profile>& profiles)
             }
             return true;
         });
+}
+
+void SQLiteStorage::save_profiles(const std::vector<profile::Profile>& profiles) {
+    (void)try_save_profiles(profiles);
 }
 
 std::vector<profile::Profile> SQLiteStorage::load_profiles() {
@@ -213,8 +225,8 @@ std::vector<profile::Profile> SQLiteStorage::load_profiles() {
 
 // --- Users ---
 
-void SQLiteStorage::save_users(const std::vector<user::User>& users) {
-    replace_all(pool_, "DELETE FROM users",
+bool SQLiteStorage::try_save_users(const std::vector<user::User>& users) {
+    return replace_all(pool_, "DELETE FROM users",
         [&](SQLiteDB& db) -> bool {
             const char* sql = "INSERT INTO users (id, username, uid, home_directory, "
                 "shell, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, "
@@ -232,6 +244,10 @@ void SQLiteStorage::save_users(const std::vector<user::User>& users) {
             }
             return true;
         });
+}
+
+void SQLiteStorage::save_users(const std::vector<user::User>& users) {
+    (void)try_save_users(users);
 }
 
 std::vector<user::User> SQLiteStorage::load_users() {
@@ -281,8 +297,8 @@ std::vector<site::Site> SQLiteStorage::load_sites() {
 
 // --- Domains ---
 
-void SQLiteStorage::save_domains(const std::vector<domain::Domain>& domains) {
-    replace_all(pool_, "DELETE FROM domains",
+bool SQLiteStorage::try_save_domains(const std::vector<domain::Domain>& domains) {
+    return replace_all(pool_, "DELETE FROM domains",
         [&](SQLiteDB& db) -> bool {
             const char* sql = "INSERT INTO domains (id, fqdn, owner_id, site_id, "
                 "php_version, ssl_enabled, enabled, type, target, "
@@ -304,6 +320,10 @@ void SQLiteStorage::save_domains(const std::vector<domain::Domain>& domains) {
             }
             return true;
         });
+}
+
+void SQLiteStorage::save_domains(const std::vector<domain::Domain>& domains) {
+    (void)try_save_domains(domains);
 }
 
 std::vector<domain::Domain> SQLiteStorage::load_domains() {
@@ -332,8 +352,8 @@ std::vector<domain::Domain> SQLiteStorage::load_domains() {
 
 // --- Databases ---
 
-void SQLiteStorage::save_databases(const std::vector<database::Database>& databases) {
-    replace_all(pool_, "DELETE FROM databases",
+bool SQLiteStorage::try_save_databases(const std::vector<database::Database>& databases) {
+    return replace_all(pool_, "DELETE FROM databases",
         [&](SQLiteDB& db) -> bool {
             const char* sql = "INSERT INTO databases (id, db_name, db_user, db_password, "
                 "engine, version, owner_id, site_id, enabled, "
@@ -355,6 +375,10 @@ void SQLiteStorage::save_databases(const std::vector<database::Database>& databa
             }
             return true;
         });
+}
+
+void SQLiteStorage::save_databases(const std::vector<database::Database>& databases) {
+    (void)try_save_databases(databases);
 }
 
 std::vector<database::Database> SQLiteStorage::load_databases() {
@@ -383,8 +407,8 @@ std::vector<database::Database> SQLiteStorage::load_databases() {
 
 // --- Reverse proxies ---
 
-void SQLiteStorage::save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies) {
-    replace_all(pool_, "DELETE FROM reverse_proxies",
+bool SQLiteStorage::try_save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies) {
+    return replace_all(pool_, "DELETE FROM reverse_proxies",
         [&](SQLiteDB& db) -> bool {
             const char* sql = "INSERT INTO reverse_proxies (id, domain, site_id, provider, "
                 "config_path, upstream, enabled, status, "
@@ -393,7 +417,7 @@ void SQLiteStorage::save_reverse_proxies(const std::vector<proxy::ReverseProxy>&
                 "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
             for (const auto& p : proxies) {
                 if (!db.prepare(sql)) return false;
-                if (!db.bind_int(1, static_cast<int64_t>(p.id))) return false;
+                if (!db.bind_int(1, static_cast<uint64_t>(p.id))) return false;
                 if (!db.bind_text(2, p.domain)) return false;
                 if (!db.bind_int(3, static_cast<int64_t>(p.site_id))) return false;
                 if (!db.bind_text(4, p.provider)) return false;
@@ -405,6 +429,10 @@ void SQLiteStorage::save_reverse_proxies(const std::vector<proxy::ReverseProxy>&
             }
             return true;
         });
+}
+
+void SQLiteStorage::save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies) {
+    (void)try_save_reverse_proxies(proxies);
 }
 
 std::vector<proxy::ReverseProxy> SQLiteStorage::load_reverse_proxies() {
@@ -484,11 +512,11 @@ static bool sync_parent_rows(
 
 // --- Access users (FK-safe parent sync: UPSERT + prune) ---
 
-void SQLiteStorage::save_access_users(const std::vector<access::AccessUser>& users) {
+bool SQLiteStorage::try_save_access_users(const std::vector<access::AccessUser>& users) {
     std::set<uint64_t> supplied_ids;
     for (const auto& u : users) supplied_ids.insert(u.id);
 
-    sync_parent_rows(pool_, "access_users", supplied_ids,
+    return sync_parent_rows(pool_, "access_users", supplied_ids,
         [&](SQLiteDB& db) -> bool {
             const char* upsert = "INSERT INTO access_users "
                 "(id, username, auth_type, password_hash, enabled, created_at, updated_at) "
@@ -512,6 +540,10 @@ void SQLiteStorage::save_access_users(const std::vector<access::AccessUser>& use
         });
 }
 
+void SQLiteStorage::save_access_users(const std::vector<access::AccessUser>& users) {
+    (void)try_save_access_users(users);
+}
+
 std::vector<access::AccessUser> SQLiteStorage::load_access_users() {
     std::vector<access::AccessUser> users;
     ReadLease rl(pool_);
@@ -533,8 +565,8 @@ std::vector<access::AccessUser> SQLiteStorage::load_access_users() {
 
 // --- Access grants (child table, normal replace_all with FK enforcement) ---
 
-void SQLiteStorage::save_access_grants(const std::vector<access::AccessGrant>& grants) {
-    replace_all(pool_, "DELETE FROM access_grants",
+bool SQLiteStorage::try_save_access_grants(const std::vector<access::AccessGrant>& grants) {
+    return replace_all(pool_, "DELETE FROM access_grants",
         [&](SQLiteDB& db) -> bool {
             const char* sql = "INSERT INTO access_grants "
                 "(id, access_user_id, site_id, permission, "
@@ -551,6 +583,10 @@ void SQLiteStorage::save_access_grants(const std::vector<access::AccessGrant>& g
             }
             return true;
         });
+}
+
+void SQLiteStorage::save_access_grants(const std::vector<access::AccessGrant>& grants) {
+    (void)try_save_access_grants(grants);
 }
 
 std::vector<access::AccessGrant> SQLiteStorage::load_access_grants() {
@@ -571,11 +607,11 @@ std::vector<access::AccessGrant> SQLiteStorage::load_access_grants() {
     return grants;
 }
 
-void SQLiteStorage::save_sites(const std::vector<site::Site>& sites) {
+bool SQLiteStorage::try_save_sites(const std::vector<site::Site>& sites) {
     std::set<uint64_t> supplied_ids;
     for (const auto& s : sites) supplied_ids.insert(s.id);
 
-    sync_parent_rows(pool_, "sites", supplied_ids,
+    return sync_parent_rows(pool_, "sites", supplied_ids,
         [&](SQLiteDB& db) -> bool {
             const char* upsert = "INSERT INTO sites "
                 "(id, domain, owner, node_id, web_server, php_mail_enabled, "
@@ -601,14 +637,18 @@ void SQLiteStorage::save_sites(const std::vector<site::Site>& sites) {
         });
 }
 
+void SQLiteStorage::save_sites(const std::vector<site::Site>& sites) {
+    (void)try_save_sites(sites);
+}
+
 // ============================================================
 // Phase 7 — Mail and SSL metadata storage
 // ============================================================
 
 // --- SSL certificates ---
 
-void SQLiteStorage::save_ssl_certificates(const std::vector<ssl::SslCertificate>& certs) {
-    replace_all(pool_, "DELETE FROM ssl_certificates",
+bool SQLiteStorage::try_save_ssl_certificates(const std::vector<ssl::SslCertificate>& certs) {
+    return replace_all(pool_, "DELETE FROM ssl_certificates",
         [&](SQLiteDB& db) -> bool {
             const char* sql = "INSERT INTO ssl_certificates "
                 "(id, domain_id, domain, provider, certificate_path, key_path, "
@@ -645,6 +685,10 @@ void SQLiteStorage::save_ssl_certificates(const std::vector<ssl::SslCertificate>
             }
             return true;
         });
+}
+
+void SQLiteStorage::save_ssl_certificates(const std::vector<ssl::SslCertificate>& certs) {
+    (void)try_save_ssl_certificates(certs);
 }
 
 std::vector<ssl::SslCertificate> SQLiteStorage::load_ssl_certificates() {
@@ -687,11 +731,11 @@ std::vector<ssl::SslCertificate> SQLiteStorage::load_ssl_certificates() {
 
 // --- Mail domains (FK-safe parent sync — referenced by mailboxes/aliases) ---
 
-void SQLiteStorage::save_mail_domains(const std::vector<mail::MailDomain>& domains) {
+bool SQLiteStorage::try_save_mail_domains(const std::vector<mail::MailDomain>& domains) {
     std::set<uint64_t> supplied_ids;
     for (const auto& m : domains) supplied_ids.insert(m.id);
 
-    sync_parent_rows(pool_, "mail_domains", supplied_ids,
+    return sync_parent_rows(pool_, "mail_domains", supplied_ids,
         [&](SQLiteDB& db) -> bool {
             const char* sql = "INSERT INTO mail_domains "
                 "(id, domain_id, site_id, domain_name, mode, relay_host, "
@@ -734,6 +778,10 @@ void SQLiteStorage::save_mail_domains(const std::vector<mail::MailDomain>& domai
         });
 }
 
+void SQLiteStorage::save_mail_domains(const std::vector<mail::MailDomain>& domains) {
+    (void)try_save_mail_domains(domains);
+}
+
 std::vector<mail::MailDomain> SQLiteStorage::load_mail_domains() {
     std::vector<mail::MailDomain> domains;
     ReadLease rl(pool_);
@@ -769,8 +817,8 @@ std::vector<mail::MailDomain> SQLiteStorage::load_mail_domains() {
 
 // --- Mail mailboxes (child table, FK → mail_domains) ---
 
-void SQLiteStorage::save_mailboxes(const std::vector<mail::Mailbox>& mailboxes) {
-    replace_all(pool_, "DELETE FROM mail_mailboxes",
+bool SQLiteStorage::try_save_mailboxes(const std::vector<mail::Mailbox>& mailboxes) {
+    return replace_all(pool_, "DELETE FROM mail_mailboxes",
         [&](SQLiteDB& db) -> bool {
             const char* sql = "INSERT INTO mail_mailboxes "
                 "(id, domain_id, local_part, password_hash, quota_bytes, "
@@ -796,6 +844,10 @@ void SQLiteStorage::save_mailboxes(const std::vector<mail::Mailbox>& mailboxes) 
             }
             return true;
         });
+}
+
+void SQLiteStorage::save_mailboxes(const std::vector<mail::Mailbox>& mailboxes) {
+    (void)try_save_mailboxes(mailboxes);
 }
 
 std::vector<mail::Mailbox> SQLiteStorage::load_mailboxes() {
@@ -829,8 +881,8 @@ std::vector<mail::Mailbox> SQLiteStorage::load_mailboxes() {
 
 // --- Mail aliases (child table, FK → mail_domains) ---
 
-void SQLiteStorage::save_mail_aliases(const std::vector<mail::MailAlias>& aliases) {
-    replace_all(pool_, "DELETE FROM mail_aliases",
+bool SQLiteStorage::try_save_mail_aliases(const std::vector<mail::MailAlias>& aliases) {
+    return replace_all(pool_, "DELETE FROM mail_aliases",
         [&](SQLiteDB& db) -> bool {
             const char* sql = "INSERT INTO mail_aliases "
                 "(id, domain_id, source_local_part, destination, enabled, "
@@ -848,6 +900,10 @@ void SQLiteStorage::save_mail_aliases(const std::vector<mail::MailAlias>& aliase
             }
             return true;
         });
+}
+
+void SQLiteStorage::save_mail_aliases(const std::vector<mail::MailAlias>& aliases) {
+    (void)try_save_mail_aliases(aliases);
 }
 
 std::vector<mail::MailAlias> SQLiteStorage::load_mail_aliases() {
@@ -874,15 +930,19 @@ std::vector<mail::MailAlias> SQLiteStorage::load_mail_aliases() {
 
 // --- Mail module state (key in mail_config) ---
 
-void SQLiteStorage::save_mail_module_state(const std::string& state) {
+bool SQLiteStorage::try_save_mail_module_state(const std::string& state) {
     TransactionGuard txn(pool_);
-    if (!txn.is_active()) return;
+    if (!txn.is_active()) return false;
     const char* sql = "INSERT OR REPLACE INTO mail_config (key, value) VALUES "
         "('module_state', ?)";
-    if (!txn.db().prepare(sql)) return;
-    if (!txn.db().bind_text(1, state)) return;
-    if (txn.db().step() == false && txn.db().error_code() != 0) return;
-    if (!txn.commit()) return;  // checked commit — rollback on failure
+    if (!txn.db().prepare(sql)) return false;
+    if (!txn.db().bind_text(1, state)) return false;
+    if (txn.db().step() == false && txn.db().error_code() != 0) return false;
+    return txn.commit();
+}
+
+void SQLiteStorage::save_mail_module_state(const std::string& state) {
+    (void)try_save_mail_module_state(state);
 }
 
 std::string SQLiteStorage::load_mail_module_state() {
@@ -896,15 +956,19 @@ std::string SQLiteStorage::load_mail_module_state() {
 
 // --- Mail smarthost config (key in mail_config) ---
 
-void SQLiteStorage::save_mail_smarthost(const std::string& config) {
+bool SQLiteStorage::try_save_mail_smarthost(const std::string& config) {
     TransactionGuard txn(pool_);
-    if (!txn.is_active()) return;
+    if (!txn.is_active()) return false;
     const char* sql = "INSERT OR REPLACE INTO mail_config (key, value) VALUES "
         "('smarthost', ?)";
-    if (!txn.db().prepare(sql)) return;
-    if (!txn.db().bind_text(1, config)) return;
-    if (txn.db().step() == false && txn.db().error_code() != 0) return;
-    if (!txn.commit()) return;
+    if (!txn.db().prepare(sql)) return false;
+    if (!txn.db().bind_text(1, config)) return false;
+    if (txn.db().step() == false && txn.db().error_code() != 0) return false;
+    return txn.commit();
+}
+
+void SQLiteStorage::save_mail_smarthost(const std::string& config) {
+    (void)try_save_mail_smarthost(config);
 }
 
 std::string SQLiteStorage::load_mail_smarthost() {

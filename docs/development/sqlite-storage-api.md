@@ -201,6 +201,45 @@ Every `save_*` method uses `replace_all()`:
 
 ---
 
+## Checked save methods (try_save_*)
+
+In addition to the existing void `save_*` methods, `SQLiteStorage` provides
+`bool`-returning checked variants for all 16 resource types:
+
+```cpp
+bool try_save_nodes(const std::vector<node::Node>& nodes);
+bool try_save_php_versions(const std::vector<php::PhpVersion>& versions);
+// ... all 16 resource types
+```
+
+### Contract
+
+- Returns `true` only when the transaction committed successfully:
+  - BEGIN IMMEDIATE started
+  - All DELETE / UPSERT / INSERT operations succeeded (every bind, step, error check)
+  - COMMIT succeeded
+- Returns `false` if any step failed (FK violation, connection issue, SQL error,
+  pool unavailable, shutdown in progress)
+- On `false`, no partial state is committed (transaction rolled back or
+  never started)
+- The existing void `save_*` methods delegate to `try_save_*` and discard
+  the result, preserving backward compatibility.
+
+### When to use
+
+- LegacyImporter uses try_save_* exclusively (must confirm commit).
+- Runtime code (CLI, API, Web UI) uses the existing void save_* methods.
+
+### Callers
+
+| Checked method | Internal primitive |
+|----------------|-------------------|
+| `try_save_nodes`, `try_save_php_versions`, `try_save_profiles`, `try_save_users`, `try_save_domains`, `try_save_databases`, `try_save_reverse_proxies`, `try_save_access_grants`, `try_save_ssl_certificates`, `try_save_mailboxes`, `try_save_mail_aliases` | `replace_all()` (DELETE + INSERT + commit) |
+| `try_save_sites`, `try_save_access_users`, `try_save_mail_domains` | `sync_parent_rows()` (UPSERT + prune) |
+| `try_save_mail_module_state`, `try_save_mail_smarthost` | Direct `TransactionGuard` |
+
+---
+
 ## Dual-backend boundary
 
 With explicit SQLite mode:

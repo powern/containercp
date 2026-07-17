@@ -66,6 +66,7 @@ class SQLiteStorage {
 public:
     explicit SQLiteStorage(ConnectionPool& pool);
 
+    // Existing void save methods (runtime compatibility)
     void save_nodes(const std::vector<node::Node>& nodes);
     std::vector<node::Node> load_nodes();
 
@@ -126,6 +127,25 @@ public:
     // Mail smarthost config (key in mail_config)
     void save_mail_smarthost(const std::string& config);
     std::string load_mail_smarthost();
+
+    // Checked save methods for importer (return true on confirmed commit).
+    // Each returns false if the transaction did not commit.
+    bool try_save_nodes(const std::vector<node::Node>& nodes);
+    bool try_save_php_versions(const std::vector<php::PhpVersion>& versions);
+    bool try_save_profiles(const std::vector<profile::Profile>& profiles);
+    bool try_save_users(const std::vector<user::User>& users);
+    bool try_save_sites(const std::vector<site::Site>& sites);
+    bool try_save_domains(const std::vector<domain::Domain>& domains);
+    bool try_save_databases(const std::vector<database::Database>& databases);
+    bool try_save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies);
+    bool try_save_access_users(const std::vector<access::AccessUser>& users);
+    bool try_save_access_grants(const std::vector<access::AccessGrant>& grants);
+    bool try_save_ssl_certificates(const std::vector<ssl::SslCertificate>& certs);
+    bool try_save_mail_domains(const std::vector<mail::MailDomain>& domains);
+    bool try_save_mailboxes(const std::vector<mail::Mailbox>& mailboxes);
+    bool try_save_mail_aliases(const std::vector<mail::MailAlias>& aliases);
+    bool try_save_mail_module_state(const std::string& state);
+    bool try_save_mail_smarthost(const std::string& config);
 
 private:
     ConnectionPool& pool_;
