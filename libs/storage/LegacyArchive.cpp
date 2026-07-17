@@ -775,8 +775,30 @@ bool LegacyArchive::verify_archive(const std::string& archive_path,
         ArchiveManifest m;
         m.manifest_version = strings["manifest_version"];
         m.migration_id = mid;
+        m.source_version = strings["source_version"];
+        m.target_version = strings["target_version"];
+        m.migration_timestamp = strings["migration_timestamp"];
+        m.source_directory = strings["source_directory"];
         m.archive_directory = ap;
         m.checksum_match = bools["checksum_match"];
+        m.initial_integrity_check = strings["initial_integrity_check"];
+        m.reopened_integrity_check = strings["reopened_integrity_check"];
+        m.initial_fk_violations = static_cast<int>(ints["initial_fk_violations"]);
+        m.reopened_fk_violations = static_cast<int>(ints["reopened_fk_violations"]);
+        m.verification_result = strings["verification_result"];
+        // Rebuild file entries from parsed data
+        for (auto& fe : file_entries) {
+            ArchiveFileEntry afe;
+            afe.filename = fe["filename"];
+            afe.present = (fe["present"] == "true");
+            afe.optional = (fe["optional"] == "true");
+            if (afe.present) {
+                afe.sha256 = fe["sha256"];
+                for (char c : fe["size"]) afe.size = afe.size * 10 + (c - '0');
+                for (char c : fe["record_count"]) afe.record_count = afe.record_count * 10 + (c - '0');
+            }
+            m.files.push_back(std::move(afe));
+        }
         *verified_manifest = std::move(m);
     }
     return true;
