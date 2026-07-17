@@ -1,6 +1,7 @@
 #include "Verification.h"
 #include "LegacyDatasetReader.h"
 #include "Storage.h"
+#include "StorageCanonicalizer.h"
 #include "access/AccessGrant.h"
 #include "access/AccessUser.h"
 #include "auth/AuthUser.h"
@@ -45,24 +46,14 @@ Verification::Verification(const std::string& legacy_directory,
 }
 
 std::string Verification::sha256(const std::string& data) {
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256_CTX ctx;
-    SHA256_Init(&ctx); SHA256_Update(&ctx, data.data(), data.size()); SHA256_Final(hash, &ctx);
-    std::string out; out.reserve(64);
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
-        out += "0123456789abcdef"[(hash[i] >> 4) & 0xf];
-        out += "0123456789abcdef"[hash[i] & 0xf];
-    }
-    return out;
+    return StorageCanonicalizer::sha256(data);
 }
 
 void Verification::append_field(std::string& out, const std::string& value) {
-    uint64_t len = value.size();
-    for (int i = 7; i >= 0; --i) out += static_cast<char>((len >> (i * 8)) & 0xff);
-    out += value;
+    StorageCanonicalizer::append_field(out, value);
 }
 void Verification::append_field(std::string& out, uint64_t value) {
-    append_field(out, std::to_string(value));
+    StorageCanonicalizer::append_field(out, std::to_string(value));
 }
 
 const ImportResult* Verification::find_import_result(const std::string& type) const {
@@ -357,78 +348,40 @@ static ResourceVerificationResult compare_resource(
 #define CANON_FIELD_BOOL(field) Verification::append_field(out, r.field ? "true" : "false")
 #define CANON_END() } return out
 
-std::string Verification::canonical_nodes(const std::vector<node::Node>& records) {
-    CANON_BEGIN(node::Node); CANON_FIELD_U64(id); CANON_FIELD_STR(name); CANON_FIELD_STR(type); CANON_END(); }
-std::string Verification::canonical_php_versions(const std::vector<php::PhpVersion>& records) {
-    CANON_BEGIN(php::PhpVersion); CANON_FIELD_U64(id); CANON_FIELD_STR(version); CANON_FIELD_STR(image);
-    CANON_FIELD_BOOL(enabled); CANON_FIELD_BOOL(default_version); CANON_END(); }
-std::string Verification::canonical_profiles(const std::vector<profile::Profile>& records) {
-    CANON_BEGIN(profile::Profile); CANON_FIELD_U64(id); CANON_FIELD_STR(profile_name);
-    Verification::append_field(out, profile::profile_type_to_string(r.type));
-    CANON_FIELD_STR(web_server); CANON_FIELD_STR(runtime); CANON_FIELD_STR(template_path);
-    CANON_FIELD_STR(description); CANON_FIELD_BOOL(enabled); CANON_FIELD_BOOL(default_profile); CANON_END(); }
-std::string Verification::canonical_users(const std::vector<user::User>& records) {
-    CANON_BEGIN(user::User); CANON_FIELD_U64(id); CANON_FIELD_STR(username); CANON_FIELD_U64(uid);
-    CANON_FIELD_STR(home_directory); CANON_FIELD_STR(shell); CANON_FIELD_BOOL(enabled); CANON_END(); }
-std::string Verification::canonical_sites(const std::vector<site::Site>& records) {
-    CANON_BEGIN(site::Site); CANON_FIELD_U64(id); CANON_FIELD_STR(domain); CANON_FIELD_STR(owner);
-    CANON_FIELD_U64(node_id); CANON_FIELD_STR(web_server); CANON_FIELD_BOOL(php_mail_enabled); CANON_END(); }
-std::string Verification::canonical_domains(const std::vector<domain::Domain>& records) {
-    CANON_BEGIN(domain::Domain); CANON_FIELD_U64(id); CANON_FIELD_STR(fqdn); CANON_FIELD_U64(owner_id);
-    CANON_FIELD_U64(site_id); CANON_FIELD_STR(php_version); CANON_FIELD_BOOL(ssl_enabled);
-    CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(type); CANON_FIELD_STR(target); CANON_END(); }
-std::string Verification::canonical_databases(const std::vector<database::Database>& records) {
-    CANON_BEGIN(database::Database); CANON_FIELD_U64(id); CANON_FIELD_STR(db_name); CANON_FIELD_STR(db_user);
-    CANON_FIELD_STR(db_password); CANON_FIELD_STR(engine); CANON_FIELD_STR(version);
-    CANON_FIELD_U64(owner_id); CANON_FIELD_U64(site_id); CANON_FIELD_BOOL(enabled); CANON_END(); }
-std::string Verification::canonical_backups(const std::vector<backup::Backup>& records) {
-    CANON_BEGIN(backup::Backup); CANON_FIELD_U64(id); CANON_FIELD_U64(site_id); CANON_FIELD_U64(owner_id);
-    CANON_FIELD_STR(filename); CANON_FIELD_STR(type); CANON_FIELD_U64(size);
-    CANON_FIELD_STR(created_at); CANON_FIELD_STR(status); CANON_FIELD_STR(file_path);
-    CANON_FIELD_STR(compression); CANON_END(); }
-std::string Verification::canonical_reverse_proxies(const std::vector<proxy::ReverseProxy>& records) {
-    CANON_BEGIN(proxy::ReverseProxy); CANON_FIELD_U64(id); CANON_FIELD_STR(domain); CANON_FIELD_U64(site_id);
-    CANON_FIELD_STR(provider); CANON_FIELD_STR(config_path); CANON_FIELD_STR(upstream);
-    CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(status); CANON_END(); }
-std::string Verification::canonical_access_users(const std::vector<access::AccessUser>& records) {
-    CANON_BEGIN(access::AccessUser); CANON_FIELD_U64(id); CANON_FIELD_STR(username); CANON_FIELD_STR(auth_type);
-    CANON_FIELD_STR(password_hash); CANON_FIELD_BOOL(enabled); CANON_END(); }
-std::string Verification::canonical_access_grants(const std::vector<access::AccessGrant>& records) {
-    CANON_BEGIN(access::AccessGrant); CANON_FIELD_U64(id); CANON_FIELD_U64(access_user_id);
-    CANON_FIELD_U64(site_id); Verification::append_field(out, access::permission_to_string(r.permission)); CANON_END(); }
-std::string Verification::canonical_auth_users(const std::vector<auth::AuthUser>& records) {
-    CANON_BEGIN(auth::AuthUser); CANON_FIELD_U64(id); CANON_FIELD_STR(username); CANON_FIELD_STR(password_hash);
-    CANON_FIELD_BOOL(must_change_password); CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(role); CANON_END(); }
-std::string Verification::canonical_ssl_certificates(const std::vector<ssl::SslCertificate>& records) {
-    CANON_BEGIN(ssl::SslCertificate); CANON_FIELD_U64(id); CANON_FIELD_U64(domain_id); CANON_FIELD_STR(domain);
-    CANON_FIELD_STR(provider); CANON_FIELD_STR(certificate_path); CANON_FIELD_STR(key_path);
-    CANON_FIELD_STR(chain_path); CANON_FIELD_STR(issued_at); CANON_FIELD_STR(expires_at);
-    CANON_FIELD_STR(renew_after); CANON_FIELD_STR(status); CANON_FIELD_BOOL(auto_renew);
-    CANON_FIELD_BOOL(https_enabled); CANON_FIELD_BOOL(redirect_enabled); CANON_FIELD_STR(domains);
-    CANON_FIELD_STR(challenge_type); CANON_FIELD_STR(last_error); CANON_FIELD_STR(last_validation);
-    CANON_FIELD_U64(renew_attempts); CANON_FIELD_U64(version); CANON_END(); }
-std::string Verification::canonical_mail_domains(const std::vector<mail::MailDomain>& records) {
-    CANON_BEGIN(mail::MailDomain); CANON_FIELD_U64(id); CANON_FIELD_U64(domain_id); CANON_FIELD_U64(site_id);
-    CANON_FIELD_STR(domain_name); Verification::append_field(out, mail::mail_domain_mode_to_string(r.mode));
-    CANON_FIELD_STR(relay_host); CANON_FIELD_STR(dkim_selector); CANON_FIELD_STR(dkim_private_key_path);
-    CANON_FIELD_STR(dkim_public_key_dns); CANON_FIELD_U64(max_mailboxes); CANON_FIELD_U64(max_aliases);
-    CANON_FIELD_STR(catch_all); CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(created_at);
-    CANON_FIELD_STR(updated_at); CANON_END(); }
-std::string Verification::canonical_mail_mailboxes(const std::vector<mail::Mailbox>& records) {
-    CANON_BEGIN(mail::Mailbox); CANON_FIELD_U64(id); CANON_FIELD_U64(domain_id); CANON_FIELD_STR(local_part);
-    CANON_FIELD_STR(password_hash); CANON_FIELD_U64(quota_bytes); CANON_FIELD_U64(quota_messages);
-    CANON_FIELD_BOOL(enabled); CANON_FIELD_STR(display_name); CANON_FIELD_STR(forward_to);
-    CANON_FIELD_BOOL(spam_enabled); CANON_FIELD_STR(last_login); CANON_FIELD_STR(created_at);
-    CANON_FIELD_STR(updated_at); CANON_END(); }
-std::string Verification::canonical_mail_aliases(const std::vector<mail::MailAlias>& records) {
-    CANON_BEGIN(mail::MailAlias); CANON_FIELD_U64(id); CANON_FIELD_U64(domain_id);
-    CANON_FIELD_STR(source_local_part); CANON_FIELD_STR(destination); CANON_FIELD_BOOL(enabled);
-    CANON_FIELD_STR(created_at); CANON_FIELD_STR(updated_at); CANON_END(); }
+std::string Verification::canonical_nodes(const std::vector<node::Node>& records)
+{ return StorageCanonicalizer::canonical_nodes(records); }
+std::string Verification::canonical_php_versions(const std::vector<php::PhpVersion>& records)
+{ return StorageCanonicalizer::canonical_php_versions(records); }
+std::string Verification::canonical_profiles(const std::vector<profile::Profile>& records)
+{ return StorageCanonicalizer::canonical_profiles(records); }
+std::string Verification::canonical_users(const std::vector<user::User>& records)
+{ return StorageCanonicalizer::canonical_users(records); }
+std::string Verification::canonical_sites(const std::vector<site::Site>& records)
+{ return StorageCanonicalizer::canonical_sites(records); }
+std::string Verification::canonical_domains(const std::vector<domain::Domain>& records)
+{ return StorageCanonicalizer::canonical_domains(records); }
+std::string Verification::canonical_databases(const std::vector<database::Database>& records)
+{ return StorageCanonicalizer::canonical_databases(records); }
+std::string Verification::canonical_backups(const std::vector<backup::Backup>& records)
+{ return StorageCanonicalizer::canonical_backups(records); }
+std::string Verification::canonical_reverse_proxies(const std::vector<proxy::ReverseProxy>& records)
+{ return StorageCanonicalizer::canonical_reverse_proxies(records); }
+std::string Verification::canonical_access_users(const std::vector<access::AccessUser>& records)
+{ return StorageCanonicalizer::canonical_access_users(records); }
+std::string Verification::canonical_access_grants(const std::vector<access::AccessGrant>& records)
+{ return StorageCanonicalizer::canonical_access_grants(records); }
+std::string Verification::canonical_auth_users(const std::vector<auth::AuthUser>& records)
+{ return StorageCanonicalizer::canonical_auth_users(records); }
+std::string Verification::canonical_ssl_certificates(const std::vector<ssl::SslCertificate>& records)
+{ return StorageCanonicalizer::canonical_ssl_certificates(records); }
+std::string Verification::canonical_mail_domains(const std::vector<mail::MailDomain>& records)
+{ return StorageCanonicalizer::canonical_mail_domains(records); }
+std::string Verification::canonical_mail_mailboxes(const std::vector<mail::Mailbox>& records)
+{ return StorageCanonicalizer::canonical_mail_mailboxes(records); }
+std::string Verification::canonical_mail_aliases(const std::vector<mail::MailAlias>& records)
+{ return StorageCanonicalizer::canonical_mail_aliases(records); }
 std::string Verification::canonical_mail_config(const std::string& ms, const std::string& sh) {
-    std::string out;
-    append_field(out, std::string("module_state")); append_field(out, ms);
-    append_field(out, std::string("smarthost")); append_field(out, sh);
-    return out;
+    return StorageCanonicalizer::canonical_mail_config(!ms.empty(), ms, !sh.empty(), sh);
 }
 
 // ---- SQLite row readers ----

@@ -158,128 +158,55 @@ ImportResult LegacyImporter::finish_import(
 // Verification's canonical format for consistent checksums.
 // ============================================================
 
-#include "Verification.h"
-#include <algorithm>
-#include <openssl/sha.h>
+#include "StorageCanonicalizer.h"
 
 ResourceBaseline LegacyImporter::capture_baseline(const std::string& type) {
     ResourceBaseline bl;
-    std::string canonical;
 
-    #define BL_CANON_FIELD_STR(field) Verification::append_field(canonical, field)
-    #define BL_CANON_FIELD_U64(field) Verification::append_field(canonical, field)
-    #define BL_CANON_FIELD_BOOL(field) Verification::append_field(canonical, field ? "true" : "false")
-
-    if (type == "nodes") { auto r = sqlite_.load_nodes();
-        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
-        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.name); BL_CANON_FIELD_STR(v.type); }
-        bl.record_count = r.size();
-    } else if (type == "php_versions") { auto r = sqlite_.load_php_versions();
-        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
-        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.version); BL_CANON_FIELD_STR(v.image); BL_CANON_FIELD_BOOL(v.enabled); BL_CANON_FIELD_BOOL(v.default_version); }
-        bl.record_count = r.size();
-    } else if (type == "profiles") { auto r = sqlite_.load_profiles();
-        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
-        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.profile_name);
-            Verification::append_field(canonical, profile::profile_type_to_string(v.type));
-            BL_CANON_FIELD_STR(v.web_server); BL_CANON_FIELD_STR(v.runtime); BL_CANON_FIELD_STR(v.template_path);
-            BL_CANON_FIELD_STR(v.description); BL_CANON_FIELD_BOOL(v.enabled); BL_CANON_FIELD_BOOL(v.default_profile); }
-        bl.record_count = r.size();
-    } else if (type == "users") { auto r = sqlite_.load_users();
-        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
-        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.username); BL_CANON_FIELD_U64(v.uid);
-            BL_CANON_FIELD_STR(v.home_directory); BL_CANON_FIELD_STR(v.shell); BL_CANON_FIELD_BOOL(v.enabled); }
-        bl.record_count = r.size();
-    } else if (type == "sites") { auto r = sqlite_.load_sites();
-        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
-        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.domain); BL_CANON_FIELD_STR(v.owner);
-            BL_CANON_FIELD_U64(v.node_id); BL_CANON_FIELD_STR(v.web_server); BL_CANON_FIELD_BOOL(v.php_mail_enabled); }
-        bl.record_count = r.size();
-    } else if (type == "domains") { auto r = sqlite_.load_domains();
-        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
-        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.fqdn); BL_CANON_FIELD_U64(v.owner_id);
-            BL_CANON_FIELD_U64(v.site_id); BL_CANON_FIELD_STR(v.php_version); BL_CANON_FIELD_BOOL(v.ssl_enabled);
-            BL_CANON_FIELD_BOOL(v.enabled); BL_CANON_FIELD_STR(v.type); BL_CANON_FIELD_STR(v.target); }
-        bl.record_count = r.size();
-    } else if (type == "databases") { auto r = sqlite_.load_databases();
-        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
-        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.db_name); BL_CANON_FIELD_STR(v.db_user);
-            BL_CANON_FIELD_STR(v.db_password); BL_CANON_FIELD_STR(v.engine); BL_CANON_FIELD_STR(v.version);
-            BL_CANON_FIELD_U64(v.owner_id); BL_CANON_FIELD_U64(v.site_id); BL_CANON_FIELD_BOOL(v.enabled); }
-        bl.record_count = r.size();
-    } else if (type == "backups") { auto r = sqlite_.load_backups();
-        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
-        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_U64(v.site_id); BL_CANON_FIELD_U64(v.owner_id);
-            BL_CANON_FIELD_STR(v.filename); BL_CANON_FIELD_STR(v.type); BL_CANON_FIELD_U64(v.size);
-            BL_CANON_FIELD_STR(v.created_at); BL_CANON_FIELD_STR(v.status); BL_CANON_FIELD_STR(v.file_path);
-            BL_CANON_FIELD_STR(v.compression); }
-        bl.record_count = r.size();
-    } else if (type == "reverse_proxies") { auto r = sqlite_.load_reverse_proxies();
-        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
-        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.domain); BL_CANON_FIELD_U64(v.site_id);
-            BL_CANON_FIELD_STR(v.provider); BL_CANON_FIELD_STR(v.config_path); BL_CANON_FIELD_STR(v.upstream);
-            BL_CANON_FIELD_BOOL(v.enabled); BL_CANON_FIELD_STR(v.status); }
-        bl.record_count = r.size();
-    } else if (type == "access_users") { auto r = sqlite_.load_access_users();
-        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
-        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.username); BL_CANON_FIELD_STR(v.auth_type);
-            BL_CANON_FIELD_STR(v.password_hash); BL_CANON_FIELD_BOOL(v.enabled); }
-        bl.record_count = r.size();
-    } else if (type == "access_grants") { auto r = sqlite_.load_access_grants();
-        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
-        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_U64(v.access_user_id); BL_CANON_FIELD_U64(v.site_id);
-            Verification::append_field(canonical, access::permission_to_string(v.permission)); }
-        bl.record_count = r.size();
-    } else if (type == "auth_users") { auto r = sqlite_.load_auth_users();
-        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
-        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_STR(v.username); BL_CANON_FIELD_STR(v.password_hash);
-            BL_CANON_FIELD_BOOL(v.must_change_password); BL_CANON_FIELD_BOOL(v.enabled); BL_CANON_FIELD_STR(v.role); }
-        bl.record_count = r.size();
-    } else if (type == "ssl_certificates") { auto r = sqlite_.load_ssl_certificates();
-        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
-        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_U64(v.domain_id); BL_CANON_FIELD_STR(v.domain);
-            BL_CANON_FIELD_STR(v.provider); BL_CANON_FIELD_STR(v.certificate_path); BL_CANON_FIELD_STR(v.key_path);
-            BL_CANON_FIELD_STR(v.chain_path); BL_CANON_FIELD_STR(v.issued_at); BL_CANON_FIELD_STR(v.expires_at);
-            BL_CANON_FIELD_STR(v.renew_after); BL_CANON_FIELD_STR(v.status); BL_CANON_FIELD_BOOL(v.auto_renew);
-            BL_CANON_FIELD_BOOL(v.https_enabled); BL_CANON_FIELD_BOOL(v.redirect_enabled); BL_CANON_FIELD_STR(v.domains);
-            BL_CANON_FIELD_STR(v.challenge_type); BL_CANON_FIELD_STR(v.last_error); BL_CANON_FIELD_STR(v.last_validation);
-            BL_CANON_FIELD_U64(static_cast<uint64_t>(v.renew_attempts)); BL_CANON_FIELD_U64(static_cast<uint64_t>(v.version)); }
-        bl.record_count = r.size();
-    } else if (type == "mail_domains") { auto r = sqlite_.load_mail_domains();
-        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
-        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_U64(v.domain_id); BL_CANON_FIELD_U64(v.site_id);
-            BL_CANON_FIELD_STR(v.domain_name); Verification::append_field(canonical, mail::mail_domain_mode_to_string(v.mode));
-            BL_CANON_FIELD_STR(v.relay_host); BL_CANON_FIELD_STR(v.dkim_selector); BL_CANON_FIELD_STR(v.dkim_private_key_path);
-            BL_CANON_FIELD_STR(v.dkim_public_key_dns); BL_CANON_FIELD_U64(v.max_mailboxes); BL_CANON_FIELD_U64(v.max_aliases);
-            BL_CANON_FIELD_STR(v.catch_all); BL_CANON_FIELD_BOOL(v.enabled); BL_CANON_FIELD_STR(v.created_at);
-            BL_CANON_FIELD_STR(v.updated_at); }
-        bl.record_count = r.size();
-    } else if (type == "mail_mailboxes") { auto r = sqlite_.load_mailboxes();
-        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
-        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_U64(v.domain_id); BL_CANON_FIELD_STR(v.local_part);
-            BL_CANON_FIELD_STR(v.password_hash); BL_CANON_FIELD_U64(v.quota_bytes); BL_CANON_FIELD_U64(v.quota_messages);
-            BL_CANON_FIELD_BOOL(v.enabled); BL_CANON_FIELD_STR(v.display_name); BL_CANON_FIELD_STR(v.forward_to);
-            BL_CANON_FIELD_BOOL(v.spam_enabled); BL_CANON_FIELD_STR(v.last_login); BL_CANON_FIELD_STR(v.created_at);
-            BL_CANON_FIELD_STR(v.updated_at); }
-        bl.record_count = r.size();
-    } else if (type == "mail_aliases") { auto r = sqlite_.load_mail_aliases();
-        std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.id < b.id; });
-        for (auto& v : r) { BL_CANON_FIELD_U64(v.id); BL_CANON_FIELD_U64(v.domain_id); BL_CANON_FIELD_STR(v.source_local_part);
-            BL_CANON_FIELD_STR(v.destination); BL_CANON_FIELD_BOOL(v.enabled); BL_CANON_FIELD_STR(v.created_at);
-            BL_CANON_FIELD_STR(v.updated_at); }
-        bl.record_count = r.size();
+    if (type == "nodes") { auto r = sqlite_.load_nodes(); bl.record_count = r.size();
+        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_nodes(r));
+    } else if (type == "php_versions") { auto r = sqlite_.load_php_versions(); bl.record_count = r.size();
+        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_php_versions(r));
+    } else if (type == "profiles") { auto r = sqlite_.load_profiles(); bl.record_count = r.size();
+        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_profiles(r));
+    } else if (type == "users") { auto r = sqlite_.load_users(); bl.record_count = r.size();
+        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_users(r));
+    } else if (type == "sites") { auto r = sqlite_.load_sites(); bl.record_count = r.size();
+        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_sites(r));
+    } else if (type == "domains") { auto r = sqlite_.load_domains(); bl.record_count = r.size();
+        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_domains(r));
+    } else if (type == "databases") { auto r = sqlite_.load_databases(); bl.record_count = r.size();
+        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_databases(r));
+    } else if (type == "backups") { auto r = sqlite_.load_backups(); bl.record_count = r.size();
+        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_backups(r));
+    } else if (type == "reverse_proxies") { auto r = sqlite_.load_reverse_proxies(); bl.record_count = r.size();
+        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_reverse_proxies(r));
+    } else if (type == "access_users") { auto r = sqlite_.load_access_users(); bl.record_count = r.size();
+        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_access_users(r));
+    } else if (type == "access_grants") { auto r = sqlite_.load_access_grants(); bl.record_count = r.size();
+        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_access_grants(r));
+    } else if (type == "auth_users") { auto r = sqlite_.load_auth_users(); bl.record_count = r.size();
+        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_auth_users(r));
+    } else if (type == "ssl_certificates") { auto r = sqlite_.load_ssl_certificates(); bl.record_count = r.size();
+        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_ssl_certificates(r));
+    } else if (type == "mail_domains") { auto r = sqlite_.load_mail_domains(); bl.record_count = r.size();
+        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_mail_domains(r));
+    } else if (type == "mail_mailboxes") { auto r = sqlite_.load_mailboxes(); bl.record_count = r.size();
+        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_mail_mailboxes(r));
+    } else if (type == "mail_aliases") { auto r = sqlite_.load_mail_aliases(); bl.record_count = r.size();
+        bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_mail_aliases(r));
     } else if (type == "mail_config") {
         std::string ms = sqlite_.load_mail_module_state();
         std::string sh = sqlite_.load_mail_smarthost();
-        Verification::append_field(canonical, std::string("module_state"));
-        Verification::append_field(canonical, ms);
-        Verification::append_field(canonical, std::string("smarthost"));
-        Verification::append_field(canonical, sh);
+        bl.canonical_checksum = StorageCanonicalizer::sha256(
+            StorageCanonicalizer::canonical_mail_config(!ms.empty(), ms, !sh.empty(), sh));
         bl.record_count = (ms.empty() ? 0 : 1) + (sh.empty() ? 0 : 1);
     } else {
-        bl.error = "unknown_type:" + type;
-        return bl;
+        bl.error = "unknown_type:" + type; return bl;
     }
+    bl.success = true;
+    return bl;
+}
 
     unsigned char hash[SHA256_DIGEST_LENGTH];
     SHA256_CTX ctx;
