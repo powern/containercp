@@ -613,7 +613,16 @@ ArchiveResult LegacyArchive::create_archive(
     if (!verify_archive(final_path)) {
         std::string quarantine = archive_root_ + ".failed-" + archive_name + "/";
         std::error_code ec;
+        // Quarantine must not already exist
+        if (fs::exists(quarantine, ec)) {
+            result.error = "post_publish_verify_failed"; return result;
+        }
+        // Atomically move failed archive to quarantine
         fs::rename(final_path, quarantine, ec);
+        if (ec) { result.error = "post_publish_verify_failed"; return result; }
+        // Verify final path no longer exists
+        if (fs::exists(final_path, ec)) { result.error = "post_publish_verify_failed"; return result; }
+        // fsync archive root
         int qd = open(archive_root_.c_str(), O_RDONLY);
         if (qd < 0) { result.error = "archive_root_fsync_open_failed"; return result; }
         if (fsync(qd) != 0) { close(qd); result.error = "archive_root_fsync_failed"; return result; }
