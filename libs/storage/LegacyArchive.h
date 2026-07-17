@@ -97,8 +97,6 @@ private:
     std::string source_dir_;
     std::string archive_root_;
     std::string migration_timestamp_; // captured once
-    bool temp_owned_ = false;
-    std::string temp_path_;
 };
 
 } // namespace containercp::storage

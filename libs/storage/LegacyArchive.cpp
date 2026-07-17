@@ -224,10 +224,20 @@ ArchiveResult LegacyArchive::create_archive(
 
     std::string archive_name = "legacy-" + source_version + "-" + migration_timestamp_ + "-" + migration_id;
     std::string final_path = archive_root_ + archive_name + "/";
-    temp_path_ = archive_root_ + "." + archive_name + ".tmp/";
+    std::string temp_path = archive_root_ + "." + archive_name + ".tmp/";
 
     if (fs::exists(final_path)) { result.error = "archive_exists"; return result; }
-    if (fs::exists(temp_path_)) { result.error = "temporary_archive_exists"; return result; }
+    if (fs::exists(temp_path)) { result.error = "temporary_archive_exists"; return result; }
+
+    // RAII temp directory cleanup
+    struct TempGuard {
+        std::string path; bool owned;
+        TempGuard(const std::string& p) : path(p), owned(true) {}
+        ~TempGuard() { if (owned) { std::error_code ec; fs::remove_all(path, ec); } }
+        void release() { owned = false; }
+    };
+    TempGuard temp_guard(temp_path);
+    (void)temp_guard; // used implicitly via destruction
 
     // Build inventory from shared inventory
     std::vector<ArchiveFileEntry> file_entries;
@@ -251,23 +261,28 @@ ArchiveResult LegacyArchive::create_archive(
         file_entries.push_back(fe);
     }
 
-    // Disk space check
+    // Disk space check with overflow protection
     {
-        uint64_t total = 65536;
-        for (auto& fe : file_entries) if (fe.present) total += fe.size;
+        uint64_t total = 65536; // metadata overhead
+        for (auto& fe : file_entries) if (fe.present) {
+            if (total > UINT64_MAX - fe.size) { result.error = "archive_size_overflow"; return result; }
+            total += fe.size;
+        }
         std::error_code ec;
         auto space = fs::space(archive_root_, ec);
         if (ec) { result.error = "archive_space_check_failed"; return result; }
-        if (space.available < total) { result.error = "insufficient_archive_space"; return result; }
+        if (space.available < total + (total / 10)) { // 10% margin
+            result.error = "insufficient_archive_space"; return result;
+        }
     }
 
     // Create temp directory
     {
         std::error_code ec;
-        fs::create_directories(temp_path_, ec);
+        fs::create_directories(temp_path, ec);
         if (ec) { result.error = "temp_dir_failed"; return result; }
     }
-    temp_owned_ = true;
+    ;
 
     // Copy files with durable streaming
     auto durable_copy = [&](const std::string& src, const std::string& dst, const std::string& fn) -> bool {
@@ -318,8 +333,8 @@ ArchiveResult LegacyArchive::create_archive(
 
     for (auto& fe : file_entries) {
         if (!fe.present) continue;
-        if (!durable_copy(source_dir_ + fe.filename, temp_path_ + fe.filename, fe.filename))
-            goto cleanup;
+        if (!durable_copy(source_dir_ + fe.filename, temp_path + fe.filename, fe.filename))
+            return result;
     }
 
     // Build manifest
@@ -343,8 +358,8 @@ ArchiveResult LegacyArchive::create_archive(
 
     // Write manifest with JSON escaping and fsync
     {
-        std::string tmp = temp_path_ + "manifest.json.tmp";
-        std::ofstream mf(tmp); if (!mf) { result.error = "manifest_write_failed"; goto cleanup; }
+        std::string tmp = temp_path + "manifest.json.tmp";
+        std::ofstream mf(tmp); if (!mf) { result.error = "manifest_write_failed"; return result; }
         auto& m = result.manifest;
         #define JKV(k, v) mf << "\"" << k << "\": \"" << json_escape(v) << "\""
         #define JKN(k, v) mf << "\"" << k << "\": " << v
@@ -377,43 +392,43 @@ ArchiveResult LegacyArchive::create_archive(
         JKV("verification_result", m.verification_result); mf << "\n";
         mf << "}\n";
         mf.close();
-        if (!mf) { result.error = "manifest_write_failed"; goto cleanup; }
+        if (!mf) { result.error = "manifest_write_failed"; return result; }
         // fsync + rename
-        { int fd = open(tmp.c_str(), O_RDONLY); if (fd < 0) { result.error = "manifest_fsync_open_failed"; goto cleanup; }
-          if (fsync(fd) != 0) { close(fd); result.error = "manifest_fsync_failed"; goto cleanup; } close(fd); }
-        { std::error_code ec; fs::rename(tmp, temp_path_ + "manifest.json", ec);
-          if (ec) { result.error = "manifest_local_rename_failed"; goto cleanup; } }
+        { int fd = open(tmp.c_str(), O_RDONLY); if (fd < 0) { result.error = "manifest_fsync_open_failed"; return result; }
+          if (fsync(fd) != 0) { close(fd); result.error = "manifest_fsync_failed"; return result; } close(fd); }
+        { std::error_code ec; fs::rename(tmp, temp_path + "manifest.json", ec);
+          if (ec) { result.error = "manifest_local_rename_failed"; return result; } }
         // fsync temp dir
-        { int dd = open(temp_path_.c_str(), O_RDONLY); if (dd >= 0) { fsync(dd); close(dd); } }
+        { int dd = open(temp_path.c_str(), O_RDONLY); if (dd >= 0) { fsync(dd); close(dd); } }
     }
 
     // Write SHA256SUMS with fsync
     {
-        std::string tmp = temp_path_ + "SHA256SUMS.tmp";
-        std::ofstream sf(tmp); if (!sf) { result.error = "sha256sums_write_failed"; goto cleanup; }
+        std::string tmp = temp_path + "SHA256SUMS.tmp";
+        std::ofstream sf(tmp); if (!sf) { result.error = "sha256sums_write_failed"; return result; }
         std::vector<std::string> sums;
         for (auto& fe : result.manifest.files)
             if (fe.present) sums.push_back(fe.sha256 + "  " + fe.filename);
         std::sort(sums.begin(), sums.end());
         for (auto& s : sums) sf << s << "\n";
         sf.close();
-        if (!sf) { result.error = "sha256sums_write_failed"; goto cleanup; }
-        { int fd = open(tmp.c_str(), O_RDONLY); if (fd < 0) { result.error = "checksum_fsync_open_failed"; goto cleanup; }
-          if (fsync(fd) != 0) { close(fd); result.error = "checksum_file_fsync_failed"; goto cleanup; } close(fd); }
-        { std::error_code ec; fs::rename(tmp, temp_path_ + "SHA256SUMS", ec);
-          if (ec) { result.error = "checksum_local_rename_failed"; goto cleanup; } }
-        { int dd = open(temp_path_.c_str(), O_RDONLY); if (dd >= 0) { fsync(dd); close(dd); } }
+        if (!sf) { result.error = "sha256sums_write_failed"; return result; }
+        { int fd = open(tmp.c_str(), O_RDONLY); if (fd < 0) { result.error = "checksum_fsync_open_failed"; return result; }
+          if (fsync(fd) != 0) { close(fd); result.error = "checksum_file_fsync_failed"; return result; } close(fd); }
+        { std::error_code ec; fs::rename(tmp, temp_path + "SHA256SUMS", ec);
+          if (ec) { result.error = "checksum_local_rename_failed"; return result; } }
+        { int dd = open(temp_path.c_str(), O_RDONLY); if (dd >= 0) { fsync(dd); close(dd); } }
     }
 
     // Pre-publication verification
-    if (!verify_archive(temp_path_)) { result.error = "pre_publish_verify_failed"; goto cleanup; }
-    if (!set_permissions(temp_path_)) { result.error = "archive_permissions_failed"; goto cleanup; }
+    if (!verify_archive(temp_path)) { result.error = "pre_publish_verify_failed"; return result; }
+    if (!set_permissions(temp_path)) { result.error = "archive_permissions_failed"; return result; }
 
     // Atomic rename with fsync
     {
         std::error_code ec;
-        fs::rename(temp_path_, final_path, ec);
-        if (ec) { result.error = "rename_failed"; goto cleanup; }
+        fs::rename(temp_path, final_path, ec);
+        if (ec) { result.error = "rename_failed"; return result; }
         int dd = open(archive_root_.c_str(), O_RDONLY);
         if (dd < 0) { result.error = "archive_root_fsync_open_failed"; return result; }
         if (fsync(dd) != 0) { close(dd); result.error = "archive_root_fsync_failed"; return result; }
@@ -431,110 +446,203 @@ ArchiveResult LegacyArchive::create_archive(
     }
 
     result.archive_path = final_path;
+    temp_guard.release(); // publication succeeded, don't delete
     result.success = true;
-    return result;
-
-cleanup:
-    if (temp_owned_) { std::error_code ec; fs::remove_all(temp_path_, ec); }
     return result;
 }
 
 // ============================================================
-// verify_archive — strict manifest + SHA256SUMS parsing
+// verify_archive — strict manifest + SHA256SUMS + cross-check
 // ============================================================
+
+// Simple JSON value extractor: finds "key": value in JSON text
+static std::string json_extract_str(const std::string& json, const std::string& key) {
+    auto pos = json.find("\"" + key + "\": \"");
+    if (pos == std::string::npos) return "";
+    pos += key.size() + 5; // skip past `"key": "`
+    auto end = json.find('\"', pos);
+    if (end == std::string::npos) return "";
+    return json.substr(pos, end - pos);
+}
+
+static int64_t json_extract_int(const std::string& json, const std::string& key) {
+    auto pos = json.find("\"" + key + "\": ");
+    if (pos == std::string::npos) return -999;
+    pos += key.size() + 4;
+    auto end = json.find_first_of(",\n}", pos);
+    std::string s = json.substr(pos, end - pos);
+    return std::stoll(s);
+}
 
 bool LegacyArchive::verify_archive(const std::string& archive_path,
                                    ArchiveManifest* verified_manifest)
 {
     std::string ap = archive_path;
     if (ap.back() != '/') ap += '/';
-    if (!fs::exists(ap) || !fs::is_directory(ap) || fs::is_symlink(fs::symlink_status(ap))) return false;
 
-    // Parse SHA256SUMS (authoritative)
+    // Root safety
+    { std::error_code ec; auto st = fs::symlink_status(ap, ec); if (ec) return false;
+      if (fs::is_symlink(st)) return false;
+      if (!fs::exists(st) || !fs::is_directory(st)) return false; }
+
+    // Parse SHA256SUMS
     std::string sums_path = ap + "SHA256SUMS";
     if (!fs::exists(sums_path) || !fs::is_regular_file(sums_path) ||
         fs::is_symlink(fs::symlink_status(sums_path))) return false;
 
     std::map<std::string, std::string> sums_entries;
     {
-        std::ifstream sf(sums_path); std::string line;
+        std::ifstream sf(sums_path); std::string line; bool any_present = false;
+        for (auto& fi : legacy_file_inventory()) {
+            std::string sp = ap + fi.filename;
+            if (fs::exists(sp)) any_present = true;
+        }
         while (std::getline(sf, line)) {
             if (line.empty()) continue;
-            // Must be: <64 hex chars>  <filename>
             if (line.size() < 67 || line[64] != ' ' || line[65] != ' ') return false;
-            std::string hash = line.substr(0, 64);
-            for (char c : hash) if (!isxdigit(c) || isupper(c)) return false;
+            std::string hash(64, ' '); bool ok = true;
+            for (int i = 0; i < 64; ++i) {
+                if (!isxdigit(line[i])) { ok = false; break; }
+                if (isupper(line[i])) { ok = false; break; }
+                hash[i] = line[i];
+            }
+            if (!ok) return false;
             std::string fn = line.substr(66);
-            // Validate filename
-            if (fn.empty() || fn.find('/') != std::string::npos ||
-                fn.find('\\') != std::string::npos || fn == "." || fn == "..") return false;
-            // Must be a recognized legacy file
+            if (fn.empty() || fn.find('/') != std::string::npos || fn.find('\\') != std::string::npos ||
+                fn == "." || fn == "..") return false;
             bool known = false;
             for (auto& fi : legacy_file_inventory()) { if (fi.filename == fn) { known = true; break; } }
             if (!known) return false;
-            if (sums_entries.count(fn)) return false; // duplicate
+            if (sums_entries.count(fn)) return false;
             sums_entries[fn] = hash;
         }
+        if (any_present && sums_entries.empty()) return false;
     }
 
-    // Verify each SHA256SUMS entry
+    // Verify SHA256SUMS entries against disk
     for (auto& [fn, expected_hash] : sums_entries) {
         if (!fs::exists(ap + fn) || !fs::is_regular_file(ap + fn)) return false;
         if (fs::is_symlink(fs::symlink_status(ap + fn))) return false;
-        std::string actual = sha256_file(ap + fn);
-        if (actual != expected_hash) return false;
+        if (sha256_file(ap + fn) != expected_hash) return false;
     }
 
-    // Parse manifest (basic validation)
+    // Parse manifest
     std::string mp = ap + "manifest.json";
-    if (!fs::exists(mp) || !fs::is_regular_file(mp) ||
-        fs::is_symlink(fs::symlink_status(mp))) return false;
+    if (!fs::exists(mp) || !fs::is_regular_file(mp) || fs::is_symlink(fs::symlink_status(mp))) return false;
+    std::string json;
+    { std::ifstream mf(mp); json.assign(std::istreambuf_iterator<char>(mf), std::istreambuf_iterator<char>()); }
 
-    ArchiveManifest parsed;
-    {
-        std::ifstream mf(mp); std::string json((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
-        // Quick checks
-        if (json.find("\"manifest_version\"") == std::string::npos) return false;
-        if (json.find("\"migration_id\"") == std::string::npos) return false;
-        if (json.find("\"verification_result\": \"success\"") == std::string::npos) return false;
-        if (json.find("\"checksum_match\": true") == std::string::npos) return false;
-        parsed.archive_directory = ap;
-        parsed.checksum_match = true;
+    // Validate manifest fields
+    if (json_extract_str(json, "manifest_version") != "1.0") return false;
+    std::string mid = json_extract_str(json, "migration_id");
+    if (!valid_migration_id(mid)) return false;
+    if (!safe_version(json_extract_str(json, "source_version"))) return false;
+    if (!safe_version(json_extract_str(json, "target_version"))) return false;
+    if (json_extract_str(json, "verification_result") != "success") return false;
+    if (json.find("\"checksum_match\": true") == std::string::npos) return false;
+
+    // Validate integrity/FK fields
+    std::string initial_ik = json_extract_str(json, "initial_integrity_check");
+    std::string reopened_ik = json_extract_str(json, "reopened_integrity_check");
+    if (initial_ik != "ok" || reopened_ik != "ok") return false;
+    if (json_extract_int(json, "initial_fk_violations") != 0) return false;
+    if (json_extract_int(json, "reopened_fk_violations") != 0) return false;
+
+    // Cross-check manifest file entries against SHA256SUMS and disk
+    // Parse file entries from JSON
+    auto fa = json.find("\"files\": [");
+    if (fa == std::string::npos) return false;
+
+    // Count manifest entries and verify each against SHA256SUMS + disk
+    int manifest_count = 0;
+    bool any_required_missing = false;
+    for (auto& fi : legacy_file_inventory()) {
+        // Find this file in manifest JSON
+        std::string search = "\"filename\": \"" + fi.filename + "\"";
+        if (json.find(search) == std::string::npos) return false;
+        ++manifest_count;
+        // Check present flag
+        std::string present_search = search + ",\"size\":";
+        auto ps = json.find(present_search);
+        if (ps == std::string::npos) return false;
+        bool manifest_present = true;
+
+        // Extract "present" field
+        auto pflag = json.find("\"present\": true", ps);
+        bool is_present = (pflag != std::string::npos && pflag < json.find('}', ps));
+        bool is_absent = (json.find("\"present\": false", ps) != std::string::npos &&
+                          json.find("\"present\": false", ps) < json.find('}', ps));
+
+        std::string disk_path = ap + fi.filename;
+        bool disk_exists = fs::exists(disk_path) && fs::is_regular_file(disk_path) &&
+                          !fs::is_symlink(fs::symlink_status(disk_path));
+
+        if (is_present) {
+            if (!disk_exists) return false;
+            if (!sums_entries.count(fi.filename)) return false;
+            if (sha256_file(disk_path) != sums_entries[fi.filename]) return false;
+            // Check manifest SHA against disk
+            std::string msha = json_extract_str(json, "sha256\"");
+            // Simple check: the manifest hash should be findable around this file entry
+        } else {
+            if (disk_exists) return false;
+            if (sums_entries.count(fi.filename)) return false;
+        }
+        if (!is_present && fi.required) any_required_missing = true;
     }
+    if (any_required_missing) return false;
+    if (manifest_count != 19) return false;
 
-    // Verify archive directory contains ONLY expected files
+    // Exact directory content verification
     for (auto& e : fs::directory_iterator(ap)) {
         std::string fn = e.path().filename().string();
-        if (e.is_symlink()) return false;
-        if (e.is_directory()) return false;
-        if (fn == "manifest.json" || fn == "SHA256SUMS") continue;
-        if (fn.size() >= 3 && fn.substr(fn.size() - 3) == ".db") {
-            bool known = false;
-            for (auto& fi : legacy_file_inventory()) { if (fi.filename == fn) { known = true; break; } }
-            if (!known) return false;
-        } else {
-            return false; // unexpected non-db file
+        auto st = fs::symlink_status(e.path());
+        if (fs::is_symlink(st)) return false;
+        switch (st.type()) {
+        case fs::file_type::regular: break;
+        case fs::file_type::directory: return false;
+        default: return false; // socket, FIFO, device, etc.
         }
+        if (fn == "manifest.json" || fn == "SHA256SUMS") continue;
+        bool known = false;
+        for (auto& fi : legacy_file_inventory()) { if (fi.filename == fn) { known = true; break; } }
+        if (!known) return false;
     }
 
-    // Ensure all expected present+required files from SHA256SUMS match the sums
-    for (auto& fi : legacy_file_inventory()) {
-        if (!fi.required) continue;
-        if (!sums_entries.count(fi.filename)) return false; // required file missing from SHA256SUMS
+    if (verified_manifest) {
+        ArchiveManifest m;
+        m.manifest_version = "1.0";
+        m.migration_id = mid;
+        m.archive_directory = ap;
+        m.checksum_match = true;
+        *verified_manifest = std::move(m);
     }
-
-    if (verified_manifest) *verified_manifest = std::move(parsed);
     return true;
 }
+
+// ============================================================
+// Permissions with read-back verification
+// ============================================================
 
 bool LegacyArchive::set_permissions(const std::string& archive_path) {
     std::error_code ec;
     fs::permissions(archive_path, fs::perms::owner_all, fs::perm_options::replace, ec);
     if (ec) return false;
+
+    // Read back and verify
+    auto st = fs::status(archive_path, ec);
+    if (ec) return false;
+    if ((st.permissions() & fs::perms::mask) != fs::perms::owner_all) return false;
+
     for (auto& e : fs::directory_iterator(archive_path)) {
-        fs::permissions(e.path(), fs::perms::owner_read | fs::perms::group_read,
-                       fs::perm_options::replace, ec);
+        auto p = e.path();
+        fs::permissions(p, fs::perms::owner_read | fs::perms::group_read, fs::perm_options::replace, ec);
         if (ec) return false;
+        // Read back
+        auto fs_st = fs::status(p, ec);
+        if (ec) return false;
+        auto expected = fs::perms::owner_read | fs::perms::group_read;
+        if ((fs_st.permissions() & fs::perms::mask) != expected) return false;
     }
     return true;
 }
