@@ -794,7 +794,6 @@ DatabaseVerificationResult Verification::verify_all() {
             rr.sqlite_record_count = storage_count;
             rr.sqlite_checksum = storage_checksum;
 
-            // Check initial evidence
             auto it = initial_evidence_.find(name);
             uint64_t expected_count = (it != initial_evidence_.end()) ? it->second.legacy_record_count : 0;
             std::string expected_checksum = (it != initial_evidence_.end()) ? it->second.legacy_checksum : "";
@@ -802,15 +801,19 @@ DatabaseVerificationResult Verification::verify_all() {
             rr.legacy_checksum = expected_checksum;
 
             if (!checked_ok) {
-                rr.success = false; rr.error = "reopen_checked_load_failed";
+                rr.success = false; rr.status = VerificationStatus::Failed;
+                rr.error = "reopen_checked_load_failed";
             } else if (storage_count != expected_count) {
-                rr.success = false; rr.error = "reopen_count_mismatch";
+                rr.success = false; rr.status = VerificationStatus::Failed;
+                rr.error = "reopen_count_mismatch";
             } else if (storage_checksum != expected_checksum) {
-                rr.success = false; rr.error = "reopen_initial_mismatch";
+                rr.success = false; rr.status = VerificationStatus::Failed;
+                rr.error = "reopen_initial_mismatch";
             } else if (storage_checksum != checked_checksum) {
-                rr.success = false; rr.error = "reopen_checksum_mismatch";
+                rr.success = false; rr.status = VerificationStatus::Failed;
+                rr.error = "reopen_checksum_mismatch";
             } else {
-                rr.success = true;
+                rr.success = true; rr.status = VerificationStatus::Passed;
             }
             if (!rr.success) { result.error = "reopen_" + name; reopen_pass = false; }
             result.reopened_resources.push_back(rr);
@@ -883,25 +886,45 @@ DatabaseVerificationResult Verification::verify_all() {
             reopen_compare("mail_config", 0, storage_checksum, checked_ok, checked_checksum);
         }
 
-        // Importer-only: backups, auth_users via direct SQLite (not Storage)
+        // Importer-only: backups, auth_users via direct SQLite (full field comparison)
         {
             ConnectionPool io_pool;
             if (!make_pool(io_pool, "reopen_importer_only")) { result.success = false; return result; }
-            // backups
+            // backups — full field comparison against typed evidence
             {
                 std::vector<backup::Backup> backup_records;
                 auto blr = load_backups(io_pool, backup_records);
                 reopen_compare("backups", backup_records.size(),
                     blr.success ? sha256(canonical_backups(backup_records)) : "",
                     blr.success, blr.success ? sha256(canonical_backups(backup_records)) : "");
+                if (!blr.success && !typed_evidence_.backups.empty()) {
+                    auto& rr = result.reopened_resources.back();
+                    auto fres = compare_resource<backup::Backup>("backups",
+                        std::vector<backup::Backup>(typed_evidence_.backups),
+                        std::move(backup_records),
+                        [this](const std::vector<backup::Backup>& v) { return canonical_backups(v); },
+                        FIELD_ADAPTOR(backup::Backup, compare_backup), TRANSIENT_NULL);
+                    rr.mismatches = std::move(fres.mismatches);
+                    rr.legacy_checksum = fres.legacy_checksum;
+                }
             }
-            // auth_users
+            // auth_users — full field comparison against typed evidence
             {
                 std::vector<auth::AuthUser> auth_records;
                 auto alr = load_auth_users(io_pool, auth_records);
                 reopen_compare("auth_users", auth_records.size(),
                     alr.success ? sha256(canonical_auth_users(auth_records)) : "",
                     alr.success, alr.success ? sha256(canonical_auth_users(auth_records)) : "");
+                if (!result.reopened_resources.back().success && !typed_evidence_.auth_users.empty()) {
+                    auto& rr = result.reopened_resources.back();
+                    auto fres = compare_resource<auth::AuthUser>("auth_users",
+                        std::vector<auth::AuthUser>(typed_evidence_.auth_users),
+                        std::move(auth_records),
+                        [this](const std::vector<auth::AuthUser>& v) { return canonical_auth_users(v); },
+                        FIELD_ADAPTOR(auth::AuthUser, compare_auth_user), transient_authu);
+                    rr.mismatches = std::move(fres.mismatches);
+                    rr.legacy_checksum = fres.legacy_checksum;
+                }
             }
             io_pool.shutdown();
         }

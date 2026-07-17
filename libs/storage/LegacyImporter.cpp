@@ -160,40 +160,105 @@ ImportResult LegacyImporter::finish_import(
 
 #include "StorageCanonicalizer.h"
 
+// Checked COUNT(*) helper — returns false on any query failure
+static bool checked_baseline_count(ConnectionPool& pool, const std::string& type, uint64_t& out) {
+    ReadLease rl(pool);
+    if (!rl.is_valid()) return false;
+    std::string tbl;
+    if (type == "nodes") tbl = "nodes";
+    else if (type == "php_versions") tbl = "php_versions";
+    else if (type == "profiles") tbl = "profiles";
+    else if (type == "users") tbl = "users";
+    else if (type == "sites") tbl = "sites";
+    else if (type == "domains") tbl = "domains";
+    else if (type == "databases") tbl = "databases";
+    else if (type == "backups") tbl = "backups";
+    else if (type == "reverse_proxies") tbl = "reverse_proxies";
+    else if (type == "access_users") tbl = "access_users";
+    else if (type == "access_grants") tbl = "access_grants";
+    else if (type == "auth_users") tbl = "auth_users";
+    else if (type == "ssl_certificates") tbl = "ssl_certificates";
+    else if (type == "mail_domains") tbl = "mail_domains";
+    else if (type == "mail_mailboxes") tbl = "mail_mailboxes";
+    else if (type == "mail_aliases") tbl = "mail_aliases";
+    else if (type == "mail_config") tbl = "mail_config";
+    else return false;
+    if (!rl->prepare("SELECT COUNT(*) FROM " + tbl)) return false;
+    if (!rl->step()) return false;
+    out = static_cast<uint64_t>(rl->column_int(0));
+    return true;
+}
+
 ResourceBaseline LegacyImporter::capture_baseline(const std::string& type) {
     ResourceBaseline bl;
+    uint64_t checked_count = 0;
+    if (!checked_baseline_count(pool_, type, checked_count)) {
+        bl.error = "baseline_capture_failed"; return bl;
+    }
 
-    if (type == "nodes") { auto r = sqlite_.load_nodes(); bl.record_count = r.size();
+    if (type == "nodes") { auto r = sqlite_.load_nodes();
+        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
+        bl.record_count = r.size();
         bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_nodes(r));
-    } else if (type == "php_versions") { auto r = sqlite_.load_php_versions(); bl.record_count = r.size();
+    } else if (type == "php_versions") { auto r = sqlite_.load_php_versions();
+        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
+        bl.record_count = r.size();
         bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_php_versions(r));
-    } else if (type == "profiles") { auto r = sqlite_.load_profiles(); bl.record_count = r.size();
+    } else if (type == "profiles") { auto r = sqlite_.load_profiles();
+        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
+        bl.record_count = r.size();
         bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_profiles(r));
-    } else if (type == "users") { auto r = sqlite_.load_users(); bl.record_count = r.size();
+    } else if (type == "users") { auto r = sqlite_.load_users();
+        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
+        bl.record_count = r.size();
         bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_users(r));
-    } else if (type == "sites") { auto r = sqlite_.load_sites(); bl.record_count = r.size();
+    } else if (type == "sites") { auto r = sqlite_.load_sites();
+        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
+        bl.record_count = r.size();
         bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_sites(r));
-    } else if (type == "domains") { auto r = sqlite_.load_domains(); bl.record_count = r.size();
+    } else if (type == "domains") { auto r = sqlite_.load_domains();
+        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
+        bl.record_count = r.size();
         bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_domains(r));
-    } else if (type == "databases") { auto r = sqlite_.load_databases(); bl.record_count = r.size();
+    } else if (type == "databases") { auto r = sqlite_.load_databases();
+        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
+        bl.record_count = r.size();
         bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_databases(r));
-    } else if (type == "backups") { auto r = sqlite_.load_backups(); bl.record_count = r.size();
+    } else if (type == "backups") { auto r = sqlite_.load_backups();
+        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
+        bl.record_count = r.size();
         bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_backups(r));
-    } else if (type == "reverse_proxies") { auto r = sqlite_.load_reverse_proxies(); bl.record_count = r.size();
+    } else if (type == "reverse_proxies") { auto r = sqlite_.load_reverse_proxies();
+        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
+        bl.record_count = r.size();
         bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_reverse_proxies(r));
-    } else if (type == "access_users") { auto r = sqlite_.load_access_users(); bl.record_count = r.size();
+    } else if (type == "access_users") { auto r = sqlite_.load_access_users();
+        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
+        bl.record_count = r.size();
         bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_access_users(r));
-    } else if (type == "access_grants") { auto r = sqlite_.load_access_grants(); bl.record_count = r.size();
+    } else if (type == "access_grants") { auto r = sqlite_.load_access_grants();
+        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
+        bl.record_count = r.size();
         bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_access_grants(r));
-    } else if (type == "auth_users") { auto r = sqlite_.load_auth_users(); bl.record_count = r.size();
+    } else if (type == "auth_users") { auto r = sqlite_.load_auth_users();
+        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
+        bl.record_count = r.size();
         bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_auth_users(r));
-    } else if (type == "ssl_certificates") { auto r = sqlite_.load_ssl_certificates(); bl.record_count = r.size();
+    } else if (type == "ssl_certificates") { auto r = sqlite_.load_ssl_certificates();
+        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
+        bl.record_count = r.size();
         bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_ssl_certificates(r));
-    } else if (type == "mail_domains") { auto r = sqlite_.load_mail_domains(); bl.record_count = r.size();
+    } else if (type == "mail_domains") { auto r = sqlite_.load_mail_domains();
+        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
+        bl.record_count = r.size();
         bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_mail_domains(r));
-    } else if (type == "mail_mailboxes") { auto r = sqlite_.load_mailboxes(); bl.record_count = r.size();
+    } else if (type == "mail_mailboxes") { auto r = sqlite_.load_mailboxes();
+        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
+        bl.record_count = r.size();
         bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_mail_mailboxes(r));
-    } else if (type == "mail_aliases") { auto r = sqlite_.load_mail_aliases(); bl.record_count = r.size();
+    } else if (type == "mail_aliases") { auto r = sqlite_.load_mail_aliases();
+        if (r.size() != checked_count) { bl.error = "baseline_load_mismatch"; return bl; }
+        bl.record_count = r.size();
         bl.canonical_checksum = StorageCanonicalizer::sha256(StorageCanonicalizer::canonical_mail_aliases(r));
     } else if (type == "mail_config") {
         std::string ms = sqlite_.load_mail_module_state();
