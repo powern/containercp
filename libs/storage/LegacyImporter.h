@@ -20,6 +20,7 @@
 #include "ssl/SslCertificate.h"
 #include "user/User.h"
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,7 @@ public:
     ImportResult import_php_versions();
     ImportResult import_profiles();
     ImportResult import_template_profiles();
+    ImportResult import_all_profiles();
     ImportResult import_users();
     ImportResult import_sites();
     ImportResult import_domains();
@@ -83,6 +85,22 @@ public:
     ImportAllResult import_all();
 
 private:
+    struct ParseResult {
+        bool success = false;
+        std::string error;
+        std::string diagnostics;
+    };
+
+    // Shared profile parser — parses one file into a vector, detecting
+    // duplicates within the file.  Returns empty result on success.
+    static ParseResult parse_profile_file(
+        const std::string& path,
+        const std::string& fname,
+        bool template_format,
+        std::vector<profile::Profile>& out,
+        std::set<uint64_t>& ids,
+        std::set<std::string>& names);
+
     // File state classification
     enum class FileState {
         Missing,

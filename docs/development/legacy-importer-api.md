@@ -21,11 +21,13 @@ class LegacyImporter {
 public:
     LegacyImporter(const std::string& legacy_directory, ConnectionPool& pool);
 
-    // Per-resource import (18 resource types)
+    // Per-resource import (17 resource types — profiles and template_profiles
+    // map to the same SQLite table and are combined via import_all_profiles)
     ImportResult import_nodes();
     ImportResult import_php_versions();
     ImportResult import_profiles();
     ImportResult import_template_profiles();
+    ImportResult import_all_profiles();  // combined profiles + template_profiles
     ImportResult import_users();
     ImportResult import_sites();
     ImportResult import_domains();
@@ -238,22 +240,21 @@ This is required for formats containing optional final fields.
 
 1. nodes
 2. php_versions
-3. profiles
-4. template_profiles
-5. users
-6. sites (FK child of users)
-7. domains
-8. databases
-9. backups
-10. reverse_proxies
-11. access_users
-12. access_grants (FK child of access_users + sites)
-13. auth_users
-14. ssl_certificates
-15. mail_domains (FK parent of mailboxes + aliases)
-16. mail_mailboxes (FK child of mail_domains)
-17. mail_aliases (FK child of mail_domains)
-18. mail_config
+3. profiles (combined — profiles.db + template_profiles.db via import_all_profiles)
+4. users
+5. sites (FK child of users)
+6. domains
+7. databases
+8. backups
+9. reverse_proxies
+10. access_users
+11. access_grants (FK child of access_users + sites)
+12. auth_users
+13. ssl_certificates
+14. mail_domains (FK parent of mailboxes + aliases)
+15. mail_mailboxes (FK child of mail_domains)
+16. mail_aliases (FK child of mail_domains)
+17. mail_config
 
 `import_all` appends each resource result and checks `success` after every
 step.  On the first `success = false`, `import_all` returns immediately
@@ -278,6 +279,50 @@ Module state is validated: must be `"active"` or `"inactive"` (matching
 If state saves successfully but smarthost fails, state remains committed
 but overall result is `Failed` with `"sqlite_write_failed"` error.
 
+## Combined profiles import (profiles.db + template_profiles.db)
+
+Both `profiles.db` and `template_profiles.db` map into the same SQLite
+`profiles` table.  During `import_all()`, they are treated as one atomic
+logical resource via `import_all_profiles()`.
+
+### Behavior
+
+1. `profiles.db` is inspected as a **required** file.
+2. `template_profiles.db` is inspected as an **optional** file.
+3. Both files are **fully parsed** before any SQLite write.
+4. Cross-file **duplicate id** and **duplicate profile_name** are rejected.
+5. One checked `try_save_profiles(combined)` call persists the union.
+6. On success: `record_count` = total rows from both files.
+7. On any failure: no SQLite mutation occurs.
+
+### Cross-file duplicate validation
+
+- Duplicate `id` across `profiles.db` and `template_profiles.db`:
+  `Failed` / `duplicate_id`
+- Duplicate `profile_name` across the two files: `Failed` /
+  `duplicate_profile_name`
+- Diagnostics identify both source filenames and the conflicting field
+
+### Optional template file
+
+- **Missing:** profiles.db imports normally.
+- **Empty:** profiles.db imports normally; no second empty replacement.
+- **Malformed after valid profiles.db:** combined write is skipped,
+  no partial commit.
+
+### Standalone API safety
+
+`import_profiles()` replaces the profiles table with only `profiles.db`
+data — correct when called standalone.
+
+`import_template_profiles()` is safe standalone: it loads existing SQLite
+profiles, merges the parsed template records, validates cross-file
+collisions, and saves the combined vector.  It never erases existing
+profiles.
+
+`import_all_profiles()` is the combined method used by `import_all()`;
+it parses both files atomically.
+
 ## Source immutability
 
 The importer opens all source files with `std::ifstream` (read-only).  No
@@ -288,7 +333,7 @@ file-size comparison in tests.
 ## Backend boundary
 
 LegacyImporter uses:
-- `SQLiteStorage::try_save_*` for 16 of the 18 resource types
+- `SQLiteStorage::try_save_*` for 15 of the 17 resource types
 - Direct `TransactionGuard` for `backups` and `auth_users` (not exposed by SQLiteStorage at runtime, but schema tables exist)
 
 The importer is never wired into daemon startup or Storage construction.

@@ -611,8 +611,8 @@ TEST_CASE("import_all does not attempt later resources after failure") {
     CHECK_FALSE(result.success);
     CHECK(result.failed_resource == "users");
     // Sites should NOT have been attempted
-    // Resources: nodes + php + profiles + template_profiles (skip) + users = 5
-    CHECK(result.resources.size() == 5);
+    // Resources: nodes + php + profiles (combined) + users = 4
+    CHECK(result.resources.size() == 4);
     cleanup(dir);
 }
 
@@ -844,5 +844,246 @@ TEST_CASE("alias missing mail_domain fails") {
     LegacyImporter imp(dir, pool);
     auto r = imp.import_mail_aliases();
     CHECK_FALSE(r.success);
+    cleanup(dir);
+}
+
+// ============================================================
+// Combined profiles import tests
+// ============================================================
+
+TEST_CASE("profiles.db only imports all rows") {
+    auto dir = test_dir("imp_prof_only");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "profiles.db",
+               "1|default|WEB_SERVER|apache|static|/tpl||1|1\n"
+               "2|custom|WEB_SERVER|nginx|docker|/tpl2||1|0\n");
+    ConnectionPool pool;
+    init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto r = imp.import_all_profiles();
+    CHECK(r.success);
+    CHECK(r.disposition == ImportDisposition::Imported);
+    CHECK(r.record_count == 2);
+    // Verify via SQLiteStorage
+    auto loaded = SQLiteStorage(pool).load_profiles();
+    CHECK(loaded.size() == 2);
+    cleanup(dir);
+}
+
+TEST_CASE("profiles + template_profiles yield union") {
+    auto dir = test_dir("imp_prof_union");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "profiles.db",
+               "1|standard|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "template_profiles.db",
+               "2|template1|nginx|static|/tpl_t||1|0\n");
+    ConnectionPool pool;
+    init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto r = imp.import_all_profiles();
+    CHECK(r.success);
+    CHECK(r.disposition == ImportDisposition::Imported);
+    CHECK(r.record_count == 2);
+    // Verify union: both rows present
+    auto loaded = SQLiteStorage(pool).load_profiles();
+    CHECK(loaded.size() == 2);
+    // Verify template row has WEB_SERVER type
+    bool found_template = false;
+    for (const auto& p : loaded) {
+        if (p.profile_name == "template1") {
+            found_template = true;
+            CHECK(p.type == profile::ProfileType::WEB_SERVER);
+        }
+    }
+    CHECK(found_template);
+    cleanup(dir);
+}
+
+TEST_CASE("profiles.db rows not erased after combined import") {
+    auto dir = test_dir("imp_prof_noerase");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "profiles.db",
+               "1|standard|WEB_SERVER|apache|static|/tpl||1|1\n"
+               "2|another|WEB_SERVER|nginx|docker|/tpl2||1|0\n");
+    write_file(dir + "template_profiles.db",
+               "3|template1|nginx|static|/tpl_t||1|0\n");
+    ConnectionPool pool;
+    init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto r = imp.import_all_profiles();
+    CHECK(r.success);
+    CHECK(r.record_count == 3);
+    // All three rows must be present
+    auto loaded = SQLiteStorage(pool).load_profiles();
+    CHECK(loaded.size() == 3);
+    std::set<std::string> names;
+    for (const auto& p : loaded) names.insert(p.profile_name);
+    CHECK(names.count("standard"));
+    CHECK(names.count("another"));
+    CHECK(names.count("template1"));
+    cleanup(dir);
+}
+
+TEST_CASE("missing optional template_profiles.db does not affect profiles") {
+    auto dir = test_dir("imp_prof_notpl");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "profiles.db",
+               "1|standard|WEB_SERVER|apache|static|/tpl||1|1\n");
+    ConnectionPool pool;
+    init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto r = imp.import_all_profiles();
+    CHECK(r.success);
+    CHECK(r.record_count == 1);
+    CHECK(SQLiteStorage(pool).load_profiles().size() == 1);
+    cleanup(dir);
+}
+
+TEST_CASE("empty template_profiles.db does not erase profiles") {
+    auto dir = test_dir("imp_prof_emptpl");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "profiles.db",
+               "1|standard|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "template_profiles.db", "");
+    ConnectionPool pool;
+    init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto r = imp.import_all_profiles();
+    CHECK(r.success);
+    CHECK(r.record_count == 1);
+    CHECK(SQLiteStorage(pool).load_profiles().size() == 1);
+    cleanup(dir);
+}
+
+TEST_CASE("cross-file duplicate id rejected") {
+    auto dir = test_dir("imp_prof_dup_id");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "profiles.db",
+               "1|standard|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "template_profiles.db",
+               "1|template1|nginx|static|/tpl_t||1|0\n");
+    ConnectionPool pool;
+    init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto r = imp.import_all_profiles();
+    CHECK_FALSE(r.success);
+    CHECK(r.error == "duplicate_id");
+    // Table unchanged
+    CHECK(SQLiteStorage(pool).load_profiles().size() == 0);
+    cleanup(dir);
+}
+
+TEST_CASE("cross-file duplicate profile_name rejected") {
+    auto dir = test_dir("imp_prof_dup_name");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "profiles.db",
+               "1|standard|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "template_profiles.db",
+               "2|standard|nginx|static|/tpl_t||1|0\n");
+    ConnectionPool pool;
+    init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto r = imp.import_all_profiles();
+    CHECK_FALSE(r.success);
+    CHECK(r.error == "duplicate_profile_name");
+    CHECK(SQLiteStorage(pool).load_profiles().size() == 0);
+    cleanup(dir);
+}
+
+TEST_CASE("malformed template after valid profiles skips write") {
+    auto dir = test_dir("imp_prof_mal_tpl");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "profiles.db",
+               "1|standard|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "template_profiles.db",
+               "BAD|template1|nginx|static|/tpl_t||1|0\n");
+    ConnectionPool pool;
+    init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto r = imp.import_all_profiles();
+    CHECK_FALSE(r.success);
+    // SQLite should still have its previous state (empty)
+    CHECK(SQLiteStorage(pool).load_profiles().size() == 0);
+    cleanup(dir);
+}
+
+TEST_CASE("idempotent combined reimport") {
+    auto dir = test_dir("imp_prof_idem");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "profiles.db",
+               "1|standard|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "template_profiles.db",
+               "2|templ|nginx|static|/tpl_t||1|0\n");
+    ConnectionPool pool;
+    init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    CHECK(imp.import_all_profiles().success);
+    uint64_t c1 = SQLiteStorage(pool).load_profiles().size();
+    CHECK(imp.import_all_profiles().success);
+    uint64_t c2 = SQLiteStorage(pool).load_profiles().size();
+    CHECK(c1 == c2);
+    // Both still present
+    CHECK(c1 == 2);
+    cleanup(dir);
+}
+
+TEST_CASE("import_all uses one combined profiles step") {
+    auto dir = test_dir("imp_prof_all");
+    cleanup(dir); fs::create_directories(dir);
+    write_file(dir + "nodes.db", "1|main|web\n");
+    write_file(dir + "php_versions.db", "1|8.2|php:8.2|1|1\n");
+    write_file(dir + "profiles.db",
+               "1|standard|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_file(dir + "template_profiles.db",
+               "2|templ|nginx|static|/tpl_t||1|0\n");
+    write_file(dir + "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_file(dir + "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_file(dir + "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n");
+    write_file(dir + "databases.db", "1|db|user|pass|mysql|8.0|1|1|1\n");
+    write_file(dir + "backups.db", "1|1|1|backup.tar.gz|full|1000|2024-01-01|completed|/path|gzip\n");
+    write_file(dir + "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+    ConnectionPool pool;
+    init_pool(pool, dir);
+    LegacyImporter imp(dir, pool);
+    auto result = imp.import_all();
+    CHECK(result.success);
+    // Find the profiles result
+    bool found_profiles = false;
+    for (const auto& res : result.resources) {
+        if (res.resource_type == "profiles") {
+            found_profiles = true;
+            CHECK(res.success);
+            CHECK(res.record_count == 2);
+            break;
+        }
+    }
+    CHECK(found_profiles);
+    // No separate template_profiles entry
+    bool found_tpl = false;
+    for (const auto& res : result.resources) {
+        if (res.resource_type == "template_profiles") {
+            found_tpl = true;
+            break;
+        }
+    }
+    CHECK_FALSE(found_tpl);
+    // Verify SQLite has union
+    auto loaded = SQLiteStorage(pool).load_profiles();
+    CHECK(loaded.size() == 2);
+    cleanup(dir);
+}
+
+TEST_CASE("import_all_profiles with full fixture retains both") {
+    auto dir = test_dir("imp_prof_fixt");
+    cleanup(dir); fs::create_directories(dir);
+    ConnectionPool pool;
+    init_pool(pool, dir);
+    copy_fixtures("normal", dir);
+    LegacyImporter imp(dir, pool);
+    auto r = imp.import_all_profiles();
+    CHECK(r.success);
+    // Normal fixtures include both profiles.db and template_profiles.db
+    auto loaded = SQLiteStorage(pool).load_profiles();
+    CHECK(loaded.size() >= 2);
     cleanup(dir);
 }
