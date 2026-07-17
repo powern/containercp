@@ -72,6 +72,7 @@ public:
     static bool valid_migration_id(const std::string& id);
     static bool valid_timestamp(const std::string& ts);
     static std::string json_escape(const std::string& s);
+    static std::string normalize_archive_identity_path(const std::string& path);
     static RecordCountResult count_records(const std::string& source_dir,
                                            const std::string& filename);
 
@@ -83,7 +84,6 @@ private:
     bool verify_archive_internal(const std::string& physical_archive_path,
                                  const std::string* expected_manifest_archive_path,
                                  ArchiveManifest* verified_manifest);
-    static std::string normalize_archive_identity_path(const std::string& path);
 };
 
 } // namespace containercp::storage
