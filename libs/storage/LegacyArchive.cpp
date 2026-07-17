@@ -169,6 +169,16 @@ LegacyArchive::RecordCountResult LegacyArchive::count_records(const std::string&
 // ============================================================
 namespace {
 
+struct ParsedFileEntry {
+    std::string filename;
+    uint64_t size = 0;
+    std::string sha256;
+    uint64_t record_count = 0;
+    bool optional = false;
+    bool present = false;
+    bool valid = false;
+};
+
 struct JsonError { const char* msg; int pos; };
 
 class ManifestParser {
@@ -246,7 +256,7 @@ public:
     bool parse_manifest(std::map<std::string, std::string>& strings,
                         std::map<std::string, int64_t>& ints,
                         std::map<std::string, bool>& bools,
-                        std::vector<std::map<std::string, std::string>>& file_entries)
+                        std::vector<ParsedFileEntry>& file_entries)
     {
         skip_ws();
         if (next() != '{') return false;
@@ -280,9 +290,9 @@ public:
                     if (!fa_first) { if (peek() != ',') return false; next(); skip_ws(); }
                     fa_first = false;
                     if (next() != '{') return false;
-                    std::map<std::string, std::string> file_entry;
-                    std::set<std::string> file_seen;
+                    ParsedFileEntry pfe;
                     bool fe_first = true;
+                    std::set<std::string> file_seen;
                     while (true) {
                         skip_ws();
                         if (peek() == '}') { next(); break; }
@@ -295,13 +305,27 @@ public:
                         skip_ws();
                         if (next() != ':') return false;
                         skip_ws();
-
-                        // File entry values: only string/number/bool fields
-                        if (peek() == '"') { std::string fv; if (!parse_string(fv)) return false; file_entry[fk] = fv; }
-                        else if (peek() == 't' || peek() == 'f') { bool b; if (!parse_bool(b)) return false; file_entry[fk] = b ? "true" : "false"; }
-                        else { int64_t n; if (!parse_int(n)) return false; file_entry[fk] = std::to_string(n); }
+                        // Parse typed value
+                        if (fk == "filename") {
+                            if (peek() != '"') return false;
+                            if (!parse_string(pfe.filename)) return false;
+                        } else if (fk == "sha256") {
+                            if (peek() != '"') return false;
+                            if (!parse_string(pfe.sha256)) return false;
+                        } else if (fk == "size" || fk == "record_count") {
+                            int64_t n;
+                            if (peek() == '"') return false; // string not allowed
+                            if (!parse_int(n) || n < 0) return false;
+                            if (fk == "size") pfe.size = static_cast<uint64_t>(n);
+                            else pfe.record_count = static_cast<uint64_t>(n);
+                        } else if (fk == "optional" || fk == "present") {
+                            bool b;
+                            if (!parse_bool(b)) return false;
+                            if (fk == "optional") pfe.optional = b;
+                            else pfe.present = b;
+                        } else { return false; } // unknown field
                     }
-                    file_entries.push_back(file_entry);
+                    pfe.valid = true;
                 }
             } else if (peek() == '"') {
                 std::string val;
@@ -402,7 +426,7 @@ ArchiveResult LegacyArchive::create_archive(
         std::map<std::string, std::string> strings;
         std::map<std::string, int64_t> ints;
         std::map<std::string, bool> bools;
-        std::vector<std::map<std::string, std::string>> file_entries;
+        std::vector<ParsedFileEntry> file_entries;
         ManifestParser parser(json);
         if (!parser.parse_manifest(strings, ints, bools, file_entries)) continue;
         if (strings["migration_id"] == migration_id) {
@@ -771,7 +795,7 @@ bool LegacyArchive::verify_archive(const std::string& archive_path,
     std::map<std::string, std::string> strings;
     std::map<std::string, int64_t> ints;
     std::map<std::string, bool> bools;
-    std::vector<std::map<std::string, std::string>> file_entries;
+    std::vector<ParsedFileEntry> file_entries;
 
     ManifestParser parser(json);
     if (!parser.parse_manifest(strings, ints, bools, file_entries)) return false;
@@ -793,62 +817,37 @@ bool LegacyArchive::verify_archive(const std::string& archive_path,
     if (!ints.count("initial_fk_violations") || ints["initial_fk_violations"] != 0) return false;
     if (!ints.count("reopened_fk_violations") || ints["reopened_fk_violations"] != 0) return false;
 
-    // Cross-check file entries (19 total) — verify SHA, size, record_count, optional
+    // Cross-check file entries using typed ParsedFileEntry fields
     if (file_entries.size() != 19) return false;
     std::set<std::string> manifest_filenames;
-    for (auto& fe : file_entries) {
-        std::string fn = fe["filename"];
-        if (fn.empty()) return false;
-        if (manifest_filenames.count(fn)) return false;
-        manifest_filenames.insert(fn);
+    for (auto& pfe : file_entries) {
+        if (pfe.filename.empty() || !pfe.valid) return false;
+        if (manifest_filenames.count(pfe.filename)) return false;
+        manifest_filenames.insert(pfe.filename);
 
-        bool present = (fe["present"] == "true");
-        std::string manifest_sha = fe["sha256"];
         bool optional = false;
-        for (auto& fi : legacy_file_inventory()) { if (fi.filename == fn) { optional = !fi.required; break; } }
+        for (auto& fi : legacy_file_inventory()) { if (fi.filename == pfe.filename) { optional = !fi.required; break; } }
+        if (pfe.optional != optional) return false;
 
-        // Validate optional flag matches inventory
-        if (fe["optional"] != (optional ? "true" : "false")) return false;
-
-        std::string disk_path = ap + fn;
+        std::string disk_path = ap + pfe.filename;
         bool disk_exists = fs::exists(disk_path) && fs::is_regular_file(disk_path) &&
                           !fs::is_symlink(fs::symlink_status(disk_path));
 
-        if (present) {
+        if (pfe.present) {
             if (!disk_exists) return false;
-
-            // Verify manifest SHA matches SHA256SUMS
-            if (!sums_entries.count(fn)) return false;
-            if (manifest_sha != sums_entries[fn]) return false;
-
-            // Verify manifest SHA matches actual disk
+            if (!sums_entries.count(pfe.filename)) return false;
+            if (pfe.sha256 != sums_entries[pfe.filename]) return false;
             std::string disk_sha = sha256_file(disk_path);
-            if (disk_sha.empty()) return false;
-            if (manifest_sha != disk_sha) return false;
-
-            // Verify manifest size matches actual disk
+            if (disk_sha.empty() || pfe.sha256 != disk_sha) return false;
             uint64_t disk_size = 0;
             { std::error_code ec; disk_size = fs::file_size(disk_path, ec); if (ec) return false; }
-            uint64_t manifest_size = 0;
-            { const std::string& s = fe["size"]; for (char c : s) {
-                if (c < '0' || c > '9') return false;
-                uint64_t prev = manifest_size;
-                manifest_size = manifest_size * 10 + (c - '0');
-                if (manifest_size < prev) return false; // overflow
-            }}
-            if (manifest_size != disk_size) return false;
-
-            // Validate record_count is numeric and non-negative
-            { const std::string& rc = fe["record_count"]; if (rc.empty()) return false;
-              for (char c : rc) if (c < '0' || c > '9') return false; }
+            if (pfe.size != disk_size) return false;
         } else {
             if (disk_exists) return false;
-            if (sums_entries.count(fn)) return false;
+            if (sums_entries.count(pfe.filename)) return false;
             if (!optional) return false;
-            // Absent entry must have empty SHA, zero size, zero record_count
-            if (!manifest_sha.empty()) return false;
-            if (fe["size"] != "0") return false;
-            if (fe["record_count"] != "0") return false;
+            if (!pfe.sha256.empty()) return false;
+            if (pfe.size != 0 || pfe.record_count != 0) return false;
         }
     }
     // Verify all required files present in manifest
@@ -887,16 +886,16 @@ bool LegacyArchive::verify_archive(const std::string& archive_path,
         m.initial_fk_violations = static_cast<int>(ints["initial_fk_violations"]);
         m.reopened_fk_violations = static_cast<int>(ints["reopened_fk_violations"]);
         m.verification_result = strings["verification_result"];
-        // Rebuild file entries from parsed data
-        for (auto& fe : file_entries) {
+        // Rebuild file entries from parsed typed data
+        for (auto& pfe : file_entries) {
             ArchiveFileEntry afe;
-            afe.filename = fe["filename"];
-            afe.present = (fe["present"] == "true");
-            afe.optional = (fe["optional"] == "true");
-            if (afe.present) {
-                afe.sha256 = fe["sha256"];
-                for (char c : fe["size"]) afe.size = afe.size * 10 + (c - '0');
-                for (char c : fe["record_count"]) afe.record_count = afe.record_count * 10 + (c - '0');
+            afe.filename = pfe.filename;
+            afe.present = pfe.present;
+            afe.optional = pfe.optional;
+            if (pfe.present) {
+                afe.sha256 = pfe.sha256;
+                afe.size = pfe.size;
+                afe.record_count = pfe.record_count;
             }
             m.files.push_back(std::move(afe));
         }
