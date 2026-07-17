@@ -109,7 +109,7 @@ static bool file_unchanged(const std::string& path, uint64_t sz, const std::stri
     return file_size_or_zero(path) == sz && LegacyArchive::sha256_file(path) == sha;
 }
 
-uint64_t LegacyArchive::count_records(const std::string& sd, const std::string& fn) {
+LegacyArchive::RecordCountResult LegacyArchive::count_records(const std::string& sd, const std::string& fn) {
     // Use LegacyDatasetReader for all files
     LegacyDatasetReader r(sd);
     // Use a single call for combined profiles
@@ -117,21 +117,21 @@ uint64_t LegacyArchive::count_records(const std::string& sd, const std::string& 
         auto dr = r.read_combined_profiles(); return dr.success ? dr.records.size() : 0;
     }
     // For other files, try named readers
-    if (fn == "nodes.db") { auto dr = r.read_nodes(); return dr.records.size(); }
-    if (fn == "php_versions.db") { auto dr = r.read_php_versions(); return dr.records.size(); }
-    if (fn == "users.db") { auto dr = r.read_users(); return dr.records.size(); }
-    if (fn == "sites.db") { auto dr = r.read_sites(); return dr.records.size(); }
-    if (fn == "domains.db") { auto dr = r.read_domains(); return dr.records.size(); }
-    if (fn == "databases.db") { auto dr = r.read_databases(); return dr.records.size(); }
-    if (fn == "backups.db") { auto dr = r.read_backups(); return dr.records.size(); }
-    if (fn == "reverse_proxies.db") { auto dr = r.read_reverse_proxies(); return dr.records.size(); }
-    if (fn == "access_users.db") { auto dr = r.read_access_users(); return dr.records.size(); }
-    if (fn == "access_grants.db") { auto dr = r.read_access_grants(); return dr.records.size(); }
-    if (fn == "auth_users.db") { auto dr = r.read_auth_users(); return dr.records.size(); }
-    if (fn == "ssl_certificates.db") { auto dr = r.read_ssl_certificates(); return dr.records.size(); }
-    if (fn == "mail_domains.db") { auto dr = r.read_mail_domains(); return dr.records.size(); }
-    if (fn == "mail_mailboxes.db") { auto dr = r.read_mailboxes(); return dr.records.size(); }
-    if (fn == "mail_aliases.db") { auto dr = r.read_mail_aliases(); return dr.records.size(); }
+    if (fn == "nodes.db") { auto dr = r.read_nodes(); r.record_count = dr.records.size(); r.success = true; return r; }
+    if (fn == "php_versions.db") { auto dr = r.read_php_versions(); r.record_count = dr.records.size(); r.success = true; return r; }
+    if (fn == "users.db") { auto dr = r.read_users(); r.record_count = dr.records.size(); r.success = true; return r; }
+    if (fn == "sites.db") { auto dr = r.read_sites(); r.record_count = dr.records.size(); r.success = true; return r; }
+    if (fn == "domains.db") { auto dr = r.read_domains(); r.record_count = dr.records.size(); r.success = true; return r; }
+    if (fn == "databases.db") { auto dr = r.read_databases(); r.record_count = dr.records.size(); r.success = true; return r; }
+    if (fn == "backups.db") { auto dr = r.read_backups(); r.record_count = dr.records.size(); r.success = true; return r; }
+    if (fn == "reverse_proxies.db") { auto dr = r.read_reverse_proxies(); r.record_count = dr.records.size(); r.success = true; return r; }
+    if (fn == "access_users.db") { auto dr = r.read_access_users(); r.record_count = dr.records.size(); r.success = true; return r; }
+    if (fn == "access_grants.db") { auto dr = r.read_access_grants(); r.record_count = dr.records.size(); r.success = true; return r; }
+    if (fn == "auth_users.db") { auto dr = r.read_auth_users(); r.record_count = dr.records.size(); r.success = true; return r; }
+    if (fn == "ssl_certificates.db") { auto dr = r.read_ssl_certificates(); r.record_count = dr.records.size(); r.success = true; return r; }
+    if (fn == "mail_domains.db") { auto dr = r.read_mail_domains(); r.record_count = dr.records.size(); r.success = true; return r; }
+    if (fn == "mail_mailboxes.db") { auto dr = r.read_mailboxes(); r.record_count = dr.records.size(); r.success = true; return r; }
+    if (fn == "mail_aliases.db") { auto dr = r.read_mail_aliases(); r.record_count = dr.records.size(); r.success = true; return r; }
     // mail_state / mail_smarthost — count as 1 if present
     if (fn == "mail_state.db" || fn == "mail_smarthost.db") {
         auto dr = r.read_mail_config();
@@ -207,15 +207,9 @@ ArchiveResult LegacyArchive::create_archive(
             fe.size = file_size_or_zero(sp);
             fe.sha256 = sha256_file(sp);
             if (fe.sha256.empty()) { result.error = "sha_failed:" + fi.filename; return result; }
-            fe.record_count = count_records(source_dir_, fi.filename);
-            // If malformed required file
-            if (fi.required && fe.record_count == 0 && fe.size > 0) {
-                // Could be zero records legitimately; but if parse fails, size>0 and count=0 suspicious
-                // For safety, verify via re-reading
-                std::ifstream chk(sp); std::string line;
-                int lines = 0; while (std::getline(chk, line)) if (!line.empty()) ++lines;
-                if (lines > 0 && fe.record_count == 0) { result.error = "parse_failed:" + fi.filename; return result; }
-            }
+            auto cr = count_records(source_dir_, fi.filename);
+            if (!cr.success) { result.error = "parse_failed:" + fi.filename; return result; }
+            fe.record_count = cr.record_count;
         } else {
             fe.present = false;
             if (!fe.optional) { result.error = "required_file_missing:" + fi.filename; return result; }

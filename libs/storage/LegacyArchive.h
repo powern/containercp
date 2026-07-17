@@ -63,6 +63,13 @@ struct ArchiveResult {
 
 class LegacyArchive {
 public:
+    // Checked record count result
+    struct RecordCountResult {
+        bool success = false;
+        uint64_t record_count = 0;
+        std::string error;
+    };
+
     LegacyArchive(const std::string& source_directory,
                   const std::string& archive_root);
 
@@ -83,8 +90,8 @@ public:
     static bool safe_version(const std::string& v);
     static bool valid_migration_id(const std::string& id);
     static std::string json_escape(const std::string& s);
-    static uint64_t count_records(const std::string& source_dir,
-                                   const std::string& filename);
+    static RecordCountResult count_records(const std::string& source_dir,
+                                           const std::string& filename);
 
 private:
     std::string source_dir_;

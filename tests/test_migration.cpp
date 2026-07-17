@@ -1446,7 +1446,7 @@ TEST_CASE("Archive validates migration UUID") {
     CHECK_FALSE(arch.create_archive("aaaa/aaa/aaaa/aaaa/aaaa/aaaa/aaaa/aaaa", "v0.6.0", "v0.7.0", dvr).success);
     std::string valid = "12345678-1234-4234-8234-1234567890ab";
     CHECK(LegacyArchive::valid_migration_id(valid));
-    fs::remove_all(dir); fs::remove_all(arc_dir);
+    std::filesystem::remove_all(dir); std::filesystem::remove_all(arc_dir);
 }
 
 TEST_CASE("Archive rejects unsafe version strings") {
