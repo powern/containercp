@@ -1710,10 +1710,11 @@ TEST_CASE("mail_config with 0 or 1 keys") {
     for (auto& res : r.resources) {
         if (res.resource_type == "mail_config") {
             CHECK(res.record_count == 1);
-            return;
+            break;
         }
     }
-    pool.shutdown();
+    pool.shutdown(); cleanup(dir);
+
     // 0 keys: neither file exists
     auto dir2 = test_dir("vfy_mc_zero");
     cleanup(dir2); fs::create_directories(dir2);
@@ -1733,10 +1734,10 @@ TEST_CASE("mail_config with 0 or 1 keys") {
     for (auto& res : r2.resources) {
         if (res.resource_type == "mail_config") {
             CHECK(res.record_count == 0);
-            return;
+            break;
         }
     }
-    pool2.shutdown(); cleanup(dir); cleanup(dir2);
+    pool2.shutdown(); cleanup(dir2);
 }
 
 TEST_CASE("snapshot rejects NULL boolean") {
