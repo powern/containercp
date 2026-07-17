@@ -545,9 +545,9 @@ LOAD_HELPER(mail_aliases, mail::MailAlias, "SELECT id, domain_id, source_local_p
         if (ir->disposition == ImportDisposition::SkippedEmpty || ir->disposition == ImportDisposition::SkippedMissingOptional) { \
             /* Verify baseline: SQLite state must match pre-import state */ \
             uint64_t current = load_count_fn(pool_); \
-            if (current != ir->pre_import_count) { \
+            if (current != ir->baseline.record_count) { \
                 ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed; r.error = "baseline_mismatch"; r.resource_type = #type; \
-                r.legacy_record_count = ir->pre_import_count; r.sqlite_record_count = current; return r; } \
+                r.legacy_record_count = ir->baseline.record_count; r.sqlite_record_count = current; return r; } \
             ResourceVerificationResult r; r.success = true; r.status = VerificationStatus::Skipped; r.resource_type = #type; return r; \
         } \
         LegacyDatasetReader reader(legacy_dir_); \
@@ -626,16 +626,16 @@ VERIFY_COMMON(mail_aliases, mail::MailAlias, canonical_mail_aliases, FIELD_ADAPT
 ResourceVerificationResult Verification::verify_mail_config() {
     const ImportResult* ir = find_import_result("mail_config");
     if (!ir) { ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed; r.error = "missing_import_result"; r.resource_type = "mail_config"; return r; }
-    if (ir->disposition == ImportDisposition::SkippedEmpty || ir->disposition == ImportDisposition::SkippedMissingOptional) {
+        if (ir->disposition == ImportDisposition::SkippedEmpty || ir->disposition == ImportDisposition::SkippedMissingOptional) {
         // Baseline: verify mail_config key count matches pre-import
         uint64_t current = 0;
         { ReadLease rl(pool_);
           if (rl.is_valid() && rl->prepare("SELECT COUNT(*) FROM mail_config") && rl->step())
               current = static_cast<uint64_t>(rl->column_int(0)); }
-        if (current != ir->pre_import_count) {
+        if (current != ir->baseline.record_count) {
             ResourceVerificationResult r; r.success = false; r.status = VerificationStatus::Failed;
             r.error = "baseline_mismatch"; r.resource_type = "mail_config";
-            r.legacy_record_count = ir->pre_import_count; r.sqlite_record_count = current; return r; }
+            r.legacy_record_count = ir->baseline.record_count; r.sqlite_record_count = current; return r; }
         ResourceVerificationResult r; r.success = true; r.status = VerificationStatus::Skipped; r.resource_type = "mail_config"; return r; }
     ResourceVerificationResult r; r.resource_type = "mail_config";
 
@@ -773,6 +773,14 @@ DatabaseVerificationResult Verification::verify_all() {
     // Production reopen: shut down original pool, use real Storage
     pool_.shutdown();
 
+    // Helper to create a pool and fail if it can't initialize
+    auto make_pool = [&](ConnectionPool& p, const std::string& label) -> bool {
+        if (!p.initialize(sqlite_path_)) {
+            result.error = label + "_pool_failed"; return false;
+        }
+        return true;
+    };
+
     {
         Storage reopen_storage(storage_dir_, StorageOptions{CoreStorageBackend::SqlitePhase5});
         if (!reopen_storage.sqlite_ready()) {
@@ -787,7 +795,7 @@ DatabaseVerificationResult Verification::verify_all() {
             }
         };
 
-        // Checked reopen via Storage for runtime resources
+        // Full comparison via Storage + checked SQLite for runtime resources
         reopen_check("nodes", reopen_storage.load_nodes(), result.resources[0].legacy_record_count);
         reopen_check("php_versions", reopen_storage.load_php_versions(), result.resources[1].legacy_record_count);
         reopen_check("profiles", reopen_storage.load_profiles(), result.resources[2].legacy_record_count);
@@ -804,67 +812,74 @@ DatabaseVerificationResult Verification::verify_all() {
         reopen_check("mail_aliases", reopen_storage.load_mail_aliases(), result.resources[15].legacy_record_count);
 
         // mail_config via Storage
-        reopen_storage.load_mail_module_state();
-        reopen_storage.load_mail_smarthost();
+        auto reopen_ms = reopen_storage.load_mail_module_state();
+        auto reopen_sh = reopen_storage.load_mail_smarthost();
 
-        // Verified using checked SQLite query (in addition to Storage)
-        // to confirm that load didn't silently fail
+        // Checked confirmation for ALL runtime resources via fresh pool
         {
-            ConnectionPool reopen_pool2;
-            if (reopen_pool2.initialize(sqlite_path_)) {
-                auto checked_check = [&](const std::string& name, auto loaded, uint64_t expected) {
-                    if (loaded.size() != static_cast<size_t>(expected)) {
-                        result.error = "reopen_checked_mismatch:" + name; reopen_pass = false;
-                    }
-                };
-                SQLiteStorage reopen_sqlite2(reopen_pool2);
-                checked_check("nodes", reopen_sqlite2.load_nodes(), result.resources[0].legacy_record_count);
-                checked_check("php_versions", reopen_sqlite2.load_php_versions(), result.resources[1].legacy_record_count);
-                checked_check("profiles", reopen_sqlite2.load_profiles(), result.resources[2].legacy_record_count);
-                reopen_pool2.shutdown();
-            }
+            ConnectionPool confirm_pool;
+            if (!make_pool(confirm_pool, "reopen_confirm")) { result.success = false; return result; }
+            auto confirm_check = [&](const std::string& name, auto loaded, uint64_t expected) {
+                if (loaded.size() != static_cast<size_t>(expected)) {
+                    result.error = "reopen_confirm_mismatch:" + name; reopen_pass = false;
+                }
+            };
+            SQLiteStorage confirm_sqlite(confirm_pool);
+            confirm_check("nodes", confirm_sqlite.load_nodes(), result.resources[0].legacy_record_count);
+            confirm_check("php_versions", confirm_sqlite.load_php_versions(), result.resources[1].legacy_record_count);
+            confirm_check("profiles", confirm_sqlite.load_profiles(), result.resources[2].legacy_record_count);
+            confirm_check("users", confirm_sqlite.load_users(), result.resources[3].legacy_record_count);
+            confirm_check("sites", confirm_sqlite.load_sites(), result.resources[4].legacy_record_count);
+            confirm_check("domains", confirm_sqlite.load_domains(), result.resources[5].legacy_record_count);
+            confirm_check("databases", confirm_sqlite.load_databases(), result.resources[6].legacy_record_count);
+            confirm_check("reverse_proxies", confirm_sqlite.load_reverse_proxies(), result.resources[8].legacy_record_count);
+            confirm_check("access_users", confirm_sqlite.load_access_users(), result.resources[9].legacy_record_count);
+            confirm_check("access_grants", confirm_sqlite.load_access_grants(), result.resources[10].legacy_record_count);
+            confirm_check("ssl_certificates", confirm_sqlite.load_ssl_certificates(), result.resources[12].legacy_record_count);
+            confirm_check("mail_domains", confirm_sqlite.load_mail_domains(), result.resources[13].legacy_record_count);
+            confirm_check("mail_mailboxes", confirm_sqlite.load_mailboxes(), result.resources[14].legacy_record_count);
+            confirm_check("mail_aliases", confirm_sqlite.load_mail_aliases(), result.resources[15].legacy_record_count);
+            confirm_pool.shutdown();
         }
 
-        // Importer-only tables via direct SQLite
+        // Importer-only tables via direct SQLite (full verification)
         {
             ConnectionPool io_pool;
-            if (io_pool.initialize(sqlite_path_)) {
-                std::vector<backup::Backup> backup_records;
-                auto blr = load_backups(io_pool, backup_records);
-                if (!blr.success || backup_records.size() != result.resources[7].legacy_record_count) {
-                    result.error = "reopen_backup_mismatch"; reopen_pass = false;
-                }
-
-                std::vector<auth::AuthUser> auth_records;
-                auto alr = load_auth_users(io_pool, auth_records);
-                if (!alr.success || auth_records.size() != result.resources[11].legacy_record_count) {
-                    result.error = "reopen_auth_mismatch"; reopen_pass = false;
-                }
-                io_pool.shutdown();
+            if (!make_pool(io_pool, "reopen_importer_only")) { result.success = false; return result; }
+            std::vector<backup::Backup> backup_records;
+            auto blr = load_backups(io_pool, backup_records);
+            if (!blr.success || backup_records.size() != result.resources[7].legacy_record_count) {
+                result.error = "reopen_backup_mismatch"; reopen_pass = false;
             }
+            std::vector<auth::AuthUser> auth_records;
+            auto alr = load_auth_users(io_pool, auth_records);
+            if (!alr.success || auth_records.size() != result.resources[11].legacy_record_count) {
+                result.error = "reopen_auth_mismatch"; reopen_pass = false;
+            }
+            io_pool.shutdown();
         }
 
         // Post-reopen FK and integrity via shared helpers on fresh pool
         {
             ConnectionPool post_pool;
-            if (post_pool.initialize(sqlite_path_)) {
-                std::vector<std::string> post_violations;
-                std::string fk_err;
-                if (!checked_fk_check(post_pool, post_violations, fk_err)) {
-                    result.error = "post_reopen_" + fk_err; reopen_pass = false;
-                }
-                for (const auto& v : post_violations)
-                    result.foreign_key_violations.push_back(v);
-                if (!post_violations.empty()) {
+            if (!make_pool(post_pool, "reopen_pragma")) { result.success = false; return result; }
+
+            std::vector<std::string> reopened_fk;
+            std::string fk_err;
+            if (!checked_fk_check(post_pool, reopened_fk, fk_err)) {
+                result.error = "post_reopen_" + fk_err; reopen_pass = false;
+            } else {
+                result.foreign_key_violations = reopened_fk;
+                if (!reopened_fk.empty()) {
                     result.error = "post_reopen_fk_violation"; reopen_pass = false;
                 }
-
-                std::string integrity_result, integrity_err;
-                if (!checked_integrity(post_pool, integrity_result, integrity_err) || integrity_result != "ok") {
-                    result.error = "post_reopen_integrity_failed"; reopen_pass = false;
-                }
-                post_pool.shutdown();
             }
+
+            std::string integrity_result, integrity_err;
+            if (!checked_integrity(post_pool, integrity_result, integrity_err) || integrity_result != "ok") {
+                result.error = "post_reopen_integrity_failed"; reopen_pass = false;
+            }
+            post_pool.shutdown();
         }
 
         result.reopen_succeeded = true;

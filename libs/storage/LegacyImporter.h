@@ -34,6 +34,13 @@ enum class ImportDisposition {
     Failed
 };
 
+struct ResourceBaseline {
+    bool success = false;
+    uint64_t record_count = 0;
+    std::string canonical_checksum;
+    std::string error;
+};
+
 struct ImportResult {
     bool success = false;
     ImportDisposition disposition = ImportDisposition::Failed;
@@ -44,8 +51,7 @@ struct ImportResult {
     std::string diagnostics;
 
     // Baseline captured just before import (for skipped-resource verification)
-    uint64_t pre_import_count = 0;
-    std::string pre_import_checksum;
+    ResourceBaseline baseline;
 };
 
 struct ImportAllResult {
@@ -134,9 +140,9 @@ private:
         bool write_ok,
         uint64_t count);
 
-    // Baseline capture helper — returns current SQLite record count for type.
-    // Uses a direct COUNT(*) query.
-    uint64_t capture_baseline_count(const std::string& table);
+    // Baseline capture — checked per-resource.
+    // Fails with success=false on connection/prepare/step errors.
+    ResourceBaseline capture_baseline(const std::string& type);
 
     std::string legacy_dir_;
     ConnectionPool& pool_;
