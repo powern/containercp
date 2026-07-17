@@ -785,7 +785,6 @@ DatabaseVerificationResult Verification::verify_all() {
             std::string expected_checksum = (it != initial_evidence_.end()) ? it->second.legacy_checksum : "";
             rr.legacy_record_count = expected_count;
             rr.legacy_checksum = expected_checksum;
-
             if (!storage_ok) {
                 rr.success = false; rr.status = VerificationStatus::Failed;
                 rr.error = "reopen_storage_load_failed";
@@ -808,6 +807,7 @@ DatabaseVerificationResult Verification::verify_all() {
                                             orig->disposition == ImportDisposition::SkippedMissingOptional);
                 rr.status = was_skipped ? VerificationStatus::Skipped : VerificationStatus::Passed;
             }
+            rr.checked_checksum_alt = checked_checksum;
             if (!rr.success) { result.error = "reopen_" + name; reopen_pass = false; }
             result.reopened_resources.push_back(rr);
         };
