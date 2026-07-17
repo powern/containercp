@@ -1531,23 +1531,32 @@ static void write_all_required(const std::string& dir, int profiles_count = 2,
     write_txt(dir, "databases.db", "1|db1|user1|pass|mysql|8.0|1|1|1\n2|db2|user2|pass|pgsql|15|1|1|1\n");
     write_txt(dir, "backups.db", "1|1|1|backup1.tar.gz|full|1000|1|completed|/path|gzip\n2|2|1|backup2.tar.gz|incr|500|1|completed|/path|xz\n");
     write_txt(dir, "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
-    // Optional: template_profiles.db
+    // Optional: template_profiles.db (8-field format: no TYPE field)
     if (tpl_profiles_count > 0) {
         std::string s; for (int i = 1; i <= tpl_profiles_count; ++i)
-            s += std::to_string(i) + "|tpl" + std::to_string(i) + "|WEB_SERVER|apache|static|/tpl||1|1\n";
+            s += std::to_string(i) + "|tpl" + std::to_string(i) + "|apache|static|/tpl||1|1\n";
         write_txt(dir, "template_profiles.db", s);
     }
 }
 
 static void write_some_optional(const std::string& dir) {
-    write_txt(dir, "access_users.db", "1|user1|access1|/tmp|/bin/sh|1|shell\n");
-    write_txt(dir, "access_grants.db", "1|user1|1|read_write|1\n");
-    write_txt(dir, "auth_users.db", "1|auth1|hash1|1\n");
-    write_txt(dir, "ssl_certificates.db", "1|example.com|cert1|chain1|key1|2025-01-01|2026-01-01|\n");
-    write_txt(dir, "mail_domains.db", "1|example.com|1|catch@ex.com|sel1|1||relay|10|5\n");
-    write_txt(dir, "mail_mailboxes.db", "1|1|box1|pass|100|/mail|1|1\n");
-    write_txt(dir, "mail_aliases.db", "1|1||alias@ex.com|box1@ex.com|1\n");
-    write_txt(dir, "mail_state.db", "1|enabled|dns_ok\n");
+    // access_users.db: ID|USERNAME|AUTH_TYPE|PASSWORD_HASH|ENABLED (5 fields)
+    write_txt(dir, "access_users.db", "1|user1|auth_type1|hash1|1\n");
+    // access_grants.db: ID|ACCESS_USER_ID|SITE_ID|PERMISSION (4 fields)
+    write_txt(dir, "access_grants.db", "1|1|1|read_only\n");
+    // auth_users.db: ID|USERNAME|PASSWORD_HASH|MUST_CHANGE|ENABLED|ROLE (6 fields)
+    write_txt(dir, "auth_users.db", "1|auth1|hash1|0|1|admin\n");
+    // ssl_certificates.db: ID|DOMAIN_ID|DOMAIN|PROVIDER|CERT|KEY|EXPIRES|STATUS|HTTPS|AUTO (10 fields)
+    write_txt(dir, "ssl_certificates.db", "1|0|ex.com|acme|cert.pem|key.pem|2025-01-01|valid|1|1\n");
+    // mail_domains.db: ID|MODE|DOMAIN|DOMAIN_ID|SITE_ID|ENABLED|CATCH|DKIM_SEL|DKIM_DNS|RELAY|MAX_BOX|MAX_ALIAS (12 fields)
+    write_txt(dir, "mail_domains.db", "1|disabled|ex.com|0|0|1|catch@ex.com|sel1||relay|10|5\n");
+    // mail_mailboxes.db: exactly 13 fields
+    write_txt(dir, "mail_mailboxes.db", "1|1|box|hash|100|10|1|Name|fwd|0|||\n");
+    // mail_aliases.db: ID|DOMAIN_ID|SOURCE|DEST|ENABLED|CREATED_AT|UPDATED_AT (7 fields)
+    write_txt(dir, "mail_aliases.db", "1|1|src@ex.com|dst@ex.com|1||\n");
+    // mail_state.db: single word
+    write_txt(dir, "mail_state.db", "active\n");
+    // mail_smarthost.db: simple format
     write_txt(dir, "mail_smarthost.db", "smtp:587:user:pass\n");
 }
 
