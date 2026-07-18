@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-18 | `PENDING` | P11-R7 — Add end-to-end SQLite production upgrade test
+## 2026-07-18 | `e2b9e90` | P11-R7 — Add end-to-end SQLite production upgrade test
 
 **Summary:** Added a focused production upgrade integration test covering TXT fixture storage, manual SQLite migration, verification, archive creation, activation-state creation, startup validation, runtime read, runtime write, restart, post-restart validation, and no TXT fallback files in SQLite runtime storage.
 

@@ -263,7 +263,7 @@ The end-to-end production test must perform:
 - [x] Complete
 
 Validation evidence:
-- Commit: `PENDING`
+- Commit: `e2b9e90`
 - Focused tests: `P11-R7*` passed (`1` test, `92` assertions).
 - Full suite: `666` tests, `4491` assertions passed.
 - CTest: `1/1` tests passed.
