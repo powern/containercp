@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `526e410` | P11-15 — SQLite startup observability
+
+**Summary:** Added `STORAGE` category logs for SQLite backend startup. Startup now logs backend selection, validation success, readiness, and fail-closed exception reasons.
+
+**Files changed:** `libs/storage/Storage.cpp`, `tests/test_sqlite_storage.cpp`, `docs/development/phase11-sqlite-activation-checklist.md`, `planning/project-status.md`, `planning/backlog.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Operators now see clear SQLite startup logs, including descriptive failure reasons when activation state or validation checks fail.
+
+**Validation:** Focused P11-15 tests passed (`2` cases, `8` assertions). Full suite passed (`629` cases, `3769` assertions). `containercpd` target builds successfully.
+
+**Known risks:** Build output still contains pre-existing compiler warnings unrelated to P11-15. Test output is more verbose because SQLite startup paths now emit observability logs.
+
+---
+
 ## 2026-07-18 | `e855ff6` | P11-14 — SQLite failure handling
 
 **Summary:** Added fail-closed startup handling for symlinked SQLite database paths. Startup validation now inspects the configured database path with `lstat()` and rejects symlinks before opening SQLite.

@@ -449,9 +449,36 @@ Validation evidence:
 
 - [x] P11-14 — Complete
 
-## P11-15 through P11-20
+## P11-15 — Observability
 
-(Observability, operator workflow, security, site_id=0, integration tests, production runbook)
+### Problem
+Operators need clear startup logs that show SQLite backend selection, validation success, readiness, and failure reasons.
+
+### Contract
+- Log when SQLite backend startup begins and which database path is configured.
+- Log successful startup validation and backend readiness.
+- Log startup failure reasons before rethrowing fail-closed exceptions.
+
+### Implementation evidence
+
+Commit SHA: `526e410`
+
+Focused test result:
+```
+test cases: 2 | 2 passed | 0 failed | 627 skipped
+assertions: 8 | 8 passed | 0 failed |
+```
+
+Validation evidence:
+- SQLite startup logs use the `STORAGE` category.
+- Success path logs backend selection, startup validation success, and backend readiness.
+- Failure path logs the exception reason, including the missing activation state file path.
+
+- [x] P11-15 — Complete
+
+## P11-16 through P11-20
+
+(Operator workflow, security, site_id=0, integration tests, production runbook)
 
 ### Implementation evidence
 
@@ -479,6 +506,7 @@ Commit SHA: _____________
 | P11-12 | Read-path validation for SQLite-only reads and checked empty snapshots | P11-12 read path tests | e954568 | Complete |
 | P11-13 | Restart persistence through validated Storage reopen | P11-13 restart persistence test | 40f703e | Complete |
 | P11-14 | Failure handling for symlinked SQLite database paths | P11-14 startup symlink rejection test | e855ff6 | Complete |
+| P11-15 | SQLite startup observability logs | P11-15 startup log tests | 526e410 | Complete |
 
 ## Final validation
 
@@ -486,10 +514,10 @@ __Build environment:__ Linux x86_64, g++ (GCC) 13.3, C++20, SQLite 3.x
 
 __Full suite result:__
 ```
-test cases:  627 |  627 passed | 0 failed | 0 skipped
-assertions: 3761 | 3761 passed | 0 failed |
+test cases:  629 |  629 passed | 0 failed | 0 skipped
+assertions: 3769 | 3769 passed | 0 failed |
 ```
 
-__HEAD SHA:__ e855ff6
+__HEAD SHA:__ 526e410
 
 __git status:__ clean after documentation update commit
