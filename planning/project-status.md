@@ -499,5 +499,22 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 
 ---
 
-*Last updated: 2026-07-16*
+## Phase 11 — SQLite Activation
+
+| Task | Status | Notes |
+|------|--------|-------|
+| P11-01: Current runtime storage analysis | ✅ | Documented in `docs/development/phase11-sqlite-activation-checklist.md` |
+| P11-02: Backend selection contract | ✅ | `storage.backend` legacy/sqlite, unknown value fails |
+| P11-03: Explicit migration command | ✅ | `containercp storage migrate-to-sqlite` |
+| P11-04: Migration orchestrator | ✅ | 13-stage fail-closed pipeline |
+| P11-05: Phase 9 verification integration | ✅ | Orchestrator requires verification success |
+| P11-06: Phase 10 archive integration | ✅ | Immutable legacy archive integrated |
+| P11-07: Activation state | ✅ | `storage-state.json` written after migration |
+| P11-08: SQLite startup path | ✅ | Activation state, DB file, PRAGMA, integrity/FK checks |
+| P11-09: No silent fallback | ✅ | Commit `23bfe33`; daemon exits before HTTP/UI listeners when SQLite validation fails |
+| P11-10: Runtime repository wiring | ⬜ | Next |
+
+---
+
+*Last updated: 2026-07-18*
 *Current Version: v0.6.0*

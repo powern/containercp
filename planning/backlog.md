@@ -90,6 +90,19 @@ Before planning any new Epic, read these documents IN ORDER:
 - [x] ARCH-007: DNS Diagnostics — DnsCheckService, Health Score, Admin Panel
 - [x] MAIL-001: Mail provider implementation — Postfix/Dovecot/Rspamd stack
 
+## Active Epic — Phase 11 SQLite Activation
+
+- [x] P11-01: Current runtime storage analysis
+- [x] P11-02: Backend selection contract
+- [x] P11-03: Explicit migration command
+- [x] P11-04: Migration orchestrator
+- [x] P11-05: Phase 9 verification integration
+- [x] P11-06: Phase 10 archive integration
+- [x] P11-07: Activation state
+- [x] P11-08: SQLite startup path
+- [x] P11-09: No silent fallback
+- [ ] P11-10: Runtime repository wiring
+
 ## Version 0.7 — Monitoring
 
 - [ ] MON-001: System metrics collection

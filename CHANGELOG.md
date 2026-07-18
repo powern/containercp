@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `23bfe33` | P11-09 — No silent SQLite fallback
+
+**Summary:** SQLite backend selection is now loaded during normal daemon startup before `ServiceRegistry` constructs `Storage`, so `storage.backend=sqlite` cannot be ignored and silently fall back to legacy TXT storage.
+
+**Files changed:** `app/containercpd/main.cpp`, `tests/test_storage.cpp`, `docs/development/phase11-sqlite-activation-checklist.md`, `planning/project-status.md`, `planning/backlog.md`, `CHANGELOG.md`
+
+**User-visible behavior:** If SQLite is configured and startup validation fails, `containercpd` exits non-zero before starting REST API or Web UI listeners. Operators see the storage validation error instead of a daemon that starts on legacy storage.
+
+**Validation:** Focused P11 tests passed (`7` cases, `14` assertions). Full suite passed (`620` cases, `3577` assertions). Daemon namespace validation with missing activation state exited `134`, was not alive after 2 seconds, and had no listeners on the selected API/UI ports.
+
+**Known risks:** Build output still contains pre-existing compiler warnings unrelated to this change; no new warning was introduced by P11-09.
+
+---
+
 ## v0.6.0 — 2026-07-16
 
 **Stable release.** See `docs/release-notes-v0.6.0.md` for full release notes.

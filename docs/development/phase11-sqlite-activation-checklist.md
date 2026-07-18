@@ -54,7 +54,7 @@ API handler → ServiceRegistry → Managers (in-memory)
 
 [x] Analysis complete — documented above.
 
-- [ ] P11-01 — Complete
+- [x] P11-01 — Complete
 
 ## P11-02 — Backend Selection Contract
 
@@ -284,11 +284,26 @@ No TXT fallback. No HTTP listener. Safe error logged.
 
 ### Implementation evidence
 
-Commit SHA: _____________
+Commit SHA: `23bfe33`
 
-Focused test result: _____________
+Focused test result:
+```
+test cases:  7 |  7 passed | 0 failed | 613 skipped
+assertions: 14 | 14 passed | 0 failed |
+```
 
-- [ ] P11-09 — Complete
+Daemon startup validation:
+```
+CONTAINERCP_STORAGE_BACKEND=sqlite containercpd
+status=134
+alive_after_2s=0
+ports=
+stderr=SQLite backend selected but activation state file not found: /srv/containercp/database/storage-state.json. Run 'containercp storage migrate-to-sqlite' first.
+```
+
+This confirms the SQLite storage exception reaches daemon startup, the process exits non-zero, no API/UI listener starts, and no legacy TXT fallback occurs.
+
+- [x] P11-09 — Complete
 
 ## P11-10 — Runtime Repository Wiring
 
@@ -335,6 +350,7 @@ Commit SHA: _____________
 | P11-06 | Archive integration (in orchestrator) | — | 6e3e009 | Complete |
 | P11-07 | Activation state (in orchestrator) | activation state test | 6e3e009 | Complete |
 | P11-08 | Storage startup validation (validate_activation_state, verify_sqlite_file, verify_sqlite_startup), StorageOptions.skip_startup_validation, sqlite_db_path fix | P11-08 startup validation tests (7 cases) | 4a920fc | Complete |
+| P11-09 | Daemon startup storage backend loading, no silent fallback validation | backend env loading test + daemon namespace validation | 23bfe33 | Complete |
 
 ## Final validation
 
@@ -342,10 +358,10 @@ __Build environment:__ Linux x86_64, g++ (GCC) 13.3, C++20, SQLite 3.x
 
 __Full suite result:__
 ```
-test cases:  619 |  619 passed | 0 failed | 0 skipped
-assertions: 3576 | 3576 passed | 0 failed |
+test cases:  620 |  620 passed | 0 failed | 0 skipped
+assertions: 3577 | 3577 passed | 0 failed |
 ```
 
-__HEAD SHA:__ 4a920fc
+__HEAD SHA:__ 23bfe33
 
-__git status:__ clean, working tree clean, no untracked files
+__git status:__ clean after documentation update commit
