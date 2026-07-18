@@ -2,6 +2,8 @@
 #include "MigrationEngine.h"
 #include "SchemaMigrations.h"
 
+#include <cerrno>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -88,9 +90,13 @@ void Storage::validate_activation_state(const std::string& sqlite_path) {
 
 void Storage::verify_sqlite_file(const std::string& sqlite_path) {
     struct stat st;
-    if (stat(sqlite_path.c_str(), &st) != 0) {
+    if (lstat(sqlite_path.c_str(), &st) != 0) {
         throw std::runtime_error(
-            "SQLite database file not found: " + sqlite_path);
+            "SQLite database file not found: " + sqlite_path + ": " + std::strerror(errno));
+    }
+    if (S_ISLNK(st.st_mode)) {
+        throw std::runtime_error(
+            "SQLite database path is a symlink and is not allowed: " + sqlite_path);
     }
     if (!S_ISREG(st.st_mode)) {
         throw std::runtime_error(

@@ -3103,3 +3103,40 @@ TEST_CASE("P11-13 SQLite restart preserves all runtime resources after startup v
     }
     tclean(dir);
 }
+
+// ============================================================
+// Phase 11-14: Failure handling
+// ============================================================
+
+TEST_CASE("P11-14 startup validation rejects symlinked SQLite database path") {
+    auto dir = tdir("p1114_symlink_db");
+    tclean(dir); fs::create_directories(dir);
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+    }
+
+    auto real_db = dir + "actual-containercp.db";
+    auto configured_db = dir + "containercp.db";
+    fs::rename(configured_db, real_db);
+    fs::create_symlink(real_db, configured_db);
+    create_state_file(dir, "sqlite", configured_db);
+
+    StorageOptions opts;
+    opts.core_backend = CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = false;
+
+    try {
+        Storage s(dir, opts);
+        FAIL("SQLite startup accepted a symlinked database path");
+    } catch (const std::runtime_error& e) {
+        std::string msg = e.what();
+        CHECK(msg.find("symlink") != std::string::npos);
+        CHECK(msg.find(configured_db) != std::string::npos);
+    }
+    CHECK_FALSE(fs::exists(dir + "nodes.db"));
+    tclean(dir);
+}
