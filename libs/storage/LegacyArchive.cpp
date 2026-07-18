@@ -104,8 +104,8 @@ bool LegacyArchive::valid_timestamp(const std::string& ts) {
 
 bool LegacyArchive::safe_version(const std::string& v) {
     if (v.empty() || v[0] != 'v') return false;
-    // Format: v<num>.<num>.<num>[-suffix]
-    size_t pos = 1; // after 'v'
+    // Format: v<num>.<num>[.<num>][-suffix]
+    size_t pos = 1;
     auto parse_num = [&]() -> bool {
         if (pos >= v.size() || (v[pos] < '0' || v[pos] > '9')) return false;
         while (pos < v.size() && v[pos] >= '0' && v[pos] <= '9') ++pos;
@@ -114,8 +114,8 @@ bool LegacyArchive::safe_version(const std::string& v) {
     if (!parse_num()) return false;
     if (pos >= v.size() || v[pos] != '.') return false; ++pos;
     if (!parse_num()) return false;
-    if (pos >= v.size() || v[pos] != '.') return false; ++pos;
-    if (!parse_num()) return false;
+    // Optional third numeric component
+    if (pos < v.size() && v[pos] == '.') { ++pos; if (!parse_num()) return false; }
     // Optional suffix: -alphanumeric
     if (pos < v.size()) {
         if (v[pos] != '-') return false; ++pos;
@@ -147,14 +147,10 @@ std::string LegacyArchive::sha256_file(const std::string& path) {
 
 std::string LegacyArchive::normalize_archive_identity_path(const std::string& path) {
     if (path.empty()) return "";
-    fs::path p(path);
-    // Reject traversal before normalization
-    for (auto& c : p) { if (c == "..") return ""; }
-    p = p.lexically_normal();
+    fs::path p = fs::path(path).lexically_normal();
     if (p.empty()) return "";
-    // Reject traversal after normalization
+    // Reject path traversal after normalization (.. that could not be resolved)
     for (auto& c : p) { if (c == "..") return ""; }
-    // Strip trailing separator
     std::string result = p.string();
     while (!result.empty() && (result.back() == '/' || result.back() == '\\'))
         result.pop_back();
