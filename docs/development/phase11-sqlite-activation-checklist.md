@@ -123,7 +123,7 @@ containercp storage migrate-to-sqlite \
 
 ### Implementation evidence
 
-Commit SHA: `97dbd1d` (P11-02), P11-03 commit: _____________
+Commit SHA: `97dbd1d` (P11-02), `6a1a48e` (P11-03)
 
 Focused test result:
 ```
@@ -327,7 +327,7 @@ Commit SHA: _____________
 |----|------------------|------------|------------|--------|
 | P11-01 | Analysis only | — | — | Complete |
 | P11-02 | Config, ServiceRegistry | backend selection tests | 97dbd1d | Complete |
-| P11-03 | DaemonApp, CommandDispatcher | migration command tests | | |
+| P11-03 | DaemonApp, CommandDispatcher | migration command tests | 6a1a48e | Complete |
 | ... | ... | ... | ... | ... |
 
 ## Final validation
