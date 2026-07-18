@@ -516,7 +516,8 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | P11-11: Write-path validation | ✅ | Commit `f3dd14e`; replacement commits, no TXT fallback, child-write rollback verified |
 | P11-12: Read-path validation | ✅ | Commit `e954568`; checked empty reads and TXT-ignore behavior verified |
 | P11-13: Restart persistence | ✅ | Commit `40f703e`; validated reopen preserves all runtime resources |
-| P11-14: Failure handling | ⬜ | Next |
+| P11-14: Failure handling | ✅ | Commit `e855ff6`; symlinked SQLite database path rejected before open |
+| P11-15: Observability | ⬜ | Next |
 
 ---
 

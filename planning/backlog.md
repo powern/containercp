@@ -105,7 +105,8 @@ Before planning any new Epic, read these documents IN ORDER:
 - [x] P11-11: Write-path validation
 - [x] P11-12: Read-path validation
 - [x] P11-13: Restart persistence
-- [ ] P11-14: Failure handling
+- [x] P11-14: Failure handling
+- [ ] P11-15: Observability
 
 ## Version 0.7 — Monitoring
 

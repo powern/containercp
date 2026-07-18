@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `e855ff6` | P11-14 — SQLite failure handling
+
+**Summary:** Added fail-closed startup handling for symlinked SQLite database paths. Startup validation now inspects the configured database path with `lstat()` and rejects symlinks before opening SQLite.
+
+**Files changed:** `libs/storage/Storage.cpp`, `tests/test_sqlite_storage.cpp`, `docs/development/phase11-sqlite-activation-checklist.md`, `planning/project-status.md`, `planning/backlog.md`, `CHANGELOG.md`
+
+**User-visible behavior:** If `storage.backend=sqlite` points to a symlinked `containercp.db`, daemon startup now fails with a descriptive error instead of following the link.
+
+**Validation:** Focused P11-14 test passed (`1` case, `4` assertions). Full suite passed (`627` cases, `3761` assertions). `containercpd` target builds successfully.
+
+**Known risks:** Build output still contains pre-existing compiler warnings unrelated to P11-14.
+
+---
+
 ## 2026-07-18 | `40f703e` | P11-13 — SQLite restart persistence
 
 **Summary:** Added restart persistence validation for SQLite activation. The test writes all runtime resource categories, closes storage, writes activation state, reopens with startup validation enabled, and verifies all checked snapshots still load.

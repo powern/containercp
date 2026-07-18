@@ -422,9 +422,36 @@ Validation evidence:
 
 - [x] P11-13 — Complete
 
-## P11-14 through P11-20
+## P11-14 — Failure Handling
 
-(Failure handling, observability, operator workflow, security, site_id=0, integration tests, production runbook)
+### Problem
+SQLite startup failure handling must reject unsafe database paths before opening SQLite and must fail closed without legacy TXT fallback.
+
+### Contract
+- Symlinked SQLite database paths are rejected during startup validation.
+- Error messages identify the rejected path and reason.
+- Failure occurs before runtime storage initialization and does not create legacy TXT state.
+
+### Implementation evidence
+
+Commit SHA: `e855ff6`
+
+Focused test result:
+```
+test cases: 1 | 1 passed | 0 failed | 626 skipped
+assertions: 4 | 4 passed | 0 failed |
+```
+
+Validation evidence:
+- `Storage::verify_sqlite_file()` now uses `lstat()` to inspect the configured database path without following symlinks.
+- Symlinked `containercp.db` paths fail with a descriptive error before the SQLite pool opens.
+- P11-14 test verifies no legacy `nodes.db` fallback file appears after the startup failure.
+
+- [x] P11-14 — Complete
+
+## P11-15 through P11-20
+
+(Observability, operator workflow, security, site_id=0, integration tests, production runbook)
 
 ### Implementation evidence
 
@@ -451,6 +478,7 @@ Commit SHA: _____________
 | P11-11 | Write-path validation for SQLite commit/replacement/rollback/no-TXT behavior | P11-11 write path tests | f3dd14e | Complete |
 | P11-12 | Read-path validation for SQLite-only reads and checked empty snapshots | P11-12 read path tests | e954568 | Complete |
 | P11-13 | Restart persistence through validated Storage reopen | P11-13 restart persistence test | 40f703e | Complete |
+| P11-14 | Failure handling for symlinked SQLite database paths | P11-14 startup symlink rejection test | e855ff6 | Complete |
 
 ## Final validation
 
@@ -458,10 +486,10 @@ __Build environment:__ Linux x86_64, g++ (GCC) 13.3, C++20, SQLite 3.x
 
 __Full suite result:__
 ```
-test cases:  626 |  626 passed | 0 failed | 0 skipped
-assertions: 3757 | 3757 passed | 0 failed |
+test cases:  627 |  627 passed | 0 failed | 0 skipped
+assertions: 3761 | 3761 passed | 0 failed |
 ```
 
-__HEAD SHA:__ 40f703e
+__HEAD SHA:__ e855ff6
 
 __git status:__ clean after documentation update commit
