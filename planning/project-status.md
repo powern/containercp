@@ -513,7 +513,8 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | P11-08: SQLite startup path | ✅ | Activation state, DB file, PRAGMA, integrity/FK checks |
 | P11-09: No silent fallback | ✅ | Commit `23bfe33`; daemon exits before HTTP/UI listeners when SQLite validation fails |
 | P11-10: Runtime repository wiring | ✅ | Commit `7a616a5`; all 17 resources verified through SQLite |
-| P11-11: Write-path validation | ⬜ | Next |
+| P11-11: Write-path validation | ✅ | Commit `f3dd14e`; replacement commits, no TXT fallback, child-write rollback verified |
+| P11-12: Read-path validation | ⬜ | Next |
 
 ---
 

@@ -337,9 +337,38 @@ Full resource verification:
 
 - [x] P11-10 — Complete
 
-## P11-11 through P11-20
+## P11-11 — Write-path Validation
 
-(Write-path validation, read-path validation, restart persistence, failure handling, observability, operator workflow, security, site_id=0, integration tests, production runbook)
+### Problem
+SQLite runtime writes must commit only to SQLite, must not create legacy TXT fallback files, and failed child-table writes must roll back without losing the previously committed SQLite state.
+
+### Contract
+- Replacement writes commit updated records and remove omitted records in SQLite.
+- SQLite-mode writes do not create legacy TXT files.
+- `mail_config` key writes commit through SQLite.
+- Failed child-table replacements roll back the whole write transaction.
+
+### Implementation evidence
+
+Commit SHA: `f3dd14e`
+
+Focused test result:
+```
+test cases:  2 |  2 passed | 0 failed | 621 skipped
+assertions: 29 | 29 passed | 0 failed |
+```
+
+Validation evidence:
+- Replacement commits verified for `backups`, `auth_users`, and `mail_config`.
+- No legacy TXT files are created for validated SQLite write paths.
+- Failed `access_grants` replacement with an invalid `site_id` rolls back and preserves the original grant.
+- Failed `mail_mailboxes` replacement with an invalid `domain_id` rolls back and preserves the original mailbox.
+
+- [x] P11-11 — Complete
+
+## P11-12 through P11-20
+
+(Read-path validation, restart persistence, failure handling, observability, operator workflow, security, site_id=0, integration tests, production runbook)
 
 ### Implementation evidence
 
@@ -363,6 +392,7 @@ Commit SHA: _____________
 | P11-08 | Storage startup validation (validate_activation_state, verify_sqlite_file, verify_sqlite_startup), StorageOptions.skip_startup_validation, sqlite_db_path fix | P11-08 startup validation tests (7 cases) | 4a920fc | Complete |
 | P11-09 | Daemon startup storage backend loading, no silent fallback validation | backend env loading test + daemon namespace validation | 23bfe33 | Complete |
 | P11-10 | Runtime repository wiring for backups/auth_users and all 17 SQLite resources | P11-10 storage route + all-resource SQLite snapshot tests | 7a616a5 | Complete |
+| P11-11 | Write-path validation for SQLite commit/replacement/rollback/no-TXT behavior | P11-11 write path tests | f3dd14e | Complete |
 
 ## Final validation
 
@@ -370,10 +400,10 @@ __Build environment:__ Linux x86_64, g++ (GCC) 13.3, C++20, SQLite 3.x
 
 __Full suite result:__
 ```
-test cases:  621 |  621 passed | 0 failed | 0 skipped
-assertions: 3640 | 3640 passed | 0 failed |
+test cases:  623 |  623 passed | 0 failed | 0 skipped
+assertions: 3669 | 3669 passed | 0 failed |
 ```
 
-__HEAD SHA:__ 7a616a5
+__HEAD SHA:__ f3dd14e
 
 __git status:__ clean after documentation update commit

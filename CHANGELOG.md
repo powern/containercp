@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `f3dd14e` | P11-11 — SQLite write-path validation
+
+**Summary:** Added focused validation for SQLite-mode write behavior after runtime repository wiring. The tests prove replacement writes commit to SQLite, omitted records are removed, legacy TXT files are not created, and failed child-table writes roll back without losing the last committed state.
+
+**Files changed:** `tests/test_sqlite_storage.cpp`, `docs/development/phase11-sqlite-activation-checklist.md`, `planning/project-status.md`, `planning/backlog.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No functional behavior change; this is validation coverage for SQLite backend writes. It reduces risk that SQLite-mode runtime mutations silently fall back to TXT or partially apply failed child writes.
+
+**Validation:** Focused P11-11 tests passed (`2` cases, `29` assertions). Full suite passed (`623` cases, `3669` assertions). `containercpd` target builds successfully.
+
+**Known risks:** Build output still contains pre-existing compiler warnings unrelated to P11-11.
+
+---
+
 ## 2026-07-18 | `7a616a5` | P11-10 — Runtime repository SQLite wiring
 
 **Summary:** Completed SQLite runtime routing for the two remaining TXT-only resources, `backups` and `auth_users`, and verified the full 17-resource runtime set through SQLite snapshots.
