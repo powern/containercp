@@ -762,3 +762,46 @@ TEST_CASE("Auth user survives simulated restart") {
 
     std::filesystem::remove_all(tmp);
 }
+
+// ============================================================
+// P11-02: Backend selection contract
+// ============================================================
+
+#include "config/Config.h"
+
+TEST_CASE("Storage backend defaults to legacy") {
+    auto& cfg = containercp::config::Config::instance();
+    cfg.set_storage_backend("legacy");
+    CHECK(cfg.storage_backend() == "legacy");
+}
+
+TEST_CASE("Storage backend sqlite accepted") {
+    auto& cfg = containercp::config::Config::instance();
+    cfg.set_storage_backend("sqlite");
+    CHECK(cfg.storage_backend() == "sqlite");
+    cfg.set_storage_backend("legacy"); // restore
+}
+
+TEST_CASE("Storage backend unknown value preserved for startup validation") {
+    // Config does NOT silently normalize unknown values — ServiceRegistry rejects them
+    auto& cfg = containercp::config::Config::instance();
+    cfg.set_storage_backend("bogus");
+    CHECK(cfg.storage_backend() == "bogus");
+    cfg.set_storage_backend("legacy"); // restore
+}
+
+TEST_CASE("StorageOptions reflects legacy backend") {
+    auto tmp = std::filesystem::temp_directory_path() / "stor_cfg_legacy";
+    std::filesystem::create_directories(tmp);
+    containercp::storage::Storage s(tmp.string(), containercp::storage::StorageOptions{containercp::storage::CoreStorageBackend::Txt});
+    CHECK_FALSE(s.sqlite_ready());
+    std::filesystem::remove_all(tmp);
+}
+
+TEST_CASE("StorageOptions reflects SqlitePhase5 backend") {
+    auto tmp = std::filesystem::temp_directory_path() / "stor_cfg_sqlite";
+    std::filesystem::create_directories(tmp);
+    containercp::storage::Storage s(tmp.string(), containercp::storage::StorageOptions{containercp::storage::CoreStorageBackend::SqlitePhase5});
+    CHECK(s.sqlite_ready());
+    std::filesystem::remove_all(tmp);
+}

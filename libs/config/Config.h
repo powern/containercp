@@ -26,6 +26,11 @@ public:
     void load_server_hostname();
     void save_server_hostname() const;
 
+    // Storage backend selection: "legacy" (default) or "sqlite"
+    std::string storage_backend() const;
+    void set_storage_backend(const std::string& backend);
+    void load_storage_backend();
+
     // Public IP detection metadata (auto-detected, NOT user-editable)
     std::string public_ipv4() const { return public_ipv4_; }
     void set_public_ipv4(const std::string& ip) { public_ipv4_ = ip; }
@@ -43,6 +48,7 @@ private:
     std::string data_root_;
     std::string log_root_;
     std::string server_hostname_;
+    std::string storage_backend_;
     std::string public_ipv4_;  // auto-detected, not user-editable
     std::string public_ipv6_;  // auto-detected, not user-editable
 };

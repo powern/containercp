@@ -9,6 +9,19 @@
 
 namespace containercp::core {
 
+storage::StorageOptions ServiceRegistry::storage_backend_options(const config::Config& cfg) {
+    storage::StorageOptions opts;
+    std::string backend = cfg.storage_backend();
+    if (backend == "sqlite") {
+        opts.core_backend = storage::CoreStorageBackend::SqlitePhase5;
+    } else if (backend != "legacy") {
+        throw std::runtime_error(
+            "Invalid storage.backend value: '" + backend + "'. "
+            "Expected 'legacy' or 'sqlite'.");
+    }
+    return opts;
+}
+
 ServiceRegistry::ServiceRegistry()
     : config_(config::Config::instance())
     , logger_(logger::Logger::instance())
@@ -20,7 +33,7 @@ ServiceRegistry::ServiceRegistry()
     , http01_challenge_(logger_, config_.data_root() + "/sites", config_.data_root() + "/ssl/0/.well-known/acme-challenge")
     , cert_provider_(std::make_shared<ssl::LetsEncryptProvider>(logger_, http01_challenge_, cert_store_))
     , pem_cert_provider_(std::make_shared<ssl::PemCertificateProvider>(logger_))
-    , storage_(config_.database_dir())
+    , storage_(config_.database_dir(), storage_backend_options(config_))
     , job_executor_(jobs_, 2, 64)
     , renewal_scheduler_(logger_, cert_store_, jobs_, job_executor_, cert_providers_)
     , auth_(*this)

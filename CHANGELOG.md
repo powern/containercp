@@ -326,3 +326,12 @@ See `docs/changelog/early-development.md` for detailed entries.
 - Bug fixes: `use_esld=false` (eSLD mismatch broke domain key lookup),
   `worker-normal.inc` not generated, `worker-proxy.inc` not mounted in compose
 - Docker images: `ghcr.io/containercp/mail-rspamd:latest` (debian:trixie + rspamd)
+
+## 2026-07-18 | P11-02 — Backend selection contract
+
+- `Config` gains `storage_backend()` getter, `set_storage_backend()`, `load_storage_backend()`
+- Backend source: `CONTAINERCP_STORAGE_BACKEND` env var → `/srv/containercp/database/storage_backend` file → `"legacy"` default
+- `ServiceRegistry` accepts `StorageOptions` from config, validates at startup
+- Unknown backend value → startup failure (no silent Txt fallback)
+- 5 new unit tests (605 total, 3526 assertions)
+- Files: `libs/config/Config.h/cpp`, `libs/core/ServiceRegistry.h/cpp`, `tests/test_storage.cpp`

@@ -175,6 +175,8 @@ private:
     provider::DockerComposeProvider hosting_provider_;
     core::RecoveryManager recovery_manager_;
     mail::DockerMailProvider mail_provider_;
+
+    static storage::StorageOptions storage_backend_options(const config::Config& cfg);
 };
 
 } // namespace containercp::core

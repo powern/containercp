@@ -11,6 +11,7 @@ Config::Config()
     , config_root_("/etc/containercp")
     , data_root_("/srv/containercp")
     , log_root_("/var/log/containercp")
+    , storage_backend_("legacy")
 {
 }
 
@@ -89,6 +90,28 @@ void Config::save_server_hostname() const {
     if (f.is_open()) {
         f << server_hostname_;
     }
+}
+
+std::string Config::storage_backend() const {
+    return storage_backend_;
+}
+
+void Config::set_storage_backend(const std::string& backend) {
+    storage_backend_ = backend;
+}
+
+void Config::load_storage_backend() {
+    const char* env = std::getenv("CONTAINERCP_STORAGE_BACKEND");
+    if (env != nullptr && env[0] != '\0') {
+        storage_backend_ = env;
+        return;
+    }
+    std::string path = data_root_ + "/database/storage_backend";
+    std::ifstream f(path);
+    if (f.is_open()) {
+        std::getline(f, storage_backend_);
+    }
+    if (storage_backend_.empty()) storage_backend_ = "legacy";
 }
 
 } // namespace containercp::config
