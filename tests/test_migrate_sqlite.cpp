@@ -1,5 +1,6 @@
 #include "storage/LegacyArchive.h"
 #include "storage/MigrationOrchestrator.h"
+#include "storage/Storage.h"
 
 #include <filesystem>
 #include <fstream>
@@ -156,6 +157,52 @@ TEST_CASE("P11-16 migration diagnostics include operator next steps") {
     CHECK(r.diagnostics.find("Restart containercpd") != std::string::npos);
     CHECK(r.diagnostics.find("STORAGE startup validation logs pass") != std::string::npos);
     CHECK(r.diagnostics.find(r.archive.archive_path) != std::string::npos);
+
+    cleanup(tmp);
+}
+
+TEST_CASE("P11-19 migrated SQLite database opens through production startup gate") {
+    auto tmp = test_dir("mig_startup_gate");
+    cleanup(tmp);
+    fs::create_directories(tmp);
+    std::string src = tmp + "source/";
+    std::string db = tmp + "containercp.db";
+    std::string archive = tmp + "archive/";
+    copy_fixtures("normal", src);
+
+    containercp::storage::MigrationOrchestrator orch(
+        src, db, archive, "v0.6.0", "v0.7.0");
+    auto r = orch.migrate_to_sqlite();
+    REQUIRE(r.success);
+
+    containercp::storage::StorageOptions opts;
+    opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = false;
+    containercp::storage::Storage storage(tmp, opts);
+    REQUIRE(storage.sqlite_ready());
+
+    auto require_snapshot = [](const auto& snap) {
+        CHECK(snap.success);
+    };
+    require_snapshot(storage.load_nodes_checked());
+    require_snapshot(storage.load_php_versions_checked());
+    require_snapshot(storage.load_profiles_checked());
+    require_snapshot(storage.load_users_checked());
+    require_snapshot(storage.load_sites_checked());
+    require_snapshot(storage.load_domains_checked());
+    require_snapshot(storage.load_databases_checked());
+    require_snapshot(storage.load_backups_checked());
+    require_snapshot(storage.load_reverse_proxies_checked());
+    require_snapshot(storage.load_access_users_checked());
+    require_snapshot(storage.load_access_grants_checked());
+    require_snapshot(storage.load_auth_users_checked());
+    require_snapshot(storage.load_ssl_certificates_checked());
+    require_snapshot(storage.load_mail_domains_checked());
+    require_snapshot(storage.load_mailboxes_checked());
+    require_snapshot(storage.load_mail_aliases_checked());
+
+    auto mail_state = storage.load_mail_module_state_checked();
+    CHECK(mail_state.success);
 
     cleanup(tmp);
 }
