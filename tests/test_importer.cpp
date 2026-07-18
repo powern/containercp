@@ -1809,8 +1809,8 @@ TEST_CASE("snapshot rejects negative SSL integer") {
     }
     SQLiteSnapshotReader snap(pool);
     auto s = snap.read_ssl_certificates();
-    // negative integers rejected by schema, table empty
-    CHECK(s.success); CHECK(s.records.empty());
+    // -1 is a valid int32 — row converts successfully
+    CHECK(s.success); CHECK_FALSE(s.records.empty());
     pool.shutdown(); cleanup(dir);
 }
 
