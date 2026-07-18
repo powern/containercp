@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `PENDING` | P11-R7 — Add end-to-end SQLite production upgrade test
+
+**Summary:** Added a focused production upgrade integration test covering TXT fixture storage, manual SQLite migration, verification, archive creation, activation-state creation, startup validation, runtime read, runtime write, restart, post-restart validation, and no TXT fallback files in SQLite runtime storage.
+
+**Files changed:** `tests/test_migrate_sqlite.cpp`, `docs/development/phase11-production-review-fixes.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. This adds coverage proving the approved upgrade path can migrate legacy TXT data to SQLite, activate through the production startup gate, accept runtime writes, persist them across restart, and avoid silently writing TXT fallback files.
+
+**Validation:** Focused P11-R7 test passed (`1` case, `92` assertions). Full suite passed (`666` cases, `4491` assertions). CTest passed (`1/1`). Clean rebuild of `containercp_tests` completed with `cmake --build build2 --clean-first --target containercp_tests containercpd -- -j1`; `containercpd` compilation was continued after the tool timeout with `cmake --build build2 --target containercpd -- -j1` and completed successfully.
+
+**Known risks:** Existing clean-build warning debt remains, including OpenSSL/c-ares deprecations, unused variables/parameters, `ServiceRegistry` member reorder warnings, sign-compare warnings, and legacy misleading indentation warnings.
+
+---
+
 ## 2026-07-18 | `e18a805` | P11-R6 — Complete SQLite filesystem security validation
 
 **Summary:** Added SQLite activation startup security checks for storage directories, database files, activation-state files, and activation archive paths. Startup now rejects unsafe ownership, group/world-writable permissions, symlinked archive paths, non-regular activation-state paths, and unexpected filesystem objects before opening SQLite.
