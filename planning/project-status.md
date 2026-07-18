@@ -523,7 +523,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | P11-18: site_id=0 | ✅ | Commit `d824ec2`; approved sentinel records survive validated restart |
 | P11-19: Integration tests | ✅ | Commit `173db12`; migrated DB opens through production startup gate |
 | P11-20: Production runbook | ✅ | Commit `046e400`; production migration/activation/rollback runbook added |
-| P11-21: Clean build and final validation | ✅ | Pending commit; clean rebuild, CTest, full doctest passed; warning debt documented |
+| P11-21: Clean build and final validation | ✅ | Commit `545a4ce`; clean rebuild, CTest, full doctest passed; warning debt documented |
 
 ---
 

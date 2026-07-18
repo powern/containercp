@@ -608,7 +608,7 @@ Validation evidence:
 
 ### P11-21 — Clean Build and Final Validation
 
-Commit SHA: `pending`
+Commit SHA: `545a4ce`
 
 Validated code HEAD: `f9036aa`
 
@@ -659,7 +659,7 @@ Known warning debt from clean rebuild:
 | P11-18 | Runtime preservation of approved site_id=0 sentinels | P11-18 sentinel restart test | d824ec2 | Complete |
 | P11-19 | End-to-end migrated database startup integration | P11-19 migration-to-startup test | 173db12 | Complete |
 | P11-20 | Production SQLite activation runbook | docs/sqlite-activation-runbook.md | 046e400 | Complete |
-| P11-21 | Clean rebuild and final validation | clean rebuild + CTest + full doctest | pending | Complete |
+| P11-21 | Clean rebuild and final validation | clean rebuild + CTest + full doctest | 545a4ce | Complete |
 
 ## Final validation
 
@@ -673,6 +673,8 @@ assertions: 3822 | 3822 passed | 0 failed |
 
 __Clean rebuild:__ passed for `containercp_tests` and `containercpd`; existing warning debt remains documented in P11-21.
 
-__HEAD SHA:__ f9036aa
+__Validated code HEAD:__ f9036aa
+
+__Documentation HEAD:__ 545a4ce
 
 __git status:__ clean after P11-21 validation
