@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `173db12` | P11-19 — SQLite startup integration test
+
+**Summary:** Added end-to-end integration coverage proving a migrated SQLite database opens through the production startup validation gate and exposes all checked runtime snapshots.
+
+**Files changed:** `tests/test_migrate_sqlite.cpp`, `docs/development/phase11-sqlite-activation-checklist.md`, `planning/project-status.md`, `planning/backlog.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No functional behavior change; this validates that successful migration output can be activated by the daemon startup path.
+
+**Validation:** Focused P11-19 test passed (`1` case, `19` assertions). Full suite passed (`633` cases, `3822` assertions). `containercpd` target builds successfully.
+
+**Known risks:** Build output still contains pre-existing compiler warnings unrelated to P11-19. SQLite startup observability logs make migration/storage tests more verbose.
+
+---
+
 ## 2026-07-18 | `d824ec2` | P11-18 — SQLite site_id=0 sentinel validation
 
 **Summary:** Added runtime validation that approved `site_id=0` sentinel records survive SQLite writes and validated restart.

@@ -556,9 +556,36 @@ Validation evidence:
 
 - [x] P11-18 — Complete
 
-## P11-19 through P11-20
+## P11-19 — Integration Tests
 
-(integration tests, production runbook)
+### Problem
+Migration success must be proven compatible with the production SQLite startup gate, not only with migration-internal verification.
+
+### Contract
+- Run TXT-to-SQLite migration from v0.6 fixture data.
+- Reopen the published database through `Storage` with startup validation enabled.
+- Verify all runtime checked snapshots can be read from the migrated database.
+
+### Implementation evidence
+
+Commit SHA: `173db12`
+
+Focused test result:
+```
+test cases:  1 |  1 passed | 0 failed | 632 skipped
+assertions: 19 | 19 passed | 0 failed |
+```
+
+Validation evidence:
+- P11-19 test runs `MigrationOrchestrator::migrate_to_sqlite()` against existing v0.6 fixture data.
+- Test opens the resulting database with `StorageOptions{SqlitePhase5, skip_startup_validation=false}`.
+- Test verifies all runtime checked snapshots report success through the production startup path.
+
+- [x] P11-19 — Complete
+
+## P11-20
+
+(production runbook)
 
 ### Implementation evidence
 
@@ -590,6 +617,7 @@ Commit SHA: _____________
 | P11-16 | Migration operator next-step diagnostics | P11-16 migration diagnostics test | 615e8b3 | Complete |
 | P11-17 | Activation-state file security validation | P11-17 symlink activation state rejection test | d8fd466 | Complete |
 | P11-18 | Runtime preservation of approved site_id=0 sentinels | P11-18 sentinel restart test | d824ec2 | Complete |
+| P11-19 | End-to-end migrated database startup integration | P11-19 migration-to-startup test | 173db12 | Complete |
 
 ## Final validation
 
@@ -597,10 +625,10 @@ __Build environment:__ Linux x86_64, g++ (GCC) 13.3, C++20, SQLite 3.x
 
 __Full suite result:__
 ```
-test cases:  632 |  632 passed | 0 failed | 0 skipped
-assertions: 3803 | 3803 passed | 0 failed |
+test cases:  633 |  633 passed | 0 failed | 0 skipped
+assertions: 3822 | 3822 passed | 0 failed |
 ```
 
-__HEAD SHA:__ d824ec2
+__HEAD SHA:__ 173db12
 
 __git status:__ clean after documentation update commit

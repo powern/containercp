@@ -110,7 +110,8 @@ Before planning any new Epic, read these documents IN ORDER:
 - [x] P11-16: Operator workflow
 - [x] P11-17: Security
 - [x] P11-18: site_id=0
-- [ ] P11-19: Integration tests
+- [x] P11-19: Integration tests
+- [ ] P11-20: Production runbook
 
 ## Version 0.7 — Monitoring
 
