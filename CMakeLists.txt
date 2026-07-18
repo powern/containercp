@@ -98,6 +98,7 @@ set(CONTAINERCP_SOURCES
     libs/storage/LegacyDatasetReader.cpp
     libs/storage/LegacyArchive.cpp
     libs/storage/Verification.cpp
+    libs/storage/MigrationOrchestrator.cpp
     libs/storage/SchemaMigrations.cpp
     libs/storage/SQLiteStorage.cpp
     libs/template/TemplateEngine.cpp

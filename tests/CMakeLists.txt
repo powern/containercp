@@ -24,6 +24,7 @@ add_executable(containercp_tests
     test_backup.cpp
     test_migration.cpp
     test_migration_api.cpp
+    test_migrate_sqlite.cpp
     test_rollback_integration.cpp
     ${CMAKE_SOURCE_DIR}/libs/migration/VestaSiteImporter.cpp
     ${CMAKE_SOURCE_DIR}/libs/config/Config.cpp
@@ -66,6 +67,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/storage/LegacyDatasetReader.cpp
     ${CMAKE_SOURCE_DIR}/libs/storage/LegacyArchive.cpp
     ${CMAKE_SOURCE_DIR}/libs/storage/Verification.cpp
+    ${CMAKE_SOURCE_DIR}/libs/storage/MigrationOrchestrator.cpp
     ${CMAKE_SOURCE_DIR}/libs/storage/SchemaMigrations.cpp
     ${CMAKE_SOURCE_DIR}/libs/storage/SQLiteStorage.cpp
     ${CMAKE_SOURCE_DIR}/libs/node/Node.cpp

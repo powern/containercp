@@ -488,13 +488,13 @@ DatasetResult<mail::MailDomain> LegacyDatasetReader::read_mail_domains() {
     while (lp.next()) {
         if (lp.empty_line()) continue;
         auto f = lp.split(); int i = 0;
+        int pipes = lp.count_pipes();
         if (f.size() < 10) { r.error = "invalid_field_count"; return r; }
         mail::MailDomain m; std::string err;
         { uint64_t tmp; if (!LineParser::parse_uint64(f[i++], tmp, err)) { r.error = "invalid_integer" + err; return r; } m.id = tmp; }
         if (ids.count(m.id)) { r.error = "duplicate_id"; return r; } ids.insert(m.id);
         m.mode = mail::mail_domain_mode_from_string(f[i++]); m.domain_name = f[i++];
 
-        int pipes = lp.count_pipes();
         if (pipes <= 9) {
             // Legacy 10-field: id|mode|domain_name|owner_id|enabled|catch_all|dkim_selector|relay_host|max_mailboxes|max_aliases
             { uint64_t tmp; if (!LineParser::parse_uint64(f[i++], tmp, err)) { r.error = "invalid_integer" + err; return r; } m.domain_id = tmp; /* owner_id → domain_id */ }
@@ -507,7 +507,7 @@ DatasetResult<mail::MailDomain> LegacyDatasetReader::read_mail_domains() {
         } else {
             // Current 12-field: id|mode|domain_name|domain_id|site_id|enabled|catch_all|dkim_selector|dkim_public_key_dns|relay_host|max_mailboxes|max_aliases
             { uint64_t tmp; if (!LineParser::parse_uint64(f[i++], tmp, err)) { r.error = "invalid_integer" + err; return r; } m.domain_id = tmp; }
-            if (f.size() > i) { uint64_t tmp; if (!LineParser::parse_uint64(f[i++], tmp, err)) { /* site_id, sentinel 0 ok */ m.site_id = tmp; } }
+            if (f.size() > i) { uint64_t tmp; if (LineParser::parse_uint64(f[i++], tmp, err)) { m.site_id = tmp; } }
             if (f.size() > i && !LineParser::parse_bool(f[i++], m.enabled, err)) { r.error = "invalid_boolean" + err; return r; }
             if (f.size() > i) m.catch_all = f[i++];
             if (f.size() > i) m.dkim_selector = f[i++];

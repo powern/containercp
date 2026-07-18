@@ -6,6 +6,7 @@
 #include "operations/SiteRemoveOperation.h"
 #include "runtime/CommandExecutor.h"
 #include "storage/LegacyArchive.h"
+#include "storage/MigrationOrchestrator.h"
 #include "utils/StringUtils.h"
 #include "utils/Validator.h"
 
@@ -759,23 +760,17 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
                 "--archive-root <dir> --source-version <ver> --target-version <ver> --confirm");
         }
 
-        if (!std::filesystem::is_directory(source_dir)) {
-            return Command::error("Source directory not found: " + source_dir);
-        }
+        storage::MigrationOrchestrator orchestrator(
+            source_dir, database_path, archive_root,
+            source_version, target_version);
+        storage::MigrationResult mr = orchestrator.migrate_to_sqlite();
 
-        if (!std::filesystem::exists(std::filesystem::path(database_path).parent_path())) {
-            return Command::error("Database parent directory not found: " + database_path);
+        if (!mr.success) {
+            return Command::error(mr.error + "\n" + mr.diagnostics);
         }
-
-        std::string migration_id = storage::LegacyArchive::generate_uuid();
 
         std::ostringstream out;
-        out << "Migration ID: " << migration_id << "\n";
-        out << "Stage 1/5: Validating inputs ... OK\n";
-        out << "Stage 2/5: Importing legacy data ... PENDING\n";
-        out << "Stage 3/5: Verifying imported data ... PENDING\n";
-        out << "Stage 4/5: Creating archive ... PENDING\n";
-        out << "Stage 5/5: Activating SQLite backend ... PENDING\n";
+        out << mr.diagnostics;
         return Command::success(out.str());
     }
 
