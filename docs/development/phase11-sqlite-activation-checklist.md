@@ -394,9 +394,37 @@ Validation evidence:
 
 - [x] P11-12 — Complete
 
-## P11-13 through P11-20
+## P11-13 — Restart Persistence
 
-(Restart persistence, failure handling, observability, operator workflow, security, site_id=0, integration tests, production runbook)
+### Problem
+SQLite runtime data must survive process restart and production startup validation, not only same-instance reads.
+
+### Contract
+- Write runtime resources to SQLite.
+- Close the storage instance.
+- Reopen with startup validation enabled and valid activation state.
+- Confirm all runtime resource snapshots still load successfully.
+
+### Implementation evidence
+
+Commit SHA: `40f703e`
+
+Focused test result:
+```
+test cases:  1 |  1 passed | 0 failed | 625 skipped
+assertions: 37 | 37 passed | 0 failed |
+```
+
+Validation evidence:
+- Test writes all 17 runtime resource categories to SQLite.
+- Test writes activation state and reopens `Storage` with `skip_startup_validation=false`.
+- Startup validation succeeds and all checked snapshots still contain the expected data.
+
+- [x] P11-13 — Complete
+
+## P11-14 through P11-20
+
+(Failure handling, observability, operator workflow, security, site_id=0, integration tests, production runbook)
 
 ### Implementation evidence
 
@@ -422,6 +450,7 @@ Commit SHA: _____________
 | P11-10 | Runtime repository wiring for backups/auth_users and all 17 SQLite resources | P11-10 storage route + all-resource SQLite snapshot tests | 7a616a5 | Complete |
 | P11-11 | Write-path validation for SQLite commit/replacement/rollback/no-TXT behavior | P11-11 write path tests | f3dd14e | Complete |
 | P11-12 | Read-path validation for SQLite-only reads and checked empty snapshots | P11-12 read path tests | e954568 | Complete |
+| P11-13 | Restart persistence through validated Storage reopen | P11-13 restart persistence test | 40f703e | Complete |
 
 ## Final validation
 
@@ -429,10 +458,10 @@ __Build environment:__ Linux x86_64, g++ (GCC) 13.3, C++20, SQLite 3.x
 
 __Full suite result:__
 ```
-test cases:  625 |  625 passed | 0 failed | 0 skipped
-assertions: 3720 | 3720 passed | 0 failed |
+test cases:  626 |  626 passed | 0 failed | 0 skipped
+assertions: 3757 | 3757 passed | 0 failed |
 ```
 
-__HEAD SHA:__ e954568
+__HEAD SHA:__ 40f703e
 
 __git status:__ clean after documentation update commit

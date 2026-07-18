@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `40f703e` | P11-13 — SQLite restart persistence
+
+**Summary:** Added restart persistence validation for SQLite activation. The test writes all runtime resource categories, closes storage, writes activation state, reopens with startup validation enabled, and verifies all checked snapshots still load.
+
+**Files changed:** `tests/test_sqlite_storage.cpp`, `docs/development/phase11-sqlite-activation-checklist.md`, `planning/project-status.md`, `planning/backlog.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No functional behavior change; this is validation coverage proving SQLite-backed data survives restart and production startup validation.
+
+**Validation:** Focused P11-13 test passed (`1` case, `37` assertions). Full suite passed (`626` cases, `3757` assertions). `containercpd` target builds successfully.
+
+**Known risks:** Build output still contains pre-existing compiler warnings unrelated to P11-13.
+
+---
+
 ## 2026-07-18 | `e954568` | P11-12 — SQLite read-path validation
 
 **Summary:** Added focused validation that SQLite-mode runtime reads use SQLite only and ignore legacy TXT files, including poisoned TXT content left beside `containercp.db`.
