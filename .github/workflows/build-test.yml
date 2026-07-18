@@ -23,6 +23,11 @@ jobs:
         run: |
           sudo mkdir -p /srv/containercp/sites
           sudo chmod -R 777 /srv/containercp
+          curl -fsSL https://get.docker.com | sudo sh
+          sudo dockerd &>/tmp/dockerd.log &
+          for i in $(seq 1 30); do sudo docker info >/dev/null 2>&1 && break; sleep 1; done
+          sudo apt-get install -y docker-compose-v2 2>/dev/null || true
+          sudo docker info
 
       - name: Build c-ares from source
         run: |
