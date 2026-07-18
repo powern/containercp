@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-18 | `PENDING` | P11-R4 — Propagate SQLite write failures
+## 2026-07-18 | `815e1cc` | P11-R4 — Propagate SQLite write failures
 
 **Summary:** Replaced ignored SQLite `try_save_*` results with controlled exceptions from public SQLite-backed save methods, so failed writes are visible to callers instead of being silently ignored. Added focused parent, child, and mail configuration write-failure coverage and updated existing foreign-key rollback tests to assert caller-visible failures.
 

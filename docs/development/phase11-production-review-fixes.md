@@ -144,7 +144,7 @@ SQLite write paths frequently ignore failures using `(void)try_save_xxx(...)`, w
 - [x] Complete
 
 Validation evidence:
-- Commit: `PENDING`
+- Commit: `815e1cc`
 - Focused tests: `P11-R4*` passed (`3` tests, `22` assertions).
 - Affected failure-path reruns passed: `SQLiteStorage access_grants FK*` (`4` tests, `20` assertions), `SQLiteStorage mail_* FK*` (`3` tests, `20` assertions), and `P11-11 SQLite write path rolls back failed child replacements`.
 - Full suite: `653` tests, `4073` assertions passed.
