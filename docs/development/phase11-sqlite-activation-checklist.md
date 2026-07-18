@@ -267,7 +267,7 @@ Commit SHA: _____________
 
 Focused test result: _____________
 
-- [ ] P11-08 — Complete
+- [x] P11-08 — Complete
 
 ## P11-09 — No Silent Fallback
 
@@ -330,6 +330,7 @@ Commit SHA: _____________
 | P11-05 | Verification integration (in orchestrator) | — | 6e3e009 | Complete |
 | P11-06 | Archive integration (in orchestrator) | — | 6e3e009 | Complete |
 | P11-07 | Activation state (in orchestrator) | activation state test | 6e3e009 | Complete |
+| P11-08 | Storage startup validation (validate_activation_state, verify_sqlite_file, verify_sqlite_startup), StorageOptions.skip_startup_validation, sqlite_db_path fix | P11-08 startup validation tests (7 cases) | | Complete |
 
 ## Final validation
 

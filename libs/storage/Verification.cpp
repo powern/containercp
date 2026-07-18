@@ -764,7 +764,7 @@ DatabaseVerificationResult Verification::verify_all() {
     };
 
     {
-        Storage reopen_storage(storage_dir_, StorageOptions{CoreStorageBackend::SqlitePhase5});
+        Storage reopen_storage(storage_dir_, StorageOptions{CoreStorageBackend::SqlitePhase5, true});
         if (!reopen_storage.sqlite_ready()) {
             result.reopen_succeeded = false; result.error = "reopen_failed";
             result.success = false; return result;

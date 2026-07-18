@@ -284,6 +284,7 @@ TEST_CASE("Storage explicit SQLite mode") {
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
         containercp::storage::Storage s(dir, opts);
         containercp::node::Node n;
         n.id = 42; n.name = "sqlite-node"; n.type = "local";
@@ -304,6 +305,7 @@ TEST_CASE("Storage explicit SQLite mode coexists with TXT resources") {
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
         containercp::storage::Storage s(dir, opts);
 
         // Node → SQLite
@@ -404,6 +406,7 @@ TEST_CASE("Explicit SQLite mode with failed init does not write to TXT") {
 
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
 
         // Storage will try to open the existing file as a SQLite
         // database.  The file is not valid, so apply_pragmas or
@@ -440,6 +443,7 @@ TEST_CASE("sqlite_ready true when explicit mode init succeeds") {
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
         containercp::storage::Storage s(dir, opts);
         CHECK(s.sqlite_ready());
     }
@@ -999,6 +1003,7 @@ TEST_CASE("Phase6a Storage explicit SQLite mode uses SQLite for users/sites/doma
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
         containercp::storage::Storage s(dir, opts);
         CHECK(s.sqlite_ready());
 
@@ -1047,6 +1052,7 @@ TEST_CASE("Phase6a SQLite resources coexist with TXT resources") {
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
         containercp::storage::Storage s(dir, opts);
         CHECK(s.sqlite_ready());
 
@@ -1070,6 +1076,7 @@ TEST_CASE("Phase6a saving sites does not alter users or domains") {
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
         containercp::storage::Storage s(dir, opts);
         CHECK(s.sqlite_ready());
 
@@ -1092,6 +1099,7 @@ TEST_CASE("Phase6a nodes/php/profiles still work") {
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
         containercp::storage::Storage s(dir, opts);
         CHECK(s.sqlite_ready());
 
@@ -1317,6 +1325,7 @@ TEST_CASE("Phase6b explicit SQLite mode uses SQLite for databases and proxies") 
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
         containercp::storage::Storage s(dir, opts);
         CHECK(s.sqlite_ready());
 
@@ -1360,6 +1369,7 @@ TEST_CASE("Phase6b saving databases does not alter proxies and vice versa") {
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
         containercp::storage::Storage s(dir, opts);
         CHECK(s.sqlite_ready());
 
@@ -1383,6 +1393,7 @@ TEST_CASE("Phase6b existing phases still work") {
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
         containercp::storage::Storage s(dir, opts);
         CHECK(s.sqlite_ready());
 
@@ -1731,6 +1742,7 @@ TEST_CASE("Phase6c explicit SQLite mode uses SQLite for access") {
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
         containercp::storage::Storage s(dir, opts);
         CHECK(s.sqlite_ready());
 
@@ -1764,6 +1776,7 @@ TEST_CASE("Phase6c existing phases still work") {
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
         containercp::storage::Storage s(dir, opts);
         CHECK(s.sqlite_ready());
 
@@ -2050,6 +2063,7 @@ TEST_CASE("Phase7 explicit SQLite mode stores mail/SSL in SQLite") {
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
         containercp::storage::Storage s(dir, opts);
         CHECK(s.sqlite_ready());
 
@@ -2344,5 +2358,163 @@ TEST_CASE("ConnectionPool Active WriteGuard shutdown waits for guard") {
     t.join();
     CHECK(shutdown_done);
     pool.shutdown();
+    tclean(dir);
+}
+
+// ============================================================
+// Phase 11-08: Startup validation for SqlitePhase5
+// ============================================================
+
+static std::string create_state_file(const std::string& dir, const std::string& backend, const std::string& db_path) {
+    std::string state_path = dir + "storage-state.json";
+    std::ofstream f(state_path);
+    f << "{\n";
+    f << "  \"active_backend\": \"" << backend << "\",\n";
+    f << "  \"database_path\": \"" << db_path << "\",\n";
+    f << "  \"schema_version\": 1\n";
+    f << "}\n";
+    f.close();
+    return state_path;
+}
+
+TEST_CASE("P11-08 startup validation passes with correct activation state") {
+    auto dir = tdir("p1108_happy");
+    tclean(dir); fs::create_directories(dir);
+    // Initialize DB with skip_startup_validation
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+    }
+    // Create activation state
+    create_state_file(dir, "sqlite", dir + "containercp.db");
+    // Reopen with validation
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = false;
+        Storage s(dir, opts);
+        CHECK(s.sqlite_ready());
+    }
+    tclean(dir);
+}
+
+TEST_CASE("P11-08 startup validation rejects missing activation state") {
+    auto dir = tdir("p1108_no_state");
+    tclean(dir); fs::create_directories(dir);
+    StorageOptions opts;
+    opts.core_backend = CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = false;
+    CHECK_THROWS_AS(Storage(dir, opts), std::runtime_error);
+    tclean(dir);
+}
+
+TEST_CASE("P11-08 startup validation rejects wrong backend in activation state") {
+    auto dir = tdir("p1108_wrong_backend");
+    tclean(dir); fs::create_directories(dir);
+    // Initialize DB
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+    }
+    // Create state with wrong backend
+    create_state_file(dir, "txt", dir + "containercp.db");
+    // Reopen should throw
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = false;
+        CHECK_THROWS_AS(Storage(dir, opts), std::runtime_error);
+    }
+    tclean(dir);
+}
+
+TEST_CASE("P11-08 startup validation rejects mismatched database_path in activation state") {
+    auto dir = tdir("p1108_wrong_path");
+    tclean(dir); fs::create_directories(dir);
+    // Initialize DB
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+    }
+    // Create state with wrong db path
+    create_state_file(dir, "sqlite", "/wrong/path/containercp.db");
+    // Reopen should throw
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = false;
+        CHECK_THROWS_AS(Storage(dir, opts), std::runtime_error);
+    }
+    tclean(dir);
+}
+
+TEST_CASE("P11-08 startup validation rejects missing database file") {
+    auto dir = tdir("p1108_no_db");
+    tclean(dir); fs::create_directories(dir);
+    // Create state file but no DB
+    create_state_file(dir, "sqlite", dir + "containercp.db");
+    StorageOptions opts;
+    opts.core_backend = CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = false;
+    CHECK_THROWS_AS(Storage(dir, opts), std::runtime_error);
+    tclean(dir);
+}
+
+TEST_CASE("P11-08 startup validation rejects corrupt database file") {
+    auto dir = tdir("p1108_corrupt");
+    tclean(dir); fs::create_directories(dir);
+    // Create dummy DB file
+    {
+        std::ofstream f(dir + "containercp.db");
+        f << "this is not a valid sqlite database file\n";
+        f.close();
+    }
+    // Create state file
+    create_state_file(dir, "sqlite", dir + "containercp.db");
+    StorageOptions opts;
+    opts.core_backend = CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = false;
+    CHECK_THROWS_AS(Storage(dir, opts), std::runtime_error);
+    tclean(dir);
+}
+
+TEST_CASE("P11-08 startup validation passes on reopened migrated database") {
+    auto dir = tdir("p1108_reopen");
+    tclean(dir); fs::create_directories(dir);
+    // Initialize DB with skip_startup_validation
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+        // Write some data
+        containercp::node::Node n;
+        n.id = 100; n.name = "reopen-node"; n.type = "local";
+        s.save_nodes({n});
+    }
+    // Create activation state
+    create_state_file(dir, "sqlite", dir + "containercp.db");
+    // Reopen with validation — should succeed AND preserve data
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = false;
+        Storage s(dir, opts);
+        CHECK(s.sqlite_ready());
+        auto nodes = s.load_nodes();
+        REQUIRE(nodes.size() == 1);
+        CHECK(nodes[0].id == 100);
+        CHECK(nodes[0].name == "reopen-node");
+    }
     tclean(dir);
 }

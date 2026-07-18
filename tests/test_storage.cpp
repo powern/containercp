@@ -801,7 +801,7 @@ TEST_CASE("StorageOptions reflects legacy backend") {
 TEST_CASE("StorageOptions reflects SqlitePhase5 backend") {
     auto tmp = std::filesystem::temp_directory_path() / "stor_cfg_sqlite";
     std::filesystem::create_directories(tmp);
-    containercp::storage::Storage s(tmp.string(), containercp::storage::StorageOptions{containercp::storage::CoreStorageBackend::SqlitePhase5});
+    containercp::storage::Storage s(tmp.string(), containercp::storage::StorageOptions{containercp::storage::CoreStorageBackend::SqlitePhase5, true});
     CHECK(s.sqlite_ready());
     std::filesystem::remove_all(tmp);
 }

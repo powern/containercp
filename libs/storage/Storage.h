@@ -35,6 +35,7 @@ enum class CoreStorageBackend {
 
 struct StorageOptions {
     CoreStorageBackend core_backend = CoreStorageBackend::Txt;
+    bool skip_startup_validation = false;
 };
 
 class Storage {
@@ -160,6 +161,13 @@ private:
     std::string sqlite_db_path() const;
 
     bool use_sqlite() const;
+
+    // Startup validation for SqlitePhase5
+    void validate_activation_state(const std::string& sqlite_path);
+    void verify_sqlite_file(const std::string& sqlite_path);
+    void verify_sqlite_startup();
+
+    static std::string json_extract_string(const std::string& json, const std::string& key);
 
     std::string db_path_;
     StorageOptions options_;

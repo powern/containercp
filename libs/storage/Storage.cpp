@@ -6,6 +6,7 @@
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
+#include <vector>
 
 namespace containercp::storage {
 
@@ -19,6 +20,12 @@ Storage::Storage(const std::string& db_path, StorageOptions options)
 
     if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
         std::string sqlite_path = sqlite_db_path();
+
+        if (!options_.skip_startup_validation) {
+            validate_activation_state(sqlite_path);
+            verify_sqlite_file(sqlite_path);
+        }
+
         sqlite_ready_ = pool_.initialize(sqlite_path);
         if (sqlite_ready_) {
             MigrationEngine engine;
@@ -33,8 +40,165 @@ Storage::Storage(const std::string& db_path, StorageOptions options)
         }
         if (!sqlite_ready_) {
             pool_.shutdown();
+            if (options_.skip_startup_validation) {
+                return;
+            }
+            throw std::runtime_error(
+                "Failed to initialize SQLite database: " + sqlite_path);
         }
+        if (!options_.skip_startup_validation) {
+            verify_sqlite_startup();
+        }
+        sqlite_ready_ = true;
     }
+}
+
+void Storage::validate_activation_state(const std::string& sqlite_path) {
+    // Construct state path: parent_dir/storage-state.json
+    std::string state_path;
+    auto slash = sqlite_path.rfind('/');
+    if (slash != std::string::npos) {
+        state_path = sqlite_path.substr(0, slash) + "/storage-state.json";
+    } else {
+        state_path = "storage-state.json";
+    }
+    std::ifstream f(state_path);
+    if (!f.is_open()) {
+        throw std::runtime_error(
+            "SQLite backend selected but activation state file not found: " + state_path
+            + ". Run 'containercp storage migrate-to-sqlite' first.");
+    }
+    std::string content((std::istreambuf_iterator<char>(f)),
+                         std::istreambuf_iterator<char>());
+    f.close();
+
+    std::string backend = json_extract_string(content, "active_backend");
+    if (backend != "sqlite") {
+        throw std::runtime_error(
+            "Activation state has active_backend='" + backend + "', expected 'sqlite'");
+    }
+
+    std::string state_db_path = json_extract_string(content, "database_path");
+    if (state_db_path != sqlite_path) {
+        throw std::runtime_error(
+            "Activation state database_path='" + state_db_path
+            + "' does not match expected '" + sqlite_path + "'");
+    }
+}
+
+void Storage::verify_sqlite_file(const std::string& sqlite_path) {
+    struct stat st;
+    if (stat(sqlite_path.c_str(), &st) != 0) {
+        throw std::runtime_error(
+            "SQLite database file not found: " + sqlite_path);
+    }
+    if (!S_ISREG(st.st_mode)) {
+        throw std::runtime_error(
+            "SQLite database path is not a regular file: " + sqlite_path);
+    }
+}
+
+void Storage::verify_sqlite_startup() {
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) {
+        throw std::runtime_error("Failed to acquire read lease for startup validation");
+    }
+
+    // Verify foreign_keys = ON
+    if (!rl->prepare("PRAGMA foreign_keys")) {
+        throw std::runtime_error(
+            "Startup validation: failed to query foreign_keys: " + rl->error_message());
+    }
+    if (!rl->step()) {
+        throw std::runtime_error(
+            "Startup validation: no result from PRAGMA foreign_keys");
+    }
+    if (rl->column_int(0) != 1) {
+        throw std::runtime_error(
+            "Startup validation: PRAGMA foreign_keys is OFF (expected ON)");
+    }
+
+    // Verify journal_mode = WAL
+    if (!rl->prepare("PRAGMA journal_mode")) {
+        throw std::runtime_error(
+            "Startup validation: failed to query journal_mode: " + rl->error_message());
+    }
+    if (!rl->step()) {
+        throw std::runtime_error(
+            "Startup validation: no result from PRAGMA journal_mode");
+    }
+    std::string jm = rl->column_text(0);
+    if (jm != "wal") {
+        throw std::runtime_error(
+            "Startup validation: journal_mode is '" + jm + "' (expected 'wal')");
+    }
+
+    // Verify synchronous = FULL
+    if (!rl->prepare("PRAGMA synchronous")) {
+        throw std::runtime_error(
+            "Startup validation: failed to query synchronous: " + rl->error_message());
+    }
+    if (!rl->step()) {
+        throw std::runtime_error(
+            "Startup validation: no result from PRAGMA synchronous");
+    }
+    if (rl->column_int(0) != 2) {
+        int sync_val = static_cast<int>(rl->column_int(0));
+        throw std::runtime_error(
+            "Startup validation: synchronous is " + std::to_string(sync_val)
+            + " (expected 2=FULL)");
+    }
+
+    // Run integrity_check
+    if (!rl->prepare("PRAGMA integrity_check")) {
+        throw std::runtime_error(
+            "Startup validation: failed to run integrity_check: " + rl->error_message());
+    }
+    if (!rl->step()) {
+        throw std::runtime_error(
+            "Startup validation: no result from integrity_check");
+    }
+    std::string integrity = rl->column_text(0);
+    if (integrity != "ok") {
+        throw std::runtime_error(
+            "Startup validation: integrity_check failed: " + integrity);
+    }
+
+    // Run foreign_key_check
+    if (!rl->prepare("PRAGMA foreign_key_check")) {
+        throw std::runtime_error(
+            "Startup validation: failed to run foreign_key_check: " + rl->error_message());
+    }
+    std::vector<std::string> fk_violations;
+    while (true) {
+        if (!rl->step()) {
+            if (rl->error_code() != 0) {
+                throw std::runtime_error(
+                    "Startup validation: foreign_key_check step failed: " + rl->error_message());
+            }
+            break;
+        }
+        fk_violations.push_back(
+            std::string("table=") + rl->column_text(0)
+            + " rowid=" + std::to_string(rl->column_int(1)));
+    }
+    if (!fk_violations.empty()) {
+        std::string msg = "Startup validation: foreign_key_check found violations:";
+        for (const auto& v : fk_violations) {
+            msg += "\n  " + v;
+        }
+        throw std::runtime_error(msg);
+    }
+}
+
+std::string Storage::json_extract_string(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\": \"";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) return "";
+    pos += search.size();
+    auto end = json.find('\"', pos);
+    if (end == std::string::npos) return "";
+    return json.substr(pos, end - pos);
 }
 
 bool Storage::use_sqlite() const {
@@ -967,7 +1131,9 @@ bool Storage::begin_transaction() {
 }
 
 std::string Storage::sqlite_db_path() const {
-    return db_path_ + "containercp.db";
+    if (db_path_.empty()) return "containercp.db";
+    if (db_path_.back() == '/') return db_path_ + "containercp.db";
+    return db_path_ + "/containercp.db";
 }
 
 bool Storage::commit_transaction() {
