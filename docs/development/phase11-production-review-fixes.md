@@ -216,7 +216,16 @@ Production startup must validate filesystem security for SQLite activation input
 - Run clean rebuild for `containercp_tests` and `containercpd`.
 
 ### Status
-- [ ] Not complete
+- [x] Complete
+
+Validation evidence:
+- Commit: `PENDING`
+- Focused tests: `P11-R6*` passed (`6` tests, `144` assertions).
+- Affected regression rerun: `P11-R3 startup rejects missing archive` passed (`1` test, `7` assertions).
+- Full suite: `665` tests, `4399` assertions passed.
+- CTest: `1/1` tests passed.
+- Clean rebuild: `cmake --build build2 --clean-first --target containercp_tests containercpd -- -j1` completed successfully.
+- Known existing warning debt remains; no new P11-R6-specific warning was introduced.
 
 ## P11-R7 — Complete End-to-End Production Upgrade Test
 

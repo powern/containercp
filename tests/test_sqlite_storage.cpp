@@ -3212,6 +3212,100 @@ TEST_CASE("P11-R5 SQLite open failure stops startup without TXT fallback or data
 }
 
 // ============================================================
+// Phase 11 production review R6: filesystem security validation
+// ============================================================
+
+static void expect_p11r6_security_rejected(const std::string& dir,
+                                           const std::string& expected_message) {
+    StorageOptions opts;
+    opts.core_backend = CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = false;
+
+    try {
+        Storage s(dir, opts);
+        FAIL("SQLite startup accepted an unsafe filesystem path");
+    } catch (const std::runtime_error& e) {
+        std::string msg = e.what();
+        CHECK(msg.find(expected_message) != std::string::npos);
+    }
+    assert_no_txt_fallback_files(dir);
+}
+
+TEST_CASE("P11-R6 startup rejects group-writable SQLite storage directory") {
+    auto dir = tdir("p11r6_storage_dir_permissions");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    create_state_file(dir, "sqlite", dir + "containercp.db");
+    fs::permissions(dir, fs::perms::group_write, fs::perm_options::add);
+
+    expect_p11r6_security_rejected(dir, "SQLite storage directory has unsafe write permissions");
+    fs::permissions(dir, fs::perms::owner_all, fs::perm_options::replace);
+    tclean(dir);
+}
+
+TEST_CASE("P11-R6 startup rejects world-writable SQLite database file") {
+    auto dir = tdir("p11r6_database_permissions");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    create_state_file(dir, "sqlite", dir + "containercp.db");
+    fs::permissions(dir + "containercp.db", fs::perms::others_write, fs::perm_options::add);
+
+    expect_p11r6_security_rejected(dir, "SQLite database path has unsafe write permissions");
+    tclean(dir);
+}
+
+TEST_CASE("P11-R6 startup rejects group-writable activation state file") {
+    auto dir = tdir("p11r6_activation_state_permissions");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    auto state_path = create_state_file(dir, "sqlite", dir + "containercp.db");
+    fs::permissions(state_path, fs::perms::group_write, fs::perm_options::add);
+
+    expect_p11r6_security_rejected(dir, "Activation state path has unsafe write permissions");
+    tclean(dir);
+}
+
+TEST_CASE("P11-R6 startup rejects non-regular activation state path") {
+    auto dir = tdir("p11r6_activation_state_not_regular");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    auto state_path = create_state_file(dir, "sqlite", dir + "containercp.db");
+    fs::remove(state_path);
+    fs::create_directory(state_path);
+
+    expect_p11r6_security_rejected(dir, "Activation state path is not a regular file");
+    tclean(dir);
+}
+
+TEST_CASE("P11-R6 startup rejects group-writable activation archive directory") {
+    auto dir = tdir("p11r6_archive_permissions");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    auto db_path = dir + "containercp.db";
+    auto archive_path = create_activation_test_archive(dir);
+    fs::permissions(archive_path, fs::perms::group_write, fs::perm_options::add);
+    write_state_file(dir, valid_state_json("sqlite", db_path, archive_path));
+
+    expect_p11r6_security_rejected(dir, "Activation state archive path has unsafe write permissions");
+    fs::permissions(archive_path, fs::perms::owner_all, fs::perm_options::replace);
+    tclean(dir);
+}
+
+TEST_CASE("P11-R6 startup rejects symlinked activation archive path") {
+    auto dir = tdir("p11r6_archive_symlink");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    auto db_path = dir + "containercp.db";
+    auto archive_path = create_activation_test_archive(dir);
+    auto link_path = dir + "archive-link";
+    fs::create_directory_symlink(archive_path, link_path);
+    write_state_file(dir, valid_state_json("sqlite", db_path, link_path));
+
+    expect_p11r6_security_rejected(dir, "Activation state archive path is a symlink");
+    tclean(dir);
+}
+
+// ============================================================
 // Phase 11-10: Runtime repository wiring for all SQLite resources
 // ============================================================
 

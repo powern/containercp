@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `PENDING` | P11-R6 — Complete SQLite filesystem security validation
+
+**Summary:** Added SQLite activation startup security checks for storage directories, database files, activation-state files, and activation archive paths. Startup now rejects unsafe ownership, group/world-writable permissions, symlinked archive paths, non-regular activation-state paths, and unexpected filesystem objects before opening SQLite.
+
+**Files changed:** `libs/storage/Storage.cpp`, `tests/test_sqlite_storage.cpp`, `docs/development/phase11-production-review-fixes.md`, `CHANGELOG.md`
+
+**User-visible behavior:** SQLite activation fails closed when startup inputs are exposed through unsafe filesystem permissions, wrong ownership, symlinks, or unsupported object types. Startup does not fall back to TXT storage on these security failures.
+
+**Validation:** Focused P11-R6 tests passed (`6` cases, `144` assertions). Affected P11-R3 missing-archive regression test passed (`1` case, `7` assertions). Full suite passed (`665` cases, `4399` assertions). CTest passed (`1/1`). Clean rebuild of `containercp_tests` and `containercpd` completed successfully with `cmake --build build2 --clean-first --target containercp_tests containercpd -- -j1`.
+
+**Known risks:** Existing clean-build warning debt remains, including OpenSSL/c-ares deprecations, unused variables/parameters, `ServiceRegistry` member reorder warnings, sign-compare warnings, and legacy misleading indentation warnings. Ownership mismatch behavior is implemented but not directly exercised in local tests because changing test-file ownership is not safe or portable in the normal developer workflow.
+
+---
+
 ## 2026-07-18 | `51429f0` | P11-R5 — Complete SQLite production failure handling tests
 
 **Summary:** Added focused production failure handling tests for SQLite startup validation. The new tests cover missing activation state, corrupted activation state, archive validation failure, migration state mismatch, unsupported schema version, and SQLite open failure while asserting fail-closed startup, no TXT fallback files, and unchanged SQLite marker state or unchanged corrupt database file.

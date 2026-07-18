@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 namespace containercp::storage {
@@ -30,6 +31,40 @@ struct ActivationState {
     std::string activation_timestamp;
     std::string verification_result;
 };
+
+std::string parent_directory(const std::string& path) {
+    auto slash = path.rfind('/');
+    if (slash == std::string::npos) return ".";
+    if (slash == 0) return "/";
+    return path.substr(0, slash);
+}
+
+void verify_secure_owner_and_permissions(const std::string& path,
+                                         const struct stat& st,
+                                         const std::string& label) {
+    if (st.st_uid != geteuid()) {
+        throw std::runtime_error(
+            label + " owner mismatch for SQLite startup path: " + path);
+    }
+    if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+        throw std::runtime_error(
+            label + " has unsafe write permissions for SQLite startup path: " + path);
+    }
+}
+
+void verify_secure_directory(const std::string& path, const std::string& label) {
+    struct stat st;
+    if (lstat(path.c_str(), &st) != 0) {
+        throw std::runtime_error(label + " not found for SQLite startup path: " + path);
+    }
+    if (S_ISLNK(st.st_mode)) {
+        throw std::runtime_error(label + " is a symlink and is not allowed: " + path);
+    }
+    if (!S_ISDIR(st.st_mode)) {
+        throw std::runtime_error(label + " is not a directory: " + path);
+    }
+    verify_secure_owner_and_permissions(path, st, label);
+}
 
 class ActivationStateParser {
 public:
@@ -247,6 +282,12 @@ void validate_activation_state_consistency(const ActivationState& state,
         throw std::runtime_error(
             "Activation state archive_path is invalid: " + state.archive_path);
     }
+    struct stat archive_st;
+    if (lstat(archive_path.c_str(), &archive_st) != 0) {
+        throw std::runtime_error(
+            "Activation state archive is missing, invalid, or inconsistent: " + state.archive_path);
+    }
+    verify_secure_directory(archive_path, "Activation state archive path");
 
     LegacyArchive archive("", "");
     ArchiveManifest manifest;
@@ -347,6 +388,7 @@ void Storage::validate_activation_state(const std::string& sqlite_path) {
     } else {
         state_path = "storage-state.json";
     }
+    verify_secure_directory(parent_directory(sqlite_path), "SQLite storage directory");
 
     struct stat state_st;
     if (lstat(state_path.c_str(), &state_st) != 0) {
@@ -362,6 +404,7 @@ void Storage::validate_activation_state(const std::string& sqlite_path) {
         throw std::runtime_error(
             "Activation state path is not a regular file: " + state_path);
     }
+    verify_secure_owner_and_permissions(state_path, state_st, "Activation state path");
 
     std::ifstream f(state_path);
     if (!f.is_open()) {
@@ -383,6 +426,8 @@ void Storage::validate_activation_state(const std::string& sqlite_path) {
 }
 
 void Storage::verify_sqlite_file(const std::string& sqlite_path) {
+    verify_secure_directory(parent_directory(sqlite_path), "SQLite storage directory");
+
     struct stat st;
     if (lstat(sqlite_path.c_str(), &st) != 0) {
         throw std::runtime_error(
@@ -396,6 +441,7 @@ void Storage::verify_sqlite_file(const std::string& sqlite_path) {
         throw std::runtime_error(
             "SQLite database path is not a regular file: " + sqlite_path);
     }
+    verify_secure_owner_and_permissions(sqlite_path, st, "SQLite database path");
 }
 
 void Storage::verify_sqlite_schema_version() {
