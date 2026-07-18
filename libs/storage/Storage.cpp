@@ -1,6 +1,7 @@
 #include "Storage.h"
 #include "MigrationEngine.h"
 #include "SchemaMigrations.h"
+#include "logger/Logger.h"
 
 #include <cerrno>
 #include <cstring>
@@ -22,36 +23,49 @@ Storage::Storage(const std::string& db_path, StorageOptions options)
 
     if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
         std::string sqlite_path = sqlite_db_path();
+        auto& log = logger::Logger::instance();
+        log.info("STORAGE", "SQLite backend selected: " + sqlite_path
+            + (options_.skip_startup_validation ? " (startup validation skipped)" : ""));
 
-        if (!options_.skip_startup_validation) {
-            validate_activation_state(sqlite_path);
-            verify_sqlite_file(sqlite_path);
-        }
-
-        sqlite_ready_ = pool_.initialize(sqlite_path);
-        if (sqlite_ready_) {
-            MigrationEngine engine;
-            register_all_schema_migrations(engine);
-            SQLiteDB migrator;
-            if (migrator.open(sqlite_path)) {
-                sqlite_ready_ = engine.migrate(migrator);
-                migrator.close();
-            } else {
-                sqlite_ready_ = false;
+        try {
+            if (!options_.skip_startup_validation) {
+                validate_activation_state(sqlite_path);
+                verify_sqlite_file(sqlite_path);
             }
-        }
-        if (!sqlite_ready_) {
+
+            sqlite_ready_ = pool_.initialize(sqlite_path);
+            if (sqlite_ready_) {
+                MigrationEngine engine;
+                register_all_schema_migrations(engine);
+                SQLiteDB migrator;
+                if (migrator.open(sqlite_path)) {
+                    sqlite_ready_ = engine.migrate(migrator);
+                    migrator.close();
+                } else {
+                    sqlite_ready_ = false;
+                }
+            }
+            if (!sqlite_ready_) {
+                pool_.shutdown();
+                if (options_.skip_startup_validation) {
+                    log.warning("STORAGE", "SQLite backend not ready while startup validation is skipped: " + sqlite_path);
+                    return;
+                }
+                throw std::runtime_error(
+                    "Failed to initialize SQLite database: " + sqlite_path);
+            }
+            if (!options_.skip_startup_validation) {
+                verify_sqlite_startup();
+                log.info("STORAGE", "SQLite startup validation passed: " + sqlite_path);
+            }
+            sqlite_ready_ = true;
+            log.info("STORAGE", "SQLite backend ready: " + sqlite_path);
+        } catch (const std::exception& e) {
             pool_.shutdown();
-            if (options_.skip_startup_validation) {
-                return;
-            }
-            throw std::runtime_error(
-                "Failed to initialize SQLite database: " + sqlite_path);
+            sqlite_ready_ = false;
+            log.error("STORAGE", "SQLite backend startup failed: " + std::string(e.what()));
+            throw;
         }
-        if (!options_.skip_startup_validation) {
-            verify_sqlite_startup();
-        }
-        sqlite_ready_ = true;
     }
 }
 

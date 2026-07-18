@@ -7,7 +7,9 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <iostream>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -3138,5 +3140,62 @@ TEST_CASE("P11-14 startup validation rejects symlinked SQLite database path") {
         CHECK(msg.find(configured_db) != std::string::npos);
     }
     CHECK_FALSE(fs::exists(dir + "nodes.db"));
+    tclean(dir);
+}
+
+// ============================================================
+// Phase 11-15: Observability
+// ============================================================
+
+TEST_CASE("P11-15 SQLite startup logs validation success") {
+    auto dir = tdir("p1115_success_logs");
+    tclean(dir); fs::create_directories(dir);
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+    }
+    create_state_file(dir, "sqlite", dir + "containercp.db");
+
+    std::ostringstream captured;
+    auto* old_buf = std::cout.rdbuf(captured.rdbuf());
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = false;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+    }
+    std::cout.rdbuf(old_buf);
+
+    auto logs = captured.str();
+    CHECK(logs.find("[INFO] [STORAGE] SQLite backend selected: " + dir + "containercp.db") != std::string::npos);
+    CHECK(logs.find("[INFO] [STORAGE] SQLite startup validation passed: " + dir + "containercp.db") != std::string::npos);
+    CHECK(logs.find("[INFO] [STORAGE] SQLite backend ready: " + dir + "containercp.db") != std::string::npos);
+    tclean(dir);
+}
+
+TEST_CASE("P11-15 SQLite startup logs failure reason") {
+    auto dir = tdir("p1115_failure_logs");
+    tclean(dir); fs::create_directories(dir);
+
+    std::ostringstream captured;
+    auto* old_buf = std::cerr.rdbuf(captured.rdbuf());
+    try {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = false;
+        Storage s(dir, opts);
+        FAIL("SQLite startup succeeded without activation state");
+    } catch (const std::runtime_error&) {
+    }
+    std::cerr.rdbuf(old_buf);
+
+    auto logs = captured.str();
+    CHECK(logs.find("[ERROR] [STORAGE] SQLite backend startup failed:") != std::string::npos);
+    CHECK(logs.find("activation state file not found") != std::string::npos);
+    CHECK(logs.find(dir + "storage-state.json") != std::string::npos);
     tclean(dir);
 }
