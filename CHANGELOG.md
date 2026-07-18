@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `e954568` | P11-12 — SQLite read-path validation
+
+**Summary:** Added focused validation that SQLite-mode runtime reads use SQLite only and ignore legacy TXT files, including poisoned TXT content left beside `containercp.db`.
+
+**Files changed:** `tests/test_sqlite_storage.cpp`, `docs/development/phase11-sqlite-activation-checklist.md`, `planning/project-status.md`, `planning/backlog.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No functional behavior change; this is validation coverage for SQLite backend reads. It confirms legacy TXT files cannot affect runtime reads after SQLite activation.
+
+**Validation:** Focused P11-12 tests passed (`2` cases, `51` assertions). Full suite passed (`625` cases, `3720` assertions). `containercpd` target builds successfully.
+
+**Known risks:** Build output still contains pre-existing compiler warnings unrelated to P11-12.
+
+---
+
 ## 2026-07-18 | `f3dd14e` | P11-11 — SQLite write-path validation
 
 **Summary:** Added focused validation for SQLite-mode write behavior after runtime repository wiring. The tests prove replacement writes commit to SQLite, omitted records are removed, legacy TXT files are not created, and failed child-table writes roll back without losing the last committed state.

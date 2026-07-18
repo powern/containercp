@@ -366,9 +366,37 @@ Validation evidence:
 
 - [x] P11-11 — Complete
 
-## P11-12 through P11-20
+## P11-12 — Read-path Validation
 
-(Read-path validation, restart persistence, failure handling, observability, operator workflow, security, site_id=0, integration tests, production runbook)
+### Problem
+SQLite runtime reads must load from SQLite only when `backend=sqlite`; legacy TXT files must not affect results, even if they still exist or contain invalid data.
+
+### Contract
+- Empty SQLite tables return successful empty checked snapshots.
+- Poisoned legacy TXT files are ignored in SQLite mode.
+- Seeded SQLite rows win over conflicting TXT content.
+- `mail_config` reads distinguish absent keys from failed reads.
+
+### Implementation evidence
+
+Commit SHA: `e954568`
+
+Focused test result:
+```
+test cases:  2 |  2 passed | 0 failed | 623 skipped
+assertions: 51 | 51 passed | 0 failed |
+```
+
+Validation evidence:
+- All checked resource snapshots return success with empty SQLite tables while poisoned TXT files exist.
+- `mail_config` checked reads return `present=false` for absent keys, not an error.
+- SQLite rows for nodes, backups, auth users, and mail module state are returned despite conflicting TXT files.
+
+- [x] P11-12 — Complete
+
+## P11-13 through P11-20
+
+(Restart persistence, failure handling, observability, operator workflow, security, site_id=0, integration tests, production runbook)
 
 ### Implementation evidence
 
@@ -393,6 +421,7 @@ Commit SHA: _____________
 | P11-09 | Daemon startup storage backend loading, no silent fallback validation | backend env loading test + daemon namespace validation | 23bfe33 | Complete |
 | P11-10 | Runtime repository wiring for backups/auth_users and all 17 SQLite resources | P11-10 storage route + all-resource SQLite snapshot tests | 7a616a5 | Complete |
 | P11-11 | Write-path validation for SQLite commit/replacement/rollback/no-TXT behavior | P11-11 write path tests | f3dd14e | Complete |
+| P11-12 | Read-path validation for SQLite-only reads and checked empty snapshots | P11-12 read path tests | e954568 | Complete |
 
 ## Final validation
 
@@ -400,10 +429,10 @@ __Build environment:__ Linux x86_64, g++ (GCC) 13.3, C++20, SQLite 3.x
 
 __Full suite result:__
 ```
-test cases:  623 |  623 passed | 0 failed | 0 skipped
-assertions: 3669 | 3669 passed | 0 failed |
+test cases:  625 |  625 passed | 0 failed | 0 skipped
+assertions: 3720 | 3720 passed | 0 failed |
 ```
 
-__HEAD SHA:__ f3dd14e
+__HEAD SHA:__ e954568
 
 __git status:__ clean after documentation update commit

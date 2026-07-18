@@ -103,7 +103,8 @@ Before planning any new Epic, read these documents IN ORDER:
 - [x] P11-09: No silent fallback
 - [x] P11-10: Runtime repository wiring
 - [x] P11-11: Write-path validation
-- [ ] P11-12: Read-path validation
+- [x] P11-12: Read-path validation
+- [ ] P11-13: Restart persistence
 
 ## Version 0.7 — Monitoring
 
