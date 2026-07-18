@@ -170,11 +170,11 @@ SQLiteDB* ConnectionPool::lease_read() {
 }
 
 void ConnectionPool::return_read(SQLiteDB* db) {
-    if (!db) { outstanding_leases_.fetch_sub(1); return; }
+    if (!db) return;
     for (int i = 0; i < kReadPoolSize; ++i) {
         if (read_conns_[i].get() == db) {
-            read_in_use_[i].store(false);
-            outstanding_leases_.fetch_sub(1);
+            bool was_in_use = read_in_use_[i].exchange(false);
+            if (was_in_use) outstanding_leases_.fetch_sub(1);
             return;
         }
     }
@@ -185,9 +185,8 @@ void ConnectionPool::shutdown() {
     //    new WriteGuard/TransactionGuard acquisitions.
     shutdown_.store(true);
 
-    // 2. Wait for all outstanding read leases to be returned (1s timeout).
-    // If leases are still outstanding after timeout, force-close anyway.
-    for (int i = 0; i < 100 && outstanding_leases_.load() > 0; ++i) {
+    // 2. Wait for all outstanding read leases to be returned.
+    while (outstanding_leases_.load() > 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 

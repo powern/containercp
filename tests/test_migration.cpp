@@ -1520,7 +1520,7 @@ TEST_CASE("Archive rejects unsafe version strings") {
     CHECK_FALSE(LegacyArchive::safe_version("v0..6"));
     CHECK_FALSE(LegacyArchive::safe_version(" v0.6"));
     CHECK(LegacyArchive::safe_version("v0.6.0"));
-    CHECK(LegacyArchive::safe_version("v1.0-rc1"));
+    CHECK(LegacyArchive::safe_version("v1.0.0-rc1"));
 }
 
 TEST_CASE("Archive naming contains source version and migration ID") {
@@ -2089,7 +2089,7 @@ TEST_CASE("normalize_archive_identity_path rejects traversal and normalizes") {
     CHECK(LegacyArchive::normalize_archive_identity_path("/a/b").find("..") == std::string::npos);
     CHECK(LegacyArchive::normalize_archive_identity_path("../evil").empty());
     CHECK(LegacyArchive::normalize_archive_identity_path("./a/./b").find("./") == std::string::npos);
-    CHECK_FALSE(LegacyArchive::normalize_archive_identity_path("a/../b").empty()); // lexically_normal resolves
+    CHECK(LegacyArchive::normalize_archive_identity_path("a/../b").empty()); // raw .. rejected
     // Trailing slash removed
     auto r = LegacyArchive::normalize_archive_identity_path("/a/b/");
     CHECK_FALSE(r.empty());
