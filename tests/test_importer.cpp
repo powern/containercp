@@ -1375,20 +1375,22 @@ TEST_CASE("reopen sensitive field redaction") {
     write_file(dir + "backups.db", "1|1|1|backup.tar.gz|full|1000|1|completed|/path|gzip\n");
     write_file(dir + "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
     write_file(dir + "access_users.db", "1|testuser|password|secret_hash|1\n");
-    ConnectionPool pool; init_pool(pool, dir);
-    LegacyImporter imp(dir, pool);
-    auto import_result = imp.import_all();
-    REQUIRE(import_result.success);
-    pool.shutdown();
+    ImportAllResult import_result;
+    {
+        ConnectionPool pool; init_pool(pool, dir);
+        LegacyImporter imp(dir, pool);
+        import_result = imp.import_all();
+        REQUIRE(import_result.success);
+    } // pool destroyed — all SQLite connections closed
 
     // Tamper with a sensitive field
+    ConnectionPool tp; tp.initialize(dir + "containercp.db");
     {
-        ConnectionPool tp; tp.initialize(dir + "containercp.db");
         WriteGuard wg(tp);
         if (wg.is_valid())
             wg.db().exec("UPDATE databases SET db_password = 'tampered' WHERE id = 1");
-        tp.shutdown();
-    }
+    } // WriteGuard destroyed before shutdown
+    tp.shutdown();
 
     DatabaseVerificationResult db_result;
     {
