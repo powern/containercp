@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-18 | `PENDING` | P11-R6 — Complete SQLite filesystem security validation
+## 2026-07-18 | `e18a805` | P11-R6 — Complete SQLite filesystem security validation
 
 **Summary:** Added SQLite activation startup security checks for storage directories, database files, activation-state files, and activation archive paths. Startup now rejects unsafe ownership, group/world-writable permissions, symlinked archive paths, non-regular activation-state paths, and unexpected filesystem objects before opening SQLite.
 
