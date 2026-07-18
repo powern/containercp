@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-18 | `PENDING` | P11-R3 — Validate SQLite activation-state consistency
+## 2026-07-18 | `c727106` | P11-R3 — Validate SQLite activation-state consistency
 
 **Summary:** Extended SQLite startup validation so activation state must reference a real completed migration archive. Startup now validates the migration ID, state schema version, database path, normalized archive path, archive integrity, and archive manifest fields before opening SQLite.
 
