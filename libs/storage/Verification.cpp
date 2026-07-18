@@ -694,16 +694,16 @@ DatabaseVerificationResult Verification::verify_all() {
 
     // FK check
     if (!checked_fk_check(pool_, result.initial_foreign_key_violations, result.error)) {
-        result.success = false; pool_.shutdown(); return result;
+        result.success = false; return result;
     }
 
     // Integrity check
     if (!checked_integrity(pool_, result.initial_integrity_check_result, result.error) || result.initial_integrity_check_result != "ok") {
-        result.success = false; pool_.shutdown(); return result;
+        result.success = false; return result;
     }
 
     if (!result.initial_verification_passed || !result.initial_foreign_key_violations.empty()) {
-        result.success = false; pool_.shutdown(); return result;
+        result.success = false; return result;
     }
 
     // Capture immutable initial evidence from successful verification

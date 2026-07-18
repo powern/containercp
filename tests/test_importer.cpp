@@ -1390,16 +1390,19 @@ TEST_CASE("reopen sensitive field redaction") {
         tp.shutdown();
     }
 
-    Verification vfy(dir, dir + "containercp.db", import_result, dir);
-    auto result = vfy.verify_all();
+    DatabaseVerificationResult db_result;
+    {
+        Verification vfy(dir, dir + "containercp.db", import_result, dir);
+        db_result = vfy.verify_all();
+    }
     // Initial verification should fail (tampered database)
-    CHECK_FALSE(result.initial_verification_passed);
+    CHECK_FALSE(db_result.initial_verification_passed);
     // The database verification should detect the mismatch
-    if (!result.resources.empty()) {
-        auto& db_result = result.resources[6]; // databases
-        CHECK_FALSE(db_result.success);
+    if (!db_result.resources.empty()) {
+        auto& r = db_result.resources[6]; // databases
+        CHECK_FALSE(r.success);
         // Check that the secret value is not exposed in mismatches
-        for (const auto& mm : db_result.mismatches) {
+        for (const auto& mm : r.mismatches) {
             CHECK(mm.expected.find("secret_pass") == std::string::npos);
             CHECK(mm.actual.find("tampered") == std::string::npos);
         }
