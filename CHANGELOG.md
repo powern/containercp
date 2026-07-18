@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `PENDING` | P11-R5 — Complete SQLite production failure handling tests
+
+**Summary:** Added focused production failure handling tests for SQLite startup validation. The new tests cover missing activation state, corrupted activation state, archive validation failure, migration state mismatch, unsupported schema version, and SQLite open failure while asserting fail-closed startup, no TXT fallback files, and unchanged SQLite marker state or unchanged corrupt database file.
+
+**Files changed:** `tests/test_sqlite_storage.cpp`, `docs/development/phase11-production-review-fixes.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. This adds validation coverage proving SQLite activation failures stop startup without silently falling back to TXT storage or mutating existing SQLite state.
+
+**Validation:** Focused P11-R5 tests passed (`6` cases, `176` assertions). Full suite passed (`659` cases, `4255` assertions). CTest passed (`1/1`). Clean rebuild of `containercp_tests` and `containercpd` completed successfully with `cmake --build build2 --clean-first --target containercp_tests containercpd -- -j1`.
+
+**Known risks:** Existing clean-build warning debt remains, including OpenSSL/c-ares deprecations, unused variables/parameters, `ServiceRegistry` member reorder warnings, sign-compare warnings, and legacy misleading indentation warnings.
+
+---
+
 ## 2026-07-18 | `7164301` | CI — Stabilize SQLite reopen verification test
 
 **Summary:** Updated the importer verification test that checks wrong SQLite reopen behavior to use an explicit empty SQLite backend under the test fixture directory instead of `/nonexistent_storage_dir`. The test now deterministically verifies that reopen comparison fails on mismatched SQLite data across both CI and root-local environments.

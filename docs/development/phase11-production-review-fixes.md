@@ -179,7 +179,15 @@ Current failure testing does not cover enough production startup and activation 
 - Run clean rebuild for `containercp_tests` and `containercpd`.
 
 ### Status
-- [ ] Not complete
+- [x] Complete
+
+Validation evidence:
+- Commit: `PENDING`
+- Focused tests: `P11-R5*` passed (`6` tests, `176` assertions).
+- Full suite: `659` tests, `4255` assertions passed.
+- CTest: `1/1` tests passed.
+- Clean rebuild: `cmake --build build2 --clean-first --target containercp_tests containercpd -- -j1` completed successfully.
+- Known existing warning debt remains; no new P11-R5-specific warning was introduced.
 
 ## P11-R6 — Complete Production Security Validation
 

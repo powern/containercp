@@ -57,6 +57,45 @@ static void drop_sqlite_table(const std::string& dir, const std::string& table) 
     db.close();
 }
 
+static void assert_no_txt_fallback_files(const std::string& dir) {
+    const char* files[] = {
+        "nodes.db", "php_versions.db", "profiles.db", "users.db", "sites.db",
+        "domains.db", "databases.db", "backups.db", "reverse_proxies.db",
+        "access_users.db", "access_grants.db", "auth_users.db",
+        "ssl_certificates.db", "mail_domains.db", "mail_mailboxes.db",
+        "mail_aliases.db", "mail_state.db", "mail_smarthost.db", nullptr};
+    for (int i = 0; files[i] != nullptr; ++i) {
+        CHECK_FALSE(fs::exists(dir + files[i]));
+    }
+}
+
+static void insert_sqlite_marker_node(const std::string& dir) {
+    containercp::storage::SQLiteDB db;
+    REQUIRE(db.open(dir + "containercp.db"));
+    REQUIRE(db.exec("INSERT INTO nodes(id,name,type) VALUES(9001,'startup-marker','local')"));
+    db.close();
+}
+
+static int64_t sqlite_node_count(const std::string& dir) {
+    containercp::storage::SQLiteDB db;
+    REQUIRE(db.open(dir + "containercp.db"));
+    REQUIRE(db.prepare("SELECT COUNT(*) FROM nodes"));
+    REQUIRE(db.step());
+    auto count = db.column_int(0);
+    db.close();
+    return count;
+}
+
+static std::string sqlite_schema_version(const std::string& dir) {
+    containercp::storage::SQLiteDB db;
+    REQUIRE(db.open(dir + "containercp.db"));
+    REQUIRE(db.prepare("SELECT value FROM storage_meta WHERE key='schema_version'"));
+    REQUIRE(db.step());
+    auto version = db.column_text(0);
+    db.close();
+    return version;
+}
+
 // ============================================================
 // TransactionGuard tests
 // ============================================================
@@ -3058,6 +3097,117 @@ TEST_CASE("P11-R4 SQLite mail config write failure propagates to caller") {
         CHECK(msg.find("SQLite save failed for mail_config.module_state") != std::string::npos);
     }
     CHECK_FALSE(fs::exists(dir + "mail_state.db"));
+    tclean(dir);
+}
+
+// ============================================================
+// Phase 11 production review R5: production failure handling
+// ============================================================
+
+static void expect_p11r5_startup_rejected(const std::string& dir,
+                                          const std::string& expected_message) {
+    StorageOptions opts;
+    opts.core_backend = CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = false;
+
+    try {
+        Storage s(dir, opts);
+        FAIL("SQLite startup accepted an invalid production activation state");
+    } catch (const std::runtime_error& e) {
+        std::string msg = e.what();
+        CHECK(msg.find(expected_message) != std::string::npos);
+    }
+    assert_no_txt_fallback_files(dir);
+}
+
+TEST_CASE("P11-R5 missing activation state stops startup without TXT fallback or SQLite mutation") {
+    auto dir = tdir("p11r5_missing_activation_state");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    insert_sqlite_marker_node(dir);
+
+    expect_p11r5_startup_rejected(dir, "activation state file not found");
+    CHECK(sqlite_node_count(dir) == 1);
+    tclean(dir);
+}
+
+TEST_CASE("P11-R5 corrupted activation state stops startup without TXT fallback or SQLite mutation") {
+    auto dir = tdir("p11r5_corrupted_activation_state");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    insert_sqlite_marker_node(dir);
+    write_state_file(dir, "{\n  \"state_version\": 1,\n  \"active_backend\": \"sqlite\"\n");
+
+    expect_p11r5_startup_rejected(dir, "Activation state file is malformed");
+    CHECK(sqlite_node_count(dir) == 1);
+    tclean(dir);
+}
+
+TEST_CASE("P11-R5 archive validation failure stops startup without TXT fallback or SQLite mutation") {
+    auto dir = tdir("p11r5_archive_validation_failure");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    insert_sqlite_marker_node(dir);
+    auto db_path = dir + "containercp.db";
+    auto archive_path = create_activation_test_archive(dir);
+    fs::remove(archive_path + "SHA256SUMS");
+    write_state_file(dir, valid_state_json("sqlite", db_path, archive_path));
+
+    expect_p11r5_startup_rejected(dir, "archive is missing");
+    CHECK(sqlite_node_count(dir) == 1);
+    tclean(dir);
+}
+
+TEST_CASE("P11-R5 migration state mismatch stops startup without TXT fallback or SQLite mutation") {
+    auto dir = tdir("p11r5_migration_state_mismatch");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    insert_sqlite_marker_node(dir);
+    auto db_path = dir + "containercp.db";
+    auto archive_path = create_activation_test_archive(dir);
+    auto json = valid_state_json("sqlite", db_path, archive_path);
+    auto pos = json.find("\"target_version\": \"v0.7.0\"");
+    REQUIRE(pos != std::string::npos);
+    json.replace(pos, std::string("\"target_version\": \"v0.7.0\"").size(),
+                 "\"target_version\": \"v0.8.0\"");
+    write_state_file(dir, json);
+
+    expect_p11r5_startup_rejected(dir, "target_version");
+    CHECK(sqlite_node_count(dir) == 1);
+    tclean(dir);
+}
+
+TEST_CASE("P11-R5 unsupported schema version stops startup without TXT fallback or schema mutation") {
+    auto dir = tdir("p11r5_unsupported_schema_version");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    insert_sqlite_marker_node(dir);
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(dir + "containercp.db"));
+        REQUIRE(db.exec("UPDATE storage_meta SET value='999' WHERE key='schema_version'"));
+        db.close();
+    }
+    create_state_file(dir, "sqlite", dir + "containercp.db");
+
+    expect_p11r5_startup_rejected(dir, "unsupported storage schema_version '999'");
+    CHECK(sqlite_schema_version(dir) == "999");
+    CHECK(sqlite_node_count(dir) == 1);
+    tclean(dir);
+}
+
+TEST_CASE("P11-R5 SQLite open failure stops startup without TXT fallback or database mutation") {
+    auto dir = tdir("p11r5_sqlite_open_failure");
+    tclean(dir); fs::create_directories(dir);
+    auto db_path = dir + "containercp.db";
+    write_text_file(db_path, "this is not a valid sqlite database file\n");
+    auto archive_path = create_activation_test_archive(dir);
+    write_state_file(dir, valid_state_json("sqlite", db_path, archive_path));
+    auto before_size = fs::file_size(db_path);
+
+    expect_p11r5_startup_rejected(dir, "Failed to initialize SQLite database");
+    CHECK(fs::exists(db_path));
+    CHECK(fs::file_size(db_path) == before_size);
     tclean(dir);
 }
 
