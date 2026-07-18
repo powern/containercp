@@ -512,7 +512,8 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | P11-07: Activation state | ✅ | `storage-state.json` written after migration |
 | P11-08: SQLite startup path | ✅ | Activation state, DB file, PRAGMA, integrity/FK checks |
 | P11-09: No silent fallback | ✅ | Commit `23bfe33`; daemon exits before HTTP/UI listeners when SQLite validation fails |
-| P11-10: Runtime repository wiring | ⬜ | Next |
+| P11-10: Runtime repository wiring | ✅ | Commit `7a616a5`; all 17 resources verified through SQLite |
+| P11-11: Write-path validation | ⬜ | Next |
 
 ---
 

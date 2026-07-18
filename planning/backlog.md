@@ -101,7 +101,8 @@ Before planning any new Epic, read these documents IN ORDER:
 - [x] P11-07: Activation state
 - [x] P11-08: SQLite startup path
 - [x] P11-09: No silent fallback
-- [ ] P11-10: Runtime repository wiring
+- [x] P11-10: Runtime repository wiring
+- [ ] P11-11: Write-path validation
 
 ## Version 0.7 — Monitoring
 

@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `7a616a5` | P11-10 — Runtime repository SQLite wiring
+
+**Summary:** Completed SQLite runtime routing for the two remaining TXT-only resources, `backups` and `auth_users`, and verified the full 17-resource runtime set through SQLite snapshots.
+
+**Files changed:** `libs/storage/SQLiteStorage.h`, `libs/storage/SQLiteStorage.cpp`, `libs/storage/Storage.h`, `libs/storage/Storage.cpp`, `tests/test_sqlite_storage.cpp`, `docs/development/phase11-sqlite-activation-checklist.md`, `planning/project-status.md`, `planning/backlog.md`, `CHANGELOG.md`
+
+**User-visible behavior:** When SQLite is the configured backend, backup metadata and auth users now persist to `containercp.db` instead of legacy TXT files. The runtime storage abstraction no longer leaves `backups` or `auth_users` on the legacy path in SQLite mode.
+
+**Validation:** Focused P11-10 tests passed (`2` cases, `62` assertions). Full suite passed (`621` cases, `3640` assertions). `containercpd` target builds successfully.
+
+**Known risks:** Build output still contains pre-existing compiler warnings unrelated to P11-10.
+
+---
+
 ## 2026-07-18 | `23bfe33` | P11-09 — No silent SQLite fallback
 
 **Summary:** SQLite backend selection is now loaded during normal daemon startup before `ServiceRegistry` constructs `Storage`, so `storage.backend=sqlite` cannot be ignored and silently fall back to legacy TXT storage.

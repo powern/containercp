@@ -320,11 +320,22 @@ Currently 2 resources (backups, auth_users) are TXT-only in SqlitePhase5.
 
 ### Implementation evidence
 
-Commit SHA: _____________
+Commit SHA: `7a616a5`
 
-Focused test result: _____________
+Focused test result:
+```
+test cases:  2 |  2 passed | 0 failed | 619 skipped
+assertions: 62 | 62 passed | 0 failed |
+```
 
-- [ ] P11-10 — Complete
+Full resource verification:
+- `backups` and `auth_users` now have SQLite save/load methods in `SQLiteStorage`.
+- `Storage` routes `save_backups/load_backups` and `save_auth_users/load_auth_users` through SQLite when `backend=sqlite`.
+- Checked SQLite snapshot accessors exist for `backups` and `auth_users`.
+- P11-10 test writes and verifies all 17 resources through SQLite, including `mail_config`.
+- P11-10 test confirms no legacy TXT files are created for the 17 resource set in SQLite mode.
+
+- [x] P11-10 — Complete
 
 ## P11-11 through P11-20
 
@@ -351,6 +362,7 @@ Commit SHA: _____________
 | P11-07 | Activation state (in orchestrator) | activation state test | 6e3e009 | Complete |
 | P11-08 | Storage startup validation (validate_activation_state, verify_sqlite_file, verify_sqlite_startup), StorageOptions.skip_startup_validation, sqlite_db_path fix | P11-08 startup validation tests (7 cases) | 4a920fc | Complete |
 | P11-09 | Daemon startup storage backend loading, no silent fallback validation | backend env loading test + daemon namespace validation | 23bfe33 | Complete |
+| P11-10 | Runtime repository wiring for backups/auth_users and all 17 SQLite resources | P11-10 storage route + all-resource SQLite snapshot tests | 7a616a5 | Complete |
 
 ## Final validation
 
@@ -358,10 +370,10 @@ __Build environment:__ Linux x86_64, g++ (GCC) 13.3, C++20, SQLite 3.x
 
 __Full suite result:__
 ```
-test cases:  620 |  620 passed | 0 failed | 0 skipped
-assertions: 3577 | 3577 passed | 0 failed |
+test cases:  621 |  621 passed | 0 failed | 0 skipped
+assertions: 3640 | 3640 passed | 0 failed |
 ```
 
-__HEAD SHA:__ 23bfe33
+__HEAD SHA:__ 7a616a5
 
 __git status:__ clean after documentation update commit
