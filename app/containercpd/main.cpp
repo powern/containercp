@@ -102,6 +102,7 @@ int main(int argc, char* argv[]) {
     // Load server_hostname BEFORE ServiceRegistry so DomainViewService
     // can include the admin panel (site_id=0) in its enriched output.
     containercp::config::Config::instance().load_server_hostname();
+    containercp::config::Config::instance().load_storage_backend();
 
     containercp::core::Application::instance();
     auto& services = containercp::core::Application::instance().services();

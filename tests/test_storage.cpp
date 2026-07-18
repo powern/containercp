@@ -8,6 +8,7 @@
 #include "domain/Domain.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <thread>
@@ -787,6 +788,16 @@ TEST_CASE("Storage backend unknown value preserved for startup validation") {
     auto& cfg = containercp::config::Config::instance();
     cfg.set_storage_backend("bogus");
     CHECK(cfg.storage_backend() == "bogus");
+    cfg.set_storage_backend("legacy"); // restore
+}
+
+TEST_CASE("Storage backend loads sqlite from environment before startup") {
+    auto& cfg = containercp::config::Config::instance();
+    cfg.set_storage_backend("legacy");
+    setenv("CONTAINERCP_STORAGE_BACKEND", "sqlite", 1);
+    cfg.load_storage_backend();
+    CHECK(cfg.storage_backend() == "sqlite");
+    unsetenv("CONTAINERCP_STORAGE_BACKEND");
     cfg.set_storage_backend("legacy"); // restore
 }
 
