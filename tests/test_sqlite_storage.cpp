@@ -50,6 +50,13 @@ static void write_text_file(const std::string& path, const std::string& content)
     f << content;
 }
 
+static void drop_sqlite_table(const std::string& dir, const std::string& table) {
+    containercp::storage::SQLiteDB db;
+    REQUIRE(db.open(dir + "containercp.db"));
+    REQUIRE(db.exec("DROP TABLE " + table));
+    db.close();
+}
+
 // ============================================================
 // TransactionGuard tests
 // ============================================================
@@ -1650,8 +1657,7 @@ TEST_CASE("SQLiteStorage access_grants FK: missing user fails") {
 
     containercp::access::AccessGrant g;
     g.id = 1; g.access_user_id = 999; g.site_id = 1;
-    ss.save_access_grants({g});
-    // save_access_grants returns void — check that no grant was stored
+    CHECK_THROWS_AS(ss.save_access_grants({g}), std::runtime_error);
     CHECK(ss.load_access_grants().empty());
     tclean(dir);
 }
@@ -1667,7 +1673,7 @@ TEST_CASE("SQLiteStorage access_grants FK: missing site fails") {
 
     containercp::access::AccessGrant g;
     g.id = 1; g.access_user_id = 1; g.site_id = 999;
-    ss.save_access_grants({g});
+    CHECK_THROWS_AS(ss.save_access_grants({g}), std::runtime_error);
     CHECK(ss.load_access_grants().empty());
     tclean(dir);
 }
@@ -1690,7 +1696,7 @@ TEST_CASE("SQLiteStorage access_grants FK: cannot delete referenced user") {
     ss.save_access_grants({g});
 
     // Trying to remove the user should fail (grant exists)
-    ss.save_access_users({});  // empty vector — prune should fail
+    CHECK_THROWS_AS(ss.save_access_users({}), std::runtime_error);  // empty vector — prune should fail
     auto users = ss.load_access_users();
     CHECK_FALSE(users.empty());  // user should still exist
     tclean(dir);
@@ -1714,7 +1720,7 @@ TEST_CASE("SQLiteStorage access_grants FK: cannot delete referenced site") {
     ss.save_access_grants({g});
 
     // Trying to remove the site should fail (grant exists)
-    ss.save_sites({});  // empty vector — prune should fail
+    CHECK_THROWS_AS(ss.save_sites({}), std::runtime_error);  // empty vector — prune should fail
     auto sites = ss.load_sites();
     CHECK_FALSE(sites.empty());  // site should still exist
     tclean(dir);
@@ -2016,7 +2022,7 @@ TEST_CASE("SQLiteStorage mail_mailboxes FK: missing domain fails") {
     containercp::storage::SQLiteStorage ss(pool);
     containercp::mail::Mailbox mb;
     mb.id = 1; mb.domain_id = 999; mb.local_part = "x";
-    ss.save_mailboxes({mb});
+    CHECK_THROWS_AS(ss.save_mailboxes({mb}), std::runtime_error);
     CHECK(ss.load_mailboxes().empty());
     tclean(dir);
 }
@@ -2056,7 +2062,7 @@ TEST_CASE("SQLiteStorage mail_aliases FK: missing domain fails") {
     containercp::mail::MailAlias a;
     a.id = 1; a.domain_id = 999;
     a.source_local_part = "x"; a.destination = "y@z.com";
-    ss.save_mail_aliases({a});
+    CHECK_THROWS_AS(ss.save_mail_aliases({a}), std::runtime_error);
     CHECK(ss.load_mail_aliases().empty());
     tclean(dir);
 }
@@ -2968,6 +2974,94 @@ TEST_CASE("P11-R3 startup rejects schema version mismatch") {
 }
 
 // ============================================================
+// Phase 11 production review R4: visible SQLite write failures
+// ============================================================
+
+TEST_CASE("P11-R4 SQLite parent write failure propagates to caller") {
+    auto dir = tdir("p11r4_parent_write_failure");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    drop_sqlite_table(dir, "sites");
+
+    StorageOptions opts;
+    opts.core_backend = CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = true;
+    Storage s(dir, opts);
+    REQUIRE(s.sqlite_ready());
+
+    containercp::site::Site site;
+    site.id = 1;
+    site.domain = "example.com";
+    site.owner = "admin";
+    site.node_id = 1;
+    site.web_server = "apache";
+
+    try {
+        s.save_sites({site});
+        FAIL("SQLite parent write failure was silently ignored");
+    } catch (const std::runtime_error& e) {
+        std::string msg = e.what();
+        CHECK(msg.find("SQLite save failed for sites") != std::string::npos);
+    }
+    CHECK_FALSE(fs::exists(dir + "sites.db"));
+    tclean(dir);
+}
+
+TEST_CASE("P11-R4 SQLite child write failure propagates to caller") {
+    auto dir = tdir("p11r4_child_write_failure");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+
+    StorageOptions opts;
+    opts.core_backend = CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = true;
+    Storage s(dir, opts);
+    REQUIRE(s.sqlite_ready());
+
+    containercp::mail::Mailbox mailbox;
+    mailbox.id = 1;
+    mailbox.domain_id = 999;
+    mailbox.local_part = "user";
+    mailbox.password_hash = "hash";
+    mailbox.enabled = true;
+    mailbox.created_at = "20260718T120000Z";
+    mailbox.updated_at = "20260718T120000Z";
+
+    try {
+        s.save_mailboxes({mailbox});
+        FAIL("SQLite child write failure was silently ignored");
+    } catch (const std::runtime_error& e) {
+        std::string msg = e.what();
+        CHECK(msg.find("SQLite save failed for mail_mailboxes") != std::string::npos);
+    }
+    CHECK_FALSE(fs::exists(dir + "mail_mailboxes.db"));
+    tclean(dir);
+}
+
+TEST_CASE("P11-R4 SQLite mail config write failure propagates to caller") {
+    auto dir = tdir("p11r4_mail_config_write_failure");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    drop_sqlite_table(dir, "mail_config");
+
+    StorageOptions opts;
+    opts.core_backend = CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = true;
+    Storage s(dir, opts);
+    REQUIRE(s.sqlite_ready());
+
+    try {
+        s.save_mail_module_state("active");
+        FAIL("SQLite mail config write failure was silently ignored");
+    } catch (const std::runtime_error& e) {
+        std::string msg = e.what();
+        CHECK(msg.find("SQLite save failed for mail_config.module_state") != std::string::npos);
+    }
+    CHECK_FALSE(fs::exists(dir + "mail_state.db"));
+    tclean(dir);
+}
+
+// ============================================================
 // Phase 11-10: Runtime repository wiring for all SQLite resources
 // ============================================================
 
@@ -3227,7 +3321,7 @@ TEST_CASE("P11-11 SQLite write path rolls back failed child replacements") {
         containercp::access::AccessGrant invalid_new = original_grant;
         invalid_new.id = 3;
         invalid_new.site_id = 999;
-        s.save_access_grants({valid_new, invalid_new});
+        CHECK_THROWS_AS(s.save_access_grants({valid_new, invalid_new}), std::runtime_error);
 
         auto grants = s.load_access_grants();
         REQUIRE(grants.size() == 1);
@@ -3257,7 +3351,7 @@ TEST_CASE("P11-11 SQLite write path rolls back failed child replacements") {
         invalid_box.id = 3;
         invalid_box.domain_id = 999;
         invalid_box.local_part = "invalid";
-        s.save_mailboxes({valid_box, invalid_box});
+        CHECK_THROWS_AS(s.save_mailboxes({valid_box, invalid_box}), std::runtime_error);
 
         auto boxes = s.load_mailboxes();
         REQUIRE(boxes.size() == 1);

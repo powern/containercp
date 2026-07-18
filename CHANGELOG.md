@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `PENDING` | P11-R4 — Propagate SQLite write failures
+
+**Summary:** Replaced ignored SQLite `try_save_*` results with controlled exceptions from public SQLite-backed save methods, so failed writes are visible to callers instead of being silently ignored. Added focused parent, child, and mail configuration write-failure coverage and updated existing foreign-key rollback tests to assert caller-visible failures.
+
+**Files changed:** `libs/storage/SQLiteStorage.cpp`, `tests/test_sqlite_storage.cpp`, `docs/development/phase11-production-review-fixes.md`, `CHANGELOG.md`
+
+**User-visible behavior:** SQLite-backed writes now fail closed with `SQLite save failed for <resource>` when the database rejects or cannot complete a write. SQLite mode no longer silently drops failed writes or falls back to TXT files for those write paths.
+
+**Validation:** Focused P11-R4 tests passed (`3` cases, `22` assertions). Affected FK and rollback reruns passed. Full suite passed (`653` cases, `4073` assertions). CTest passed (`1/1`). Clean rebuild of `containercp_tests` and `containercpd` completed successfully with `cmake --build build2 --clean-first --target containercp_tests containercpd -- -j1`.
+
+**Known risks:** Existing clean-build warning debt remains, including OpenSSL/c-ares deprecations, unused variables/parameters, `ServiceRegistry` member reorder warnings, sign-compare warnings, and legacy misleading indentation warnings.
+
+---
+
 ## 2026-07-18 | `c727106` | P11-R3 — Validate SQLite activation-state consistency
 
 **Summary:** Extended SQLite startup validation so activation state must reference a real completed migration archive. Startup now validates the migration ID, state schema version, database path, normalized archive path, archive integrity, and archive manifest fields before opening SQLite.

@@ -141,7 +141,16 @@ SQLite write paths frequently ignore failures using `(void)try_save_xxx(...)`, w
 - Run clean rebuild for `containercp_tests` and `containercpd`.
 
 ### Status
-- [ ] Not complete
+- [x] Complete
+
+Validation evidence:
+- Commit: `PENDING`
+- Focused tests: `P11-R4*` passed (`3` tests, `22` assertions).
+- Affected failure-path reruns passed: `SQLiteStorage access_grants FK*` (`4` tests, `20` assertions), `SQLiteStorage mail_* FK*` (`3` tests, `20` assertions), and `P11-11 SQLite write path rolls back failed child replacements`.
+- Full suite: `653` tests, `4073` assertions passed.
+- CTest: `1/1` tests passed.
+- Clean rebuild: `cmake --build build2 --clean-first --target containercp_tests containercpd -- -j1` completed successfully.
+- Known existing warning debt remains; no new P11-R4-specific warning was introduced.
 
 ## P11-R5 — Complete Production Failure Handling Tests
 

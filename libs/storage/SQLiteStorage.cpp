@@ -4,6 +4,7 @@
 #include "profile/ProfileType.h"
 
 #include <functional>
+#include <stdexcept>
 #include <set>
 #include <string>
 #include <vector>
@@ -81,6 +82,13 @@ static bool replace_all(
     return txn.commit();
 }
 
+static void require_save(bool saved, const char* resource) {
+    if (!saved) {
+        throw std::runtime_error(
+            std::string("SQLite save failed for ") + resource);
+    }
+}
+
 // --- Nodes ---
 
 bool SQLiteStorage::try_save_nodes(const std::vector<node::Node>& nodes) {
@@ -102,7 +110,7 @@ bool SQLiteStorage::try_save_nodes(const std::vector<node::Node>& nodes) {
 }
 
 void SQLiteStorage::save_nodes(const std::vector<node::Node>& nodes) {
-    (void)try_save_nodes(nodes);
+    require_save(try_save_nodes(nodes), "nodes");
 }
 
 std::vector<node::Node> SQLiteStorage::load_nodes() {
@@ -144,7 +152,7 @@ bool SQLiteStorage::try_save_php_versions(const std::vector<php::PhpVersion>& ve
 }
 
 void SQLiteStorage::save_php_versions(const std::vector<php::PhpVersion>& versions) {
-    (void)try_save_php_versions(versions);
+    require_save(try_save_php_versions(versions), "php_versions");
 }
 
 std::vector<php::PhpVersion> SQLiteStorage::load_php_versions() {
@@ -196,7 +204,7 @@ bool SQLiteStorage::try_save_profiles(const std::vector<profile::Profile>& profi
 }
 
 void SQLiteStorage::save_profiles(const std::vector<profile::Profile>& profiles) {
-    (void)try_save_profiles(profiles);
+    require_save(try_save_profiles(profiles), "profiles");
 }
 
 std::vector<profile::Profile> SQLiteStorage::load_profiles() {
@@ -247,7 +255,7 @@ bool SQLiteStorage::try_save_users(const std::vector<user::User>& users) {
 }
 
 void SQLiteStorage::save_users(const std::vector<user::User>& users) {
-    (void)try_save_users(users);
+    require_save(try_save_users(users), "users");
 }
 
 std::vector<user::User> SQLiteStorage::load_users() {
@@ -323,7 +331,7 @@ bool SQLiteStorage::try_save_domains(const std::vector<domain::Domain>& domains)
 }
 
 void SQLiteStorage::save_domains(const std::vector<domain::Domain>& domains) {
-    (void)try_save_domains(domains);
+    require_save(try_save_domains(domains), "domains");
 }
 
 std::vector<domain::Domain> SQLiteStorage::load_domains() {
@@ -378,7 +386,7 @@ bool SQLiteStorage::try_save_databases(const std::vector<database::Database>& da
 }
 
 void SQLiteStorage::save_databases(const std::vector<database::Database>& databases) {
-    (void)try_save_databases(databases);
+    require_save(try_save_databases(databases), "databases");
 }
 
 std::vector<database::Database> SQLiteStorage::load_databases() {
@@ -433,7 +441,7 @@ bool SQLiteStorage::try_save_backups(const std::vector<backup::Backup>& backups)
 }
 
 void SQLiteStorage::save_backups(const std::vector<backup::Backup>& backups) {
-    (void)try_save_backups(backups);
+    require_save(try_save_backups(backups), "backups");
 }
 
 std::vector<backup::Backup> SQLiteStorage::load_backups() {
@@ -488,7 +496,7 @@ bool SQLiteStorage::try_save_reverse_proxies(const std::vector<proxy::ReversePro
 }
 
 void SQLiteStorage::save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies) {
-    (void)try_save_reverse_proxies(proxies);
+    require_save(try_save_reverse_proxies(proxies), "reverse_proxies");
 }
 
 std::vector<proxy::ReverseProxy> SQLiteStorage::load_reverse_proxies() {
@@ -597,7 +605,7 @@ bool SQLiteStorage::try_save_access_users(const std::vector<access::AccessUser>&
 }
 
 void SQLiteStorage::save_access_users(const std::vector<access::AccessUser>& users) {
-    (void)try_save_access_users(users);
+    require_save(try_save_access_users(users), "access_users");
 }
 
 std::vector<access::AccessUser> SQLiteStorage::load_access_users() {
@@ -642,7 +650,7 @@ bool SQLiteStorage::try_save_access_grants(const std::vector<access::AccessGrant
 }
 
 void SQLiteStorage::save_access_grants(const std::vector<access::AccessGrant>& grants) {
-    (void)try_save_access_grants(grants);
+    require_save(try_save_access_grants(grants), "access_grants");
 }
 
 std::vector<access::AccessGrant> SQLiteStorage::load_access_grants() {
@@ -688,7 +696,7 @@ bool SQLiteStorage::try_save_auth_users(const std::vector<auth::AuthUser>& users
 }
 
 void SQLiteStorage::save_auth_users(const std::vector<auth::AuthUser>& users) {
-    (void)try_save_auth_users(users);
+    require_save(try_save_auth_users(users), "auth_users");
 }
 
 std::vector<auth::AuthUser> SQLiteStorage::load_auth_users() {
@@ -742,7 +750,7 @@ bool SQLiteStorage::try_save_sites(const std::vector<site::Site>& sites) {
 }
 
 void SQLiteStorage::save_sites(const std::vector<site::Site>& sites) {
-    (void)try_save_sites(sites);
+    require_save(try_save_sites(sites), "sites");
 }
 
 // ============================================================
@@ -792,7 +800,7 @@ bool SQLiteStorage::try_save_ssl_certificates(const std::vector<ssl::SslCertific
 }
 
 void SQLiteStorage::save_ssl_certificates(const std::vector<ssl::SslCertificate>& certs) {
-    (void)try_save_ssl_certificates(certs);
+    require_save(try_save_ssl_certificates(certs), "ssl_certificates");
 }
 
 std::vector<ssl::SslCertificate> SQLiteStorage::load_ssl_certificates() {
@@ -883,7 +891,7 @@ bool SQLiteStorage::try_save_mail_domains(const std::vector<mail::MailDomain>& d
 }
 
 void SQLiteStorage::save_mail_domains(const std::vector<mail::MailDomain>& domains) {
-    (void)try_save_mail_domains(domains);
+    require_save(try_save_mail_domains(domains), "mail_domains");
 }
 
 std::vector<mail::MailDomain> SQLiteStorage::load_mail_domains() {
@@ -951,7 +959,7 @@ bool SQLiteStorage::try_save_mailboxes(const std::vector<mail::Mailbox>& mailbox
 }
 
 void SQLiteStorage::save_mailboxes(const std::vector<mail::Mailbox>& mailboxes) {
-    (void)try_save_mailboxes(mailboxes);
+    require_save(try_save_mailboxes(mailboxes), "mail_mailboxes");
 }
 
 std::vector<mail::Mailbox> SQLiteStorage::load_mailboxes() {
@@ -1007,7 +1015,7 @@ bool SQLiteStorage::try_save_mail_aliases(const std::vector<mail::MailAlias>& al
 }
 
 void SQLiteStorage::save_mail_aliases(const std::vector<mail::MailAlias>& aliases) {
-    (void)try_save_mail_aliases(aliases);
+    require_save(try_save_mail_aliases(aliases), "mail_aliases");
 }
 
 std::vector<mail::MailAlias> SQLiteStorage::load_mail_aliases() {
@@ -1046,7 +1054,7 @@ bool SQLiteStorage::try_save_mail_module_state(const std::string& state) {
 }
 
 void SQLiteStorage::save_mail_module_state(const std::string& state) {
-    (void)try_save_mail_module_state(state);
+    require_save(try_save_mail_module_state(state), "mail_config.module_state");
 }
 
 std::string SQLiteStorage::load_mail_module_state() {
@@ -1072,7 +1080,7 @@ bool SQLiteStorage::try_save_mail_smarthost(const std::string& config) {
 }
 
 void SQLiteStorage::save_mail_smarthost(const std::string& config) {
-    (void)try_save_mail_smarthost(config);
+    require_save(try_save_mail_smarthost(config), "mail_config.smarthost");
 }
 
 std::string SQLiteStorage::load_mail_smarthost() {
