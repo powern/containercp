@@ -78,6 +78,22 @@ void Storage::validate_activation_state(const std::string& sqlite_path) {
     } else {
         state_path = "storage-state.json";
     }
+
+    struct stat state_st;
+    if (lstat(state_path.c_str(), &state_st) != 0) {
+        throw std::runtime_error(
+            "SQLite backend selected but activation state file not found: " + state_path
+            + ". Run 'containercp storage migrate-to-sqlite' first.");
+    }
+    if (S_ISLNK(state_st.st_mode)) {
+        throw std::runtime_error(
+            "Activation state path is a symlink and is not allowed: " + state_path);
+    }
+    if (!S_ISREG(state_st.st_mode)) {
+        throw std::runtime_error(
+            "Activation state path is not a regular file: " + state_path);
+    }
+
     std::ifstream f(state_path);
     if (!f.is_open()) {
         throw std::runtime_error(

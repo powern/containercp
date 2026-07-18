@@ -3199,3 +3199,39 @@ TEST_CASE("P11-15 SQLite startup logs failure reason") {
     CHECK(logs.find(dir + "storage-state.json") != std::string::npos);
     tclean(dir);
 }
+
+// ============================================================
+// Phase 11-17: Security
+// ============================================================
+
+TEST_CASE("P11-17 startup validation rejects symlinked activation state") {
+    auto dir = tdir("p1117_symlink_state");
+    tclean(dir); fs::create_directories(dir);
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+    }
+
+    auto state_path = create_state_file(dir, "sqlite", dir + "containercp.db");
+    auto real_state = dir + "storage-state-real.json";
+    fs::rename(state_path, real_state);
+    fs::create_symlink(real_state, state_path);
+
+    StorageOptions opts;
+    opts.core_backend = CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = false;
+
+    try {
+        Storage s(dir, opts);
+        FAIL("SQLite startup accepted a symlinked activation state file");
+    } catch (const std::runtime_error& e) {
+        std::string msg = e.what();
+        CHECK(msg.find("Activation state path is a symlink") != std::string::npos);
+        CHECK(msg.find(state_path) != std::string::npos);
+    }
+    CHECK_FALSE(fs::exists(dir + "nodes.db"));
+    tclean(dir);
+}
