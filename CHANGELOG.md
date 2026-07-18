@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `pending` | P11-20 — SQLite activation production runbook
+
+**Summary:** Added a production runbook for SQLite activation covering prerequisites, migration, activation, validation, failure handling, rollback, and operator safety warnings.
+
+**Files changed:** `docs/sqlite-activation-runbook.md`, `docs/development/phase11-sqlite-activation-checklist.md`, `planning/project-status.md`, `planning/backlog.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Operators now have a documented procedure for safely migrating to SQLite and rolling back to legacy TXT if activation fails.
+
+**Validation:** Documentation-only change; full suite from P11-19 passed (`633` cases, `3822` assertions), and `containercpd` target built successfully before this runbook update.
+
+**Known risks:** Runbook assumes legacy TXT files remain present for configuration-only rollback.
+
+---
+
 ## 2026-07-18 | `173db12` | P11-19 — SQLite startup integration test
 
 **Summary:** Added end-to-end integration coverage proving a migrated SQLite database opens through the production startup validation gate and exposes all checked runtime snapshots.

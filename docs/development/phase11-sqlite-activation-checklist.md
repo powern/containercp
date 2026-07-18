@@ -583,13 +583,28 @@ Validation evidence:
 
 - [x] P11-19 — Complete
 
-## P11-20
+## P11-20 — Production Runbook
 
-(production runbook)
+### Problem
+Operators need a concrete production procedure for migration, activation, validation, failure handling, and rollback.
+
+### Contract
+- Document prerequisites before migration.
+- Document the exact migration command.
+- Document when to set `storage.backend = sqlite`.
+- Document successful startup logs and post-activation checks.
+- Document fail-closed cases and rollback.
 
 ### Implementation evidence
 
-Commit SHA: _____________
+Commit SHA: `pending`
+
+Runbook: `docs/sqlite-activation-runbook.md`
+
+Validation evidence:
+- Runbook includes migration, activation, post-activation validation, failure handling, rollback, and operator prohibitions.
+
+- [x] P11-20 — Complete
 
 ### P11-21 — Clean Build and Final Validation
 
@@ -618,6 +633,7 @@ Commit SHA: _____________
 | P11-17 | Activation-state file security validation | P11-17 symlink activation state rejection test | d8fd466 | Complete |
 | P11-18 | Runtime preservation of approved site_id=0 sentinels | P11-18 sentinel restart test | d824ec2 | Complete |
 | P11-19 | End-to-end migrated database startup integration | P11-19 migration-to-startup test | 173db12 | Complete |
+| P11-20 | Production SQLite activation runbook | docs/sqlite-activation-runbook.md | pending | Complete |
 
 ## Final validation
 
