@@ -33,6 +33,7 @@ Current SQLite startup executes `MigrationEngine::migrate()` automatically. This
 - [x] Complete
 
 Validation evidence:
+- Commit: `c557601`
 - Focused tests: `P11-R1*` passed (`2` tests, `19` assertions).
 - Full suite: `635` tests, `3925` assertions passed.
 - CTest: `1/1` tests passed.

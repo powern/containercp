@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-18 | `pending` | P11-R1 — Remove automatic SQLite schema migration from startup
+## 2026-07-18 | `c557601` | P11-R1 — Remove automatic SQLite schema migration from startup
 
 **Summary:** Removed automatic schema migration from `Storage` SQLite startup. Startup now opens the configured database and validates existing schema metadata/version instead of running `MigrationEngine::migrate()`.
 
