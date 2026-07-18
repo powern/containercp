@@ -19,6 +19,14 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y build-essential cmake ninja-build libsqlite3-dev libssl-dev libcurl4-openssl-dev git
 
+      - name: Setup environment
+        run: |
+          sudo mkdir -p /srv/containercp/sites
+          sudo chmod -R 777 /srv/containercp
+          sudo apt-get install -y docker.io
+          sudo docker info >/dev/null 2>&1 || sudo dockerd &>/dev/null &
+          sleep 3
+
       - name: Build c-ares from source
         run: |
           curl -sL https://github.com/c-ares/c-ares/archive/refs/tags/v1.34.4.tar.gz | tar xz
@@ -34,4 +42,4 @@ jobs:
         run: ninja -C build -j2 containercp_tests
 
       - name: Test
-        run: ./build/tests/containercp_tests
+        run: sudo ./build/tests/containercp_tests
