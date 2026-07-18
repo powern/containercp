@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `PENDING` | CI — Stabilize SQLite reopen verification test
+
+**Summary:** Updated the importer verification test that checks wrong SQLite reopen behavior to use an explicit empty SQLite backend under the test fixture directory instead of `/nonexistent_storage_dir`. The test now deterministically verifies that reopen comparison fails on mismatched SQLite data across both CI and root-local environments.
+
+**Files changed:** `tests/test_importer.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. This stabilizes CI coverage for SQLite migration verification after the fail-closed startup validation changes.
+
+**Validation:** Focused `Storage failure detected on corrupt db reopen` test passed (`1` case, `12` assertions). Full suite passed (`653` cases, `4079` assertions). CTest passed (`1/1`). Clean rebuild of `containercp_tests` completed with `cmake --build build2 --clean-first --target containercp_tests containercpd -- -j1`; `containercpd` compilation was continued after the tool timeout with `cmake --build build2 --target containercpd -- -j1` and completed successfully.
+
+**Known risks:** Existing clean-build warning debt remains, including OpenSSL/c-ares deprecations, unused variables/parameters, `ServiceRegistry` member reorder warnings, sign-compare warnings, and legacy misleading indentation warnings.
+
+---
+
 ## 2026-07-18 | `815e1cc` | P11-R4 — Propagate SQLite write failures
 
 **Summary:** Replaced ignored SQLite `try_save_*` results with controlled exceptions from public SQLite-backed save methods, so failed writes are visible to callers instead of being silently ignored. Added focused parent, child, and mail configuration write-failure coverage and updated existing foreign-key rollback tests to assert caller-visible failures.

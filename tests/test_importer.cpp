@@ -1538,11 +1538,21 @@ TEST_CASE("Storage failure detected on corrupt db reopen") {
     REQUIRE(r.success);
     pool.shutdown();
 
-    // Pass wrong storage directory → Storage reopen must fail
-    Verification vfy(dir, dir + "containercp.db", r, "/nonexistent_storage_dir/");
+    auto wrong_dir = dir + "wrong-storage/";
+    fs::create_directories(wrong_dir);
+    ConnectionPool wrong_pool;
+    init_pool(wrong_pool, wrong_dir);
+    wrong_pool.shutdown();
+
+    // Pass a different SQLite backend with a valid empty schema. Reopen may
+    // succeed, but verification must fail instead of accepting mismatched data.
+    Verification vfy(dir, dir + "containercp.db", r, wrong_dir);
     auto result = vfy.verify_all();
     CHECK(result.initial_verification_passed);
-    CHECK(result.reopen_succeeded); // Storage::mkdir auto-creates dir
+    CHECK(result.reopen_succeeded);
+    CHECK_FALSE(result.reopened_verification_passed);
+    CHECK_FALSE(result.success);
+    CHECK(result.error.find("failed_reopened:") == 0);
     cleanup(dir);
 }
 
