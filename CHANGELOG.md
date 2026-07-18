@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `d824ec2` | P11-18 — SQLite site_id=0 sentinel validation
+
+**Summary:** Added runtime validation that approved `site_id=0` sentinel records survive SQLite writes and validated restart.
+
+**Files changed:** `tests/test_sqlite_storage.cpp`, `docs/development/phase11-sqlite-activation-checklist.md`, `planning/project-status.md`, `planning/backlog.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No behavior change; this is validation coverage proving approved orphan/admin/external sentinel records remain valid after SQLite activation.
+
+**Validation:** Focused P11-18 test passed (`1` case, `24` assertions). Full suite passed (`632` cases, `3803` assertions). `containercpd` target builds successfully.
+
+**Known risks:** Build output still contains pre-existing compiler warnings unrelated to P11-18. SQLite startup observability logs make storage tests more verbose.
+
+---
+
 ## 2026-07-18 | `d8fd466` | P11-17 — SQLite activation-state security
 
 **Summary:** Hardened SQLite startup validation by rejecting symlinked or non-regular `storage-state.json` files before reading activation state JSON.

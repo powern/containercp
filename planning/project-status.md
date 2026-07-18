@@ -520,7 +520,8 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | P11-15: Observability | ✅ | Commit `526e410`; SQLite startup success/failure logs added |
 | P11-16: Operator workflow | ✅ | Commit `615e8b3`; migration diagnostics include activation next steps |
 | P11-17: Security | ✅ | Commit `d8fd466`; symlinked activation state rejected before read |
-| P11-18: site_id=0 | ⬜ | Next |
+| P11-18: site_id=0 | ✅ | Commit `d824ec2`; approved sentinel records survive validated restart |
+| P11-19: Integration tests | ⬜ | Next |
 
 ---
 

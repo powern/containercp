@@ -530,9 +530,35 @@ Validation evidence:
 
 - [x] P11-17 — Complete
 
-## P11-18 through P11-20
+## P11-18 — site_id=0 Sentinels
 
-(site_id=0, integration tests, production runbook)
+### Problem
+Approved `site_id=0` sentinel records must survive runtime SQLite writes and validated restart, not only schema-level insertion tests.
+
+### Contract
+- Preserve `site_id=0` for approved runtime resources.
+- Preserve related sentinel owner/domain values where applicable.
+- Startup validation must pass after sentinel records are written.
+
+### Implementation evidence
+
+Commit SHA: `d824ec2`
+
+Focused test result:
+```
+test cases:  1 |  1 passed | 0 failed | 631 skipped
+assertions: 24 | 24 passed | 0 failed |
+```
+
+Validation evidence:
+- Runtime `Storage` test writes approved sentinel records for domains, databases, backups, reverse proxies, mail domains, and SSL certificates.
+- Test reopens with startup validation enabled and verifies sentinel values survive.
+
+- [x] P11-18 — Complete
+
+## P11-19 through P11-20
+
+(integration tests, production runbook)
 
 ### Implementation evidence
 
@@ -563,6 +589,7 @@ Commit SHA: _____________
 | P11-15 | SQLite startup observability logs | P11-15 startup log tests | 526e410 | Complete |
 | P11-16 | Migration operator next-step diagnostics | P11-16 migration diagnostics test | 615e8b3 | Complete |
 | P11-17 | Activation-state file security validation | P11-17 symlink activation state rejection test | d8fd466 | Complete |
+| P11-18 | Runtime preservation of approved site_id=0 sentinels | P11-18 sentinel restart test | d824ec2 | Complete |
 
 ## Final validation
 
@@ -570,10 +597,10 @@ __Build environment:__ Linux x86_64, g++ (GCC) 13.3, C++20, SQLite 3.x
 
 __Full suite result:__
 ```
-test cases:  631 |  631 passed | 0 failed | 0 skipped
-assertions: 3779 | 3779 passed | 0 failed |
+test cases:  632 |  632 passed | 0 failed | 0 skipped
+assertions: 3803 | 3803 passed | 0 failed |
 ```
 
-__HEAD SHA:__ d8fd466
+__HEAD SHA:__ d824ec2
 
 __git status:__ clean after documentation update commit

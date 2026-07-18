@@ -109,7 +109,8 @@ Before planning any new Epic, read these documents IN ORDER:
 - [x] P11-15: Observability
 - [x] P11-16: Operator workflow
 - [x] P11-17: Security
-- [ ] P11-18: site_id=0
+- [x] P11-18: site_id=0
+- [ ] P11-19: Integration tests
 
 ## Version 0.7 — Monitoring
 
