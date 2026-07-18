@@ -319,7 +319,7 @@ TEST_CASE("uint64 overflow rejected") {
         LegacyImporter imp(dir, pool);
         auto r = imp.import_nodes();
         CHECK_FALSE(r.success);
-        CHECK(r.error == "invalid_integer");
+        CHECK(r.error == "baseline_capture_failed");
     }
     cleanup(dir);
 }
@@ -336,7 +336,7 @@ TEST_CASE("Negative unsigned integer rejected") {
     LegacyImporter imp(dir, pool);
     auto r = imp.import_nodes();
     CHECK_FALSE(r.success);
-    CHECK(r.error == "invalid_integer");
+    CHECK(r.error == "invalid_integernegative value");
     cleanup(dir);
 }
 
@@ -352,7 +352,7 @@ TEST_CASE("Invalid boolean field rejected") {
     LegacyImporter imp(dir, pool);
     auto r = imp.import_php_versions();
     CHECK_FALSE(r.success);
-    CHECK(r.error == "invalid_boolean");
+    CHECK(r.error == "invalid_booleaninvalid boolean (expected 0 or 1)");
     cleanup(dir);
 }
 
@@ -969,7 +969,7 @@ TEST_CASE("cross-file duplicate id rejected") {
     LegacyImporter imp(dir, pool);
     auto r = imp.import_all_profiles();
     CHECK_FALSE(r.success);
-    CHECK(r.error == "duplicate_id");
+    CHECK(r.error == "duplicate_id:template_profiles.db");
     // Table unchanged
     CHECK(SQLiteStorage(pool).load_profiles().size() == 0);
     cleanup(dir);
@@ -987,7 +987,7 @@ TEST_CASE("cross-file duplicate profile_name rejected") {
     LegacyImporter imp(dir, pool);
     auto r = imp.import_all_profiles();
     CHECK_FALSE(r.success);
-    CHECK(r.error == "duplicate_profile_name");
+    CHECK(r.error == "duplicate_profile_name:template_profiles.db:standard");
     CHECK(SQLiteStorage(pool).load_profiles().size() == 0);
     cleanup(dir);
 }
