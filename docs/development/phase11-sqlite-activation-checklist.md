@@ -86,7 +86,7 @@ No auto-detection. No silent fallback.
 
 ### Implementation evidence
 
-Commit SHA: _____________
+Commit SHA: `97dbd1d`
 
 Focused test result:
 ```
