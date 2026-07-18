@@ -518,7 +518,8 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | P11-13: Restart persistence | ✅ | Commit `40f703e`; validated reopen preserves all runtime resources |
 | P11-14: Failure handling | ✅ | Commit `e855ff6`; symlinked SQLite database path rejected before open |
 | P11-15: Observability | ✅ | Commit `526e410`; SQLite startup success/failure logs added |
-| P11-16: Operator workflow | ⬜ | Next |
+| P11-16: Operator workflow | ✅ | Commit `615e8b3`; migration diagnostics include activation next steps |
+| P11-17: Security | ⬜ | Next |
 
 ---
 

@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `615e8b3` | P11-16 — SQLite migration operator workflow
+
+**Summary:** Added explicit operator next steps to successful SQLite migration diagnostics, including the required config change, daemon restart validation, and legacy archive retention guidance.
+
+**Files changed:** `libs/storage/MigrationOrchestrator.cpp`, `tests/test_migrate_sqlite.cpp`, `docs/development/phase11-sqlite-activation-checklist.md`, `planning/project-status.md`, `planning/backlog.md`, `CHANGELOG.md`
+
+**User-visible behavior:** `containercp storage migrate-to-sqlite` success output now tells operators how to activate SQLite safely after migration.
+
+**Validation:** Focused P11-16 test passed (`1` case, `6` assertions). Full suite passed (`630` cases, `3775` assertions). `containercpd` target builds successfully.
+
+**Known risks:** Build output still contains pre-existing compiler warnings unrelated to P11-16. SQLite startup observability logs make migration tests more verbose.
+
+---
+
 ## 2026-07-18 | `526e410` | P11-15 — SQLite startup observability
 
 **Summary:** Added `STORAGE` category logs for SQLite backend startup. Startup now logs backend selection, validation success, readiness, and fail-closed exception reasons.

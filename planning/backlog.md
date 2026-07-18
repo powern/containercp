@@ -107,7 +107,8 @@ Before planning any new Epic, read these documents IN ORDER:
 - [x] P11-13: Restart persistence
 - [x] P11-14: Failure handling
 - [x] P11-15: Observability
-- [ ] P11-16: Operator workflow
+- [x] P11-16: Operator workflow
+- [ ] P11-17: Security
 
 ## Version 0.7 — Monitoring
 

@@ -476,9 +476,36 @@ Validation evidence:
 
 - [x] P11-15 — Complete
 
-## P11-16 through P11-20
+## P11-16 — Operator Workflow
 
-(Operator workflow, security, site_id=0, integration tests, production runbook)
+### Problem
+After a successful migration, operators need explicit activation instructions rather than only raw stage diagnostics.
+
+### Contract
+- Migration diagnostics include actionable next steps.
+- Next steps tell the operator to set `storage.backend = sqlite`.
+- Next steps tell the operator to restart `containercpd` and confirm `STORAGE` validation logs.
+- Next steps identify the legacy archive to keep for rollback.
+
+### Implementation evidence
+
+Commit SHA: `615e8b3`
+
+Focused test result:
+```
+test cases: 1 | 1 passed | 0 failed | 629 skipped
+assertions: 6 | 6 passed | 0 failed |
+```
+
+Validation evidence:
+- `MigrationOrchestrator` appends a `Next steps:` section to successful migration diagnostics.
+- P11-16 test validates the config change, restart/log confirmation, and archive retention instructions are present.
+
+- [x] P11-16 — Complete
+
+## P11-17 through P11-20
+
+(Security, site_id=0, integration tests, production runbook)
 
 ### Implementation evidence
 
@@ -507,6 +534,7 @@ Commit SHA: _____________
 | P11-13 | Restart persistence through validated Storage reopen | P11-13 restart persistence test | 40f703e | Complete |
 | P11-14 | Failure handling for symlinked SQLite database paths | P11-14 startup symlink rejection test | e855ff6 | Complete |
 | P11-15 | SQLite startup observability logs | P11-15 startup log tests | 526e410 | Complete |
+| P11-16 | Migration operator next-step diagnostics | P11-16 migration diagnostics test | 615e8b3 | Complete |
 
 ## Final validation
 
@@ -514,10 +542,10 @@ __Build environment:__ Linux x86_64, g++ (GCC) 13.3, C++20, SQLite 3.x
 
 __Full suite result:__
 ```
-test cases:  629 |  629 passed | 0 failed | 0 skipped
-assertions: 3769 | 3769 passed | 0 failed |
+test cases:  630 |  630 passed | 0 failed | 0 skipped
+assertions: 3775 | 3775 passed | 0 failed |
 ```
 
-__HEAD SHA:__ 526e410
+__HEAD SHA:__ 615e8b3
 
 __git status:__ clean after documentation update commit
