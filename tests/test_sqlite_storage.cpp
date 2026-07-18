@@ -2831,3 +2831,118 @@ TEST_CASE("P11-11 SQLite write path rolls back failed child replacements") {
     }
     tclean(dir);
 }
+
+// ============================================================
+// Phase 11-12: Read-path validation
+// ============================================================
+
+static void write_p1112_poison_txt_files(const std::string& dir) {
+    for (const auto& filename : std::vector<std::string>{
+             "nodes.db", "php_versions.db", "profiles.db", "users.db",
+             "sites.db", "domains.db", "databases.db", "backups.db",
+             "reverse_proxies.db", "access_users.db", "access_grants.db",
+             "auth_users.db", "ssl_certificates.db", "mail_domains.db",
+             "mail_mailboxes.db", "mail_aliases.db", "mail_state.db",
+             "mail_smarthost.db"}) {
+        std::ofstream f(dir + filename);
+        f << "POISON_TXT_SHOULD_NOT_BE_READ\n";
+    }
+}
+
+TEST_CASE("P11-12 SQLite read path returns successful empty snapshots without TXT fallback") {
+    auto dir = tdir("p1112_empty_no_fallback");
+    tclean(dir); fs::create_directories(dir);
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+
+        write_p1112_poison_txt_files(dir);
+
+        auto require_empty_snapshot = [](const auto& snap) {
+            CHECK(snap.success);
+            CHECK(snap.records.empty());
+        };
+        require_empty_snapshot(s.load_nodes_checked());
+        require_empty_snapshot(s.load_php_versions_checked());
+        require_empty_snapshot(s.load_profiles_checked());
+        require_empty_snapshot(s.load_users_checked());
+        require_empty_snapshot(s.load_sites_checked());
+        require_empty_snapshot(s.load_domains_checked());
+        require_empty_snapshot(s.load_databases_checked());
+        require_empty_snapshot(s.load_backups_checked());
+        require_empty_snapshot(s.load_reverse_proxies_checked());
+        require_empty_snapshot(s.load_access_users_checked());
+        require_empty_snapshot(s.load_access_grants_checked());
+        require_empty_snapshot(s.load_auth_users_checked());
+        require_empty_snapshot(s.load_ssl_certificates_checked());
+        require_empty_snapshot(s.load_mail_domains_checked());
+        require_empty_snapshot(s.load_mailboxes_checked());
+        require_empty_snapshot(s.load_mail_aliases_checked());
+
+        auto module_state = s.load_mail_module_state_checked();
+        CHECK(module_state.success);
+        CHECK_FALSE(module_state.present);
+        auto smarthost = s.load_mail_smarthost_checked();
+        CHECK(smarthost.success);
+        CHECK_FALSE(smarthost.present);
+    }
+    tclean(dir);
+}
+
+TEST_CASE("P11-12 SQLite read path prefers SQLite data over conflicting TXT") {
+    auto dir = tdir("p1112_sqlite_wins");
+    tclean(dir); fs::create_directories(dir);
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+
+        containercp::node::Node node;
+        node.id = 42; node.name = "sqlite-node"; node.type = "local";
+        s.save_nodes({node});
+
+        containercp::backup::Backup backup;
+        backup.id = 7; backup.site_id = 2; backup.owner_id = 3;
+        backup.filename = "sqlite-backup.tar.gz"; backup.type = "manual";
+        backup.size = 4096; backup.created_at = "2026-07-18T12:00:00Z";
+        backup.status = "completed"; backup.file_path = "/sqlite/backup.tar.gz";
+        backup.compression = "gzip";
+        s.save_backups({backup});
+
+        containercp::auth::AuthUser auth;
+        auth.id = 5; auth.username = "sqlite-admin"; auth.password_hash = "sqlite-hash";
+        auth.must_change_password = true; auth.enabled = true; auth.role = "admin";
+        s.save_auth_users({auth});
+
+        s.save_mail_module_state("active");
+
+        write_p1112_poison_txt_files(dir);
+
+        auto nodes = s.load_nodes();
+        REQUIRE(nodes.size() == 1);
+        CHECK(nodes[0].id == 42);
+        CHECK(nodes[0].name == "sqlite-node");
+
+        auto backups = s.load_backups();
+        REQUIRE(backups.size() == 1);
+        CHECK(backups[0].id == 7);
+        CHECK(backups[0].filename == "sqlite-backup.tar.gz");
+
+        auto auths = s.load_auth_users();
+        REQUIRE(auths.size() == 1);
+        CHECK(auths[0].id == 5);
+        CHECK(auths[0].username == "sqlite-admin");
+        CHECK(auths[0].must_change_password);
+
+        auto module_state = s.load_mail_module_state_checked();
+        REQUIRE(module_state.success);
+        CHECK(module_state.present);
+        CHECK(module_state.value == "active");
+    }
+    tclean(dir);
+}
