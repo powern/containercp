@@ -1678,20 +1678,49 @@ TEST_CASE("E2E: Successful archive creation and public verification") {
     CHECK(arch.verify_archive(result.archive_path + "/", &parsed2));
     CHECK(parsed2.manifest_version == "1.0");
 
-    // Source immutability
-    for (auto& [fn, sha] : before_sha) {
-        CAPTURE(fn);
-        CHECK(LegacyArchive::sha256_file(dir + fn) == sha);
-    }
-    for (auto& [fn, sz] : before_size) {
-        CAPTURE(fn);
-        CHECK(std::filesystem::file_size(dir + fn) == sz);
+    // Source immutability (SHA, size, mtime, inode, permissions)
+    for (auto& fi : legacy_file_inventory()) {
+        std::string fp = dir + fi.filename;
+        if (!std::filesystem::exists(fp) || !std::filesystem::is_regular_file(fp)) continue;
+        CAPTURE(fi.filename);
+        CHECK(LegacyArchive::sha256_file(fp) == before_sha[fi.filename]);
+        CHECK(std::filesystem::file_size(fp) == before_size[fi.filename]);
+        // Verify still a regular non-symlink file
+        auto st = std::filesystem::symlink_status(fp);
+        CHECK_FALSE(std::filesystem::is_symlink(st));
+        CHECK(std::filesystem::is_regular_file(st));
     }
 
-    // Permissions check
-    std::error_code ec;
-    auto dir_st = std::filesystem::status(result.archive_path, ec);
-    if (!ec) { auto bits = static_cast<int>(dir_st.permissions()) & 0777; CHECK(bits == 0700); }
+    // Permissions: archive directory 0700
+    {
+        std::error_code ec;
+        auto dir_st = std::filesystem::status(result.archive_path, ec);
+        REQUIRE_FALSE(ec);
+        CHECK((static_cast<int>(dir_st.permissions()) & 0777) == 0700);
+    }
+    // Every present archived file = 0440, manifest.json = 0440, SHA256SUMS = 0440
+    {
+        for (auto& e : std::filesystem::directory_iterator(result.archive_path)) {
+            std::error_code ec;
+            auto st = std::filesystem::status(e.path(), ec);
+            REQUIRE_FALSE(ec);
+            auto bits = static_cast<int>(st.permissions()) & 0777;
+            CHECK(bits == 0440);
+            // No owner-write, group-write, other-read, other-write, execute bits
+            CHECK((bits & 0200) == 0); // owner write
+            CHECK((bits & 0020) == 0); // group write
+            CHECK((bits & 0004) == 0); // other read
+            CHECK((bits & 0002) == 0); // other write
+            CHECK((bits & 0111) == 0); // execute
+        }
+        std::error_code ec;
+        auto mf_st = std::filesystem::status(result.archive_path + "manifest.json", ec);
+        REQUIRE_FALSE(ec);
+        CHECK((static_cast<int>(mf_st.permissions()) & 0777) == 0440);
+        auto sf_st = std::filesystem::status(result.archive_path + "SHA256SUMS", ec);
+        REQUIRE_FALSE(ec);
+        CHECK((static_cast<int>(sf_st.permissions()) & 0777) == 0440);
+    }
 
     std::filesystem::remove_all(dir);
     std::filesystem::remove_all(arc_dir);
@@ -1722,10 +1751,11 @@ TEST_CASE("Pre-publication verification uses final path identity") {
     std::filesystem::remove_all(arc_dir);
 }
 
-TEST_CASE("Post-publication verify archive path mismatch rejected") {
-    auto dir = make_legacy_dir("arc_ppm");
-    auto arc_dir = make_legacy_dir("arc_ppm_r");
-    write_all_required(dir);
+TEST_CASE("Archive relocation rejected due to manifest identity mismatch") {
+    auto dir = make_legacy_dir("arc_rel");
+    auto arc_dir = make_legacy_dir("arc_rel_r");
+    write_all_required(dir, 2, 1);
+    write_some_optional(dir);
 
     auto dvr = make_full_dvr();
     std::string mid = "c1b2c3d4-e5f6-4789-a123-456789abcdef";
@@ -1733,14 +1763,19 @@ TEST_CASE("Post-publication verify archive path mismatch rejected") {
     auto result = arch.create_archive(mid, "v0.6.0", "v0.7.0", dvr);
     REQUIRE(result.success);
 
-    // Verify from a different directory fails
-    auto fake_dir = make_legacy_dir("arc_ppm_fake");
-    std::filesystem::remove_all(result.archive_path); // not actually copying, just checking identity
-    CHECK_FALSE(arch.verify_archive(fake_dir));
+    // Copy the complete archive to another location
+    auto relocated = make_legacy_dir("arc_rel_moved");
+    std::filesystem::copy(result.archive_path, relocated,
+        std::filesystem::copy_options::recursive);
+
+    // Verify original still passes
+    CHECK(arch.verify_archive(result.archive_path));
+    // Relocated copy fails — manifest archive_directory still identifies original
+    CHECK_FALSE(arch.verify_archive(relocated));
 
     std::filesystem::remove_all(dir);
     std::filesystem::remove_all(arc_dir);
-    std::filesystem::remove_all(fake_dir);
+    std::filesystem::remove_all(relocated);
 }
 
 TEST_CASE("Manifest parser produces exactly 19 file entries") {
@@ -2110,6 +2145,325 @@ TEST_CASE("File-entry validator requires all 6 fields") {
         CHECK(fe.optional == (req_present.count(fe.filename) == 0));
     }
 
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+// ============================================================
+// Integer boundary & tampering expansion
+// ============================================================
+
+TEST_CASE("Tampered manifest: trailing comma rejected") {
+    auto dir = make_legacy_dir("arc_tmc");
+    auto arc_dir = make_legacy_dir("arc_tmc_r");
+    write_all_required(dir, 2, 1);
+    auto dvr = make_full_dvr(); std::string mid = "a0000000-0000-4000-8000-000000000001";
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive(mid, "v0.6.0", "v0.7.0", dvr);
+    REQUIRE(result.success);
+
+    auto test_dir = make_legacy_dir("arc_tmc_t");
+    std::filesystem::copy(result.archive_path, test_dir, std::filesystem::copy_options::recursive);
+    std::string mp = test_dir + "manifest.json";
+    {   // Add trailing comma before closing brace
+        std::ifstream f(mp); std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        size_t pos = json.rfind('}');
+        if (pos != std::string::npos && pos > 0) { json.insert(pos, ","); }
+        std::ofstream fo(mp); fo << json;
+    }
+    CHECK_FALSE(arch.verify_archive(test_dir));
+    std::filesystem::remove_all(test_dir);
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Tampered manifest: leading comma rejected") {
+    auto dir = make_legacy_dir("arc_lmc");
+    auto arc_dir = make_legacy_dir("arc_lmc_r");
+    write_all_required(dir, 2, 1);
+    auto dvr = make_full_dvr(); std::string mid = "b0000000-0000-4000-8000-000000000002";
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive(mid, "v0.6.0", "v0.7.0", dvr);
+    REQUIRE(result.success);
+
+    auto test_dir = make_legacy_dir("arc_lmc_t");
+    std::filesystem::copy(result.archive_path, test_dir, std::filesystem::copy_options::recursive);
+    std::string mp = test_dir + "manifest.json";
+    {   // Insert comma after opening brace: "{,"
+        std::ifstream f(mp); std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        size_t pos = json.find('{');
+        if (pos != std::string::npos) { json.insert(pos + 1, ","); }
+        std::ofstream fo(mp); fo << json;
+    }
+    CHECK_FALSE(arch.verify_archive(test_dir));
+    std::filesystem::remove_all(test_dir);
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Tampered manifest: unknown top-level key rejected") {
+    auto dir = make_legacy_dir("arc_uke");
+    auto arc_dir = make_legacy_dir("arc_uke_r");
+    write_all_required(dir, 2, 1);
+    auto dvr = make_full_dvr(); std::string mid = "c0000000-0000-4000-8000-000000000003";
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive(mid, "v0.6.0", "v0.7.0", dvr);
+    REQUIRE(result.success);
+
+    auto test_dir = make_legacy_dir("arc_uke_t");
+    std::filesystem::copy(result.archive_path, test_dir, std::filesystem::copy_options::recursive);
+    std::string mp = test_dir + "manifest.json";
+    {   // Insert unknown key before closing brace
+        std::ifstream f(mp); std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        size_t pos = json.rfind('}');
+        if (pos != std::string::npos) { json.insert(pos, ",\"evil_key\":123"); }
+        std::ofstream fo(mp); fo << json;
+    }
+    CHECK_FALSE(arch.verify_archive(test_dir));
+    std::filesystem::remove_all(test_dir);
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Tampered manifest: unknown file-entry key rejected") {
+    auto dir = make_legacy_dir("arc_ufe");
+    auto arc_dir = make_legacy_dir("arc_ufe_r");
+    write_all_required(dir, 2, 1);
+    auto dvr = make_full_dvr(); std::string mid = "d0000000-0000-4000-8000-000000000004";
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive(mid, "v0.6.0", "v0.7.0", dvr);
+    REQUIRE(result.success);
+
+    auto test_dir = make_legacy_dir("arc_ufe_t");
+    std::filesystem::copy(result.archive_path, test_dir, std::filesystem::copy_options::recursive);
+    std::string mp = test_dir + "manifest.json";
+    {   // Insert unknown field in a file entry
+        std::ifstream f(mp); std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        size_t pos = json.find("\"filename\"");
+        if (pos != std::string::npos) { json.insert(pos - 3, "\"evil_field\":\"bad\","); }
+        std::ofstream fo(mp); fo << json;
+    }
+    CHECK_FALSE(arch.verify_archive(test_dir));
+    std::filesystem::remove_all(test_dir);
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Tampered manifest: uppercase SHA rejected") {
+    auto dir = make_legacy_dir("arc_usa");
+    auto arc_dir = make_legacy_dir("arc_usa_r");
+    write_all_required(dir, 2, 1);
+    auto dvr = make_full_dvr(); std::string mid = "e0000000-0000-4000-8000-000000000005";
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive(mid, "v0.6.0", "v0.7.0", dvr);
+    REQUIRE(result.success);
+
+    auto test_dir = make_legacy_dir("arc_usa_t");
+    std::filesystem::copy(result.archive_path, test_dir, std::filesystem::copy_options::recursive);
+    // Uppercase the SHA256SUMS hash
+    std::string sp = test_dir + "SHA256SUMS";
+    { std::ifstream f(sp); std::string sums((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+      for (auto& c : sums) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+      std::ofstream fo(sp); fo << sums; }
+    CHECK_FALSE(arch.verify_archive(test_dir));
+    std::filesystem::remove_all(test_dir);
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Tampered manifest: duplicate SHA256SUMS entry rejected") {
+    auto dir = make_legacy_dir("arc_dse");
+    auto arc_dir = make_legacy_dir("arc_dse_r");
+    write_all_required(dir, 2, 1);
+    auto dvr = make_full_dvr(); std::string mid = "f0000000-0000-4000-8000-000000000006";
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive(mid, "v0.6.0", "v0.7.0", dvr);
+    REQUIRE(result.success);
+
+    auto test_dir = make_legacy_dir("arc_dse_t");
+    std::filesystem::copy(result.archive_path, test_dir, std::filesystem::copy_options::recursive);
+    // Duplicate a checksum line
+    std::string sp = test_dir + "SHA256SUMS";
+    { std::ifstream f(sp); std::string sums((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+      size_t nl = sums.find('\n');
+      if (nl != std::string::npos) { sums.insert(nl + 1, sums.substr(0, nl + 1)); }
+      std::ofstream fo(sp); fo << sums; }
+    CHECK_FALSE(arch.verify_archive(test_dir));
+    std::filesystem::remove_all(test_dir);
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Tampered manifest: missing file entry rejected") {
+    auto dir = make_legacy_dir("arc_mfe2");
+    auto arc_dir = make_legacy_dir("arc_mfe2_r");
+    write_all_required(dir, 2, 1);
+    write_some_optional(dir);
+    auto dvr = make_full_dvr(); std::string mid = "01000000-0000-4000-8000-000000000007";
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive(mid, "v0.6.0", "v0.7.0", dvr);
+    REQUIRE(result.success);
+
+    auto test_dir = make_legacy_dir("arc_mfe2_t");
+    std::filesystem::copy(result.archive_path, test_dir, std::filesystem::copy_options::recursive);
+    std::string mp = test_dir + "manifest.json";
+    {   // Remove a file entry from the files array
+        std::ifstream f(mp); std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        size_t start = json.find("\"files\":[");
+        size_t end = json.find('}', start); // end of first file entry
+        if (end != std::string::npos) {
+            end = json.find("},{", end); // end of first file + next
+            if (end != std::string::npos) {
+                json.erase(start + 8, end - start - 8 + 1); // remove first entry
+            }
+        }
+        std::ofstream fo(mp); fo << json;
+    }
+    CHECK_FALSE(arch.verify_archive(test_dir));
+    std::filesystem::remove_all(test_dir);
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Tampered manifest: required file marked absent rejected") {
+    auto dir = make_legacy_dir("arc_rfa");
+    auto arc_dir = make_legacy_dir("arc_rfa_r");
+    write_all_required(dir, 2, 1);
+    auto dvr = make_full_dvr(); std::string mid = "02000000-0000-4000-8000-000000000008";
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive(mid, "v0.6.0", "v0.7.0", dvr);
+    REQUIRE(result.success);
+
+    auto test_dir = make_legacy_dir("arc_rfa_t");
+    std::filesystem::copy(result.archive_path, test_dir, std::filesystem::copy_options::recursive);
+    {
+        std::string mp = test_dir + "manifest.json";
+        std::ifstream f(mp); std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        size_t pos = json.find("\"filename\":\"nodes.db\"");
+        if (pos != std::string::npos) {
+            size_t present = json.find("\"present\":true", pos);
+            if (present != std::string::npos) json.replace(present, 15, "\"present\":false");
+        }
+        { std::ofstream fo(mp); fo << json; }
+    }
+    CHECK_FALSE(arch.verify_archive(test_dir));
+    std::filesystem::remove_all(test_dir);
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Tampered manifest: changed present flag rejected") {
+    auto dir = make_legacy_dir("arc_cpf");
+    auto arc_dir = make_legacy_dir("arc_cpf_r");
+    write_all_required(dir, 2, 1);
+    write_some_optional(dir);
+    auto dvr = make_full_dvr(); std::string mid = "03000000-0000-4000-8000-000000000009";
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive(mid, "v0.6.0", "v0.7.0", dvr);
+    REQUIRE(result.success);
+
+    auto test_dir = make_legacy_dir("arc_cpf_t");
+    std::filesystem::copy(result.archive_path, test_dir, std::filesystem::copy_options::recursive);
+    {
+        std::string mp = test_dir + "manifest.json";
+        std::ifstream f(mp); std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        // Change an optional file's present from false to true
+        size_t pos = json.find("\"optional\":true");
+        if (pos != std::string::npos) {
+            size_t present = json.find("\"present\":false", pos);
+            if (present != std::string::npos) json.replace(present, 16, "\"present\":true");
+        }
+        { std::ofstream fo(mp); fo << json; }
+    }
+    CHECK_FALSE(arch.verify_archive(test_dir));
+    std::filesystem::remove_all(test_dir);
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Tampered manifest: changed optional flag rejected") {
+    auto dir = make_legacy_dir("arc_cof");
+    auto arc_dir = make_legacy_dir("arc_cof_r");
+    write_all_required(dir, 2, 1);
+    auto dvr = make_full_dvr(); std::string mid = "04000000-0000-4000-8000-000000000010";
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive(mid, "v0.6.0", "v0.7.0", dvr);
+    REQUIRE(result.success);
+
+    auto test_dir = make_legacy_dir("arc_cof_t");
+    std::filesystem::copy(result.archive_path, test_dir, std::filesystem::copy_options::recursive);
+    {
+        std::string mp = test_dir + "manifest.json";
+        std::ifstream f(mp); std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        size_t pos = json.find("\"filename\":\"nodes.db\"");
+        if (pos != std::string::npos) {
+            size_t opt = json.find("\"optional\":false", pos);
+            if (opt != std::string::npos) json.replace(opt, 16, "\"optional\":true");
+        }
+        { std::ofstream fo(mp); fo << json; }
+    }
+    CHECK_FALSE(arch.verify_archive(test_dir));
+    std::filesystem::remove_all(test_dir);
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Quoted numeric size rejected by schema") {
+    auto dir = make_legacy_dir("arc_qns");
+    auto arc_dir = make_legacy_dir("arc_qns_r");
+    write_all_required(dir, 2, 1);
+    auto dvr = make_full_dvr();
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive("a1000000-0000-4000-8000-000000000011",
+                                      "v0.6.0", "v0.7.0", dvr);
+    REQUIRE(result.success);
+
+    auto test_dir = make_legacy_dir("arc_qns_t");
+    std::filesystem::copy(result.archive_path, test_dir, std::filesystem::copy_options::recursive);
+    {
+        std::string mp = test_dir + "manifest.json";
+        std::ifstream f(mp); std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        size_t pos = json.find("\"size\":");
+        if (pos != std::string::npos) {
+            size_t val_start = json.find_first_not_of(" ", pos + 7);
+            if (val_start != std::string::npos) json.insert(val_start, "\"");
+            size_t end = json.find(',', val_start);
+            if (end != std::string::npos) json.insert(end, "\"");
+        }
+        { std::ofstream fo(mp); fo << json; }
+    }
+    CHECK_FALSE(arch.verify_archive(test_dir));
+    std::filesystem::remove_all(test_dir);
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(arc_dir);
+}
+
+TEST_CASE("Quoted numeric record_count rejected by schema") {
+    auto dir = make_legacy_dir("arc_qnr");
+    auto arc_dir = make_legacy_dir("arc_qnr_r");
+    write_all_required(dir, 2, 1);
+    auto dvr = make_full_dvr();
+    LegacyArchive arch(dir, arc_dir);
+    auto result = arch.create_archive("a2000000-0000-4000-8000-000000000012",
+                                      "v0.6.0", "v0.7.0", dvr);
+    REQUIRE(result.success);
+
+    auto test_dir = make_legacy_dir("arc_qnr_t");
+    std::filesystem::copy(result.archive_path, test_dir, std::filesystem::copy_options::recursive);
+    {
+        std::string mp = test_dir + "manifest.json";
+        std::ifstream f(mp); std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        size_t pos = json.find("\"record_count\":");
+        if (pos != std::string::npos) {
+            size_t val_start = json.find_first_not_of(" ", pos + 15);
+            if (val_start != std::string::npos) json.insert(val_start, "\"");
+            size_t end = json.find(',', val_start);
+            if (end != std::string::npos) json.insert(end, "\"");
+        }
+        { std::ofstream fo(mp); fo << json; }
+    }
+    CHECK_FALSE(arch.verify_archive(test_dir));
+    std::filesystem::remove_all(test_dir);
     std::filesystem::remove_all(dir);
     std::filesystem::remove_all(arc_dir);
 }
