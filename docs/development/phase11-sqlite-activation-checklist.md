@@ -503,9 +503,36 @@ Validation evidence:
 
 - [x] P11-16 — Complete
 
-## P11-17 through P11-20
+## P11-17 — Security
 
-(Security, site_id=0, integration tests, production runbook)
+### Problem
+SQLite startup validation must not trust activation state through symlinks or non-regular files.
+
+### Contract
+- Inspect `storage-state.json` with `lstat()` before opening it.
+- Reject symlinked activation state files.
+- Reject non-regular activation state paths.
+- Fail closed without legacy TXT fallback.
+
+### Implementation evidence
+
+Commit SHA: `d8fd466`
+
+Focused test result:
+```
+test cases: 1 | 1 passed | 0 failed | 630 skipped
+assertions: 4 | 4 passed | 0 failed |
+```
+
+Validation evidence:
+- `Storage::validate_activation_state()` now rejects symlinked and non-regular activation state paths before reading JSON.
+- P11-17 test verifies a symlinked `storage-state.json` fails with a descriptive error and creates no legacy TXT fallback file.
+
+- [x] P11-17 — Complete
+
+## P11-18 through P11-20
+
+(site_id=0, integration tests, production runbook)
 
 ### Implementation evidence
 
@@ -535,6 +562,7 @@ Commit SHA: _____________
 | P11-14 | Failure handling for symlinked SQLite database paths | P11-14 startup symlink rejection test | e855ff6 | Complete |
 | P11-15 | SQLite startup observability logs | P11-15 startup log tests | 526e410 | Complete |
 | P11-16 | Migration operator next-step diagnostics | P11-16 migration diagnostics test | 615e8b3 | Complete |
+| P11-17 | Activation-state file security validation | P11-17 symlink activation state rejection test | d8fd466 | Complete |
 
 ## Final validation
 
@@ -542,10 +570,10 @@ __Build environment:__ Linux x86_64, g++ (GCC) 13.3, C++20, SQLite 3.x
 
 __Full suite result:__
 ```
-test cases:  630 |  630 passed | 0 failed | 0 skipped
-assertions: 3775 | 3775 passed | 0 failed |
+test cases:  631 |  631 passed | 0 failed | 0 skipped
+assertions: 3779 | 3779 passed | 0 failed |
 ```
 
-__HEAD SHA:__ 615e8b3
+__HEAD SHA:__ d8fd466
 
 __git status:__ clean after documentation update commit

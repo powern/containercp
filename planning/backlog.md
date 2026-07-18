@@ -108,7 +108,8 @@ Before planning any new Epic, read these documents IN ORDER:
 - [x] P11-14: Failure handling
 - [x] P11-15: Observability
 - [x] P11-16: Operator workflow
-- [ ] P11-17: Security
+- [x] P11-17: Security
+- [ ] P11-18: site_id=0
 
 ## Version 0.7 — Monitoring
 

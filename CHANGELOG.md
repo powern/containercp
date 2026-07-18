@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `d8fd466` | P11-17 — SQLite activation-state security
+
+**Summary:** Hardened SQLite startup validation by rejecting symlinked or non-regular `storage-state.json` files before reading activation state JSON.
+
+**Files changed:** `libs/storage/Storage.cpp`, `tests/test_sqlite_storage.cpp`, `docs/development/phase11-sqlite-activation-checklist.md`, `planning/project-status.md`, `planning/backlog.md`, `CHANGELOG.md`
+
+**User-visible behavior:** If `storage.backend=sqlite` is configured and `storage-state.json` is a symlink or non-regular file, startup now fails with a descriptive error instead of following the path.
+
+**Validation:** Focused P11-17 test passed (`1` case, `4` assertions). Full suite passed (`631` cases, `3779` assertions). `containercpd` target builds successfully.
+
+**Known risks:** Build output still contains pre-existing compiler warnings unrelated to P11-17. SQLite startup observability logs make storage tests more verbose.
+
+---
+
 ## 2026-07-18 | `615e8b3` | P11-16 — SQLite migration operator workflow
 
 **Summary:** Added explicit operator next steps to successful SQLite migration diagnostics, including the required config change, daemon restart validation, and legacy archive retention guidance.
