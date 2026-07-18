@@ -167,11 +167,15 @@ Ordered workflow (fail-closed):
 
 ### Implementation evidence
 
-Commit SHA: _____________
+Commit SHA: `6e3e009`
 
-Focused test result: _____________
+Focused test result:
+```
+test cases:  612 |  612 passed | 0 failed | 0 skipped
+assertions: 3562 | 3562 passed | 0 failed |
+```
 
-- [ ] P11-04 — Complete
+- [x] P11-04 — Complete
 
 ## P11-05 — Phase 9 Verification Integration
 
@@ -187,11 +191,9 @@ Reuse `Verification::verify_all()` public API. Require all checks:
 
 ### Implementation evidence
 
-Commit SHA: _____________
+Integrated in MigrationOrchestrator (commit `6e3e009`), steps 6–8.
 
-Focused test result: _____________
-
-- [ ] P11-05 — Complete
+- [x] P11-05 — Complete
 
 ## P11-06 — Phase 10 Archive Integration
 
@@ -207,11 +209,9 @@ Reuse `LegacyArchive::create_archive()`. Require:
 
 ### Implementation evidence
 
-Commit SHA: _____________
+Integrated in MigrationOrchestrator (commit `6e3e009`), steps 9–10.
 
-Focused test result: _____________
-
-- [ ] P11-06 — Complete
+- [x] P11-06 — Complete
 
 ## P11-07 — Activation State
 
@@ -239,11 +239,9 @@ Atomic write: temp file → fsync → rename → fsync parent.
 
 ### Implementation evidence
 
-Commit SHA: _____________
+Integrated in MigrationOrchestrator (commit `6e3e009`), step 12. Test `MigrationOrchestrator activation state content` validates content.
 
-Focused test result: _____________
-
-- [ ] P11-07 — Complete
+- [x] P11-07 — Complete
 
 ## P11-08 — SQLite Startup Path
 
@@ -328,7 +326,10 @@ Commit SHA: _____________
 | P11-01 | Analysis only | — | — | Complete |
 | P11-02 | Config, ServiceRegistry | backend selection tests | 97dbd1d | Complete |
 | P11-03 | DaemonApp, CommandDispatcher | migration command tests | 6a1a48e | Complete |
-| ... | ... | ... | ... | ... |
+| P11-04 | MigrationOrchestrator | migration orchestrator tests | 6e3e009 | Complete |
+| P11-05 | Verification integration (in orchestrator) | — | 6e3e009 | Complete |
+| P11-06 | Archive integration (in orchestrator) | — | 6e3e009 | Complete |
+| P11-07 | Activation state (in orchestrator) | activation state test | 6e3e009 | Complete |
 
 ## Final validation
 
