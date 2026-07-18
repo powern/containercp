@@ -23,9 +23,6 @@ jobs:
         run: |
           sudo mkdir -p /srv/containercp/sites
           sudo chmod -R 777 /srv/containercp
-          sudo apt-get install -y docker.io
-          sudo docker info >/dev/null 2>&1 || sudo dockerd &>/dev/null &
-          sleep 3
 
       - name: Build c-ares from source
         run: |
