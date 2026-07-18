@@ -608,7 +608,32 @@ Validation evidence:
 
 ### P11-21 — Clean Build and Final Validation
 
-Commit SHA: _____________
+Commit SHA: `pending`
+
+Validated code HEAD: `f9036aa`
+
+Validation commands:
+```bash
+cmake --build build2 --clean-first --target containercp_tests containercpd
+ctest --test-dir build2 --output-on-failure
+build2/tests/containercp_tests
+git status --short
+```
+
+Results:
+- Clean rebuild completed successfully for `containercp_tests` and `containercpd`.
+- CTest passed: `1/1` tests.
+- Full doctest suite passed: `633` tests, `3822` assertions.
+- Worktree was clean after validation.
+
+Known warning debt from clean rebuild:
+- OpenSSL SHA256 deprecation warnings.
+- c-ares API deprecation warnings.
+- Existing unused variable/parameter warnings.
+- Existing `ServiceRegistry` member initialization reorder warnings.
+- Existing misleading indentation warnings in legacy/archive/test code.
+
+- [x] P11-21 — Complete
 
 ## Traceability
 
@@ -634,6 +659,7 @@ Commit SHA: _____________
 | P11-18 | Runtime preservation of approved site_id=0 sentinels | P11-18 sentinel restart test | d824ec2 | Complete |
 | P11-19 | End-to-end migrated database startup integration | P11-19 migration-to-startup test | 173db12 | Complete |
 | P11-20 | Production SQLite activation runbook | docs/sqlite-activation-runbook.md | 046e400 | Complete |
+| P11-21 | Clean rebuild and final validation | clean rebuild + CTest + full doctest | pending | Complete |
 
 ## Final validation
 
@@ -645,6 +671,8 @@ test cases:  633 |  633 passed | 0 failed | 0 skipped
 assertions: 3822 | 3822 passed | 0 failed |
 ```
 
-__HEAD SHA:__ 046e400
+__Clean rebuild:__ passed for `containercp_tests` and `containercpd`; existing warning debt remains documented in P11-21.
 
-__git status:__ clean after documentation update commit
+__HEAD SHA:__ f9036aa
+
+__git status:__ clean after P11-21 validation

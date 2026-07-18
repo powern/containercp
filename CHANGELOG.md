@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `pending` | P11-21 — Phase 11 final validation
+
+**Summary:** Completed final Phase 11 validation for SQLite activation. Clean rebuild, CTest, full doctest, and worktree status checks were run against validated code HEAD `f9036aa`.
+
+**Files changed:** `docs/development/phase11-sqlite-activation-checklist.md`, `planning/project-status.md`, `planning/backlog.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No functional behavior change; this closes Phase 11 validation records.
+
+**Validation:** Clean rebuild of `containercp_tests` and `containercpd` succeeded. CTest passed (`1/1`). Full doctest suite passed (`633` cases, `3822` assertions). Worktree was clean after validation.
+
+**Known risks:** Clean rebuild still emits existing compiler warning debt, including OpenSSL/c-ares deprecations, unused variables/parameters, `ServiceRegistry` member reorder warnings, and misleading indentation warnings in legacy/archive/test code.
+
+---
+
 ## 2026-07-18 | `046e400` | P11-20 — SQLite activation production runbook
 
 **Summary:** Added a production runbook for SQLite activation covering prerequisites, migration, activation, validation, failure handling, rollback, and operator safety warnings.

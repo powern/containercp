@@ -112,7 +112,7 @@ Before planning any new Epic, read these documents IN ORDER:
 - [x] P11-18: site_id=0
 - [x] P11-19: Integration tests
 - [x] P11-20: Production runbook
-- [ ] P11-21: Clean build and final validation
+- [x] P11-21: Clean build and final validation
 
 ## Version 0.7 — Monitoring
 
