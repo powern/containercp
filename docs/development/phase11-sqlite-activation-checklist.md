@@ -123,11 +123,15 @@ containercp storage migrate-to-sqlite \
 
 ### Implementation evidence
 
-Commit SHA: _____________
+Commit SHA: `97dbd1d` (P11-02), P11-03 commit: _____________
 
-Focused test result: _____________
+Focused test result:
+```
+test cases:  607 |  607 passed | 0 failed | 0 skipped
+assertions: 3541 | 3541 passed | 0 failed |
+```
 
-- [ ] P11-03 — Complete
+- [x] P11-03 — Complete
 
 ## P11-04 — Migration Orchestrator
 
@@ -322,7 +326,7 @@ Commit SHA: _____________
 | ID | Production files | Test cases | Commit SHA | Result |
 |----|------------------|------------|------------|--------|
 | P11-01 | Analysis only | — | — | Complete |
-| P11-02 | Config, ServiceRegistry | backend selection tests | | |
+| P11-02 | Config, ServiceRegistry | backend selection tests | 97dbd1d | Complete |
 | P11-03 | DaemonApp, CommandDispatcher | migration command tests | | |
 | ... | ... | ... | ... | ... |
 

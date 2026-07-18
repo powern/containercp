@@ -88,7 +88,14 @@ void print_help() {
         << "  template path           Show template directory\n"
         << "  template validate <name> Validate template\n"
         << "  template reload         Reload templates from disk\n"
-        << "  auth debug              Show auth user diagnostics\n";
+        << "  auth debug              Show auth user diagnostics\n"
+        << "  storage migrate-to-sqlite  Migrate TXT storage to SQLite\n"
+        << "    --source <dir>         Source TXT database directory\n"
+        << "    --database <path>      Target SQLite database path\n"
+        << "    --archive-root <dir>   Archive directory for legacy TXT data\n"
+        << "    --source-version <ver> Source version (e.g. v0.6.0)\n"
+        << "    --target-version <ver> Target version (e.g. v0.7.0)\n"
+        << "    --confirm              Confirm migration intent\n";
 }
 
 void print_version() {
@@ -365,6 +372,41 @@ int CommandDispatcher::run(int argc, char* argv[]) {
         if (enable_mail) cmd += "|--enable-mail";
 
         return print_response(send_command(cmd));
+    }
+
+    if (arg1 == "storage" && argc >= 3 && std::string(argv[2]) == "migrate-to-sqlite") {
+        std::string source, database, archive_root, source_version, target_version;
+        bool confirm = false;
+
+        for (int i = 3; i < argc; ++i) {
+            std::string arg(argv[i]);
+            if (arg == "--source" && i + 1 < argc) source = argv[++i];
+            else if (arg == "--database" && i + 1 < argc) database = argv[++i];
+            else if (arg == "--archive-root" && i + 1 < argc) archive_root = argv[++i];
+            else if (arg == "--source-version" && i + 1 < argc) source_version = argv[++i];
+            else if (arg == "--target-version" && i + 1 < argc) target_version = argv[++i];
+            else if (arg == "--confirm") confirm = true;
+        }
+
+        if (source.empty() || database.empty() || archive_root.empty() ||
+            source_version.empty() || target_version.empty() || !confirm) {
+            std::cout << "Usage: containercp storage migrate-to-sqlite\n"
+                      << "  --source <dir>         Source TXT database directory\n"
+                      << "  --database <path>      Target SQLite database path\n"
+                      << "  --archive-root <dir>   Archive directory for legacy TXT data\n"
+                      << "  --source-version <ver> Source version (e.g. v0.6.0)\n"
+                      << "  --target-version <ver> Target version (e.g. v0.7.0)\n"
+                      << "  --confirm              Confirm migration intent\n";
+            return 1;
+        }
+
+        std::string cmd = "migrate-to-sqlite|--source|" + source
+                        + "|--database|" + database
+                        + "|--archive-root|" + archive_root
+                        + "|--source-version|" + source_version
+                        + "|--target-version|" + target_version
+                        + "|--confirm";
+        return print_response(send_command(cmd), true);
     }
 
     std::cout << "Error: unknown command\n\n";

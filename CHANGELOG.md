@@ -327,6 +327,15 @@ See `docs/changelog/early-development.md` for detailed entries.
   `worker-normal.inc` not generated, `worker-proxy.inc` not mounted in compose
 - Docker images: `ghcr.io/containercp/mail-rspamd:latest` (debian:trixie + rspamd)
 
+## 2026-07-18 | P11-03 — Explicit migration command
+
+- New CLI: `containercp storage migrate-to-sqlite` with `--source`, `--database`, `--archive-root`, `--source-version`, `--target-version`, `--confirm`
+- Daemon handler validates flags, checks paths, generates UUID v4 migration ID
+- Command does NOT start HTTP service (handler-only, no API dependency)
+- Requires `--confirm` flag, exits non-zero on failure
+- 2 new unit tests (607 total, 3541 assertions)
+- Files: `libs/cli/CommandDispatcher.cpp`, `libs/daemon/DaemonApp.cpp`, `tests/test_daemon.cpp`
+
 ## 2026-07-18 | P11-02 — Backend selection contract
 
 - `Config` gains `storage_backend()` getter, `set_storage_backend()`, `load_storage_backend()`

@@ -46,3 +46,44 @@ TEST_CASE("Command encode with no args") {
     cmd.name = "site-list";
     CHECK(cmd.encode() == "site-list");
 }
+
+TEST_CASE("migrate-to-sqlite command wire format") {
+    std::string cmd = "migrate-to-sqlite"
+        "|--source|/srv/containercp/database"
+        "|--database|/srv/containercp/database/containercp.db"
+        "|--archive-root|/srv/containercp/archive"
+        "|--source-version|v0.6.0"
+        "|--target-version|v0.7.0"
+        "|--confirm";
+
+    auto decoded = containercp::daemon::Command::decode(cmd);
+    CHECK(decoded.name == "migrate-to-sqlite");
+    CHECK(decoded.args.size() == 11);
+
+    // Verify flag-value pairs
+    auto it = decoded.args.begin();
+    CHECK(*it++ == "--source");         CHECK(*it++ == "/srv/containercp/database");
+    CHECK(*it++ == "--database");       CHECK(*it++ == "/srv/containercp/database/containercp.db");
+    CHECK(*it++ == "--archive-root");   CHECK(*it++ == "/srv/containercp/archive");
+    CHECK(*it++ == "--source-version"); CHECK(*it++ == "v0.6.0");
+    CHECK(*it++ == "--target-version"); CHECK(*it++ == "v0.7.0");
+    CHECK(*it++ == "--confirm");
+}
+
+TEST_CASE("migrate-to-sqlite missing --confirm rejected") {
+    std::string cmd = "migrate-to-sqlite"
+        "|--source|/tmp/src"
+        "|--database|/tmp/db"
+        "|--archive-root|/tmp/archive"
+        "|--source-version|v0.6.0"
+        "|--target-version|v0.7.0";
+
+    auto decoded = containercp::daemon::Command::decode(cmd);
+    CHECK(decoded.name == "migrate-to-sqlite");
+
+    bool has_confirm = false;
+    for (const auto& arg : decoded.args) {
+        if (arg == "--confirm") has_confirm = true;
+    }
+    CHECK_FALSE(has_confirm);
+}

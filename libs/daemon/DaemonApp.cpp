@@ -5,8 +5,11 @@
 #include "operations/SiteCreateOperation.h"
 #include "operations/SiteRemoveOperation.h"
 #include "runtime/CommandExecutor.h"
+#include "storage/LegacyArchive.h"
 #include "utils/StringUtils.h"
 #include "utils/Validator.h"
+
+#include <filesystem>
 
 #include <chrono>
 #include <fstream>
@@ -732,6 +735,47 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
                 << " role=" << u.role
                 << "\n";
         }
+        return Command::success(out.str());
+    }
+
+    if (cmd.name == "migrate-to-sqlite") {
+        std::string source_dir, database_path, archive_root, source_version, target_version;
+        bool confirm = false;
+
+        for (size_t i = 0; i < cmd.args.size(); ++i) {
+            const auto& arg = cmd.args[i];
+            if (arg == "--source" && i + 1 < cmd.args.size()) source_dir = cmd.args[++i];
+            else if (arg == "--database" && i + 1 < cmd.args.size()) database_path = cmd.args[++i];
+            else if (arg == "--archive-root" && i + 1 < cmd.args.size()) archive_root = cmd.args[++i];
+            else if (arg == "--source-version" && i + 1 < cmd.args.size()) source_version = cmd.args[++i];
+            else if (arg == "--target-version" && i + 1 < cmd.args.size()) target_version = cmd.args[++i];
+            else if (arg == "--confirm") confirm = true;
+        }
+
+        if (source_dir.empty() || database_path.empty() || archive_root.empty() ||
+            source_version.empty() || target_version.empty() || !confirm) {
+            return Command::error(
+                "Usage: migrate-to-sqlite --source <dir> --database <path> "
+                "--archive-root <dir> --source-version <ver> --target-version <ver> --confirm");
+        }
+
+        if (!std::filesystem::is_directory(source_dir)) {
+            return Command::error("Source directory not found: " + source_dir);
+        }
+
+        if (!std::filesystem::exists(std::filesystem::path(database_path).parent_path())) {
+            return Command::error("Database parent directory not found: " + database_path);
+        }
+
+        std::string migration_id = storage::LegacyArchive::generate_uuid();
+
+        std::ostringstream out;
+        out << "Migration ID: " << migration_id << "\n";
+        out << "Stage 1/5: Validating inputs ... OK\n";
+        out << "Stage 2/5: Importing legacy data ... PENDING\n";
+        out << "Stage 3/5: Verifying imported data ... PENDING\n";
+        out << "Stage 4/5: Creating archive ... PENDING\n";
+        out << "Stage 5/5: Activating SQLite backend ... PENDING\n";
         return Command::success(out.str());
     }
 
