@@ -136,3 +136,26 @@ TEST_CASE("MigrationOrchestrator activation state content") {
 
     cleanup(tmp);
 }
+
+TEST_CASE("P11-16 migration diagnostics include operator next steps") {
+    auto tmp = test_dir("mig_operator_steps");
+    cleanup(tmp);
+    fs::create_directories(tmp);
+    std::string src = tmp + "source/";
+    std::string db = tmp + "containercp.db";
+    std::string archive = tmp + "archive/";
+    copy_fixtures("normal", src);
+
+    containercp::storage::MigrationOrchestrator orch(
+        src, db, archive, "v0.6.0", "v0.7.0");
+    auto r = orch.migrate_to_sqlite();
+    REQUIRE(r.success);
+
+    CHECK(r.diagnostics.find("Next steps:") != std::string::npos);
+    CHECK(r.diagnostics.find("storage.backend = sqlite") != std::string::npos);
+    CHECK(r.diagnostics.find("Restart containercpd") != std::string::npos);
+    CHECK(r.diagnostics.find("STORAGE startup validation logs pass") != std::string::npos);
+    CHECK(r.diagnostics.find(r.archive.archive_path) != std::string::npos);
+
+    cleanup(tmp);
+}

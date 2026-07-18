@@ -271,6 +271,10 @@ MigrationResult MigrationOrchestrator::migrate_to_sqlite() {
             if (!s.detail.empty()) diag << " (" << s.detail << ")";
             diag << "\n";
         }
+        diag << "Next steps:\n";
+        diag << "  1. Set storage.backend = sqlite in containercp.conf\n";
+        diag << "  2. Restart containercpd and confirm STORAGE startup validation logs pass\n";
+        diag << "  3. Keep the legacy archive for rollback: " << result.archive.archive_path << "\n";
         result.diagnostics = diag.str();
     }
 
