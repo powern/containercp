@@ -30,7 +30,9 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: ninja -C build -j1 containercpd containercp_tests
+        run: |
+          ninja -C build -j1 containercpd containercp_tests
+          ls -la build/tests/containercp_tests
 
       - name: Test
-        run: ./build/tests/containercp_tests -s
+        run: ./build/tests/containercp_tests
