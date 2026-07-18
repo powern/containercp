@@ -73,7 +73,7 @@ Activation state parsing currently searches strings manually, which can accept m
 - [x] Complete
 
 Validation evidence:
-- Commit: `PENDING`
+- Commit: `8e18db1`
 - Focused tests: `P11-R2*` passed (`8` tests, `44` assertions).
 - Full suite: `643` tests, `3969` assertions passed.
 - CTest: `1/1` tests passed.

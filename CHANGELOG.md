@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-18 | `PENDING` | P11-R2 — Strict SQLite activation-state parsing
+## 2026-07-18 | `8e18db1` | P11-R2 — Strict SQLite activation-state parsing
 
 **Summary:** Replaced SQLite activation-state substring extraction with a strict typed parser. Startup now rejects malformed JSON, duplicate keys, missing required keys, unknown keys, wrong value types, invalid strings, and invalid enum values before continuing SQLite activation.
 
