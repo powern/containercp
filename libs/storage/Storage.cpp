@@ -1,6 +1,4 @@
 #include "Storage.h"
-#include "MigrationEngine.h"
-#include "SchemaMigrations.h"
 #include "logger/Logger.h"
 
 #include <cerrno>
@@ -12,6 +10,10 @@
 #include <vector>
 
 namespace containercp::storage {
+
+namespace {
+constexpr int kExpectedSchemaVersion = 1;
+}
 
 Storage::Storage(const std::string& db_path, StorageOptions options)
     : db_path_(db_path)
@@ -34,17 +36,6 @@ Storage::Storage(const std::string& db_path, StorageOptions options)
             }
 
             sqlite_ready_ = pool_.initialize(sqlite_path);
-            if (sqlite_ready_) {
-                MigrationEngine engine;
-                register_all_schema_migrations(engine);
-                SQLiteDB migrator;
-                if (migrator.open(sqlite_path)) {
-                    sqlite_ready_ = engine.migrate(migrator);
-                    migrator.close();
-                } else {
-                    sqlite_ready_ = false;
-                }
-            }
             if (!sqlite_ready_) {
                 pool_.shutdown();
                 if (options_.skip_startup_validation) {
@@ -53,6 +44,17 @@ Storage::Storage(const std::string& db_path, StorageOptions options)
                 }
                 throw std::runtime_error(
                     "Failed to initialize SQLite database: " + sqlite_path);
+            }
+            try {
+                verify_sqlite_schema_version();
+            } catch (const std::exception&) {
+                if (options_.skip_startup_validation) {
+                    pool_.shutdown();
+                    sqlite_ready_ = false;
+                    log.warning("STORAGE", "SQLite backend schema validation failed while startup validation is skipped: " + sqlite_path);
+                    return;
+                }
+                throw;
             }
             if (!options_.skip_startup_validation) {
                 verify_sqlite_startup();
@@ -131,6 +133,62 @@ void Storage::verify_sqlite_file(const std::string& sqlite_path) {
     if (!S_ISREG(st.st_mode)) {
         throw std::runtime_error(
             "SQLite database path is not a regular file: " + sqlite_path);
+    }
+}
+
+void Storage::verify_sqlite_schema_version() {
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) {
+        throw std::runtime_error("Startup validation: failed to acquire read lease for schema validation");
+    }
+
+    if (!rl->prepare("SELECT value FROM storage_meta WHERE key = 'schema_version'")) {
+        throw std::runtime_error(
+            "Startup validation: failed to query storage schema_version: " + rl->error_message());
+    }
+    if (!rl->step()) {
+        throw std::runtime_error("Startup validation: storage schema_version is missing");
+    }
+    std::string schema_version = rl->column_text(0);
+    if (schema_version != std::to_string(kExpectedSchemaVersion)) {
+        throw std::runtime_error(
+            "Startup validation: unsupported storage schema_version '" + schema_version
+            + "' (expected '" + std::to_string(kExpectedSchemaVersion) + "')");
+    }
+
+    if (!rl->prepare("SELECT status FROM schema_migrations WHERE version = ?")) {
+        throw std::runtime_error(
+            "Startup validation: failed to query schema_migrations: " + rl->error_message());
+    }
+    if (!rl->bind_int(1, kExpectedSchemaVersion)) {
+        throw std::runtime_error(
+            "Startup validation: failed to bind schema version: " + rl->error_message());
+    }
+    if (!rl->step()) {
+        throw std::runtime_error(
+            "Startup validation: schema migration " + std::to_string(kExpectedSchemaVersion)
+            + " is not recorded as completed");
+    }
+    std::string status = rl->column_text(0);
+    if (status != "completed") {
+        throw std::runtime_error(
+            "Startup validation: schema migration " + std::to_string(kExpectedSchemaVersion)
+            + " has status '" + status + "' (expected 'completed')");
+    }
+
+    if (!rl->prepare("SELECT COUNT(*) FROM schema_migrations WHERE status = 'completed' AND version > ?")) {
+        throw std::runtime_error(
+            "Startup validation: failed to query newer schema migrations: " + rl->error_message());
+    }
+    if (!rl->bind_int(1, kExpectedSchemaVersion)) {
+        throw std::runtime_error(
+            "Startup validation: failed to bind expected schema version: " + rl->error_message());
+    }
+    if (!rl->step()) {
+        throw std::runtime_error("Startup validation: failed to read newer schema migration count");
+    }
+    if (rl->column_int(0) != 0) {
+        throw std::runtime_error("Startup validation: database schema is newer than this runtime supports");
     }
 }
 

@@ -30,7 +30,14 @@ Current SQLite startup executes `MigrationEngine::migrate()` automatically. This
 - Run clean rebuild for `containercp_tests` and `containercpd`.
 
 ### Status
-- [ ] Not complete
+- [x] Complete
+
+Validation evidence:
+- Focused tests: `P11-R1*` passed (`2` tests, `19` assertions).
+- Full suite: `635` tests, `3925` assertions passed.
+- CTest: `1/1` tests passed.
+- Clean rebuild: `cmake --build build2 --clean-first --target containercp_tests containercpd` completed successfully.
+- Known existing warning debt remains; no new P11-R1-specific warning was introduced.
 
 ## P11-R2 — Replace Activation-State Substring Parsing
 

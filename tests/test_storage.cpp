@@ -1,6 +1,8 @@
 #include "storage/Storage.h"
 #include "storage/SQLiteWrapper.h"
 #include "storage/ConnectionPool.h"
+#include "storage/MigrationEngine.h"
+#include "storage/SchemaMigrations.h"
 #include "auth/AuthUser.h"
 #include "auth/sha256.h"
 #include "user/User.h"
@@ -29,6 +31,18 @@ static void cleanup(const std::string& path) {
     std::filesystem::remove(path);
     std::filesystem::remove(path + "-wal");
     std::filesystem::remove(path + "-shm");
+}
+
+static void init_storage_schema_for_test(const std::filesystem::path& dir) {
+    containercp::storage::ConnectionPool pool;
+    REQUIRE(pool.initialize((dir / "containercp.db").string()));
+    containercp::storage::SQLiteDB migrator;
+    REQUIRE(migrator.open((dir / "containercp.db").string()));
+    containercp::storage::MigrationEngine engine;
+    containercp::storage::register_all_schema_migrations(engine);
+    REQUIRE(engine.migrate(migrator));
+    migrator.close();
+    pool.shutdown();
 }
 
 TEST_CASE("SQLiteWrapper open and close") {
@@ -812,6 +826,7 @@ TEST_CASE("StorageOptions reflects legacy backend") {
 TEST_CASE("StorageOptions reflects SqlitePhase5 backend") {
     auto tmp = std::filesystem::temp_directory_path() / "stor_cfg_sqlite";
     std::filesystem::create_directories(tmp);
+    init_storage_schema_for_test(tmp);
     containercp::storage::Storage s(tmp.string(), containercp::storage::StorageOptions{containercp::storage::CoreStorageBackend::SqlitePhase5, true});
     CHECK(s.sqlite_ready());
     std::filesystem::remove_all(tmp);

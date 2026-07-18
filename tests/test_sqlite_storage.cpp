@@ -36,6 +36,12 @@ static void init_pool(containercp::storage::ConnectionPool& pool, const std::str
     migrator.close();
 }
 
+static void init_storage_schema(const std::string& dir) {
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    pool.shutdown();
+}
+
 // ============================================================
 // TransactionGuard tests
 // ============================================================
@@ -283,6 +289,7 @@ TEST_CASE("Storage default mode reads existing TXT nodes") {
 TEST_CASE("Storage explicit SQLite mode") {
     auto dir = tdir("ss_exp_sqlite");
     tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
@@ -304,6 +311,7 @@ TEST_CASE("Storage explicit SQLite mode") {
 TEST_CASE("P11-10 Storage explicit SQLite mode routes backups and auth_users to SQLite") {
     auto dir = tdir("ss_exp_coexist");
     tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
@@ -454,6 +462,7 @@ TEST_CASE("Explicit SQLite mode sqlite_ready reflects init status") {
 TEST_CASE("sqlite_ready true when explicit mode init succeeds") {
     auto dir = tdir("ss_ready_ok");
     tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
@@ -1014,6 +1023,7 @@ TEST_CASE("SQLiteStorage domains reopen") {
 
 TEST_CASE("Phase6a Storage explicit SQLite mode uses SQLite for users/sites/domains") {
     auto dir = tdir("s6a_mode"); tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
@@ -1063,6 +1073,7 @@ TEST_CASE("Phase6a default mode reads TXT users/sites/domains") {
 
 TEST_CASE("Phase6a SQLite resources include auth_users") {
     auto dir = tdir("s6a_coexist"); tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
@@ -1087,6 +1098,7 @@ TEST_CASE("Phase6a SQLite resources include auth_users") {
 
 TEST_CASE("Phase6a saving sites does not alter users or domains") {
     auto dir = tdir("s6a_isolation"); tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
@@ -1110,6 +1122,7 @@ TEST_CASE("Phase6a saving sites does not alter users or domains") {
 
 TEST_CASE("Phase6a nodes/php/profiles still work") {
     auto dir = tdir("s6a_legacy"); tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
@@ -1336,6 +1349,7 @@ TEST_CASE("SQLiteStorage reverse_proxies reopens") {
 
 TEST_CASE("Phase6b explicit SQLite mode uses SQLite for databases and proxies") {
     auto dir = tdir("s6b_mode"); tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
@@ -1380,6 +1394,7 @@ TEST_CASE("Phase6b default mode reads TXT databases and proxies") {
 
 TEST_CASE("Phase6b saving databases does not alter proxies and vice versa") {
     auto dir = tdir("s6b_isolation"); tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
@@ -1404,6 +1419,7 @@ TEST_CASE("Phase6b saving databases does not alter proxies and vice versa") {
 
 TEST_CASE("Phase6b existing phases still work") {
     auto dir = tdir("s6b_existing"); tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
@@ -1753,6 +1769,7 @@ TEST_CASE("SQLiteStorage access_grants PRAGMA foreign_key_check") {
 
 TEST_CASE("Phase6c explicit SQLite mode uses SQLite for access") {
     auto dir = tdir("s6c_mode"); tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
@@ -1787,6 +1804,7 @@ TEST_CASE("Phase6c default mode reads TXT access") {
 
 TEST_CASE("Phase6c existing phases still work") {
     auto dir = tdir("s6c_existing"); tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
@@ -2074,6 +2092,7 @@ TEST_CASE("SQLiteStorage mail_config state and smarthost coexist") {
 
 TEST_CASE("Phase7 explicit SQLite mode stores mail/SSL in SQLite") {
     auto dir = tdir("s7_mode"); tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         containercp::storage::StorageOptions opts;
         opts.core_backend = containercp::storage::CoreStorageBackend::SqlitePhase5;
@@ -2394,7 +2413,8 @@ static std::string create_state_file(const std::string& dir, const std::string& 
 TEST_CASE("P11-08 startup validation passes with correct activation state") {
     auto dir = tdir("p1108_happy");
     tclean(dir); fs::create_directories(dir);
-    // Initialize DB with skip_startup_validation
+    init_storage_schema(dir);
+    // Open DB with skip_startup_validation
     {
         StorageOptions opts;
         opts.core_backend = CoreStorageBackend::SqlitePhase5;
@@ -2428,7 +2448,8 @@ TEST_CASE("P11-08 startup validation rejects missing activation state") {
 TEST_CASE("P11-08 startup validation rejects wrong backend in activation state") {
     auto dir = tdir("p1108_wrong_backend");
     tclean(dir); fs::create_directories(dir);
-    // Initialize DB
+    init_storage_schema(dir);
+    // Open DB
     {
         StorageOptions opts;
         opts.core_backend = CoreStorageBackend::SqlitePhase5;
@@ -2451,7 +2472,8 @@ TEST_CASE("P11-08 startup validation rejects wrong backend in activation state")
 TEST_CASE("P11-08 startup validation rejects mismatched database_path in activation state") {
     auto dir = tdir("p1108_wrong_path");
     tclean(dir); fs::create_directories(dir);
-    // Initialize DB
+    init_storage_schema(dir);
+    // Open DB
     {
         StorageOptions opts;
         opts.core_backend = CoreStorageBackend::SqlitePhase5;
@@ -2504,7 +2526,8 @@ TEST_CASE("P11-08 startup validation rejects corrupt database file") {
 TEST_CASE("P11-08 startup validation passes on reopened migrated database") {
     auto dir = tdir("p1108_reopen");
     tclean(dir); fs::create_directories(dir);
-    // Initialize DB with skip_startup_validation
+    init_storage_schema(dir);
+    // Open DB with skip_startup_validation
     {
         StorageOptions opts;
         opts.core_backend = CoreStorageBackend::SqlitePhase5;
@@ -2534,12 +2557,90 @@ TEST_CASE("P11-08 startup validation passes on reopened migrated database") {
 }
 
 // ============================================================
+// Phase 11 production review R1: no startup schema migration
+// ============================================================
+
+TEST_CASE("P11-R1 startup rejects missing schema without creating migration tables") {
+    auto dir = tdir("p11r1_no_startup_migrate");
+    tclean(dir); fs::create_directories(dir);
+    auto db_path = dir + "containercp.db";
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(db_path));
+        db.close();
+    }
+    create_state_file(dir, "sqlite", db_path);
+
+    StorageOptions opts;
+    opts.core_backend = CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = false;
+
+    try {
+        Storage s(dir, opts);
+        FAIL("SQLite startup created or accepted a database without schema metadata");
+    } catch (const std::runtime_error& e) {
+        std::string msg = e.what();
+        CHECK(msg.find("schema_version") != std::string::npos);
+    }
+
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(db_path));
+        REQUIRE(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='storage_meta'"));
+        CHECK_FALSE(db.step());
+        REQUIRE(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'"));
+        CHECK_FALSE(db.step());
+        db.close();
+    }
+    CHECK_FALSE(fs::exists(dir + "nodes.db"));
+    tclean(dir);
+}
+
+TEST_CASE("P11-R1 startup rejects unsupported schema version without modifying it") {
+    auto dir = tdir("p11r1_unsupported_schema");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    auto db_path = dir + "containercp.db";
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(db_path));
+        REQUIRE(db.exec("UPDATE storage_meta SET value='999' WHERE key='schema_version'"));
+        db.close();
+    }
+    create_state_file(dir, "sqlite", db_path);
+
+    StorageOptions opts;
+    opts.core_backend = CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = false;
+
+    try {
+        Storage s(dir, opts);
+        FAIL("SQLite startup accepted unsupported schema version");
+    } catch (const std::runtime_error& e) {
+        std::string msg = e.what();
+        CHECK(msg.find("unsupported storage schema_version '999'") != std::string::npos);
+    }
+
+    {
+        containercp::storage::SQLiteDB db;
+        REQUIRE(db.open(db_path));
+        REQUIRE(db.prepare("SELECT value FROM storage_meta WHERE key='schema_version'"));
+        REQUIRE(db.step());
+        CHECK(std::string(db.column_text(0)) == "999");
+        db.close();
+    }
+    CHECK_FALSE(fs::exists(dir + "nodes.db"));
+    tclean(dir);
+}
+
+// ============================================================
 // Phase 11-10: Runtime repository wiring for all SQLite resources
 // ============================================================
 
 TEST_CASE("P11-10 Storage SQLite mode routes all 17 resources through SQLite") {
     auto dir = tdir("p1110_all_resources");
     tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         StorageOptions opts;
         opts.core_backend = CoreStorageBackend::SqlitePhase5;
@@ -2693,6 +2794,7 @@ TEST_CASE("P11-10 Storage SQLite mode routes all 17 resources through SQLite") {
 TEST_CASE("P11-11 SQLite write path commits replacements without TXT fallback") {
     auto dir = tdir("p1111_commit_replace");
     tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         StorageOptions opts;
         opts.core_backend = CoreStorageBackend::SqlitePhase5;
@@ -2761,6 +2863,7 @@ TEST_CASE("P11-11 SQLite write path commits replacements without TXT fallback") 
 TEST_CASE("P11-11 SQLite write path rolls back failed child replacements") {
     auto dir = tdir("p1111_child_rollback");
     tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         StorageOptions opts;
         opts.core_backend = CoreStorageBackend::SqlitePhase5;
@@ -2854,6 +2957,7 @@ static void write_p1112_poison_txt_files(const std::string& dir) {
 TEST_CASE("P11-12 SQLite read path returns successful empty snapshots without TXT fallback") {
     auto dir = tdir("p1112_empty_no_fallback");
     tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         StorageOptions opts;
         opts.core_backend = CoreStorageBackend::SqlitePhase5;
@@ -2897,6 +3001,7 @@ TEST_CASE("P11-12 SQLite read path returns successful empty snapshots without TX
 TEST_CASE("P11-12 SQLite read path prefers SQLite data over conflicting TXT") {
     auto dir = tdir("p1112_sqlite_wins");
     tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         StorageOptions opts;
         opts.core_backend = CoreStorageBackend::SqlitePhase5;
@@ -3059,6 +3164,7 @@ static void seed_p1113_runtime_resources(Storage& s) {
 TEST_CASE("P11-13 SQLite restart preserves all runtime resources after startup validation") {
     auto dir = tdir("p1113_restart_all_resources");
     tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         StorageOptions opts;
         opts.core_backend = CoreStorageBackend::SqlitePhase5;
@@ -3113,6 +3219,7 @@ TEST_CASE("P11-13 SQLite restart preserves all runtime resources after startup v
 TEST_CASE("P11-14 startup validation rejects symlinked SQLite database path") {
     auto dir = tdir("p1114_symlink_db");
     tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         StorageOptions opts;
         opts.core_backend = CoreStorageBackend::SqlitePhase5;
@@ -3150,6 +3257,7 @@ TEST_CASE("P11-14 startup validation rejects symlinked SQLite database path") {
 TEST_CASE("P11-15 SQLite startup logs validation success") {
     auto dir = tdir("p1115_success_logs");
     tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         StorageOptions opts;
         opts.core_backend = CoreStorageBackend::SqlitePhase5;
@@ -3207,6 +3315,7 @@ TEST_CASE("P11-15 SQLite startup logs failure reason") {
 TEST_CASE("P11-17 startup validation rejects symlinked activation state") {
     auto dir = tdir("p1117_symlink_state");
     tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         StorageOptions opts;
         opts.core_backend = CoreStorageBackend::SqlitePhase5;
@@ -3243,6 +3352,7 @@ TEST_CASE("P11-17 startup validation rejects symlinked activation state") {
 TEST_CASE("P11-18 SQLite runtime preserves approved site_id zero sentinels after restart") {
     auto dir = tdir("p1118_site_zero_runtime");
     tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
     {
         StorageOptions opts;
         opts.core_backend = CoreStorageBackend::SqlitePhase5;

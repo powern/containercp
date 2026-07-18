@@ -167,6 +167,7 @@ private:
     // Startup validation for SqlitePhase5
     void validate_activation_state(const std::string& sqlite_path);
     void verify_sqlite_file(const std::string& sqlite_path);
+    void verify_sqlite_schema_version();
     void verify_sqlite_startup();
 
     static std::string json_extract_string(const std::string& json, const std::string& key);

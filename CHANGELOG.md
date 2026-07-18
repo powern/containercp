@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `pending` | P11-R1 — Remove automatic SQLite schema migration from startup
+
+**Summary:** Removed automatic schema migration from `Storage` SQLite startup. Startup now opens the configured database and validates existing schema metadata/version instead of running `MigrationEngine::migrate()`.
+
+**Files changed:** `libs/storage/Storage.cpp`, `libs/storage/Storage.h`, `tests/test_sqlite_storage.cpp`, `tests/test_storage.cpp`, `docs/development/phase11-production-review-fixes.md`, `CHANGELOG.md`
+
+**User-visible behavior:** `containercpd` startup no longer creates or updates SQLite schema. If SQLite is configured with missing or unsupported schema metadata, startup fails closed instead of migrating automatically.
+
+**Validation:** Focused P11-R1 tests passed (`2` cases, `19` assertions). Full suite passed (`635` cases, `3925` assertions). CTest passed (`1/1`). Clean rebuild of `containercp_tests` and `containercpd` completed successfully.
+
+**Known risks:** Existing clean-build warning debt remains, including OpenSSL/c-ares deprecations, unused variables/parameters, member reorder warnings, and legacy misleading indentation warnings.
+
+---
+
 ## 2026-07-18 | `545a4ce` | P11-21 — Phase 11 final validation
 
 **Summary:** Completed final Phase 11 validation for SQLite activation. Clean rebuild, CTest, full doctest, and worktree status checks were run against validated code HEAD `f9036aa`.
