@@ -23,18 +23,15 @@ jobs:
         run: |
           curl -sL https://github.com/c-ares/c-ares/archive/refs/tags/v1.34.4.tar.gz | tar xz
           cd c-ares-1.34.4
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
           sudo ninja -C build install
+          sudo ldconfig
 
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: |
-          ninja -C build -j1 containercpd containercp_tests
-          find build -name containercp_tests -type f
+        run: ninja -C build -j2 containercp_tests
 
       - name: Test
-        run: |
-          TEST=$(find build -name containercp_tests -type f | head -1)
-          $TEST
+        run: ./build/tests/containercp_tests
