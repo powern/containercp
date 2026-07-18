@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-18 | `PENDING` | CI — Stabilize SQLite reopen verification test
+## 2026-07-18 | `7164301` | CI — Stabilize SQLite reopen verification test
 
 **Summary:** Updated the importer verification test that checks wrong SQLite reopen behavior to use an explicit empty SQLite backend under the test fixture directory instead of `/nonexistent_storage_dir`. The test now deterministically verifies that reopen comparison fails on mismatched SQLite data across both CI and root-local environments.
 
