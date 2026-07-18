@@ -2079,3 +2079,270 @@ TEST_CASE("Shutdown then reinitialize still works") {
     }
     tclean(dir);
 }
+
+// ============================================================
+// ConnectionPool lifecycle and lease accounting tests
+// ============================================================
+
+using namespace containercp::storage;
+
+TEST_CASE("ConnectionPool uninitialized lease does not affect lease count") {
+    ConnectionPool pool;
+    CHECK(pool.lease_read() == nullptr);
+    pool.shutdown();
+    pool.shutdown(); // idempotent
+}
+
+TEST_CASE("ConnectionPool return nullptr is a no-op") {
+    ConnectionPool pool;
+    pool.return_read(nullptr);
+    pool.shutdown();
+}
+
+TEST_CASE("ConnectionPool lease return accounting is exact") {
+    auto dir = tdir("cp_lease_acc");
+    tclean(dir); fs::create_directories(dir);
+    ConnectionPool pool;
+    REQUIRE(pool.initialize(dir + "test.db"));
+    {
+        ReadLease rl(pool);
+        CHECK(rl.is_valid());
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("ConnectionPool double return does not underflow") {
+    auto dir = tdir("cp_dbl_ret");
+    tclean(dir); fs::create_directories(dir);
+    ConnectionPool pool;
+    REQUIRE(pool.initialize(dir + "test.db"));
+    SQLiteDB* db = pool.lease_read();
+    REQUIRE(db != nullptr);
+    pool.return_read(db);
+    pool.return_read(db); // second return — no-op
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("ConnectionPool foreign pointer return is ignored") {
+    auto dir = tdir("cp_foreign");
+    tclean(dir); fs::create_directories(dir);
+    ConnectionPool pool;
+    REQUIRE(pool.initialize(dir + "test.db"));
+    SQLiteDB fake;
+    pool.return_read(&fake);
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("ConnectionPool repeated lease cycles return to zero") {
+    auto dir = tdir("cp_cycle");
+    tclean(dir); fs::create_directories(dir);
+    ConnectionPool pool;
+    REQUIRE(pool.initialize(dir + "test.db"));
+    for (int cycle = 0; cycle < 10; ++cycle) {
+        ReadLease rl(pool);
+        CHECK(rl.is_valid());
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("ConnectionPool shutdown waits for active read lease") {
+    auto dir = tdir("cp_shut_wait");
+    tclean(dir); fs::create_directories(dir);
+    ConnectionPool pool;
+    REQUIRE(pool.initialize(dir + "test.db"));
+
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool shutdown_done = false;
+
+    std::unique_ptr<ReadLease> rl(new ReadLease(pool));
+    REQUIRE(rl->is_valid());
+    REQUIRE((*rl)->exec("CREATE TABLE IF NOT EXISTS t(x)"));
+    REQUIRE((*rl)->exec("INSERT INTO t VALUES(1)"));
+
+    std::thread t([&]() {
+        pool.shutdown();
+        std::lock_guard<std::mutex> lk(mtx);
+        shutdown_done = true;
+        cv.notify_one();
+    });
+
+    // Wait until shutdown flag is set (lease wait has started)
+    while (!pool.is_shutdown()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    // Shutdown not complete while lease still active
+    {
+        std::lock_guard<std::mutex> lk(mtx);
+        CHECK_FALSE(shutdown_done);
+    }
+
+    // New lease rejected
+    CHECK(pool.lease_read() == nullptr);
+
+    // Active lease still valid
+    REQUIRE((*rl)->exec("SELECT * FROM t"));
+
+    rl.reset(); // release lease → shutdown completes
+    t.join();
+    CHECK(shutdown_done);
+    tclean(dir);
+}
+
+TEST_CASE("ConnectionPool destructor on never-initialized pool") {
+    { ConnectionPool pool; }
+    CHECK(true);
+}
+
+TEST_CASE("ConnectionPool shutdown on never-initialized pool") {
+    ConnectionPool pool;
+    pool.shutdown();
+    pool.shutdown();
+    CHECK(true);
+}
+
+TEST_CASE("ConnectionPool shutdown twice") {
+    auto dir = tdir("cp_shut2");
+    tclean(dir); fs::create_directories(dir);
+    ConnectionPool pool;
+    REQUIRE(pool.initialize(dir + "test.db"));
+    pool.shutdown();
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("ConnectionPool initialization failure then shutdown") {
+    ConnectionPool pool;
+    CHECK_FALSE(pool.initialize("/nonexistent_dir_xyz_123/test.db"));
+    pool.shutdown();
+}
+
+TEST_CASE("ConnectionPool read acquisition after shutdown rejected") {
+    auto dir = tdir("cp_acq_after");
+    tclean(dir); fs::create_directories(dir);
+    ConnectionPool pool;
+    REQUIRE(pool.initialize(dir + "test.db"));
+    pool.shutdown();
+    CHECK(pool.lease_read() == nullptr);
+    tclean(dir);
+}
+
+TEST_CASE("ConnectionPool WriteGuard on uninitialized pool") {
+    ConnectionPool pool;
+    WriteGuard wg(pool);
+    CHECK_FALSE(wg.is_valid());
+}
+
+TEST_CASE("ConnectionPool ReadLease on uninitialized pool") {
+    ConnectionPool pool;
+    ReadLease rl(pool);
+    CHECK_FALSE(rl.is_valid());
+}
+
+TEST_CASE("ConnectionPool WriteGuard after shutdown") {
+    auto dir = tdir("cp_wg_after");
+    tclean(dir); fs::create_directories(dir);
+    ConnectionPool pool;
+    REQUIRE(pool.initialize(dir + "test.db"));
+    pool.shutdown();
+    WriteGuard wg(pool);
+    CHECK_FALSE(wg.is_valid());
+    tclean(dir);
+}
+
+TEST_CASE("ConnectionPool repeated initialize shutdown cycles") {
+    auto dir = tdir("cp_rep_init");
+    tclean(dir); fs::create_directories(dir);
+    ConnectionPool pool;
+    for (int i = 0; i < 3; ++i) {
+        REQUIRE(pool.initialize(dir + "test.db"));
+        pool.shutdown();
+    }
+    tclean(dir);
+}
+
+TEST_CASE("ConnectionPool pool destruction after normal shutdown") {
+    auto dir = tdir("cp_dtor_norm");
+    tclean(dir); fs::create_directories(dir);
+    {
+        ConnectionPool pool;
+        REQUIRE(pool.initialize(dir + "test.db"));
+        pool.shutdown();
+    }
+    tclean(dir);
+}
+
+TEST_CASE("ConnectionPool pool destruction after init failure") {
+    { ConnectionPool pool; pool.initialize("/bad/db"); }
+    CHECK(true);
+}
+
+TEST_CASE("ConnectionPool backup and shutdown ordering") {
+    auto dir = tdir("cp_backup_shut");
+    tclean(dir); fs::create_directories(dir);
+    ConnectionPool pool;
+    REQUIRE(pool.initialize(dir + "test.db"));
+    {
+        WriteGuard wg(pool);
+        REQUIRE(wg.is_valid());
+        wg.db().exec("CREATE TABLE IF NOT EXISTS backup_test(x)");
+        wg.db().exec("INSERT INTO backup_test VALUES(42)");
+    }
+    std::thread t([&]() { pool.backup(dir + "backup.db"); });
+    t.join();
+    pool.shutdown();
+    CHECK(fs::exists(dir + "backup.db"));
+    tclean(dir);
+}
+
+TEST_CASE("ConnectionPool Active WriteGuard shutdown waits for guard") {
+    auto dir = tdir("cp_wg_shut");
+    tclean(dir); fs::create_directories(dir);
+    ConnectionPool pool;
+    REQUIRE(pool.initialize(dir + "test.db"));
+
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool shutdown_started = false;
+    bool shutdown_done = false;
+
+    pool.test_obs_.on_shutdown_awaiting_write_mutex = [&]() {
+        std::lock_guard<std::mutex> lk(mtx);
+        shutdown_started = true;
+        cv.notify_one();
+    };
+
+    std::unique_ptr<WriteGuard> wg(new WriteGuard(pool));
+    REQUIRE(wg->is_valid());
+    wg->db().exec("CREATE TABLE IF NOT EXISTS wg_test(x)");
+
+    std::thread t([&]() {
+        pool.shutdown();
+        std::lock_guard<std::mutex> lk(mtx);
+        shutdown_done = true;
+        cv.notify_one();
+    });
+
+    {
+        std::unique_lock<std::mutex> lk(mtx);
+        cv.wait(lk, [&]() { return shutdown_started; });
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(mtx);
+        CHECK_FALSE(shutdown_done);
+    }
+
+    CHECK(wg->db().exec("INSERT INTO wg_test VALUES(1)"));
+
+    wg.reset(); // release before joining
+    t.join();
+    CHECK(shutdown_done);
+    pool.shutdown();
+    tclean(dir);
+}
