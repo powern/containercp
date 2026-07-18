@@ -284,7 +284,7 @@ Validation evidence:
 - [x] Complete
 
 Final report evidence:
-- Report commit: `PENDING`
+- Report commit: `c9c09b3`
 - Validated code/documentation HEAD before final report: `3e65609`.
 - Git status before final report edit: `git status --short` produced no output.
 - Latest CI: Build and Test run `29660270878` passed for `3e65609`.
