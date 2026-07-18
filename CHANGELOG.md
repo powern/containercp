@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-18 | `PENDING` | P11-R5 — Complete SQLite production failure handling tests
+## 2026-07-18 | `51429f0` | P11-R5 — Complete SQLite production failure handling tests
 
 **Summary:** Added focused production failure handling tests for SQLite startup validation. The new tests cover missing activation state, corrupted activation state, archive validation failure, migration state mismatch, unsupported schema version, and SQLite open failure while asserting fail-closed startup, no TXT fallback files, and unchanged SQLite marker state or unchanged corrupt database file.
 
