@@ -263,9 +263,13 @@ When `config.backend == "sqlite"`:
 
 ### Implementation evidence
 
-Commit SHA: _____________
+Commit SHA: 4a920fc
 
-Focused test result: _____________
+Focused test result:
+```
+test cases:  619 |  619 passed | 0 failed | 0 skipped
+assertions: 3576 | 3576 passed | 0 failed |
+```
 
 - [x] P11-08 — Complete
 
@@ -330,14 +334,18 @@ Commit SHA: _____________
 | P11-05 | Verification integration (in orchestrator) | — | 6e3e009 | Complete |
 | P11-06 | Archive integration (in orchestrator) | — | 6e3e009 | Complete |
 | P11-07 | Activation state (in orchestrator) | activation state test | 6e3e009 | Complete |
-| P11-08 | Storage startup validation (validate_activation_state, verify_sqlite_file, verify_sqlite_startup), StorageOptions.skip_startup_validation, sqlite_db_path fix | P11-08 startup validation tests (7 cases) | | Complete |
+| P11-08 | Storage startup validation (validate_activation_state, verify_sqlite_file, verify_sqlite_startup), StorageOptions.skip_startup_validation, sqlite_db_path fix | P11-08 startup validation tests (7 cases) | 4a920fc | Complete |
 
 ## Final validation
 
-__Build environment:__ ________
+__Build environment:__ Linux x86_64, g++ (GCC) 13.3, C++20, SQLite 3.x
 
-__Full suite result:__ ________
+__Full suite result:__
+```
+test cases:  619 |  619 passed | 0 failed | 0 skipped
+assertions: 3576 | 3576 passed | 0 failed |
+```
 
-__HEAD SHA:__ ________
+__HEAD SHA:__ 4a920fc
 
-__git status:__ ________
+__git status:__ clean, working tree clean, no untracked files
