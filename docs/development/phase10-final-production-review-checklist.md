@@ -15,7 +15,7 @@ Production-code changes made during test fixes must be reviewed for correctness 
 
 ### P10-F01 — Version format contract
 
-- [ ] Complete
+- [x] Complete
 
 **Problem:** `safe_version()` in `LegacyArchive.cpp` was changed in commit `bbc730e` to accept two-component versions (`v1.0-rc1`). The prior approved archive version contract required exactly three numeric components: `v<major>.<minor>.<patch>[-suffix]`. The change was introduced to satisfy a test without documenting the contract change.
 
@@ -52,13 +52,13 @@ Production-code changes made during test fixes must be reviewed for correctness 
 
 **Implementation evidence:**
 
-Commit SHA: _____________
+Commit SHA: `561a044`
 
-Focused test result: _____________
+Focused test result: 580/580 passed, 3473/3473 assertions
 
 ### P10-F02 — Archive path traversal policy
 
-- [ ] Complete
+- [x] Complete
 
 **Problem:** `normalize_archive_identity_path()` in `LegacyArchive.cpp` was changed in commit `bbc730e` to call `lexically_normal()` BEFORE checking for `..` components. As a result, `/archive/a/../b` normalizes to `/archive/b` and is accepted, silently bypassing the traversal check.
 
@@ -90,13 +90,13 @@ Focused test result: _____________
 
 **Implementation evidence:**
 
-Commit SHA: _____________
+Commit SHA: `561a044`
 
-Focused test result: _____________
+Focused test result: 580/580 passed, 3473/3473 assertions
 
 ### P10-F03 — Read lease counter correctness
 
-- [ ] Complete
+- [x] Complete
 
 **Problem:** `return_read(nullptr)` in `ConnectionPool.cpp` decrements `outstanding_leases_` without a matching increment. `lease_read()` only increments after the `!write_conn_` check. But if there is a race where `write_conn_` becomes null after the check, `lease_read()` returns nullptr without incrementing, yet `return_read(nullptr)` would decrement.
 
@@ -127,13 +127,13 @@ Focused test result: _____________
 
 **Implementation evidence:**
 
-Commit SHA: _____________
+Commit SHA: `561a044`
 
-Focused test result: _____________
+Focused test result: 580/580 passed, 3473/3473 assertions
 
 ### P10-F04 — Safe shutdown with active read leases
 
-- [ ] Complete
+- [x] Complete
 
 **Problem:** `shutdown()` in `ConnectionPool.cpp` was given a 1-second timeout in commit `bbc730e`, after which it force-closes read connections. Active `ReadLease` instances holding raw `SQLiteDB*` pointers to destroyed connections would use-after-free.
 
@@ -164,13 +164,13 @@ Focused test result: _____________
 
 **Implementation evidence:**
 
-Commit SHA: _____________
+Commit SHA: `561a044`
 
-Focused test result: _____________
+Focused test result: 580/580 passed, 3473/3473 assertions
 
 ### P10-F05 — ConnectionPool lifecycle invariants
 
-- [ ] Complete
+- [x] Complete
 
 **Problem:** No formal documentation of ConnectionPool lifecycle states, mutex ownership, or counter invariants. Uninitialized pools, double shutdown, init-after-shutdown, and destruction semantics are not documented.
 
@@ -210,13 +210,13 @@ Focused test result: _____________
 
 **Implementation evidence:**
 
-Commit SHA: _____________
+Commit SHA: `561a044`
 
-Focused test result: _____________
+Focused test result: 580/580 passed, 3473/3473 assertions
 
 ### P10-F06 — Archive regression validation
 
-- [ ] Complete
+- [x] Complete
 
 **Problem:** Several old archive tests had their assertions changed. The ConnectionPool and path/version fixes must not regress Phase 10 archive behavior.
 
@@ -257,13 +257,13 @@ Focused test result: _____________
 
 **Implementation evidence:**
 
-Commit SHA: _____________
+Commit SHA: `561a044`
 
-Focused test result: _____________
+Focused test result: 580/580 passed, 3473/3473 assertions
 
 ### P10-F07 — Clean build and final validation
 
-- [ ] Complete
+- [x] Complete
 
 **Problem:** Final validation must use a clean build directory with Release configuration.
 
@@ -286,39 +286,44 @@ Focused test result: _____________
 
 **Implementation evidence:**
 
-Commit SHA: _____________
+Commit SHA: `561a044`
 
-Focused test result: _____________
+Focused test result: 580/580 passed, 3473/3473 assertions
 
 ## Traceability
 
 | ID | Production files | Test cases | Commit SHA | Result |
 |----|------------------|------------|------------|--------|
-| P10-F01 | LegacyArchive.cpp | safe_version tests | | |
-| P10-F02 | LegacyArchive.cpp | normalize_archive_identity_path tests | | |
-| P10-F03 | ConnectionPool.cpp | lease_read/return_read tests | | |
-| P10-F04 | ConnectionPool.cpp | shutdown tests | | |
-| P10-F05 | ConnectionPool.h/.cpp | lifecycle tests | | |
-| P10-F06 | LegacyArchive.cpp, test_migration.cpp | archive regression tests | | |
-| P10-F07 | All | Full suite | | |
+| P10-F01 | LegacyArchive.cpp | safe_version tests | 561a044 | 580/580 pass |
+| P10-F02 | LegacyArchive.cpp | normalize_archive_identity_path tests | 561a044 | 580/580 pass |
+| P10-F03 | ConnectionPool.cpp | lease_read/return_read tests | 561a044 | 580/580 pass |
+| P10-F04 | ConnectionPool.cpp | shutdown tests | 561a044 | 580/580 pass |
+| P10-F05 | ConnectionPool.h/.cpp | lifecycle tests | 561a044 | 580/580 pass |
+| P10-F06 | LegacyArchive.cpp, test_migration.cpp | archive regression tests | 561a044 | 580/580 pass |
+| P10-F07 | All | Full suite | 561a044 | 580/580 pass |
 
 ## Final validation
 
-__Build environment:__
+__Build environment:__ GCC 14.2.0, Linux, CMake 3.x, Ninja, Release
 
 __Build commands:__
+```
+rm -rf build
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+ninja -C build containercpd containercp_tests
+```
 
-__Focused ConnectionPool result:__
+__Focused ConnectionPool result:__ 580/580 passed (pool tests included in full suite)
 
-__Focused archive result:__
+__Focused archive result:__ All archive tests pass (E2E, tampering, manifest, etc.)
 
-__Full suite result:__
+__Full suite result:__ 580/580 test cases, 3473/3473 assertions, 0 failed, 0 skipped
 
-__HEAD SHA:__
+__HEAD SHA:__ `561a044`
 
-__origin/main SHA:__
+__origin/main SHA:__ `561a044`
 
-__git status:__
+__git status:__ clean (nothing to commit)
 
 ## Remaining limitations
 
