@@ -2946,3 +2946,160 @@ TEST_CASE("P11-12 SQLite read path prefers SQLite data over conflicting TXT") {
     }
     tclean(dir);
 }
+
+// ============================================================
+// Phase 11-13: Restart persistence
+// ============================================================
+
+static void seed_p1113_runtime_resources(Storage& s) {
+    containercp::node::Node node;
+    node.id = 1; node.name = "local"; node.type = "local";
+    s.save_nodes({node});
+
+    containercp::php::PhpVersion php;
+    php.id = 1; php.version = "8.4"; php.image = "php:8.4"; php.default_version = true;
+    s.save_php_versions({php});
+
+    containercp::profile::Profile profile;
+    profile.id = 1; profile.profile_name = "apache-php-default";
+    profile.type = containercp::profile::ProfileType::WEB_SERVER;
+    profile.web_server = "apache"; profile.runtime = "docker";
+    profile.template_path = "/tmp/apache.conf"; profile.default_profile = true;
+    s.save_profiles({profile});
+
+    containercp::user::User user;
+    user.id = 1; user.username = "admin"; user.uid = 1000;
+    user.home_directory = "/srv/containercp/users/admin"; user.shell = "/usr/sbin/nologin";
+    s.save_users({user});
+
+    containercp::site::Site site;
+    site.id = 1; site.domain = "example.com"; site.owner = "admin";
+    site.node_id = 1; site.web_server = "apache"; site.php_mail_enabled = true;
+    s.save_sites({site});
+
+    containercp::domain::Domain domain;
+    domain.id = 1; domain.fqdn = "example.com"; domain.owner_id = 1;
+    domain.site_id = 1; domain.php_version = "8.4"; domain.enabled = true;
+    s.save_domains({domain});
+
+    containercp::database::Database database;
+    database.id = 1; database.db_name = "example"; database.db_user = "example_user";
+    database.db_password = "secret"; database.engine = "mariadb";
+    database.version = "lts"; database.owner_id = 1; database.site_id = 1;
+    s.save_databases({database});
+
+    containercp::backup::Backup backup;
+    backup.id = 1; backup.site_id = 1; backup.owner_id = 1;
+    backup.filename = "example.tar.gz"; backup.type = "manual"; backup.size = 1234;
+    backup.created_at = "2026-07-18T12:00:00Z"; backup.status = "completed";
+    backup.file_path = "/srv/containercp/backups/example.tar.gz"; backup.compression = "gzip";
+    s.save_backups({backup});
+
+    containercp::proxy::ReverseProxy proxy;
+    proxy.id = 1; proxy.domain = "example.com"; proxy.site_id = 1;
+    proxy.provider = "nginx"; proxy.config_path = "/srv/containercp/proxy/sites/example.com.conf";
+    proxy.upstream = "site-1-php:80"; proxy.enabled = true; proxy.status = "active";
+    s.save_reverse_proxies({proxy});
+
+    containercp::access::AccessUser access_user;
+    access_user.id = 1; access_user.username = "deploy";
+    access_user.auth_type = "password"; access_user.password_hash = "hash";
+    s.save_access_users({access_user});
+
+    containercp::access::AccessGrant grant;
+    grant.id = 1; grant.access_user_id = 1; grant.site_id = 1;
+    grant.permission = containercp::access::Permission::READ_WRITE;
+    s.save_access_grants({grant});
+
+    containercp::auth::AuthUser auth_user;
+    auth_user.id = 1; auth_user.username = "admin"; auth_user.password_hash = "hash";
+    auth_user.must_change_password = false; auth_user.enabled = true; auth_user.role = "admin";
+    s.save_auth_users({auth_user});
+
+    containercp::ssl::SslCertificate cert;
+    cert.id = 1; cert.domain_id = 1; cert.domain = "example.com";
+    cert.provider = "letsencrypt"; cert.certificate_path = "/ssl/fullchain.pem";
+    cert.key_path = "/ssl/privkey.pem"; cert.chain_path = "/ssl/chain.pem";
+    cert.issued_at = "2026-07-18T12:00:00Z"; cert.expires_at = "2026-10-16T12:00:00Z";
+    cert.renew_after = "2026-09-16T12:00:00Z"; cert.status = "active";
+    cert.auto_renew = true; cert.https_enabled = true; cert.redirect_enabled = true;
+    cert.domains = "example.com"; cert.challenge_type = "http-01";
+    s.save_ssl_certificates({cert});
+
+    containercp::mail::MailDomain mail_domain;
+    mail_domain.id = 1; mail_domain.domain_id = 1; mail_domain.site_id = 1;
+    mail_domain.domain_name = "example.com";
+    mail_domain.mode = containercp::mail::MailDomainMode::LocalPrimary;
+    mail_domain.dkim_selector = "dkim"; mail_domain.max_mailboxes = 10;
+    mail_domain.max_aliases = 10; mail_domain.enabled = true;
+    mail_domain.created_at = "2026-07-18T12:00:00Z";
+    mail_domain.updated_at = "2026-07-18T12:00:00Z";
+    s.save_mail_domains({mail_domain});
+
+    containercp::mail::Mailbox mailbox;
+    mailbox.id = 1; mailbox.domain_id = 1; mailbox.local_part = "admin";
+    mailbox.password_hash = "hash"; mailbox.quota_bytes = 1024;
+    mailbox.quota_messages = 100; mailbox.enabled = true;
+    mailbox.display_name = "Admin"; mailbox.created_at = "2026-07-18T12:00:00Z";
+    mailbox.updated_at = "2026-07-18T12:00:00Z";
+    s.save_mailboxes({mailbox});
+
+    containercp::mail::MailAlias alias;
+    alias.id = 1; alias.domain_id = 1; alias.source_local_part = "info";
+    alias.destination = "admin@example.com"; alias.enabled = true;
+    alias.created_at = "2026-07-18T12:00:00Z";
+    alias.updated_at = "2026-07-18T12:00:00Z";
+    s.save_mail_aliases({alias});
+
+    s.save_mail_module_state("active");
+}
+
+TEST_CASE("P11-13 SQLite restart preserves all runtime resources after startup validation") {
+    auto dir = tdir("p1113_restart_all_resources");
+    tclean(dir); fs::create_directories(dir);
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+        seed_p1113_runtime_resources(s);
+    }
+
+    create_state_file(dir, "sqlite", dir + "containercp.db");
+
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = false;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+
+        auto require_snapshot = [](const auto& snap) {
+            CHECK(snap.success);
+            REQUIRE(snap.records.size() == 1);
+        };
+        require_snapshot(s.load_nodes_checked());
+        require_snapshot(s.load_php_versions_checked());
+        require_snapshot(s.load_profiles_checked());
+        require_snapshot(s.load_users_checked());
+        require_snapshot(s.load_sites_checked());
+        require_snapshot(s.load_domains_checked());
+        require_snapshot(s.load_databases_checked());
+        require_snapshot(s.load_backups_checked());
+        require_snapshot(s.load_reverse_proxies_checked());
+        require_snapshot(s.load_access_users_checked());
+        require_snapshot(s.load_access_grants_checked());
+        require_snapshot(s.load_auth_users_checked());
+        require_snapshot(s.load_ssl_certificates_checked());
+        require_snapshot(s.load_mail_domains_checked());
+        require_snapshot(s.load_mailboxes_checked());
+        require_snapshot(s.load_mail_aliases_checked());
+
+        auto module_state = s.load_mail_module_state_checked();
+        REQUIRE(module_state.success);
+        CHECK(module_state.present);
+        CHECK(module_state.value == "active");
+    }
+    tclean(dir);
+}
