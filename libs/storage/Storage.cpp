@@ -551,6 +551,13 @@ std::vector<database::Database> Storage::load_databases() {
 }
 
 void Storage::save_backups(const std::vector<backup::Backup>& backups) {
+    if (use_sqlite()) {
+        sqlite_.save_backups(backups);
+        return;
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return;
+    }
     std::ofstream file(backups_file());
     for (const auto& b : backups) {
         file << b.id << "|" << b.site_id << "|" << b.owner_id << "|"
@@ -561,6 +568,12 @@ void Storage::save_backups(const std::vector<backup::Backup>& backups) {
 }
 
 std::vector<backup::Backup> Storage::load_backups() {
+    if (use_sqlite()) {
+        return sqlite_.load_backups();
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return {};
+    }
     std::vector<backup::Backup> backups;
     std::ifstream file(backups_file());
     if (!file.is_open()) {
@@ -920,6 +933,13 @@ std::vector<access::AccessUser> Storage::load_access_users() {
 }
 
 void Storage::save_auth_users(const std::vector<auth::AuthUser>& users) {
+    if (use_sqlite()) {
+        sqlite_.save_auth_users(users);
+        return;
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return;
+    }
     std::ofstream file(auth_users_file());
     for (const auto& u : users) {
         file << u.id << "|" << u.username << "|" << u.password_hash << "|"
@@ -929,6 +949,12 @@ void Storage::save_auth_users(const std::vector<auth::AuthUser>& users) {
 }
 
 std::vector<auth::AuthUser> Storage::load_auth_users() {
+    if (use_sqlite()) {
+        return sqlite_.load_auth_users();
+    }
+    if (options_.core_backend == CoreStorageBackend::SqlitePhase5) {
+        return {};
+    }
     std::vector<auth::AuthUser> users;
     std::ifstream file(auth_users_file());
     if (!file.is_open()) {
@@ -1157,9 +1183,11 @@ CheckedSnapshot<user::User> Storage::load_users_checked() { SQLiteSnapshotReader
 CheckedSnapshot<site::Site> Storage::load_sites_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_sites(); }
 CheckedSnapshot<domain::Domain> Storage::load_domains_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_domains(); }
 CheckedSnapshot<database::Database> Storage::load_databases_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_databases(); }
+CheckedSnapshot<backup::Backup> Storage::load_backups_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_backups(); }
 CheckedSnapshot<proxy::ReverseProxy> Storage::load_reverse_proxies_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_reverse_proxies(); }
 CheckedSnapshot<access::AccessUser> Storage::load_access_users_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_access_users(); }
 CheckedSnapshot<access::AccessGrant> Storage::load_access_grants_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_access_grants(); }
+CheckedSnapshot<auth::AuthUser> Storage::load_auth_users_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_auth_users(); }
 CheckedSnapshot<ssl::SslCertificate> Storage::load_ssl_certificates_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_ssl_certificates(); }
 CheckedSnapshot<mail::MailDomain> Storage::load_mail_domains_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_mail_domains(); }
 CheckedSnapshot<mail::Mailbox> Storage::load_mailboxes_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_mail_mailboxes(); }

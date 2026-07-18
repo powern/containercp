@@ -405,6 +405,62 @@ std::vector<database::Database> SQLiteStorage::load_databases() {
     return databases;
 }
 
+// --- Backups ---
+
+bool SQLiteStorage::try_save_backups(const std::vector<backup::Backup>& backups) {
+    return replace_all(pool_, "DELETE FROM backups",
+        [&](SQLiteDB& db) -> bool {
+            const char* sql = "INSERT INTO backups "
+                "(id, site_id, owner_id, filename, type, size, created_at, status, "
+                "file_path, compression, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
+            for (const auto& b : backups) {
+                if (!db.prepare(sql)) return false;
+                if (!db.bind_int(1, static_cast<int64_t>(b.id))) return false;
+                if (!db.bind_int(2, static_cast<int64_t>(b.site_id))) return false;
+                if (!db.bind_int(3, static_cast<int64_t>(b.owner_id))) return false;
+                if (!db.bind_text(4, b.filename)) return false;
+                if (!db.bind_text(5, b.type)) return false;
+                if (!db.bind_int(6, static_cast<int64_t>(b.size))) return false;
+                if (!db.bind_text(7, b.created_at)) return false;
+                if (!db.bind_text(8, b.status)) return false;
+                if (!db.bind_text(9, b.file_path)) return false;
+                if (!db.bind_text(10, b.compression)) return false;
+                if (db.step() == false && db.error_code() != 0) return false;
+            }
+            return true;
+        });
+}
+
+void SQLiteStorage::save_backups(const std::vector<backup::Backup>& backups) {
+    (void)try_save_backups(backups);
+}
+
+std::vector<backup::Backup> SQLiteStorage::load_backups() {
+    std::vector<backup::Backup> backups;
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return backups;
+    const char* sql = "SELECT id, site_id, owner_id, filename, type, size, "
+        "created_at, status, file_path, compression FROM backups ORDER BY id";
+    if (!rl->prepare(sql)) return backups;
+    while (rl->step()) {
+        backup::Backup b;
+        b.id = static_cast<uint64_t>(rl->column_int(0));
+        b.site_id = static_cast<uint64_t>(rl->column_int(1));
+        b.owner_id = static_cast<uint64_t>(rl->column_int(2));
+        b.filename = rl->column_text(3);
+        b.type = rl->column_text(4);
+        b.size = static_cast<uint64_t>(rl->column_int(5));
+        b.created_at = rl->column_text(6);
+        b.status = rl->column_text(7);
+        b.file_path = rl->column_text(8);
+        b.compression = rl->column_text(9);
+        b.name = b.filename;
+        backups.push_back(std::move(b));
+    }
+    return backups;
+}
+
 // --- Reverse proxies ---
 
 bool SQLiteStorage::try_save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies) {
@@ -605,6 +661,54 @@ std::vector<access::AccessGrant> SQLiteStorage::load_access_grants() {
         grants.push_back(std::move(g));
     }
     return grants;
+}
+
+// --- Auth users ---
+
+bool SQLiteStorage::try_save_auth_users(const std::vector<auth::AuthUser>& users) {
+    return replace_all(pool_, "DELETE FROM auth_users",
+        [&](SQLiteDB& db) -> bool {
+            const char* sql = "INSERT INTO auth_users "
+                "(id, username, password_hash, must_change_password, enabled, role, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
+            for (const auto& u : users) {
+                if (!db.prepare(sql)) return false;
+                if (!db.bind_int(1, static_cast<int64_t>(u.id))) return false;
+                if (!db.bind_text(2, u.username)) return false;
+                if (!db.bind_text(3, u.password_hash)) return false;
+                if (!db.bind_int(4, u.must_change_password ? 1 : 0)) return false;
+                if (!db.bind_int(5, u.enabled ? 1 : 0)) return false;
+                if (!db.bind_text(6, u.role)) return false;
+                if (db.step() == false && db.error_code() != 0) return false;
+            }
+            return true;
+        });
+}
+
+void SQLiteStorage::save_auth_users(const std::vector<auth::AuthUser>& users) {
+    (void)try_save_auth_users(users);
+}
+
+std::vector<auth::AuthUser> SQLiteStorage::load_auth_users() {
+    std::vector<auth::AuthUser> users;
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return users;
+    if (!rl->prepare("SELECT id, username, password_hash, must_change_password, "
+                     "enabled, role FROM auth_users ORDER BY id")) return users;
+    while (rl->step()) {
+        auth::AuthUser u;
+        u.id = static_cast<uint64_t>(rl->column_int(0));
+        u.username = rl->column_text(1);
+        u.password_hash = rl->column_text(2);
+        u.must_change_password = (rl->column_int(3) != 0);
+        u.enabled = (rl->column_int(4) != 0);
+        u.role = rl->column_text(5);
+        u.name = u.username;
+        users.push_back(std::move(u));
+    }
+    return users;
 }
 
 bool SQLiteStorage::try_save_sites(const std::vector<site::Site>& sites) {

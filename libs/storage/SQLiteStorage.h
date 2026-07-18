@@ -3,6 +3,8 @@
 
 #include "access/AccessGrant.h"
 #include "access/AccessUser.h"
+#include "auth/AuthUser.h"
+#include "backup/Backup.h"
 #include "ConnectionPool.h"
 #include "database/Database.h"
 #include "domain/Domain.h"
@@ -61,7 +63,7 @@ private:
     bool committed_ = false;
 };
 
-// SQLite-backed storage for a subset of resource types.
+// SQLite-backed storage for runtime resource types.
 class SQLiteStorage {
 public:
     explicit SQLiteStorage(ConnectionPool& pool);
@@ -92,6 +94,10 @@ public:
     void save_databases(const std::vector<database::Database>& databases);
     std::vector<database::Database> load_databases();
 
+    // Backups
+    void save_backups(const std::vector<backup::Backup>& backups);
+    std::vector<backup::Backup> load_backups();
+
     // Reverse proxies
     void save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies);
     std::vector<proxy::ReverseProxy> load_reverse_proxies();
@@ -103,6 +109,10 @@ public:
     // Access grants (child table, FK-dependent)
     void save_access_grants(const std::vector<access::AccessGrant>& grants);
     std::vector<access::AccessGrant> load_access_grants();
+
+    // Auth users
+    void save_auth_users(const std::vector<auth::AuthUser>& users);
+    std::vector<auth::AuthUser> load_auth_users();
 
     // SSL certificate metadata
     void save_ssl_certificates(const std::vector<ssl::SslCertificate>& certs);
@@ -137,9 +147,11 @@ public:
     bool try_save_sites(const std::vector<site::Site>& sites);
     bool try_save_domains(const std::vector<domain::Domain>& domains);
     bool try_save_databases(const std::vector<database::Database>& databases);
+    bool try_save_backups(const std::vector<backup::Backup>& backups);
     bool try_save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies);
     bool try_save_access_users(const std::vector<access::AccessUser>& users);
     bool try_save_access_grants(const std::vector<access::AccessGrant>& grants);
+    bool try_save_auth_users(const std::vector<auth::AuthUser>& users);
     bool try_save_ssl_certificates(const std::vector<ssl::SslCertificate>& certs);
     bool try_save_mail_domains(const std::vector<mail::MailDomain>& domains);
     bool try_save_mailboxes(const std::vector<mail::Mailbox>& mailboxes);

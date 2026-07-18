@@ -299,7 +299,7 @@ TEST_CASE("Storage explicit SQLite mode") {
     tclean(dir);
 }
 
-TEST_CASE("Storage explicit SQLite mode coexists with TXT resources") {
+TEST_CASE("P11-10 Storage explicit SQLite mode routes backups and auth_users to SQLite") {
     auto dir = tdir("ss_exp_coexist");
     tclean(dir); fs::create_directories(dir);
     {
@@ -308,20 +308,32 @@ TEST_CASE("Storage explicit SQLite mode coexists with TXT resources") {
         opts.skip_startup_validation = true;
         containercp::storage::Storage s(dir, opts);
 
-        // Node → SQLite
-        containercp::node::Node n;
-        n.id = 1; n.name = "sqlite"; n.type = "local";
-        s.save_nodes({n});
+        containercp::backup::Backup b;
+        b.id = 7; b.site_id = 2; b.owner_id = 3;
+        b.filename = "site-2.tar.gz"; b.type = "manual"; b.size = 4096;
+        b.created_at = "2026-07-18T12:00:00Z"; b.status = "completed";
+        b.file_path = "/srv/containercp/backups/site-2.tar.gz";
+        b.compression = "gzip";
+        s.save_backups({b});
 
-        // Auth user → TXT (unchanged)
         containercp::auth::AuthUser u;
         u.id = 1; u.username = "admin"; u.password_hash = "h"; u.role = "admin";
+        u.must_change_password = true;
         s.save_auth_users({u});
 
-        auto nodes = s.load_nodes();
-        CHECK(nodes.size() == 1);
+        auto backups = s.load_backups();
+        REQUIRE(backups.size() == 1);
+        CHECK(backups[0].id == 7);
+        CHECK(backups[0].filename == "site-2.tar.gz");
+        CHECK(backups[0].size == 4096);
+
         auto auths = s.load_auth_users();
-        CHECK(auths.size() == 1);
+        REQUIRE(auths.size() == 1);
+        CHECK(auths[0].username == "admin");
+        CHECK(auths[0].must_change_password == true);
+
+        CHECK_FALSE(fs::exists(dir + "backups.db"));
+        CHECK_FALSE(fs::exists(dir + "auth_users.db"));
     }
     tclean(dir);
 }
@@ -1047,7 +1059,7 @@ TEST_CASE("Phase6a default mode reads TXT users/sites/domains") {
     tclean(dir);
 }
 
-TEST_CASE("Phase6a SQLite resources coexist with TXT resources") {
+TEST_CASE("Phase6a SQLite resources include auth_users") {
     auto dir = tdir("s6a_coexist"); tclean(dir); fs::create_directories(dir);
     {
         containercp::storage::StorageOptions opts;
@@ -1060,13 +1072,13 @@ TEST_CASE("Phase6a SQLite resources coexist with TXT resources") {
         containercp::user::User u; u.id = 1; u.username = "sqlite_user"; u.enabled = true;
         s.save_users({u});
 
-        // TXT-backed auth_users
         containercp::auth::AuthUser au; au.id = 1; au.username = "admin";
         au.password_hash = "h"; au.role = "admin";
         s.save_auth_users({au});
 
         CHECK(s.load_users().size() == 1);
         CHECK(s.load_auth_users().size() == 1);
+        CHECK_FALSE(fs::exists(dir + "auth_users.db"));
     }
     tclean(dir);
 }
@@ -1405,11 +1417,11 @@ TEST_CASE("Phase6b existing phases still work") {
         s.save_users({u});
         CHECK(s.load_users().size() == 1);
 
-        // TXT-backed auth_users unchanged
         containercp::auth::AuthUser au; au.id = 1; au.username = "admin";
         au.password_hash = "h"; au.role = "admin";
         s.save_auth_users({au});
         CHECK(s.load_auth_users().size() == 1);
+        CHECK_FALSE(fs::exists(dir + "auth_users.db"));
     }
     tclean(dir);
 }
@@ -1789,11 +1801,11 @@ TEST_CASE("Phase6c existing phases still work") {
         s.save_databases({db});
         CHECK(s.load_databases().size() == 1);
 
-        // TXT-backed auth_users unchanged
         containercp::auth::AuthUser au;
         au.id = 1; au.username = "admin"; au.password_hash = "h"; au.role = "admin";
         s.save_auth_users({au});
         CHECK(s.load_auth_users().size() == 1);
+        CHECK_FALSE(fs::exists(dir + "auth_users.db"));
     }
     tclean(dir);
 }
@@ -2515,6 +2527,159 @@ TEST_CASE("P11-08 startup validation passes on reopened migrated database") {
         REQUIRE(nodes.size() == 1);
         CHECK(nodes[0].id == 100);
         CHECK(nodes[0].name == "reopen-node");
+    }
+    tclean(dir);
+}
+
+// ============================================================
+// Phase 11-10: Runtime repository wiring for all SQLite resources
+// ============================================================
+
+TEST_CASE("P11-10 Storage SQLite mode routes all 17 resources through SQLite") {
+    auto dir = tdir("p1110_all_resources");
+    tclean(dir); fs::create_directories(dir);
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+
+        containercp::node::Node node;
+        node.id = 1; node.name = "local"; node.type = "local";
+        s.save_nodes({node});
+
+        containercp::php::PhpVersion php;
+        php.id = 1; php.version = "8.4"; php.image = "php:8.4"; php.default_version = true;
+        s.save_php_versions({php});
+
+        containercp::profile::Profile profile;
+        profile.id = 1; profile.profile_name = "apache-php-default";
+        profile.type = containercp::profile::ProfileType::WEB_SERVER;
+        profile.web_server = "apache"; profile.runtime = "docker";
+        profile.template_path = "/tmp/apache.conf"; profile.default_profile = true;
+        s.save_profiles({profile});
+
+        containercp::user::User user;
+        user.id = 1; user.username = "admin"; user.uid = 1000;
+        user.home_directory = "/srv/containercp/users/admin"; user.shell = "/usr/sbin/nologin";
+        s.save_users({user});
+
+        containercp::site::Site site;
+        site.id = 1; site.domain = "example.com"; site.owner = "admin";
+        site.node_id = 1; site.web_server = "apache"; site.php_mail_enabled = true;
+        s.save_sites({site});
+
+        containercp::domain::Domain domain;
+        domain.id = 1; domain.fqdn = "example.com"; domain.owner_id = 1;
+        domain.site_id = 1; domain.php_version = "8.4"; domain.enabled = true;
+        s.save_domains({domain});
+
+        containercp::database::Database database;
+        database.id = 1; database.db_name = "example"; database.db_user = "example_user";
+        database.db_password = "secret"; database.engine = "mariadb";
+        database.version = "lts"; database.owner_id = 1; database.site_id = 1;
+        s.save_databases({database});
+
+        containercp::backup::Backup backup;
+        backup.id = 1; backup.site_id = 1; backup.owner_id = 1;
+        backup.filename = "example.tar.gz"; backup.type = "manual"; backup.size = 1234;
+        backup.created_at = "2026-07-18T12:00:00Z"; backup.status = "completed";
+        backup.file_path = "/srv/containercp/backups/example.tar.gz"; backup.compression = "gzip";
+        s.save_backups({backup});
+
+        containercp::proxy::ReverseProxy proxy;
+        proxy.id = 1; proxy.domain = "example.com"; proxy.site_id = 1;
+        proxy.provider = "nginx"; proxy.config_path = "/srv/containercp/proxy/sites/example.com.conf";
+        proxy.upstream = "site-1-php:80"; proxy.enabled = true; proxy.status = "active";
+        s.save_reverse_proxies({proxy});
+
+        containercp::access::AccessUser access_user;
+        access_user.id = 1; access_user.username = "deploy";
+        access_user.auth_type = "password"; access_user.password_hash = "hash";
+        s.save_access_users({access_user});
+
+        containercp::access::AccessGrant grant;
+        grant.id = 1; grant.access_user_id = 1; grant.site_id = 1;
+        grant.permission = containercp::access::Permission::READ_WRITE;
+        s.save_access_grants({grant});
+
+        containercp::auth::AuthUser auth_user;
+        auth_user.id = 1; auth_user.username = "admin"; auth_user.password_hash = "hash";
+        auth_user.must_change_password = false; auth_user.enabled = true; auth_user.role = "admin";
+        s.save_auth_users({auth_user});
+
+        containercp::ssl::SslCertificate cert;
+        cert.id = 1; cert.domain_id = 1; cert.domain = "example.com";
+        cert.provider = "letsencrypt"; cert.certificate_path = "/ssl/fullchain.pem";
+        cert.key_path = "/ssl/privkey.pem"; cert.chain_path = "/ssl/chain.pem";
+        cert.issued_at = "2026-07-18T12:00:00Z"; cert.expires_at = "2026-10-16T12:00:00Z";
+        cert.renew_after = "2026-09-16T12:00:00Z"; cert.status = "active";
+        cert.auto_renew = true; cert.https_enabled = true; cert.redirect_enabled = true;
+        cert.domains = "example.com"; cert.challenge_type = "http-01";
+        s.save_ssl_certificates({cert});
+
+        containercp::mail::MailDomain mail_domain;
+        mail_domain.id = 1; mail_domain.domain_id = 1; mail_domain.site_id = 1;
+        mail_domain.domain_name = "example.com";
+        mail_domain.mode = containercp::mail::MailDomainMode::LocalPrimary;
+        mail_domain.dkim_selector = "dkim"; mail_domain.max_mailboxes = 10;
+        mail_domain.max_aliases = 10; mail_domain.enabled = true;
+        mail_domain.created_at = "2026-07-18T12:00:00Z";
+        mail_domain.updated_at = "2026-07-18T12:00:00Z";
+        s.save_mail_domains({mail_domain});
+
+        containercp::mail::Mailbox mailbox;
+        mailbox.id = 1; mailbox.domain_id = 1; mailbox.local_part = "admin";
+        mailbox.password_hash = "hash"; mailbox.quota_bytes = 1024;
+        mailbox.quota_messages = 100; mailbox.enabled = true;
+        mailbox.display_name = "Admin"; mailbox.created_at = "2026-07-18T12:00:00Z";
+        mailbox.updated_at = "2026-07-18T12:00:00Z";
+        s.save_mailboxes({mailbox});
+
+        containercp::mail::MailAlias alias;
+        alias.id = 1; alias.domain_id = 1; alias.source_local_part = "info";
+        alias.destination = "admin@example.com"; alias.enabled = true;
+        alias.created_at = "2026-07-18T12:00:00Z";
+        alias.updated_at = "2026-07-18T12:00:00Z";
+        s.save_mail_aliases({alias});
+
+        s.save_mail_module_state("active");
+
+        auto require_snapshot = [](const auto& snap) {
+            CHECK(snap.success);
+            REQUIRE(snap.records.size() == 1);
+        };
+        require_snapshot(s.load_nodes_checked());
+        require_snapshot(s.load_php_versions_checked());
+        require_snapshot(s.load_profiles_checked());
+        require_snapshot(s.load_users_checked());
+        require_snapshot(s.load_sites_checked());
+        require_snapshot(s.load_domains_checked());
+        require_snapshot(s.load_databases_checked());
+        require_snapshot(s.load_backups_checked());
+        require_snapshot(s.load_reverse_proxies_checked());
+        require_snapshot(s.load_access_users_checked());
+        require_snapshot(s.load_access_grants_checked());
+        require_snapshot(s.load_auth_users_checked());
+        require_snapshot(s.load_ssl_certificates_checked());
+        require_snapshot(s.load_mail_domains_checked());
+        require_snapshot(s.load_mailboxes_checked());
+        require_snapshot(s.load_mail_aliases_checked());
+
+        auto mail_config = s.load_mail_module_state_checked();
+        CHECK(mail_config.success);
+        CHECK(mail_config.present);
+        CHECK(mail_config.value == "active");
+
+        for (const auto& txt_file : std::vector<std::string>{
+                 "nodes.db", "php_versions.db", "profiles.db", "users.db",
+                 "sites.db", "domains.db", "databases.db", "backups.db",
+                 "reverse_proxies.db", "access_users.db", "access_grants.db",
+                 "auth_users.db", "ssl_certificates.db", "mail_domains.db",
+                 "mail_mailboxes.db", "mail_aliases.db", "mail_state.db"}) {
+            CHECK_FALSE(fs::exists(dir + txt_file));
+        }
     }
     tclean(dir);
 }

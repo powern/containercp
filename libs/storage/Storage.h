@@ -43,39 +43,39 @@ public:
     explicit Storage(const std::string& db_path,
                      StorageOptions options = StorageOptions{});
 
-    // Nodes — SQLite-backed
+    // Nodes
     void save_nodes(const std::vector<node::Node>& nodes);
     std::vector<node::Node> load_nodes();
 
-    // Sites — TXT-backed
+    // Sites
     void save_sites(const std::vector<site::Site>& sites);
     std::vector<site::Site> load_sites();
 
-    // Users — TXT-backed
+    // Users
     void save_users(const std::vector<user::User>& users);
     std::vector<user::User> load_users();
 
-    // Domains — TXT-backed
+    // Domains
     void save_domains(const std::vector<domain::Domain>& domains);
     std::vector<domain::Domain> load_domains();
 
-    // PHP versions — SQLite-backed
+    // PHP versions
     void save_php_versions(const std::vector<php::PhpVersion>& versions);
     std::vector<php::PhpVersion> load_php_versions();
 
-    // Databases — TXT-backed
+    // Databases
     void save_databases(const std::vector<database::Database>& databases);
     std::vector<database::Database> load_databases();
 
-    // Backups — TXT-backed
+    // Backups
     void save_backups(const std::vector<backup::Backup>& backups);
     std::vector<backup::Backup> load_backups();
 
-    // SSL certificates — TXT-backed
+    // SSL certificates
     void save_ssl_certificates(const std::vector<ssl::SslCertificate>& certs);
     std::vector<ssl::SslCertificate> load_ssl_certificates();
 
-    // Mail — TXT-backed
+    // Mail
     void save_mail_domains(const std::vector<mail::MailDomain>& domains);
     std::vector<mail::MailDomain> load_mail_domains();
     void save_mail_module_state(const std::string& state);
@@ -87,22 +87,22 @@ public:
     void save_mail_aliases(const std::vector<mail::MailAlias>& aliases);
     std::vector<mail::MailAlias> load_mail_aliases();
 
-    // Access — TXT-backed
+    // Access
     void save_access_users(const std::vector<access::AccessUser>& users);
     std::vector<access::AccessUser> load_access_users();
     void save_access_grants(const std::vector<access::AccessGrant>& grants);
     std::vector<access::AccessGrant> load_access_grants();
 
-    // Reverse proxies — TXT-backed
+    // Reverse proxies
     void save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies);
     std::vector<proxy::ReverseProxy> load_reverse_proxies();
 
-    // Profiles — SQLite-backed
+    // Profiles
     void save_profiles(const std::vector<profile::Profile>& profiles);
     std::vector<profile::Profile> load_profiles();
     std::vector<profile::Profile> migrate_template_profiles();
 
-    // Auth users — TXT-backed
+    // Auth users
     void save_auth_users(const std::vector<auth::AuthUser>& users);
     std::vector<auth::AuthUser> load_auth_users();
 
@@ -120,9 +120,11 @@ public:
     CheckedSnapshot<site::Site> load_sites_checked();
     CheckedSnapshot<domain::Domain> load_domains_checked();
     CheckedSnapshot<database::Database> load_databases_checked();
+    CheckedSnapshot<backup::Backup> load_backups_checked();
     CheckedSnapshot<proxy::ReverseProxy> load_reverse_proxies_checked();
     CheckedSnapshot<access::AccessUser> load_access_users_checked();
     CheckedSnapshot<access::AccessGrant> load_access_grants_checked();
+    CheckedSnapshot<auth::AuthUser> load_auth_users_checked();
     CheckedSnapshot<ssl::SslCertificate> load_ssl_certificates_checked();
     CheckedSnapshot<mail::MailDomain> load_mail_domains_checked();
     CheckedSnapshot<mail::Mailbox> load_mailboxes_checked();
