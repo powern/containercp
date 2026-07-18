@@ -2683,3 +2683,151 @@ TEST_CASE("P11-10 Storage SQLite mode routes all 17 resources through SQLite") {
     }
     tclean(dir);
 }
+
+// ============================================================
+// Phase 11-11: Write-path validation
+// ============================================================
+
+TEST_CASE("P11-11 SQLite write path commits replacements without TXT fallback") {
+    auto dir = tdir("p1111_commit_replace");
+    tclean(dir); fs::create_directories(dir);
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+
+        containercp::backup::Backup b1;
+        b1.id = 1; b1.site_id = 1; b1.owner_id = 1;
+        b1.filename = "initial.tar.gz"; b1.type = "manual"; b1.size = 100;
+        b1.created_at = "2026-07-18T12:00:00Z"; b1.status = "completed";
+        b1.file_path = "/srv/containercp/backups/initial.tar.gz"; b1.compression = "gzip";
+
+        containercp::backup::Backup b2 = b1;
+        b2.id = 2; b2.filename = "removed.tar.gz"; b2.file_path = "/srv/containercp/backups/removed.tar.gz";
+        s.save_backups({b1, b2});
+
+        b1.filename = "updated.tar.zst";
+        b1.type = "scheduled";
+        b1.size = 200;
+        b1.file_path = "/srv/containercp/backups/updated.tar.zst";
+        b1.compression = "zstd";
+        s.save_backups({b1});
+
+        auto backups = s.load_backups();
+        REQUIRE(backups.size() == 1);
+        CHECK(backups[0].id == 1);
+        CHECK(backups[0].filename == "updated.tar.zst");
+        CHECK(backups[0].type == "scheduled");
+        CHECK(backups[0].size == 200);
+        CHECK(backups[0].compression == "zstd");
+
+        containercp::auth::AuthUser auth1;
+        auth1.id = 1; auth1.username = "admin"; auth1.password_hash = "h1";
+        auth1.must_change_password = true; auth1.enabled = true; auth1.role = "admin";
+        containercp::auth::AuthUser auth2 = auth1;
+        auth2.id = 2; auth2.username = "obsolete";
+        s.save_auth_users({auth1, auth2});
+
+        auth1.password_hash = "h2";
+        auth1.must_change_password = false;
+        auth1.role = "owner";
+        s.save_auth_users({auth1});
+
+        auto auths = s.load_auth_users();
+        REQUIRE(auths.size() == 1);
+        CHECK(auths[0].id == 1);
+        CHECK(auths[0].password_hash == "h2");
+        CHECK_FALSE(auths[0].must_change_password);
+        CHECK(auths[0].role == "owner");
+
+        s.save_mail_module_state("inactive");
+        s.save_mail_module_state("active");
+        auto state = s.load_mail_module_state_checked();
+        REQUIRE(state.success);
+        CHECK(state.present);
+        CHECK(state.value == "active");
+
+        CHECK_FALSE(fs::exists(dir + "backups.db"));
+        CHECK_FALSE(fs::exists(dir + "auth_users.db"));
+        CHECK_FALSE(fs::exists(dir + "mail_state.db"));
+    }
+    tclean(dir);
+}
+
+TEST_CASE("P11-11 SQLite write path rolls back failed child replacements") {
+    auto dir = tdir("p1111_child_rollback");
+    tclean(dir); fs::create_directories(dir);
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+
+        containercp::access::AccessUser access_user;
+        access_user.id = 1; access_user.username = "deploy";
+        access_user.auth_type = "password"; access_user.password_hash = "hash";
+        s.save_access_users({access_user});
+
+        containercp::site::Site site;
+        site.id = 1; site.domain = "example.com"; site.owner = "admin";
+        site.node_id = 1;
+        s.save_sites({site});
+
+        containercp::access::AccessGrant original_grant;
+        original_grant.id = 1; original_grant.access_user_id = 1;
+        original_grant.site_id = 1;
+        original_grant.permission = containercp::access::Permission::READ_ONLY;
+        s.save_access_grants({original_grant});
+
+        containercp::access::AccessGrant valid_new = original_grant;
+        valid_new.id = 2;
+        valid_new.permission = containercp::access::Permission::DEPLOY;
+        containercp::access::AccessGrant invalid_new = original_grant;
+        invalid_new.id = 3;
+        invalid_new.site_id = 999;
+        s.save_access_grants({valid_new, invalid_new});
+
+        auto grants = s.load_access_grants();
+        REQUIRE(grants.size() == 1);
+        CHECK(grants[0].id == 1);
+        CHECK(grants[0].site_id == 1);
+        CHECK(grants[0].permission == containercp::access::Permission::READ_ONLY);
+
+        containercp::mail::MailDomain mail_domain;
+        mail_domain.id = 1; mail_domain.domain_id = 1; mail_domain.site_id = 1;
+        mail_domain.domain_name = "example.com";
+        mail_domain.mode = containercp::mail::MailDomainMode::LocalPrimary;
+        mail_domain.created_at = "2026-07-18T12:00:00Z";
+        mail_domain.updated_at = "2026-07-18T12:00:00Z";
+        s.save_mail_domains({mail_domain});
+
+        containercp::mail::Mailbox original_box;
+        original_box.id = 1; original_box.domain_id = 1; original_box.local_part = "admin";
+        original_box.password_hash = "hash";
+        original_box.created_at = "2026-07-18T12:00:00Z";
+        original_box.updated_at = "2026-07-18T12:00:00Z";
+        s.save_mailboxes({original_box});
+
+        containercp::mail::Mailbox valid_box = original_box;
+        valid_box.id = 2;
+        valid_box.local_part = "valid";
+        containercp::mail::Mailbox invalid_box = original_box;
+        invalid_box.id = 3;
+        invalid_box.domain_id = 999;
+        invalid_box.local_part = "invalid";
+        s.save_mailboxes({valid_box, invalid_box});
+
+        auto boxes = s.load_mailboxes();
+        REQUIRE(boxes.size() == 1);
+        CHECK(boxes[0].id == 1);
+        CHECK(boxes[0].domain_id == 1);
+        CHECK(boxes[0].local_part == "admin");
+
+        CHECK_FALSE(fs::exists(dir + "access_grants.db"));
+        CHECK_FALSE(fs::exists(dir + "mail_mailboxes.db"));
+    }
+    tclean(dir);
+}
