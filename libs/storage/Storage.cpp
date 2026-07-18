@@ -222,6 +222,64 @@ bool parse_activation_state(const std::string& content, ActivationState& state) 
     ActivationStateParser parser(content);
     return parser.parse(state);
 }
+
+void validate_activation_state_consistency(const ActivationState& state,
+                                           const std::string& sqlite_path) {
+    if (state.database_path != sqlite_path) {
+        throw std::runtime_error(
+            "Activation state database_path='" + state.database_path
+            + "' does not match expected '" + sqlite_path + "'");
+    }
+
+    if (!LegacyArchive::valid_migration_id(state.migration_id)) {
+        throw std::runtime_error(
+            "Activation state migration_id is invalid: " + state.migration_id);
+    }
+
+    if (state.schema_version != kExpectedSchemaVersion) {
+        throw std::runtime_error(
+            "Activation state schema_version='" + std::to_string(state.schema_version)
+            + "' does not match expected '" + std::to_string(kExpectedSchemaVersion) + "'");
+    }
+
+    std::string archive_path = LegacyArchive::normalize_archive_identity_path(state.archive_path);
+    if (archive_path.empty()) {
+        throw std::runtime_error(
+            "Activation state archive_path is invalid: " + state.archive_path);
+    }
+
+    LegacyArchive archive("", "");
+    ArchiveManifest manifest;
+    if (!archive.verify_archive(archive_path, &manifest)) {
+        throw std::runtime_error(
+            "Activation state archive is missing, invalid, or inconsistent: " + state.archive_path);
+    }
+
+    if (manifest.archive_directory != archive_path) {
+        throw std::runtime_error(
+            "Activation state archive_path='" + state.archive_path
+            + "' does not match archive manifest path '" + manifest.archive_directory + "'");
+    }
+    if (manifest.migration_id != state.migration_id) {
+        throw std::runtime_error(
+            "Activation state migration_id='" + state.migration_id
+            + "' does not match archive migration_id '" + manifest.migration_id + "'");
+    }
+    if (manifest.source_version != state.source_version) {
+        throw std::runtime_error(
+            "Activation state source_version='" + state.source_version
+            + "' does not match archive source_version '" + manifest.source_version + "'");
+    }
+    if (manifest.target_version != state.target_version) {
+        throw std::runtime_error(
+            "Activation state target_version='" + state.target_version
+            + "' does not match archive target_version '" + manifest.target_version + "'");
+    }
+    if (manifest.verification_result != state.verification_result || state.verification_result != "success") {
+        throw std::runtime_error(
+            "Activation state verification_result does not represent a completed migration");
+    }
+}
 }
 
 Storage::Storage(const std::string& db_path, StorageOptions options)
@@ -321,11 +379,7 @@ void Storage::validate_activation_state(const std::string& sqlite_path) {
             "Activation state file is malformed or invalid: " + state_path);
     }
 
-    if (state.database_path != sqlite_path) {
-        throw std::runtime_error(
-            "Activation state database_path='" + state.database_path
-            + "' does not match expected '" + sqlite_path + "'");
-    }
+    validate_activation_state_consistency(state, sqlite_path);
 }
 
 void Storage::verify_sqlite_file(const std::string& sqlite_path) {

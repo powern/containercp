@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-18 | `PENDING` | P11-R3 — Validate SQLite activation-state consistency
+
+**Summary:** Extended SQLite startup validation so activation state must reference a real completed migration archive. Startup now validates the migration ID, state schema version, database path, normalized archive path, archive integrity, and archive manifest fields before opening SQLite.
+
+**Files changed:** `libs/storage/Storage.cpp`, `tests/test_sqlite_storage.cpp`, `docs/development/phase11-production-review-fixes.md`, `CHANGELOG.md`
+
+**User-visible behavior:** If `storage.backend=sqlite` is configured and `storage-state.json` points to a missing, invalid, relocated, or inconsistent migration archive, daemon startup fails closed instead of accepting the activation state.
+
+**Validation:** Focused P11-R3 tests passed (`7` cases, `46` assertions). Full suite passed (`650` cases, `4043` assertions). CTest passed (`1/1`). Clean rebuild of `containercp_tests` and `containercpd` completed successfully with `cmake --build build2 --clean-first --target containercp_tests containercpd -- -j1`.
+
+**Known risks:** Existing clean-build warning debt remains, including OpenSSL/c-ares deprecations, unused variables/parameters, `ServiceRegistry` member reorder warnings, sign-compare warnings, and legacy misleading indentation warnings.
+
+---
+
 ## 2026-07-18 | `8e18db1` | P11-R2 — Strict SQLite activation-state parsing
 
 **Summary:** Replaced SQLite activation-state substring extraction with a strict typed parser. Startup now rejects malformed JSON, duplicate keys, missing required keys, unknown keys, wrong value types, invalid strings, and invalid enum values before continuing SQLite activation.

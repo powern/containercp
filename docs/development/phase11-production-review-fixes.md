@@ -107,7 +107,15 @@ Startup does not fully prove that activation state represents a real completed m
 - Run clean rebuild for `containercp_tests` and `containercpd`.
 
 ### Status
-- [ ] Not complete
+- [x] Complete
+
+Validation evidence:
+- Commit: `PENDING`
+- Focused tests: `P11-R3*` passed (`7` tests, `46` assertions).
+- Full suite: `650` tests, `4043` assertions passed.
+- CTest: `1/1` tests passed.
+- Clean rebuild: `cmake --build build2 --clean-first --target containercp_tests containercpd -- -j1` completed successfully.
+- Known existing warning debt remains; no new P11-R3-specific warning was introduced.
 
 ## P11-R4 — Do Not Silently Ignore SQLite Write Failures
 

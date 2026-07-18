@@ -1,4 +1,5 @@
 #include "storage/Storage.h"
+#include "storage/LegacyArchive.h"
 #include "storage/SQLiteStorage.h"
 #include "storage/SchemaMigrations.h"
 
@@ -16,6 +17,8 @@
 #include "doctest/doctest.h"
 
 namespace fs = std::filesystem;
+
+static const char* kActivationTestMigrationId = "11111111-2222-4333-8444-555555555555";
 
 static std::string tdir(const std::string& name) {
     return (fs::temp_directory_path() / name).string() + "/";
@@ -40,6 +43,11 @@ static void init_storage_schema(const std::string& dir) {
     containercp::storage::ConnectionPool pool;
     init_pool(pool, dir);
     pool.shutdown();
+}
+
+static void write_text_file(const std::string& path, const std::string& content) {
+    std::ofstream f(path);
+    f << content;
 }
 
 // ============================================================
@@ -2398,18 +2406,71 @@ TEST_CASE("ConnectionPool Active WriteGuard shutdown waits for guard") {
 // Phase 11-08: Startup validation for SqlitePhase5
 // ============================================================
 
-static std::string valid_state_json(const std::string& backend, const std::string& db_path) {
+static containercp::storage::DatabaseVerificationResult activation_test_dvr() {
+    containercp::storage::DatabaseVerificationResult dvr;
+    dvr.success = true;
+    dvr.initial_verification_passed = true;
+    dvr.reopened_verification_passed = true;
+    dvr.reopen_succeeded = true;
+    dvr.initial_integrity_check_result = "ok";
+    dvr.reopened_integrity_check_result = "ok";
+    const char* resources[] = {
+        "nodes", "php_versions", "profiles", "users", "sites", "domains", "databases",
+        "backups", "reverse_proxies", "access_users", "access_grants", "auth_users",
+        "ssl_certificates", "mail_domains", "mail_mailboxes", "mail_aliases", "mail_config", nullptr};
+    for (int i = 0; resources[i]; ++i) {
+        containercp::storage::ResourceVerificationResult r;
+        r.resource_type = resources[i];
+        r.success = true;
+        dvr.resources.push_back(r);
+        dvr.reopened_resources.push_back(r);
+    }
+    return dvr;
+}
+
+static void write_activation_archive_source(const std::string& source_dir) {
+    fs::create_directories(source_dir);
+    write_text_file(source_dir + "nodes.db", "1|main|web\n");
+    write_text_file(source_dir + "php_versions.db", "1|8.4|php:8.4|1|1\n");
+    write_text_file(source_dir + "profiles.db", "1|default|WEB_SERVER|apache|static|/tpl||1|1\n");
+    write_text_file(source_dir + "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n");
+    write_text_file(source_dir + "sites.db", "1|example.com|admin|1|apache|1\n");
+    write_text_file(source_dir + "domains.db", "1|example.com|1|1|8.4|1|1|primary|\n");
+    write_text_file(source_dir + "databases.db", "1|example|example_user|secret|mariadb|lts|1|1|1\n");
+    write_text_file(source_dir + "backups.db", "1|1|1|backup.tar.gz|manual|1000|1|completed|/path|gzip\n");
+    write_text_file(source_dir + "reverse_proxies.db", "1|proxy.example.com|1|nginx|/cfg|http://upstream|1|active\n");
+}
+
+static std::string create_activation_test_archive(const std::string& dir,
+                                                  const std::string& migration_id = kActivationTestMigrationId) {
+    auto source_dir = dir + "activation-legacy-source/";
+    auto archive_root = dir + "activation-archive/";
+    write_activation_archive_source(source_dir);
+    fs::create_directories(archive_root);
+    containercp::storage::LegacyArchive archive(source_dir, archive_root);
+    auto result = archive.create_archive(migration_id, "v0.6.0", "v0.7.0", activation_test_dvr());
+    CAPTURE(result.error);
+    REQUIRE(result.success);
+    REQUIRE_FALSE(result.archive_path.empty());
+    return result.archive_path;
+}
+
+static std::string valid_state_json(const std::string& backend,
+                                    const std::string& db_path,
+                                    const std::string& archive_path = "/srv/containercp/migrations/archive/11111111-2222-4333-8444-555555555555",
+                                    const std::string& migration_id = kActivationTestMigrationId,
+                                    int schema_version = 1) {
     std::ostringstream json;
     json << "{\n";
     json << "  \"state_version\": 1,\n";
     json << "  \"active_backend\": \"" << backend << "\",\n";
-    json << "  \"migration_id\": \"11111111-2222-4333-8444-555555555555\",\n";
+    json << "  \"migration_id\": \"" << migration_id << "\",\n";
     json << "  \"database_path\": \"" << db_path << "\",\n";
-    json << "  \"archive_path\": \"/srv/containercp/migrations/archive/11111111-2222-4333-8444-555555555555\",\n";
+    json << "  \"archive_path\": \"" << archive_path << "\",\n";
     json << "  \"source_version\": \"v0.6.0\",\n";
     json << "  \"target_version\": \"v0.7.0\",\n";
     json << "  \"activation_timestamp\": \"20260718T120000Z\",\n";
-    json << "  \"schema_version\": 1,\n";
+    json << "  \"schema_version\": " << schema_version << ",\n";
     json << "  \"verification_result\": \"success\"\n";
     json << "}\n";
     return json.str();
@@ -2424,7 +2485,8 @@ static std::string write_state_file(const std::string& dir, const std::string& c
 }
 
 static std::string create_state_file(const std::string& dir, const std::string& backend, const std::string& db_path) {
-    return write_state_file(dir, valid_state_json(backend, db_path));
+    auto archive_path = create_activation_test_archive(dir);
+    return write_state_file(dir, valid_state_json(backend, db_path, archive_path));
 }
 
 TEST_CASE("P11-08 startup validation passes with correct activation state") {
@@ -2778,6 +2840,130 @@ TEST_CASE("P11-R2 strict activation state parser rejects invalid enums") {
     REQUIRE(pos != std::string::npos);
     json.replace(pos, std::string("\"verification_result\": \"success\"").size(), "\"verification_result\": \"failed\"");
     expect_p11r2_state_rejected(dir, json);
+    tclean(dir);
+}
+
+// ============================================================
+// Phase 11 production review R3: activation-state consistency
+// ============================================================
+
+static void expect_p11r3_state_rejected(const std::string& dir,
+                                        const std::string& state_json,
+                                        const std::string& expected_message) {
+    write_state_file(dir, state_json);
+
+    StorageOptions opts;
+    opts.core_backend = CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = false;
+
+    try {
+        Storage s(dir, opts);
+        FAIL("SQLite startup accepted inconsistent activation state");
+    } catch (const std::runtime_error& e) {
+        std::string msg = e.what();
+        CHECK(msg.find(expected_message) != std::string::npos);
+    }
+    CHECK_FALSE(fs::exists(dir + "nodes.db"));
+}
+
+TEST_CASE("P11-R3 startup accepts valid completed migration state") {
+    auto dir = tdir("p11r3_valid_completed_state");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    auto db_path = dir + "containercp.db";
+    auto archive_path = create_activation_test_archive(dir);
+    write_state_file(dir, valid_state_json("sqlite", db_path, archive_path));
+
+    StorageOptions opts;
+    opts.core_backend = CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = false;
+
+    Storage s(dir, opts);
+    CHECK(s.sqlite_ready());
+    tclean(dir);
+}
+
+TEST_CASE("P11-R3 startup rejects missing archive") {
+    auto dir = tdir("p11r3_missing_archive");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    auto db_path = dir + "containercp.db";
+    auto archive_path = create_activation_test_archive(dir);
+    fs::remove_all(archive_path);
+
+    expect_p11r3_state_rejected(
+        dir,
+        valid_state_json("sqlite", db_path, archive_path),
+        "archive is missing");
+    tclean(dir);
+}
+
+TEST_CASE("P11-R3 startup rejects invalid archive path") {
+    auto dir = tdir("p11r3_invalid_archive_path");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+
+    expect_p11r3_state_rejected(
+        dir,
+        valid_state_json("sqlite", dir + "containercp.db", "../bad-archive-path"),
+        "archive_path is invalid");
+    tclean(dir);
+}
+
+TEST_CASE("P11-R3 startup rejects archive path that does not match manifest") {
+    auto dir = tdir("p11r3_archive_manifest_mismatch");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    auto db_path = dir + "containercp.db";
+    auto archive_path = create_activation_test_archive(dir);
+    auto relocated = dir + "relocated-archive";
+    fs::copy(archive_path, relocated, fs::copy_options::recursive);
+
+    expect_p11r3_state_rejected(
+        dir,
+        valid_state_json("sqlite", db_path, relocated),
+        "archive is missing");
+    tclean(dir);
+}
+
+TEST_CASE("P11-R3 startup rejects invalid migration ID") {
+    auto dir = tdir("p11r3_invalid_migration_id");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    auto db_path = dir + "containercp.db";
+    auto archive_path = create_activation_test_archive(dir);
+
+    expect_p11r3_state_rejected(
+        dir,
+        valid_state_json("sqlite", db_path, archive_path, "not-a-valid-migration-id"),
+        "migration_id is invalid");
+    tclean(dir);
+}
+
+TEST_CASE("P11-R3 startup rejects database path mismatch") {
+    auto dir = tdir("p11r3_database_path_mismatch");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    auto archive_path = create_activation_test_archive(dir);
+
+    expect_p11r3_state_rejected(
+        dir,
+        valid_state_json("sqlite", "/wrong/path/containercp.db", archive_path),
+        "database_path");
+    tclean(dir);
+}
+
+TEST_CASE("P11-R3 startup rejects schema version mismatch") {
+    auto dir = tdir("p11r3_schema_version_mismatch");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    auto db_path = dir + "containercp.db";
+    auto archive_path = create_activation_test_archive(dir);
+
+    expect_p11r3_state_rejected(
+        dir,
+        valid_state_json("sqlite", db_path, archive_path, kActivationTestMigrationId, 999),
+        "schema_version");
     tclean(dir);
 }
 
