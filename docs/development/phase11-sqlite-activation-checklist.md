@@ -597,7 +597,7 @@ Operators need a concrete production procedure for migration, activation, valida
 
 ### Implementation evidence
 
-Commit SHA: `pending`
+Commit SHA: `046e400`
 
 Runbook: `docs/sqlite-activation-runbook.md`
 
@@ -633,7 +633,7 @@ Commit SHA: _____________
 | P11-17 | Activation-state file security validation | P11-17 symlink activation state rejection test | d8fd466 | Complete |
 | P11-18 | Runtime preservation of approved site_id=0 sentinels | P11-18 sentinel restart test | d824ec2 | Complete |
 | P11-19 | End-to-end migrated database startup integration | P11-19 migration-to-startup test | 173db12 | Complete |
-| P11-20 | Production SQLite activation runbook | docs/sqlite-activation-runbook.md | pending | Complete |
+| P11-20 | Production SQLite activation runbook | docs/sqlite-activation-runbook.md | 046e400 | Complete |
 
 ## Final validation
 
@@ -645,6 +645,6 @@ test cases:  633 |  633 passed | 0 failed | 0 skipped
 assertions: 3822 | 3822 passed | 0 failed |
 ```
 
-__HEAD SHA:__ 173db12
+__HEAD SHA:__ 046e400
 
 __git status:__ clean after documentation update commit

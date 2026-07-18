@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-18 | `pending` | P11-20 — SQLite activation production runbook
+## 2026-07-18 | `046e400` | P11-20 — SQLite activation production runbook
 
 **Summary:** Added a production runbook for SQLite activation covering prerequisites, migration, activation, validation, failure handling, rollback, and operator safety warnings.
 
