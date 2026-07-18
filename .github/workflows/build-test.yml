@@ -32,7 +32,9 @@ jobs:
       - name: Build
         run: |
           ninja -C build -j1 containercpd containercp_tests
-          ls -la build/tests/containercp_tests
+          find build -name containercp_tests -type f
 
       - name: Test
-        run: ./build/tests/containercp_tests
+        run: |
+          TEST=$(find build -name containercp_tests -type f | head -1)
+          $TEST
