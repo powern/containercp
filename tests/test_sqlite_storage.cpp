@@ -3235,3 +3235,93 @@ TEST_CASE("P11-17 startup validation rejects symlinked activation state") {
     CHECK_FALSE(fs::exists(dir + "nodes.db"));
     tclean(dir);
 }
+
+// ============================================================
+// Phase 11-18: site_id=0 sentinels
+// ============================================================
+
+TEST_CASE("P11-18 SQLite runtime preserves approved site_id zero sentinels after restart") {
+    auto dir = tdir("p1118_site_zero_runtime");
+    tclean(dir); fs::create_directories(dir);
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = true;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+
+        containercp::domain::Domain domain;
+        domain.id = 1; domain.fqdn = "orphan.example.com";
+        domain.owner_id = 0; domain.site_id = 0; domain.enabled = true;
+        s.save_domains({domain});
+
+        containercp::database::Database database;
+        database.id = 1; database.db_name = "orphan_db"; database.db_user = "orphan";
+        database.db_password = "secret"; database.owner_id = 0; database.site_id = 0;
+        s.save_databases({database});
+
+        containercp::backup::Backup backup;
+        backup.id = 1; backup.site_id = 0; backup.owner_id = 0;
+        backup.filename = "orphan.tar.gz"; backup.created_at = "2026-07-18T12:00:00Z";
+        backup.status = "completed"; backup.file_path = "/srv/containercp/backups/orphan.tar.gz";
+        s.save_backups({backup});
+
+        containercp::proxy::ReverseProxy proxy;
+        proxy.id = 1; proxy.domain = "admin.example.com"; proxy.site_id = 0;
+        proxy.provider = "nginx"; proxy.config_path = "/srv/containercp/proxy/admin.conf";
+        proxy.upstream = "127.0.0.1:8081"; proxy.enabled = true; proxy.status = "active";
+        s.save_reverse_proxies({proxy});
+
+        containercp::mail::MailDomain mail_domain;
+        mail_domain.id = 1; mail_domain.domain_id = 0; mail_domain.site_id = 0;
+        mail_domain.domain_name = "external.example.com";
+        mail_domain.mode = containercp::mail::MailDomainMode::ExternalRelay;
+        mail_domain.created_at = "2026-07-18T12:00:00Z";
+        mail_domain.updated_at = "2026-07-18T12:00:00Z";
+        s.save_mail_domains({mail_domain});
+
+        containercp::ssl::SslCertificate cert;
+        cert.id = 1; cert.domain_id = 0; cert.domain = "orphan.example.com";
+        cert.provider = "letsencrypt"; cert.status = "http_only";
+        s.save_ssl_certificates({cert});
+    }
+
+    create_state_file(dir, "sqlite", dir + "containercp.db");
+
+    {
+        StorageOptions opts;
+        opts.core_backend = CoreStorageBackend::SqlitePhase5;
+        opts.skip_startup_validation = false;
+        Storage s(dir, opts);
+        REQUIRE(s.sqlite_ready());
+
+        auto domains = s.load_domains_checked();
+        REQUIRE(domains.success); REQUIRE(domains.records.size() == 1);
+        CHECK(domains.records[0].site_id == 0);
+        CHECK(domains.records[0].owner_id == 0);
+
+        auto databases = s.load_databases_checked();
+        REQUIRE(databases.success); REQUIRE(databases.records.size() == 1);
+        CHECK(databases.records[0].site_id == 0);
+        CHECK(databases.records[0].owner_id == 0);
+
+        auto backups = s.load_backups_checked();
+        REQUIRE(backups.success); REQUIRE(backups.records.size() == 1);
+        CHECK(backups.records[0].site_id == 0);
+        CHECK(backups.records[0].owner_id == 0);
+
+        auto proxies = s.load_reverse_proxies_checked();
+        REQUIRE(proxies.success); REQUIRE(proxies.records.size() == 1);
+        CHECK(proxies.records[0].site_id == 0);
+
+        auto mail_domains = s.load_mail_domains_checked();
+        REQUIRE(mail_domains.success); REQUIRE(mail_domains.records.size() == 1);
+        CHECK(mail_domains.records[0].site_id == 0);
+        CHECK(mail_domains.records[0].domain_id == 0);
+
+        auto certs = s.load_ssl_certificates_checked();
+        REQUIRE(certs.success); REQUIRE(certs.records.size() == 1);
+        CHECK(certs.records[0].domain_id == 0);
+    }
+    tclean(dir);
+}
