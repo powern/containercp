@@ -133,6 +133,7 @@ void ConnectionPool::unlock_write() {
 
 SQLiteDB* ConnectionPool::lease_read() {
     if (shutdown_.load()) return nullptr;
+    if (!write_conn_) return nullptr; // pool never initialized
 
     outstanding_leases_.fetch_add(1);
 
@@ -169,7 +170,7 @@ SQLiteDB* ConnectionPool::lease_read() {
 }
 
 void ConnectionPool::return_read(SQLiteDB* db) {
-    if (!db) return;
+    if (!db) { outstanding_leases_.fetch_sub(1); return; }
     for (int i = 0; i < kReadPoolSize; ++i) {
         if (read_conns_[i].get() == db) {
             read_in_use_[i].store(false);
