@@ -70,7 +70,16 @@ Activation state parsing currently searches strings manually, which can accept m
 - Run clean rebuild for `containercp_tests` and `containercpd`.
 
 ### Status
-- [ ] Not complete
+- [x] Complete
+
+Validation evidence:
+- Commit: `PENDING`
+- Focused tests: `P11-R2*` passed (`8` tests, `44` assertions).
+- Full suite: `643` tests, `3969` assertions passed.
+- CTest: `1/1` tests passed.
+- Clean rebuild: `cmake --build build2 --clean-first --target containercp_tests containercpd -- -j1` completed successfully.
+- Known existing warning debt remains; no new P11-R2-specific warning was introduced.
+- P11-R3 remains responsible for archive existence, migration ID validity, and activation-state consistency checks.
 
 ## P11-R3 — Validate Activation State Consistency
 

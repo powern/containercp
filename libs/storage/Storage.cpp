@@ -1,9 +1,13 @@
 #include "Storage.h"
+#include "LegacyArchive.h"
 #include "logger/Logger.h"
 
+#include <climits>
+#include <cstdint>
 #include <cerrno>
 #include <cstring>
 #include <fstream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
@@ -13,6 +17,211 @@ namespace containercp::storage {
 
 namespace {
 constexpr int kExpectedSchemaVersion = 1;
+
+struct ActivationState {
+    int64_t state_version = 0;
+    int64_t schema_version = 0;
+    std::string active_backend;
+    std::string migration_id;
+    std::string database_path;
+    std::string archive_path;
+    std::string source_version;
+    std::string target_version;
+    std::string activation_timestamp;
+    std::string verification_result;
+};
+
+class ActivationStateParser {
+public:
+    explicit ActivationStateParser(const std::string& json) : json_(json) {}
+
+    bool parse(ActivationState& state) {
+        skip_ws();
+        if (next() != '{') return false;
+
+        std::set<std::string> seen;
+        bool first = true;
+        while (true) {
+            skip_ws();
+            if (peek() == '}') {
+                next();
+                break;
+            }
+            if (!first) {
+                if (next() != ',') return false;
+                skip_ws();
+                if (peek() == '}') return false;
+            }
+            first = false;
+
+            std::string key;
+            if (peek() != '"' || !parse_string(key)) return false;
+            if (seen.count(key) != 0) return false;
+            seen.insert(key);
+
+            skip_ws();
+            if (next() != ':') return false;
+            skip_ws();
+
+            if (key == "state_version") {
+                if (peek() == '"') return false;
+                if (!parse_int(state.state_version) || state.state_version != 1) return false;
+            } else if (key == "schema_version") {
+                if (peek() == '"') return false;
+                if (!parse_int(state.schema_version) || state.schema_version < 1) return false;
+            } else if (key == "active_backend") {
+                if (!parse_required_string(state.active_backend)) return false;
+                if (state.active_backend != "sqlite") return false;
+            } else if (key == "migration_id") {
+                if (!parse_required_string(state.migration_id)) return false;
+            } else if (key == "database_path") {
+                if (!parse_required_string(state.database_path)) return false;
+            } else if (key == "archive_path") {
+                if (!parse_required_string(state.archive_path)) return false;
+            } else if (key == "source_version") {
+                if (!parse_required_string(state.source_version)) return false;
+                if (!LegacyArchive::safe_version(state.source_version)) return false;
+            } else if (key == "target_version") {
+                if (!parse_required_string(state.target_version)) return false;
+                if (!LegacyArchive::safe_version(state.target_version)) return false;
+            } else if (key == "activation_timestamp") {
+                if (!parse_required_string(state.activation_timestamp)) return false;
+                if (!LegacyArchive::valid_timestamp(state.activation_timestamp)) return false;
+            } else if (key == "verification_result") {
+                if (!parse_required_string(state.verification_result)) return false;
+                if (state.verification_result != "success") return false;
+            } else {
+                return false;
+            }
+        }
+
+        skip_ws();
+        if (peek() != '\0') return false;
+
+        static const std::set<std::string> kRequired = {
+            "state_version",
+            "active_backend",
+            "migration_id",
+            "database_path",
+            "archive_path",
+            "source_version",
+            "target_version",
+            "activation_timestamp",
+            "schema_version",
+            "verification_result",
+        };
+        if (seen.size() != kRequired.size()) return false;
+        for (const auto& required : kRequired) {
+            if (seen.count(required) == 0) return false;
+        }
+        return true;
+    }
+
+private:
+    const std::string& json_;
+    size_t pos_ = 0;
+
+    char peek() const { return pos_ < json_.size() ? json_[pos_] : '\0'; }
+    char next() { return pos_ < json_.size() ? json_[pos_++] : '\0'; }
+
+    void skip_ws() {
+        while (peek() == ' ' || peek() == '\t' || peek() == '\n' || peek() == '\r') {
+            next();
+        }
+    }
+
+    bool parse_required_string(std::string& out) {
+        if (peek() != '"' || !parse_string(out)) return false;
+        if (out.empty()) return false;
+        for (unsigned char c : out) {
+            if (c < 0x20) return false;
+        }
+        return true;
+    }
+
+    bool parse_string(std::string& out) {
+        if (next() != '"') return false;
+        out.clear();
+        while (peek() != '"' && peek() != '\0') {
+            if (peek() == '\\') {
+                next();
+                switch (next()) {
+                case '"': out += '"'; break;
+                case '\\': out += '\\'; break;
+                case '/': out += '/'; break;
+                case 'b': out += '\b'; break;
+                case 'f': out += '\f'; break;
+                case 'n': out += '\n'; break;
+                case 'r': out += '\r'; break;
+                case 't': out += '\t'; break;
+                case 'u': {
+                    uint32_t cp = 0;
+                    for (int i = 0; i < 4; ++i) {
+                        char c = next();
+                        if (c >= '0' && c <= '9') cp = cp * 16 + static_cast<uint32_t>(c - '0');
+                        else if (c >= 'a' && c <= 'f') cp = cp * 16 + static_cast<uint32_t>(c - 'a' + 10);
+                        else if (c >= 'A' && c <= 'F') cp = cp * 16 + static_cast<uint32_t>(c - 'A' + 10);
+                        else return false;
+                    }
+                    if (cp >= 0xD800 && cp <= 0xDFFF) return false;
+                    if (cp <= 0x7F) out += static_cast<char>(cp);
+                    else if (cp <= 0x7FF) {
+                        out += static_cast<char>(0xC0 | (cp >> 6));
+                        out += static_cast<char>(0x80 | (cp & 0x3F));
+                    } else {
+                        out += static_cast<char>(0xE0 | (cp >> 12));
+                        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                        out += static_cast<char>(0x80 | (cp & 0x3F));
+                    }
+                    break;
+                }
+                default: return false;
+                }
+            } else if (static_cast<unsigned char>(peek()) < 0x20) {
+                return false;
+            } else {
+                out += next();
+            }
+        }
+        return next() == '"';
+    }
+
+    bool parse_int(int64_t& out) {
+        if (peek() == '\0') return false;
+        bool neg = false;
+        if (peek() == '-') {
+            neg = true;
+            next();
+        }
+        if (peek() < '0' || peek() > '9') return false;
+        uint64_t val = 0;
+        const uint64_t max = neg ? static_cast<uint64_t>(INT64_MAX) + 1U : static_cast<uint64_t>(INT64_MAX);
+        if (peek() == '0') {
+            next();
+        } else {
+            while (peek() >= '0' && peek() <= '9') {
+                uint64_t digit = static_cast<uint64_t>(next() - '0');
+                if (val > max / 10U) return false;
+                uint64_t next_val = val * 10U + digit;
+                if (next_val < val || next_val > max) return false;
+                val = next_val;
+            }
+        }
+        if (peek() >= '0' && peek() <= '9') return false;
+        if (neg) {
+            if (val == static_cast<uint64_t>(INT64_MAX) + 1U) out = INT64_MIN;
+            else out = -static_cast<int64_t>(val);
+        } else {
+            out = static_cast<int64_t>(val);
+        }
+        return true;
+    }
+};
+
+bool parse_activation_state(const std::string& content, ActivationState& state) {
+    ActivationStateParser parser(content);
+    return parser.parse(state);
+}
 }
 
 Storage::Storage(const std::string& db_path, StorageOptions options)
@@ -106,16 +315,15 @@ void Storage::validate_activation_state(const std::string& sqlite_path) {
                          std::istreambuf_iterator<char>());
     f.close();
 
-    std::string backend = json_extract_string(content, "active_backend");
-    if (backend != "sqlite") {
+    ActivationState state;
+    if (!parse_activation_state(content, state)) {
         throw std::runtime_error(
-            "Activation state has active_backend='" + backend + "', expected 'sqlite'");
+            "Activation state file is malformed or invalid: " + state_path);
     }
 
-    std::string state_db_path = json_extract_string(content, "database_path");
-    if (state_db_path != sqlite_path) {
+    if (state.database_path != sqlite_path) {
         throw std::runtime_error(
-            "Activation state database_path='" + state_db_path
+            "Activation state database_path='" + state.database_path
             + "' does not match expected '" + sqlite_path + "'");
     }
 }
@@ -283,16 +491,6 @@ void Storage::verify_sqlite_startup() {
         }
         throw std::runtime_error(msg);
     }
-}
-
-std::string Storage::json_extract_string(const std::string& json, const std::string& key) {
-    std::string search = "\"" + key + "\": \"";
-    auto pos = json.find(search);
-    if (pos == std::string::npos) return "";
-    pos += search.size();
-    auto end = json.find('\"', pos);
-    if (end == std::string::npos) return "";
-    return json.substr(pos, end - pos);
 }
 
 bool Storage::use_sqlite() const {

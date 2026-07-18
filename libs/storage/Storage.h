@@ -170,8 +170,6 @@ private:
     void verify_sqlite_schema_version();
     void verify_sqlite_startup();
 
-    static std::string json_extract_string(const std::string& json, const std::string& key);
-
     std::string db_path_;
     StorageOptions options_;
     ConnectionPool pool_;

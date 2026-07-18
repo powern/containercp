@@ -2398,16 +2398,33 @@ TEST_CASE("ConnectionPool Active WriteGuard shutdown waits for guard") {
 // Phase 11-08: Startup validation for SqlitePhase5
 // ============================================================
 
-static std::string create_state_file(const std::string& dir, const std::string& backend, const std::string& db_path) {
+static std::string valid_state_json(const std::string& backend, const std::string& db_path) {
+    std::ostringstream json;
+    json << "{\n";
+    json << "  \"state_version\": 1,\n";
+    json << "  \"active_backend\": \"" << backend << "\",\n";
+    json << "  \"migration_id\": \"11111111-2222-4333-8444-555555555555\",\n";
+    json << "  \"database_path\": \"" << db_path << "\",\n";
+    json << "  \"archive_path\": \"/srv/containercp/migrations/archive/11111111-2222-4333-8444-555555555555\",\n";
+    json << "  \"source_version\": \"v0.6.0\",\n";
+    json << "  \"target_version\": \"v0.7.0\",\n";
+    json << "  \"activation_timestamp\": \"20260718T120000Z\",\n";
+    json << "  \"schema_version\": 1,\n";
+    json << "  \"verification_result\": \"success\"\n";
+    json << "}\n";
+    return json.str();
+}
+
+static std::string write_state_file(const std::string& dir, const std::string& content) {
     std::string state_path = dir + "storage-state.json";
     std::ofstream f(state_path);
-    f << "{\n";
-    f << "  \"active_backend\": \"" << backend << "\",\n";
-    f << "  \"database_path\": \"" << db_path << "\",\n";
-    f << "  \"schema_version\": 1\n";
-    f << "}\n";
+    f << content;
     f.close();
     return state_path;
+}
+
+static std::string create_state_file(const std::string& dir, const std::string& backend, const std::string& db_path) {
+    return write_state_file(dir, valid_state_json(backend, db_path));
 }
 
 TEST_CASE("P11-08 startup validation passes with correct activation state") {
@@ -2630,6 +2647,137 @@ TEST_CASE("P11-R1 startup rejects unsupported schema version without modifying i
         db.close();
     }
     CHECK_FALSE(fs::exists(dir + "nodes.db"));
+    tclean(dir);
+}
+
+// ============================================================
+// Phase 11 production review R2: strict activation-state parser
+// ============================================================
+
+static void expect_p11r2_state_rejected(const std::string& dir, const std::string& state_json) {
+    write_state_file(dir, state_json);
+
+    StorageOptions opts;
+    opts.core_backend = CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = false;
+
+    try {
+        Storage s(dir, opts);
+        FAIL("SQLite startup accepted invalid activation state");
+    } catch (const std::runtime_error& e) {
+        std::string msg = e.what();
+        CHECK(msg.find("Activation state") != std::string::npos);
+    }
+    CHECK_FALSE(fs::exists(dir + "nodes.db"));
+}
+
+TEST_CASE("P11-R2 strict activation state parser accepts valid state") {
+    auto dir = tdir("p11r2_valid_state");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    create_state_file(dir, "sqlite", dir + "containercp.db");
+
+    StorageOptions opts;
+    opts.core_backend = CoreStorageBackend::SqlitePhase5;
+    opts.skip_startup_validation = false;
+
+    Storage s(dir, opts);
+    CHECK(s.sqlite_ready());
+    tclean(dir);
+}
+
+TEST_CASE("P11-R2 strict activation state parser rejects malformed JSON") {
+    auto dir = tdir("p11r2_malformed_json");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+
+    expect_p11r2_state_rejected(dir, "{\n  \"state_version\": 1,\n");
+    tclean(dir);
+}
+
+TEST_CASE("P11-R2 strict activation state parser rejects duplicate keys") {
+    auto dir = tdir("p11r2_duplicate_keys");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+
+    std::string json = valid_state_json("sqlite", dir + "containercp.db");
+    auto pos = json.find("  \"migration_id\"");
+    REQUIRE(pos != std::string::npos);
+    json.insert(pos, "  \"active_backend\": \"sqlite\",\n");
+    expect_p11r2_state_rejected(dir, json);
+    tclean(dir);
+}
+
+TEST_CASE("P11-R2 strict activation state parser rejects missing required keys") {
+    auto dir = tdir("p11r2_missing_key");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+
+    std::ostringstream json;
+    json << "{\n";
+    json << "  \"state_version\": 1,\n";
+    json << "  \"active_backend\": \"sqlite\",\n";
+    json << "  \"migration_id\": \"11111111-2222-4333-8444-555555555555\",\n";
+    json << "  \"database_path\": \"" << dir << "containercp.db\",\n";
+    json << "  \"source_version\": \"v0.6.0\",\n";
+    json << "  \"target_version\": \"v0.7.0\",\n";
+    json << "  \"activation_timestamp\": \"20260718T120000Z\",\n";
+    json << "  \"schema_version\": 1,\n";
+    json << "  \"verification_result\": \"success\"\n";
+    json << "}\n";
+    expect_p11r2_state_rejected(dir, json.str());
+    tclean(dir);
+}
+
+TEST_CASE("P11-R2 strict activation state parser rejects unknown keys") {
+    auto dir = tdir("p11r2_unknown_key");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+
+    std::string json = valid_state_json("sqlite", dir + "containercp.db");
+    auto pos = json.rfind("}\n");
+    REQUIRE(pos != std::string::npos);
+    json.insert(pos, ",\n  \"unexpected\": \"value\"\n");
+    expect_p11r2_state_rejected(dir, json);
+    tclean(dir);
+}
+
+TEST_CASE("P11-R2 strict activation state parser rejects wrong value types") {
+    auto dir = tdir("p11r2_wrong_type");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+
+    std::string json = valid_state_json("sqlite", dir + "containercp.db");
+    auto pos = json.find("\"schema_version\": 1");
+    REQUIRE(pos != std::string::npos);
+    json.replace(pos, std::string("\"schema_version\": 1").size(), "\"schema_version\": \"1\"");
+    expect_p11r2_state_rejected(dir, json);
+    tclean(dir);
+}
+
+TEST_CASE("P11-R2 strict activation state parser rejects invalid strings") {
+    auto dir = tdir("p11r2_invalid_string");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+
+    std::string json = valid_state_json("sqlite", dir + "containercp.db");
+    auto pos = json.find("\"source_version\": \"v0.6.0\"");
+    REQUIRE(pos != std::string::npos);
+    json.replace(pos, std::string("\"source_version\": \"v0.6.0\"").size(), "\"source_version\": \"bad version\"");
+    expect_p11r2_state_rejected(dir, json);
+    tclean(dir);
+}
+
+TEST_CASE("P11-R2 strict activation state parser rejects invalid enums") {
+    auto dir = tdir("p11r2_invalid_enum");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+
+    std::string json = valid_state_json("sqlite", dir + "containercp.db");
+    auto pos = json.find("\"verification_result\": \"success\"");
+    REQUIRE(pos != std::string::npos);
+    json.replace(pos, std::string("\"verification_result\": \"success\"").size(), "\"verification_result\": \"failed\"");
+    expect_p11r2_state_rejected(dir, json);
     tclean(dir);
 }
 
