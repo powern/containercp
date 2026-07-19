@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Harden runtime credential verification
+
+**Summary:** Added WP-R7 hardening for `WordPressRuntimeVerifier`. Runtime verification now rejects incomplete requests, relative host paths, document roots outside the compose project, unsafe PHP service names, unsafe container document roots, and config paths outside the document root before constructing any Docker command. Documentation now explicitly states that verifier execution still loads the selected site's active `wp-config.php`, so the trust boundary is scoped execution in the selected site container, not a PHP sandbox.
+
+**Files changed:** `libs/wordpress/WordPressRuntimeVerifier.cpp`, `tests/test_wordpress_runtime_verifier.cpp`, `docs/development/wordpress-credential-management.md`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No new UI/API behavior. Unsupported or unsafe runtime verification requests fail closed with redacted diagnostics before command execution.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused verifier tests passed with `build-wp0/tests/containercp_tests -tc="*WordPressRuntimeVerifier*"` (`8` cases, `37` assertions), `*WordPress*` (`64` cases, `376` assertions), `*DatabaseCredentialRotation*` (`28` cases, `270` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full CTest (`1/1`) and `git diff --check` passed.
+
+**Known risks:** The verifier intentionally executes site-controlled `wp-config.php` inside the selected PHP container to test real WordPress database access. Request validation narrows what can be executed, but compromised site PHP remains outside this verifier's trust model. Endpoint/job safety, UI polish, documentation readiness language, and final validation remain scheduled for WP-R8 through WP-R11.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Harden credential rotation compensation
 
 **Summary:** Added WP-R6 compensation hardening for WordPress database credential rotation. The rotation saga now verifies restored WordPress/PHP database access, restored site health, and restored credential metadata after rollback before reporting `rotation_compensated`. Failures in any restored-state verification now return `manual_recovery_required`. The concrete adapter now restores in-memory database metadata to the old password when metadata persistence fails and keeps compensation context until restored metadata consistency has been verified.

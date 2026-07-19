@@ -65,6 +65,56 @@ TEST_CASE("WordPressRuntimeVerifier rejects config path outside document root") 
     CHECK(runner.args.empty());
 }
 
+TEST_CASE("WordPressRuntimeVerifier rejects relative host paths") {
+    FakeWordPressRuntimeRunner runner;
+    runner.result.exit_code = 0;
+    WordPressRuntimeVerifier verifier(runner);
+
+    const auto result = verifier.verify_database_access({"relative-site",
+                                                         "/srv/containercp/sites/example.com/public",
+                                                         "/srv/containercp/sites/example.com/public/wp-config.php"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "unsafe_runtime_path");
+    CHECK(runner.args.empty());
+}
+
+TEST_CASE("WordPressRuntimeVerifier rejects document root outside compose project") {
+    FakeWordPressRuntimeRunner runner;
+    runner.result.exit_code = 0;
+    WordPressRuntimeVerifier verifier(runner);
+
+    const auto result = verifier.verify_database_access({"/srv/containercp/sites/example.com",
+                                                         "/srv/containercp/other/example.com/public",
+                                                         "/srv/containercp/other/example.com/public/wp-config.php"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "unsafe_runtime_path");
+    CHECK(runner.args.empty());
+}
+
+TEST_CASE("WordPressRuntimeVerifier rejects unsafe service and container roots") {
+    FakeWordPressRuntimeRunner runner;
+    runner.result.exit_code = 0;
+    WordPressRuntimeVerifier verifier(runner);
+
+    auto bad_service = verifier.verify_database_access({"/srv/containercp/sites/example.com",
+                                                        "/srv/containercp/sites/example.com/public",
+                                                        "/srv/containercp/sites/example.com/public/wp-config.php",
+                                                        "php;bad"});
+    CHECK_FALSE(bad_service.success);
+    CHECK(bad_service.code == "invalid_php_service");
+
+    auto bad_container_root = verifier.verify_database_access({"/srv/containercp/sites/example.com",
+                                                              "/srv/containercp/sites/example.com/public",
+                                                              "/srv/containercp/sites/example.com/public/wp-config.php",
+                                                              "php",
+                                                              "../html"});
+    CHECK_FALSE(bad_container_root.success);
+    CHECK(bad_container_root.code == "unsafe_container_document_root");
+    CHECK(runner.args.empty());
+}
+
 TEST_CASE("WordPressRuntimeVerifier does not expose command stderr on failure") {
     FakeWordPressRuntimeRunner runner;
     runner.result.exit_code = 4;

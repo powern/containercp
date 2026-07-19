@@ -86,6 +86,12 @@ Password presence may be reported as a boolean. DB name, DB user, and DB host ma
 
 MariaDB provider secret transport uses protected stdin bundles and in-container temporary option/SQL files. Passwords are not placed in shell command strings or process argv.
 
+## Runtime Verification Trust Boundary
+
+`WordPressRuntimeVerifier` validates database access by running a fixed PHP snippet through Docker Compose in the site's PHP service. The verifier computes the in-container `wp-config.php` path from a previously inspected safe host path, requires absolute host paths, requires the document root to stay inside the compose project, restricts the PHP service name, and rejects unsafe container document roots.
+
+The PHP snippet still executes the site's active `wp-config.php` with `require`. That file is site-controlled PHP code, not data. The verifier must therefore only be called after `WordPressConfigService` has resolved a regular non-symlink active config path inside the selected site root, and only for the selected site's PHP container. It is not a general-purpose PHP sandbox and must not be pointed at arbitrary paths, backup configs, external document roots, or untrusted compose projects.
+
 ## Threat Model
 
 Primary threats addressed:
@@ -96,12 +102,14 @@ Primary threats addressed:
 - Partial rotation that leaves MariaDB and WordPress out of sync.
 - Duplicate credential parser/update logic diverging between migration and rotation paths.
 - Operator mistakes through missing typed confirmation or unsupported config states.
+- Accidental runtime verification against an arbitrary PHP service, compose project, or config path.
 
 Residual risks:
 
 - Current storage still persists database passwords in plaintext SQLite/TXT metadata and site `.env` files.
 - Existing site `.env` bootstrap secrets remain outside this rotation foundation until a dedicated secret store and `.env` owner are approved.
 - Exact narrow MariaDB grant requirements require validation against the deployed MariaDB version before live rotation.
+- Runtime WordPress verification executes the selected site's own `wp-config.php`; hardening restricts the request boundary but does not make site-controlled PHP code trusted.
 - No production browser automation exists for the Site Details workflow; coverage is unit/static validation plus manual operator review.
 - Queueing exists before live dependency wiring, so current jobs fail closed by design.
 

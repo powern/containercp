@@ -1,5 +1,6 @@
 #include "WordPressRuntimeVerifier.h"
 
+#include <cctype>
 #include <system_error>
 #include <utility>
 
@@ -17,6 +18,32 @@ bool path_has_prefix(const fs::path& path, const fs::path& root) {
         }
     }
     return true;
+}
+
+bool has_parent_reference(const fs::path& path) {
+    for (const auto& part : path) {
+        if (part == "..") {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool is_safe_service_name(const std::string& value) {
+    if (value.empty() || value.size() > 64) {
+        return false;
+    }
+    for (unsigned char c : value) {
+        const bool alnum = std::isalnum(c) != 0;
+        if (!alnum && c != '_' && c != '-' && c != '.') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool is_safe_container_root(const fs::path& path) {
+    return !path.empty() && path.is_absolute() && !has_parent_reference(path);
 }
 
 WordPressRuntimeVerificationResult result(bool success, std::string code, std::string message) {
@@ -80,6 +107,28 @@ WordPressRuntimeVerifier::WordPressRuntimeVerifier(const WordPressRuntimeCommand
 WordPressRuntimeVerificationResult WordPressRuntimeVerifier::verify_database_access(const WordPressRuntimeVerificationRequest& request) const {
     if (request.compose_dir.empty() || request.document_root.empty() || request.config_path.empty() || request.php_service.empty()) {
         return result(false, "invalid_verification_request", "WordPress runtime verification request is incomplete");
+    }
+    if (!request.compose_dir.is_absolute() || !request.document_root.is_absolute() || !request.config_path.is_absolute()) {
+        return result(false, "unsafe_runtime_path", "WordPress runtime verification paths must be absolute");
+    }
+    if (!is_safe_service_name(request.php_service)) {
+        return result(false, "invalid_php_service", "WordPress runtime verification PHP service is invalid");
+    }
+    const fs::path container_document_root = request.container_document_root.empty()
+        ? fs::path("/var/www/html")
+        : fs::path(request.container_document_root);
+    if (!is_safe_container_root(container_document_root)) {
+        return result(false, "unsafe_container_document_root", "WordPress runtime verification container document root is unsafe");
+    }
+
+    std::error_code ec;
+    const fs::path compose_dir = fs::absolute(request.compose_dir, ec).lexically_normal();
+    if (ec) {
+        return result(false, "unsafe_runtime_path", "WordPress runtime verification compose path is unsafe");
+    }
+    const fs::path document_root = fs::absolute(request.document_root, ec).lexically_normal();
+    if (ec || !path_has_prefix(document_root, compose_dir)) {
+        return result(false, "unsafe_runtime_path", "WordPress runtime verification document root is outside the compose project");
     }
 
     bool path_ok = false;
