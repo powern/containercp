@@ -1,5 +1,6 @@
 #include "DatabaseCredentialRotationJobService.h"
 
+#include <cctype>
 #include <utility>
 #include <vector>
 
@@ -21,6 +22,18 @@ std::string job_message_for_result(const DatabaseCredentialRotationResult& rotat
         return "Credential rotation requires manual recovery";
     }
     return "Credential rotation failed";
+}
+
+bool safe_confirmation(const std::string& value) {
+    if (value.empty() || value.size() > 253) {
+        return false;
+    }
+    for (unsigned char c : value) {
+        if (std::iscntrl(c) != 0) {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -57,6 +70,9 @@ void DatabaseCredentialRotationJobService::release_queue_lock(const std::shared_
 }
 
 DatabaseCredentialRotationJobResult DatabaseCredentialRotationJobService::enqueue(const DatabaseCredentialRotationJobRequest& request) {
+    if (!safe_confirmation(request.confirmation)) {
+        return result(false, "confirmation_invalid", "Confirmation must be a valid domain confirmation string");
+    }
     auto* site = sites_.find_by_id(request.site_id);
     if (site == nullptr) {
         return result(false, "site_not_found", "Site was not found");

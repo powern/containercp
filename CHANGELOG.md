@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | API — Harden credential rotation endpoints
+
+**Summary:** Added WP-R8 queue and endpoint safety hardening for WordPress credential rotation. `DatabaseCredentialRotationJobService` now rejects empty, overlong, or control-character confirmation strings before resource lookup or job creation. Rotation jobs continue to use internally created immutable job ids and generic redacted job messages; new regression coverage verifies unsafe confirmations create no jobs and async rotation failures do not store secret-bearing dependency messages. The rotate endpoint keeps backend target resolution before queueing and returns bounded error codes/messages without echoing confirmations or credentials.
+
+**Files changed:** `libs/database/DatabaseCredentialRotationJobService.cpp`, `tests/test_database_credential_rotation.cpp`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Invalid confirmation strings are rejected earlier with `confirmation_invalid`. Failed credential rotation jobs continue to show generic redacted messages only.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused tests passed for `*DatabaseCredentialRotationJobService*,*DatabaseCredentialRotation*` (`30` cases, `280` assertions), `*API*` (`18` cases, `73` assertions), `*database*` (`54` cases, `485` assertions), and `*WordPress*` (`64` cases, `376` assertions). Full CTest (`1/1`) and `git diff --check` passed.
+
+**Known risks:** This stage does not introduce a new role/permission model; endpoints remain protected by the existing `ApiServer` authentication middleware. UI safety-state presentation, documentation readiness cleanup, and final validation remain scheduled for WP-R9 through WP-R11.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Harden runtime credential verification
 
 **Summary:** Added WP-R7 hardening for `WordPressRuntimeVerifier`. Runtime verification now rejects incomplete requests, relative host paths, document roots outside the compose project, unsafe PHP service names, unsafe container document roots, and config paths outside the document root before constructing any Docker command. Documentation now explicitly states that verifier execution still loads the selected site's active `wp-config.php`, so the trust boundary is scoped execution in the selected site container, not a PHP sandbox.

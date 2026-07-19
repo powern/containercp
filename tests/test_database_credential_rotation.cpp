@@ -760,6 +760,26 @@ TEST_CASE("DatabaseCredentialRotationJobService rejects confirmation mismatch be
     CHECK(jobs.list().empty());
 }
 
+TEST_CASE("DatabaseCredentialRotationJobService rejects unsafe confirmation before job creation") {
+    site::SiteManager sites;
+    DatabaseManager databases;
+    jobs::JobManager jobs;
+    jobs::JobExecutor executor(jobs, 0, 4);
+    executor.start();
+    DatabaseCredentialRotationService rotation;
+    DatabaseCredentialRotationJobService queue(sites, databases, jobs, executor, rotation);
+
+    const uint64_t site_id = sites.create("example.com", "admin", 1);
+    const uint64_t database_id = databases.create("wp_example", "wp_user", "stored-secret", 1, site_id);
+
+    const auto result = queue.enqueue({site_id, database_id, "example.com\nsecret"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "confirmation_invalid");
+    CHECK(result.message.find("secret") == std::string::npos);
+    CHECK(jobs.list().empty());
+}
+
 TEST_CASE("DatabaseCredentialRotationJobService rejects database from another site") {
     site::SiteManager sites;
     DatabaseManager databases;
@@ -823,4 +843,29 @@ TEST_CASE("DatabaseCredentialRotationJobService rejects duplicate queued rotatio
     CHECK_FALSE(second.success);
     CHECK(second.code == "rotation_already_running");
     CHECK(jobs.list().size() == 1);
+}
+
+TEST_CASE("DatabaseCredentialRotationJobService stores redacted async failure message") {
+    site::SiteManager sites;
+    DatabaseManager databases;
+    jobs::JobManager jobs;
+    jobs::JobExecutor executor(jobs, 1, 4);
+    executor.start();
+    FakeRotationDependencies deps;
+    deps.fail_call = "inspect_wordpress";
+    DatabaseCredentialRotationService rotation(deps);
+    DatabaseCredentialRotationJobService queue(sites, databases, jobs, executor, rotation);
+
+    const uint64_t site_id = sites.create("example.com", "admin", 1);
+    const uint64_t database_id = databases.create("wp_example", "wp_user", "stored-secret", 1, site_id);
+    const auto result = queue.enqueue({site_id, database_id, "example.com"});
+    REQUIRE(result.success);
+    executor.shutdown();
+
+    auto* job = jobs.find(result.job_id);
+    REQUIRE(job != nullptr);
+    CHECK(job->status == "failed");
+    CHECK(job->message == "Credential rotation failed");
+    CHECK(job->message.find("new-secret") == std::string::npos);
+    CHECK(job->message.find("stored-secret") == std::string::npos);
 }

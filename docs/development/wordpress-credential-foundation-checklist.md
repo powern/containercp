@@ -598,11 +598,13 @@ Suggested commit: `wordpress: harden runtime credential verification`.
 
 Result: Complete. Hardened `WordPressRuntimeVerifier` request validation before any Docker command is built. The verifier now requires absolute host paths, rejects document roots outside the compose project path, restricts the PHP service name to a safe service-token alphabet, rejects unsafe relative or parent-traversing container document roots, preserves config-path containment under the document root, and continues to return redacted diagnostics without exposing command stderr/stdout. The operator documentation now explicitly records that verifier execution still `require`s the selected site's active `wp-config.php`, so the boundary is safe request scoping rather than a PHP sandbox. Validation passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings, `build-wp0/tests/containercp_tests -tc="*WordPressRuntimeVerifier*"` (`8` cases, `37` assertions), `*WordPress*` (`64` cases, `376` assertions), `*DatabaseCredentialRotation*` (`28` cases, `270` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full CTest (`1/1`) and `git diff --check` passed.
 
-### [ ] WP-R8 API, authorization and job safety
+### [x] WP-R8 API, authorization and job safety
 
 Objective: Harden status/rotate endpoint parsing, authorization behavior, queue semantics, immutable job identifiers, and information-leak boundaries.
 
 Suggested commit: `api: harden credential rotation endpoints`.
+
+Result: Complete. Hardened the queue boundary for API/CLI callers by rejecting empty, overlong, or control-character domain confirmations before resource lookup or job creation. Rotation job execution already uses immutable internally created job ids, captures only site/database/confirmation request data, and stores generic redacted job messages; new tests assert unsafe confirmations create no job and async failures with secret-bearing internal dependency messages still store only `Credential rotation failed`. The rotate API continues to resolve the exact backend WordPress database target before queueing and maps unavailable target states to bounded HTTP errors without echoing submitted confirmation or credentials. Validation passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings, `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotationJobService*,*DatabaseCredentialRotation*"` (`30` cases, `280` assertions), `*API*` (`18` cases, `73` assertions), `*database*` (`54` cases, `485` assertions), and `*WordPress*` (`64` cases, `376` assertions). Full CTest (`1/1`) and `git diff --check` passed.
 
 ### [ ] WP-R9 GUI corrections
 
