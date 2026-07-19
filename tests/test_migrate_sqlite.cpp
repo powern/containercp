@@ -115,6 +115,7 @@ TEST_CASE("MigrationOrchestrator happy path") {
     CHECK(r.archive.success);
     CHECK_FALSE(r.archive.archive_path.empty());
     CHECK(fs::exists(db));
+    CHECK(r.diagnostics.find("create_staging_dir: OK (" + tmp + ".containercp-migrate-") != std::string::npos);
 
     std::string state_path = containercp::storage::MigrationOrchestrator::activation_state_path(tmp);
     CHECK(fs::exists(state_path));

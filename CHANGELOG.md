@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `TBD` | Bug Fix — Keep SQLite migration staging on target filesystem
+
+**Summary:** Fixed SQLite migration publishing when `/tmp` and `/srv/containercp/database` are on different filesystems. Migration staging now happens in a hidden directory next to the target SQLite database, so final publication can use atomic rename without failing with `Invalid cross-device link`.
+
+**Files changed:** `libs/storage/MigrationOrchestrator.cpp`, `tests/test_migrate_sqlite.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** `containercp storage migrate-to-sqlite` can now complete on hosts where the temporary directory and ContainerCP data directory are different mounts. Failed pre-fix attempts remain fail-before-activation: they do not create `containercp.db`, do not create `storage-state.json`, and do not switch the active backend.
+
+**Validation:** Incremental build passed for `containercp_tests` and `containercpd` with `cmake --build build2 --target containercp_tests containercpd -- -j1`. Focused `MigrationOrchestrator happy path` passed (`1` case, `10` assertions). Focused `P11-R7*` passed (`1` case, `92` assertions). CTest passed (`1/1`).
+
+**Known risks:** A failed migration attempt may leave an already-created immutable legacy archive from the pre-publish stages; this is safe but can require operator cleanup under a separate retention policy.
+
+---
+
 ## 2026-07-19 | `d4d601a` | Maintenance — Reduce clean-build compiler warning noise
 
 **Summary:** Removed cosmetic compiler warning noise without changing product behavior. Replaced deprecated OpenSSL SHA256 calls with EVP SHA256 helpers, localized c-ares deprecation suppression behind compatibility wrappers, removed unused variables and helpers, fixed initializer-order and misleading-indentation warnings, and used size-correct legacy dataset indices where warnings were emitted.

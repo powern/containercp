@@ -114,7 +114,11 @@ MigrationResult MigrationOrchestrator::migrate_to_sqlite() {
     append_stage(stages, "generate_uuid", true, migration_id);
 
     // ── Step 3: Create staging directory ──
-    std::string staging_dir = (fs::temp_directory_path() / ("containercp-migrate-" + migration_id)).string();
+    // Keep staging next to the final database so publish can use atomic rename.
+    // Moving from /tmp to /srv may cross filesystems and fail with EXDEV.
+    fs::path db_parent = fs::path(database_path_).parent_path();
+    if (db_parent.empty()) db_parent = ".";
+    std::string staging_dir = (db_parent / (".containercp-migrate-" + migration_id)).string();
     {
         std::error_code ec;
         fs::remove_all(staging_dir, ec);
