@@ -129,14 +129,34 @@ TEST_CASE("WordPressConfigService reports non-WordPress site with no active conf
     fs::remove_all(root);
 }
 
-TEST_CASE("WordPressConfigService rejects site_id zero") {
+TEST_CASE("WordPressConfigService resolves site_id zero as unsupported system site when WordPress is absent") {
     site::SiteManager sites;
-    WordPressConfigService service(sites, service_root("site_zero"));
+    site::Site system_site;
+    system_site.id = 0;
+    system_site.name = "ContainerCP Admin";
+    system_site.domain = "admin.test";
+    system_site.owner = "system";
+    system_site.node_id = 0;
+    system_site.web_server = "nginx";
+    sites.set_sites({system_site});
+
+    const auto root = service_root("site_zero");
+    write_service_file(root / "admin.test" / "public" / "index.php", "<?php echo 'admin';");
+    WordPressConfigService service(sites, root);
 
     const auto result = service.inspect_site(0);
     CHECK_FALSE(result.ok);
     CHECK(result.status == WordPressCredentialStatus::Unsupported);
-    CHECK(result.code == "system_site_unsupported");
+    CHECK(result.code == "wordpress_not_detected");
+    CHECK(result.site_id == 0);
+    CHECK(result.domain == "admin.test");
+
+    const auto by_domain = service.inspect_domain("admin.test");
+    CHECK_FALSE(by_domain.ok);
+    CHECK(by_domain.code == "wordpress_not_detected");
+    CHECK(by_domain.site_id == 0);
+
+    fs::remove_all(root);
 }
 
 TEST_CASE("WordPressConfigService rejects resolved site root escapes") {

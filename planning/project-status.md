@@ -560,7 +560,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | Task | Status | Notes |
 |------|--------|-------|
 | WordPress credential source detector | ✅ | Direct constants, unsupported/dynamic states, path safety, redacted public values |
-| Read-only WordPress config service | ✅ | Site/domain inspection, public-safe view, `site_id=0` rejection |
+| Read-only WordPress config service | ✅ | Site/domain inspection, public-safe view, `site_id=0` resolved by capability |
 | Shared credential updater | ✅ | Direct-literal renderer, atomic writes, PHP validation boundary, rollback |
 | Migration credential consolidation | ✅ | Migration parser/update path delegates to shared WordPress detector/updater |
 | MariaDB credential provider boundary | ✅ | Fake-tested provider with no-secret argv and protected stdin transport |

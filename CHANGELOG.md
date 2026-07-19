@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Preserve valid system site identity
+
+**Summary:** Added WP-R2 `site_id=0` semantic fixes for WordPress credential operations. WordPress config inspection now resolves `site_id=0` through the site manager instead of rejecting it by numeric value; resolved system-site records without WordPress return `wordpress_not_detected`. Domain inspection no longer rejects a resolved site just because its id is `0`. Rotation and queue services no longer reject `site_id=0` before resource/dependency checks. The WordPress credential API now parses numeric identifiers strictly so literal `0` is distinct from missing, negative, or malformed IDs.
+
+**Files changed:** `libs/wordpress/WordPressConfigService.cpp`, `libs/database/DatabaseCredentialRotationService.cpp`, `libs/database/DatabaseCredentialRotationJobService.cpp`, `libs/api/ApiServer.cpp`, `tests/test_wordpress_config_service.cpp`, `tests/test_database_credential_rotation.cpp`, `docs/development/wordpress-credential-management.md`, `docs/development/wordpress-credential-foundation-checklist.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Public WordPress credential status for an existing system-site identity now reports unsupported WordPress capability (`wordpress_not_detected`) rather than treating `site_id=0` as an invalid identifier. Rotation still does not enable live credential mutation.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused tests passed for `*WordPressConfigService*` (`10` cases, `65` assertions), `*DatabaseCredentialRotation*` (`22` cases, `152` assertions), `*API*` (`18` cases, `73` assertions), `*WordPress*` (`58` cases, `344` assertions), `*database*` (`44` cases, `344` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`).
+
+**Known risks:** Existing runtime APIs outside WordPress credential operations still intentionally treat `site_id=0` as not applicable. Full endpoint authorization, overflow/negative parsing coverage, and job immutability hardening remain scheduled for WP-R8.
+
+---
+
 ## 2026-07-19 | `this commit` | Database — Implement strict shared credential assessment
 
 **Summary:** Added WP-R1 strict shared-user assessment for WordPress database credential rotation. `MariaDBCredentialProvider::detect_shared_user()` now returns a structured `MariaDBSharedCredentialAssessment` instead of relying on a boolean-only result, queries machine-readable batch output for exact `User` + `Host`, username host variants, and schema grant count, and fails closed on empty, malformed, duplicate, unexpected, ambiguous, or command-failure output. `DatabaseCredentialRotationService` now runs an explicit pre-mutation `assess_shared_user()` step after old-credential verification and before password generation; every state except `not_shared` blocks rotation before any password mutation.

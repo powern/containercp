@@ -629,17 +629,42 @@ bool ApiServer::start() {
     // POST /api/wordpress/database-credentials/rotate — queue WordPress DB credential rotation
     router_.add("POST", "/api/wordpress/database-credentials/rotate", [&s](const Request& req) {
         Response r;
-        auto parse_uint = [](const std::string& value) -> uint64_t {
+        struct ParsedId {
+            bool valid = false;
+            uint64_t value = 0;
+        };
+        auto parse_uint = [](const std::string& value) -> ParsedId {
+            if (value.empty()) {
+                return {};
+            }
+            for (unsigned char c : value) {
+                if (!std::isdigit(c)) {
+                    return {};
+                }
+            }
             try {
-                return value.empty() ? 0 : std::stoull(value);
+                size_t parsed = 0;
+                const uint64_t id = std::stoull(value, &parsed);
+                if (parsed != value.size()) {
+                    return {};
+                }
+                return {true, id};
             } catch (...) {
-                return 0;
+                return {};
             }
         };
 
+        const auto parsed_site_id = parse_uint(json_extract(req.body, "site_id"));
+        const auto parsed_database_id = parse_uint(json_extract(req.body, "database_id"));
+        if (!parsed_site_id.valid || !parsed_database_id.valid) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":{\"code\":\"invalid_identifier\",\"message\":\"Site id and database id must be valid numeric identifiers\"}}";
+            return r;
+        }
+
         database::DatabaseCredentialRotationJobRequest request;
-        request.site_id = parse_uint(json_extract(req.body, "site_id"));
-        request.database_id = parse_uint(json_extract(req.body, "database_id"));
+        request.site_id = parsed_site_id.value;
+        request.database_id = parsed_database_id.value;
         request.confirmation = json_extract(req.body, "confirmation");
 
         const auto queued = s.database_credential_rotation_jobs().enqueue(request);
@@ -667,13 +692,40 @@ bool ApiServer::start() {
     // GET /api/wordpress/database-credentials/status?site_id=N — public-safe WordPress credential status
     router_.add("GET", "/api/wordpress/database-credentials/status", [&s](const Request& req) {
         Response r;
-        uint64_t site_id = 0;
+        struct ParsedId {
+            bool valid = false;
+            uint64_t value = 0;
+        };
+        auto parse_uint = [](const std::string& value) -> ParsedId {
+            if (value.empty()) {
+                return {};
+            }
+            for (unsigned char c : value) {
+                if (!std::isdigit(c)) {
+                    return {};
+                }
+            }
+            try {
+                size_t parsed = 0;
+                const uint64_t id = std::stoull(value, &parsed);
+                if (parsed != value.size()) {
+                    return {};
+                }
+                return {true, id};
+            } catch (...) {
+                return {};
+            }
+        };
+
         auto it = req.query.find("site_id");
-        if (it != req.query.end()) {
-            try { site_id = std::stoull(it->second); } catch (...) { site_id = 0; }
+        const auto parsed_site_id = it == req.query.end() ? ParsedId{} : parse_uint(it->second);
+        if (!parsed_site_id.valid) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":{\"code\":\"invalid_identifier\",\"message\":\"Site id must be a valid numeric identifier\"}}";
+            return r;
         }
 
-        const auto inspected = s.wordpress_config().inspect_site(site_id);
+        const auto inspected = s.wordpress_config().inspect_site(parsed_site_id.value);
         const auto view = s.wordpress_config().public_view(inspected);
 
         std::ostringstream json;

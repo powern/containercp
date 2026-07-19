@@ -10,7 +10,7 @@ The foundation is intentionally conservative: status inspection and rotation req
 
 Supported for inspection:
 
-- Existing ContainerCP sites with a real `site_id`; `site_id=0` is rejected.
+- Existing ContainerCP sites with a resolvable site identity, including `site_id=0` system-site records when present.
 - WordPress sites whose active `wp-config.php` is a regular file inside the resolved site root.
 - Direct literal definitions for `DB_NAME`, `DB_USER`, `DB_PASSWORD`, and `DB_HOST`.
 - Apache and nginx document-root mappings handled by `WordPressConfigService`.
@@ -26,7 +26,7 @@ Supported for credential update by the shared updater:
 
 Unsupported and fail-closed:
 
-- `site_id=0` and system/admin-panel virtual sites.
+- System/admin-panel sites whose resolved capabilities do not include an eligible WordPress database credential target.
 - Missing, symlinked, backup, temporary, non-regular, or path-escaping `wp-config.php` files.
 - Environment-backed, `$_ENV`, `$_SERVER`, variable, concatenated, helper-call, included, duplicate, conditional, or otherwise ambiguous credential definitions.
 - Shared database users unless a future operator-approved policy explicitly handles the impact.

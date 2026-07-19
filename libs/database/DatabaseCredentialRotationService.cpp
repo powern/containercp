@@ -157,10 +157,6 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::compensate_a
 
 DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const DatabaseCredentialRotationRequest& request) {
     DatabaseCredentialRotationResult result;
-    if (request.site_id == 0) {
-        return fail_with(std::move(result), DatabaseCredentialRotationState::Failed, "system_site_unsupported",
-                         "System site credentials cannot be rotated");
-    }
     if (request.database_id == 0) {
         return fail_with(std::move(result), DatabaseCredentialRotationState::Failed, "database_required",
                          "Database id is required");

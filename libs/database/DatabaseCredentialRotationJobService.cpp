@@ -57,9 +57,6 @@ void DatabaseCredentialRotationJobService::release_queue_lock(const std::shared_
 }
 
 DatabaseCredentialRotationJobResult DatabaseCredentialRotationJobService::enqueue(const DatabaseCredentialRotationJobRequest& request) {
-    if (request.site_id == 0) {
-        return result(false, "system_site_unsupported", "System site credentials cannot be rotated");
-    }
     auto* site = sites_.find_by_id(request.site_id);
     if (site == nullptr) {
         return result(false, "site_not_found", "Site was not found");

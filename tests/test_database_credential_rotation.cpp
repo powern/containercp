@@ -121,13 +121,13 @@ TEST_CASE("DatabaseCredentialRotationService state strings are stable") {
     CHECK(database_credential_rotation_state_to_string(DatabaseCredentialRotationState::Completed) == "completed");
 }
 
-TEST_CASE("DatabaseCredentialRotationService rejects site_id zero") {
+TEST_CASE("DatabaseCredentialRotationService preserves site_id zero as a valid operation identity") {
     DatabaseCredentialRotationService service;
     const auto result = service.rotate({0, 1, "example.com"});
 
     CHECK_FALSE(result.success);
     CHECK(result.final_state == DatabaseCredentialRotationState::Failed);
-    CHECK(result.code == "system_site_unsupported");
+    CHECK(result.code == "rotation_dependencies_missing");
     CHECK_FALSE(service.is_locked(0, 1));
 }
 
@@ -474,6 +474,30 @@ TEST_CASE("DatabaseCredentialRotationJobService rejects database from another si
     const uint64_t database_id = databases.create("wp_other", "wp_user", "stored-secret", 1, other_site_id);
 
     const auto result = queue.enqueue({site_id, database_id, "example.com"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "database_not_found");
+    CHECK(jobs.list().empty());
+}
+
+TEST_CASE("DatabaseCredentialRotationJobService resolves site_id zero before capability checks") {
+    site::SiteManager sites;
+    DatabaseManager databases;
+    jobs::JobManager jobs;
+    jobs::JobExecutor executor(jobs, 0, 4);
+    executor.start();
+    DatabaseCredentialRotationService rotation;
+    DatabaseCredentialRotationJobService queue(sites, databases, jobs, executor, rotation);
+
+    site::Site system_site;
+    system_site.id = 0;
+    system_site.name = "ContainerCP Admin";
+    system_site.domain = "admin.test";
+    system_site.owner = "system";
+    system_site.node_id = 0;
+    sites.set_sites({system_site});
+
+    const auto result = queue.enqueue({0, 99, "admin.test"});
 
     CHECK_FALSE(result.success);
     CHECK(result.code == "database_not_found");

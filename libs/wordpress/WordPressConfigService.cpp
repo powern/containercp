@@ -72,6 +72,10 @@ std::string container_document_root_for_site(const site::Site& site_record) {
     return "/var/www/html";
 }
 
+bool is_system_site_record(const site::Site& site_record) {
+    return site_record.id == 0 || site_record.node_id == 0 || site_record.owner == "system";
+}
+
 } // namespace
 
 WordPressConfigService::WordPressConfigService(site::SiteManager& sites)
@@ -99,10 +103,6 @@ WordPressConfigServiceResult WordPressConfigService::failure(uint64_t site_id,
 }
 
 WordPressConfigServiceResult WordPressConfigService::inspect_site(uint64_t site_id) const {
-    if (site_id == 0) {
-        return failure(0, {}, WordPressCredentialStatus::Unsupported, "system_site_unsupported",
-                       "The system admin-panel site does not have WordPress credentials");
-    }
     const auto* site_record = sites_.find_by_id(site_id);
     if (site_record == nullptr) {
         return failure(site_id, {}, WordPressCredentialStatus::Error, "site_not_found", "Site was not found");
@@ -114,10 +114,6 @@ WordPressConfigServiceResult WordPressConfigService::inspect_domain(const std::s
     const auto* site_record = sites_.find(domain);
     if (site_record == nullptr) {
         return failure(0, domain, WordPressCredentialStatus::Error, "site_not_found", "Site was not found");
-    }
-    if (site_record->id == 0) {
-        return failure(0, site_record->domain, WordPressCredentialStatus::Unsupported, "system_site_unsupported",
-                       "The system admin-panel site does not have WordPress credentials");
     }
     return inspect(*site_record);
 }
@@ -138,6 +134,13 @@ WordPressConfigServiceResult WordPressConfigService::inspect(const site::Site& s
 
     const fs::file_status root_status = fs::symlink_status(site_root, ec);
     if (ec || !fs::exists(root_status)) {
+        if (is_system_site_record(site_record)) {
+            auto result = failure(site_record.id, site_record.domain, WordPressCredentialStatus::Unsupported,
+                                  "wordpress_not_detected",
+                                  "WordPress credentials were not detected for this system site");
+            result.site_root = site_root;
+            return result;
+        }
         auto result = failure(site_record.id, site_record.domain, WordPressCredentialStatus::ConfigMissing,
                               "site_root_missing", "Site root does not exist");
         result.site_root = site_root;
@@ -210,6 +213,11 @@ WordPressConfigServiceResult WordPressConfigService::inspect(const site::Site& s
 
     auto result = failure(site_record.id, site_record.domain, WordPressCredentialStatus::ConfigMissing,
                           "config_missing", "No active wp-config.php file was found");
+    if (is_system_site_record(site_record)) {
+        result.status = WordPressCredentialStatus::Unsupported;
+        result.code = "wordpress_not_detected";
+        result.message = "WordPress credentials were not detected for this system site";
+    }
     result.site_root = site_root;
     if (!last_missing.config_path.empty()) {
         result.config_path = last_missing.config_path;
