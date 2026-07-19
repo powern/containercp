@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Add credential inspection types
+
+**Summary:** Added the initial WordPress credential inspection type model for WP-1.1. The new `WordPressConfigTypes` subsystem defines credential source, mutability, status, value-state, and issue severity enums with string conversion helpers, plus public-safe credential value/set/inspection structures that redact sensitive values by construction.
+
+**Files changed:** `libs/wordpress/WordPressConfigTypes.h`, `libs/wordpress/WordPressConfigTypes.cpp`, `tests/test_wordpress_config_types.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. The new types are not wired into API, CLI, Web UI, migration, runtime, storage, or production site operations yet.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused WordPress tests passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`5` cases, `51` assertions), including type/string conversion and sensitive-value redaction coverage. Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`).
+
+**Known risks:** Parser, filesystem safety, read-only inspection service, config updates, MariaDB provider, rotation saga, API/CLI, and Web UI actions remain pending. The type model may receive additional enum values as later detector implementation covers more WordPress config forms.
+
+---
+
 ## 2026-07-19 | `this commit` | Documentation — Add WordPress credential implementation checklist
 
 **Summary:** Added the executable WP-0 through WP-8 implementation checklist for the approved v0.8 WordPress database credential-management foundation. The checklist maps current source behavior, records existing credential duplication and intended single-source ownership, defines incremental commit-sized work items, and captures clean baseline validation before implementation begins.

@@ -108,6 +108,7 @@ set(CONTAINERCP_SOURCES
     libs/utils/PasswordGenerator.cpp
     libs/utils/StringUtils.cpp
     libs/utils/Validator.cpp
+    libs/wordpress/WordPressConfigTypes.cpp
 )
 
 # Daemon binary

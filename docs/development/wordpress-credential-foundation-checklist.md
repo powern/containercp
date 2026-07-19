@@ -86,7 +86,7 @@ Result: Complete. No behavior changes were made; validation evidence is recorded
 
 ## WP-1 Credential-Source Detector
 
-### [ ] WP-1.1 Add detector model types
+### [x] WP-1.1 Add detector model types
 
 Objective: Add `WordPressCredentialSource`, mutability/status enums, value state types, warnings/errors, and redacted inspection data structures.
 
@@ -101,6 +101,8 @@ Focused tests: type/string conversion tests and password-redaction tests.
 Acceptance criteria: Types compile, conversion coverage exists, no behavior changes outside new subsystem.
 
 Commit message: `wordpress: add credential inspection types`.
+
+Result: Complete. Added `WordPressConfigTypes` with source, mutability, status, value-state, issue severity, public-safe credential values, redacted credential sets, and inspection views. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`5` test cases, `51` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`).
 
 ### [ ] WP-1.2 Implement read-only detector parser
 
