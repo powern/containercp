@@ -305,7 +305,7 @@ Operational notes:
 - `confirmation` must exactly match the target site domain.
 - The endpoint is API-first; CLI and Web UI clients delegate to this queueing boundary.
 - Current v0.8 foundation builds queue jobs but fail closed until live rotation dependencies are explicitly wired and validated.
-- A successful future rotation must verify MariaDB access with the new password, WordPress/PHP database access, site health, and metadata persistence before reporting completion.
+- A successful future rotation must verify MariaDB access with the new password, WordPress/PHP database access, runtime container availability, and metadata persistence before reporting completion. HTTP/application health validation remains a separate live-validation requirement.
 - Post-mutation failures must compensate or report `manual_recovery_required`; partial rotation must never be reported as success.
 
 See `docs/development/wordpress-credential-management.md` for supported config forms, threat model, operator workflow, and residual risks.

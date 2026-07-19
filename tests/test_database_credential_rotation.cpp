@@ -338,6 +338,7 @@ TEST_CASE("DatabaseCredentialRotationService state strings are stable") {
     CHECK(database_credential_rotation_state_to_string(DatabaseCredentialRotationState::NotStarted) == "not_started");
     CHECK(database_credential_rotation_state_to_string(DatabaseCredentialRotationState::LockAcquired) == "lock_acquired");
     CHECK(database_credential_rotation_state_to_string(DatabaseCredentialRotationState::AssessingSharedUser) == "assessing_shared_user");
+    CHECK(database_credential_rotation_state_to_string(DatabaseCredentialRotationState::VerifyingSiteHealth) == "verifying_runtime_availability");
     CHECK(database_credential_rotation_state_to_string(DatabaseCredentialRotationState::Compensating) == "compensating");
     CHECK(database_credential_rotation_state_to_string(DatabaseCredentialRotationState::ManualRecoveryRequired) == "manual_recovery_required");
     CHECK(database_credential_rotation_state_to_string(DatabaseCredentialRotationState::Completed) == "completed");
@@ -411,6 +412,14 @@ TEST_CASE("DatabaseCredentialRotationService executes happy path in order") {
         "persist_metadata",
     });
     CHECK_FALSE(service.is_locked(10, 20));
+    bool saw_runtime_availability_event = false;
+    for (const auto& event : result.events) {
+        if (event.code == "verifying_runtime_availability") {
+            saw_runtime_availability_event = true;
+            CHECK(event.message == "Verifying runtime container availability");
+        }
+    }
+    CHECK(saw_runtime_availability_event);
 }
 
 TEST_CASE("DatabaseCredentialRotationService rejects unsupported inspection before mutation") {

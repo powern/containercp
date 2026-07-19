@@ -666,11 +666,13 @@ Suggested commit: `database: harden shared credential assessment`.
 
 Result: Complete. The rotation saga already blocked every shared-user assessment state except `not_shared`; WP-R2.4 added concrete adapter enforcement for same-site ContainerCP metadata/runtime disagreement before the live provider shared-user query. `DatabaseCredentialRotationAdapter::assess_shared_user()` now counts same-site database metadata records that reference the target MariaDB user and returns `metadata_conflict` when the exact operation is not the only same-site metadata reference. The context is cleared before password generation, no mutation is attempted, and the low-level shared-user SQL query is skipped when same-site metadata is already conflicting. The same username in another site's separate MariaDB container remains allowed. Provider behavior remains fail-closed for missing identity, ambiguous/multiple host identity, shared schema grants, malformed output, empty output, command failure, and unknown state. Validation passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings, `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotation*"` (`41` cases, `354` assertions), `*MariaDBCredentialProvider*` (`16` cases, `104` assertions), plus final focused/full validation recorded in `CHANGELOG.md`.
 
-### [ ] WP-R2.5 Review site health verification
+### [x] WP-R2.5 Review site health verification
 
 Objective: Clarify whether the stage verifies runtime container availability or application health, rename or extend accordingly, and document the guarantee.
 
 Suggested commit: `wordpress: clarify site health verification`.
+
+Result: Complete. Clarified that the rotation stage previously described as site health verifies runtime container availability only: the selected site's `php` and `mariadb` services must be reported as `Running` by `SiteRuntimeManager`. It does not perform HTTP, front-end, login, plugin/theme, or end-user application health checks. Runtime/job event wording now uses `verifying_runtime_availability` and “runtime container availability”; adapter success/failure codes now use `runtime_availability_verified` and `runtime_availability_verification_failed`. Documentation now records that separate HTTP/application validation is still required before live enablement. Validation passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings, `*DatabaseCredentialRotation*` (`41` cases, `357` assertions), `*database*` (`65` cases, `562` assertions), `*WordPress*` (`64` cases, `379` assertions), `*API*` (`18` cases, `73` assertions), full CTest (`1/1`), `node --check web/app.js`, and `git diff --check`.
 
 ### [ ] WP-R2.6 Review temporary secret files
 

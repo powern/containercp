@@ -58,7 +58,7 @@ Use only an approved migrated test site until live rotation is explicitly enable
 4. Confirm the database user is not shared with another application. The rotation saga independently performs a strict MariaDB shared-user assessment before mutation.
 5. Queue rotation through `POST /api/wordpress/database-credentials/rotate` with `site_id`, backend-resolved `database_id`, and typed domain confirmation, or through `containercp wordpress rotate-db-password <site_id> <database_id> --confirm <domain>`.
 6. Track the returned job id through `GET /api/jobs?id=N` or the Site Details job polling UI.
-7. Treat `completed` as success only when the rotation service has verified MariaDB access with the new password, verified WordPress/PHP DB access, verified site health, and persisted metadata.
+7. Treat `completed` as success only when the rotation service has verified MariaDB access with the new password, verified WordPress/PHP DB access, verified runtime container availability, and persisted metadata.
 8. Treat `failed`, `compensated`, or `manual_recovery_required` as operator-review states; do not retry blindly.
 
 Current v0.8 review-fix behavior: API/CLI/UI can queue a guarded job and production-shaped dependencies are wired in code, but this must remain limited to repository/test validation until WP-R11 and explicit live validation approval are complete.
@@ -72,7 +72,7 @@ The rotation saga mutates state only after preflight inspection and old-credenti
 - reapply or restore runtime state when needed;
 - verify old database access again;
 - verify restored WordPress/PHP database access;
-- verify restored site health;
+- verify restored runtime container availability;
 - verify restored credential metadata;
 - report `compensated` only when rollback and restored-state checks succeed.
 
@@ -105,6 +105,12 @@ MariaDB provider secret transport uses protected stdin bundles and in-container 
 
 The PHP snippet still executes the site's active `wp-config.php` with `require`. That file is site-controlled PHP code, not data. The verifier must therefore only be called after `WordPressConfigService` has resolved a regular non-symlink active config path inside the selected site root, and only for the selected site's PHP container. It is not a general-purpose PHP sandbox and must not be pointed at arbitrary paths, backup configs, external document roots, or untrusted compose projects.
 
+## Runtime Availability Boundary
+
+The rotation stage formerly described as site health is a runtime container availability check. It verifies that the selected site's `php` and `mariadb` services are reported as `Running` by `SiteRuntimeManager` after runtime apply or restore. It does not perform HTTP requests, WordPress front-end checks, admin login checks, theme/plugin execution checks, or end-user application health validation.
+
+Full live validation must include separate HTTP/application health checks, but the rotation saga's built-in completion gate is limited to MariaDB credential verification, WordPress/PHP database verification, runtime container availability, and metadata persistence.
+
 ## Threat Model
 
 Primary threats addressed:
@@ -136,7 +142,7 @@ Before any real production rotation is enabled, validate on one approved migrate
 - static secret-leak checks for new API/CLI/UI/job surfaces;
 - manual API status inspection proving no password fields are exposed;
 - manual Site Details inspection proving no passwords are visible or stored in browser state;
-- one controlled test rotation with MariaDB, WordPress/PHP, and HTTP/site health verification;
+- one controlled test rotation with MariaDB verification, WordPress/PHP database verification, runtime container availability verification, and separate HTTP/application health validation;
 - one forced failure after mutation proving compensation or manual-recovery reporting.
 
 Do not run this validation against production sites, production databases, production `wp-config.php`, or production credentials without explicit operator approval.

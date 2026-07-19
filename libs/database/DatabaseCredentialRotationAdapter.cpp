@@ -300,9 +300,9 @@ DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::verify_s
     auto* site = sites_.find_by_id(request.site_id);
     if (site == nullptr) return fail("site_not_found", "Site was not found");
     if (site_health_verifier_ && !site_health_verifier_(*site)) {
-        return fail("site_health_verification_failed", "Site health verification failed");
+        return fail("runtime_availability_verification_failed", "Runtime container availability verification failed");
     }
-    return ok("site_health_verified", "Site health verified");
+    return ok("runtime_availability_verified", "Runtime container availability verified");
 }
 
 DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::persist_metadata(const DatabaseCredentialRotationRequest& request,

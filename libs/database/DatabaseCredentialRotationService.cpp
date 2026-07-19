@@ -57,7 +57,7 @@ std::string database_credential_rotation_state_to_string(DatabaseCredentialRotat
     case DatabaseCredentialRotationState::VerifyingWordPress:
         return "verifying_wordpress";
     case DatabaseCredentialRotationState::VerifyingSiteHealth:
-        return "verifying_site_health";
+        return "verifying_runtime_availability";
     case DatabaseCredentialRotationState::PersistingMetadata:
         return "persisting_metadata";
     case DatabaseCredentialRotationState::Completed:
@@ -161,8 +161,8 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::compensate_a
     }
 
     result.events.push_back(event(DatabaseCredentialRotationState::Compensating,
-                                  "verifying_restored_site_health",
-                                  "Verifying restored site health"));
+                                  "verifying_restored_runtime_availability",
+                                  "Verifying restored runtime container availability"));
     step = dependencies_->verify_restored_site_health(request);
     if (!step.success) {
         return manual_recovery("manual_recovery_required", "Credential rotation requires manual recovery");
@@ -329,12 +329,12 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const
     }
 
     step = run_step(DatabaseCredentialRotationState::VerifyingSiteHealth,
-                    "verifying_site_health",
-                    "Verifying site health",
+                    "verifying_runtime_availability",
+                    "Verifying runtime container availability",
                     [&] { return dependencies_->verify_site_health(request); });
     if (!step.success) {
-        return fail_after_mutation(step.code.empty() ? "site_health_verification_failed" : step.code,
-                                   "Site health verification failed");
+        return fail_after_mutation(step.code.empty() ? "runtime_availability_verification_failed" : step.code,
+                                   "Runtime container availability verification failed");
     }
 
     step = run_step(DatabaseCredentialRotationState::PersistingMetadata,

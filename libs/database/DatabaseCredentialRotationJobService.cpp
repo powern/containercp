@@ -97,7 +97,7 @@ DatabaseCredentialRotationJobResult DatabaseCredentialRotationJobService::enqueu
         "Inspecting WordPress credentials",
         "Changing database password",
         "Updating WordPress config",
-        "Verifying site health",
+        "Verifying runtime container availability",
         "Persisting metadata",
     };
     const uint64_t job_id = jobs_.create("wordpress-db-credential-rotation", steps);

@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Clarify site health verification
+
+**Summary:** Completed WP-R2.5 site-health semantics clarification for WordPress credential rotation. The rotation stage now uses runtime container availability wording because the concrete check verifies that the selected site's `php` and `mariadb` services are `Running` through `SiteRuntimeManager`; it does not perform HTTP/application health checks.
+
+**Files changed:** `libs/database/DatabaseCredentialRotationService.cpp`, `libs/database/DatabaseCredentialRotationAdapter.cpp`, `libs/database/DatabaseCredentialRotationJobService.cpp`, `tests/test_database_credential_rotation.cpp`, `docs/development/wordpress-credential-management.md`, `docs/api/API_REFERENCE.md`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Rotation job/event wording now says runtime container availability instead of site health, reducing the risk that operators infer HTTP/front-end WordPress validation from this stage. Separate HTTP/application health validation remains required before live enablement.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused tests passed for `*DatabaseCredentialRotation*` (`41` cases, `357` assertions), `*database*` (`65` cases, `562` assertions), `*WordPress*` (`64` cases, `379` assertions), and `*API*` (`18` cases, `73` assertions). Full CTest (`1/1`), `node --check web/app.js`, and `git diff --check` passed.
+
+**Known risks:** This does not add HTTP/application health probing to the rotation saga. Temporary secret handling and final production-readiness validation remain in WP-R2.6 and WP-R2.7.
+
+---
+
 ## 2026-07-19 | `this commit` | Database — Harden shared credential assessment
 
 **Summary:** Completed WP-R2.4 shared-user assessment hardening for WordPress credential rotation. The concrete rotation adapter now fails closed on same-site ContainerCP metadata disagreement before the live MariaDB shared-user query. If more than one database metadata record in the same site references the target MariaDB user, the adapter returns `metadata_conflict`, clears the pre-mutation context, and blocks rotation before password generation.
