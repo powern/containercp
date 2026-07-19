@@ -664,6 +664,43 @@ bool ApiServer::start() {
         return r;
     });
 
+    // GET /api/wordpress/database-credentials/status?site_id=N — public-safe WordPress credential status
+    router_.add("GET", "/api/wordpress/database-credentials/status", [&s](const Request& req) {
+        Response r;
+        uint64_t site_id = 0;
+        auto it = req.query.find("site_id");
+        if (it != req.query.end()) {
+            try { site_id = std::stoull(it->second); } catch (...) { site_id = 0; }
+        }
+
+        const auto inspected = s.wordpress_config().inspect_site(site_id);
+        const auto view = s.wordpress_config().public_view(inspected);
+
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":{"
+             << "\"available\":" << (view.available ? "true" : "false")
+             << ",\"site_id\":" << view.site_id
+             << ",\"domain\":\"" << JsonFormatter::escape(view.domain) << "\""
+             << ",\"status\":\"" << JsonFormatter::escape(view.status) << "\""
+             << ",\"source\":\"" << JsonFormatter::escape(view.source) << "\""
+             << ",\"mutability\":\"" << JsonFormatter::escape(view.mutability) << "\""
+             << ",\"db_name\":\"" << JsonFormatter::escape(view.db_name) << "\""
+             << ",\"db_user\":\"" << JsonFormatter::escape(view.db_user) << "\""
+             << ",\"db_host\":\"" << JsonFormatter::escape(view.db_host) << "\""
+             << ",\"db_password_present\":" << (view.db_password_present ? "true" : "false")
+             << ",\"issues\":[";
+        for (size_t i = 0; i < view.issues.size(); ++i) {
+            if (i > 0) json << ",";
+            const auto& issue = view.issues[i];
+            json << "{\"severity\":\"" << JsonFormatter::escape(wordpress::config_issue_severity_to_string(issue.severity))
+                 << "\",\"code\":\"" << JsonFormatter::escape(issue.code)
+                 << "\",\"message\":\"" << JsonFormatter::escape(issue.message) << "\"}";
+        }
+        json << "]}}";
+        r.body = json.str();
+        return r;
+    });
+
     router_.add("GET", "/api/settings", [&s](const Request&) {
         Response r;
         std::ostringstream json;

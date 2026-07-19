@@ -25,6 +25,7 @@ storage::StorageOptions ServiceRegistry::storage_backend_options(const config::C
 ServiceRegistry::ServiceRegistry()
     : config_(config::Config::instance())
     , logger_(logger::Logger::instance())
+    , wordpress_config_(sites_)
     , backup_provider_(logger_)
     , access_provider_(logger_)
     , proxy_provider_(filesystem_, config_, logger_, ssl_, reverse_proxies_)
@@ -702,6 +703,10 @@ auth::AuthService& ServiceRegistry::auth() {
 
 storage::Storage& ServiceRegistry::storage() {
     return storage_;
+}
+
+wordpress::WordPressConfigService& ServiceRegistry::wordpress_config() {
+    return wordpress_config_;
 }
 
 filesystem::Filesystem& ServiceRegistry::filesystem() {

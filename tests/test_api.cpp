@@ -209,6 +209,23 @@ TEST_CASE("WordPress credential rotation API returns job id only") {
     CHECK(json.find("secret") == std::string::npos);
 }
 
+TEST_CASE("WordPress credential UI uses public endpoints without raw password fields") {
+    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/web/app.js");
+    REQUIRE(in.is_open());
+    std::string js((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    CHECK(js.find("/api/wordpress/database-credentials/status") != std::string::npos);
+    CHECK(js.find("/api/wordpress/database-credentials/rotate") != std::string::npos);
+    const auto start = js.find("WORDPRESS DATABASE CREDENTIALS");
+    const auto end = js.find("PHP MAIL CARD");
+    REQUIRE(start != std::string::npos);
+    REQUIRE(end != std::string::npos);
+    const std::string wordpress_block = js.substr(start, end - start);
+    CHECK(wordpress_block.find("DB_PASSWORD") == std::string::npos);
+    CHECK(wordpress_block.find("new_password") == std::string::npos);
+    CHECK(wordpress_block.find("generated_password") == std::string::npos);
+}
+
 TEST_CASE("SSL providers response format") {
     std::string json = "{\"success\":true,\"data\":["
         "{\"id\":\"letsencrypt\",\"name\":\"Let's Encrypt\",\"supports_auto_renew\":true,\"supports_dns\":false}"

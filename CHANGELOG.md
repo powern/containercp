@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Web — Add Site Details WordPress credential rotation UI
+
+**Summary:** Added WP-7 Site Details integration for WordPress database credentials. The backend now exposes `GET /api/wordpress/database-credentials/status?site_id=N`, backed by `WordPressConfigService::public_view()`, and `ServiceRegistry` owns the shared WordPress config service. The Site Details page now shows a WordPress Database Credentials card with public-safe status/source/mutability, DB name/user/host, password-presence boolean, sanitized issues, typed domain confirmation, queue submission, job id toast, and job polling through the existing Jobs API.
+
+**Files changed:** `libs/core/ServiceRegistry.h`, `libs/core/ServiceRegistry.cpp`, `libs/api/ApiServer.cpp`, `web/app.js`, `tests/test_api.cpp`, `docs/api/API_REFERENCE.md`, `docs/development/api-rules.md`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Site Details now shows WordPress credential status and a guarded rotate action for supported sites. The Databases page, Adminer, SQL import/export, and full WordPress site creation remain unchanged and out of scope. Rotation jobs still fail safely until live rotation dependencies are wired.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused tests passed for `*API*` (`18` cases, `73` assertions), `*WordPress*` (`58` cases, `339` assertions), `*DatabaseCredentialRotation*` (`17` cases, `131` assertions), `*database*` (`39` cases, `323` assertions), `*Command*` (`17` cases, `62` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `node --check web/app.js` passed. `git diff --check` passed.
+
+**Known risks:** The UI can queue jobs, but live rotation dependencies remain unwired, so actual jobs still fail closed. No browser-based visual test harness exists; coverage is by static UI tests, JS syntax check, backend unit tests, and CTest.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Queue credential rotation jobs through API and CLI
 
 **Summary:** Added WP-6 API/CLI job entrypoints for WordPress database credential rotation. New `DatabaseCredentialRotationJobService` validates site id, database id, typed domain confirmation, database ownership, duplicate queued rotations, and queue availability before creating an async job. `POST /api/wordpress/database-credentials/rotate` returns HTTP `202` with job id/status only. The daemon command `wordpress-rotate-db-password` and CLI command `containercp wordpress rotate-db-password <site_id> <database_id> --confirm <domain>` delegate to the same queue service.

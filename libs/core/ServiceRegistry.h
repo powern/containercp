@@ -54,6 +54,7 @@
 #include "site/SiteManager.h"
 #include "storage/Storage.h"
 #include "user/UserManager.h"
+#include "wordpress/WordPressConfigService.h"
 
 #include <unordered_map>
 
@@ -108,6 +109,7 @@ public:
     auth::AuthUserManager& auth_users();
     auth::AuthService& auth();
     storage::Storage& storage();
+    wordpress::WordPressConfigService& wordpress_config();
     core::RecoveryManager& recovery();
     // Detect Docker bridge gateway address for Web UI binding and proxy upstream.
     // Returns "host.docker.internal" if detection fails (works with --add-host flag).
@@ -134,6 +136,7 @@ private:
     logger::Logger& logger_;
     ResourceManager nodes_;
     site::SiteManager sites_;
+    wordpress::WordPressConfigService wordpress_config_;
     user::UserManager users_;
     domain::DomainManager domains_;
     php::PhpVersionManager php_versions_;

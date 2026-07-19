@@ -245,7 +245,31 @@ subsystems.
 
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|
+| GET | `/api/wordpress/database-credentials/status?site_id=N` | Public-safe WordPress credential status | `WordPressConfigService` |
 | POST | `/api/wordpress/database-credentials/rotate` | Queue WordPress database credential rotation | `DatabaseCredentialRotationJobService` |
+
+**GET /api/wordpress/database-credentials/status?site_id=N** — returns public-safe credential status for Site Details UI:
+
+```json
+{
+  "success": true,
+  "data": {
+    "available": true,
+    "site_id": 1,
+    "domain": "example.com",
+    "status": "complete",
+    "source": "direct_constant",
+    "mutability": "mutable_direct_constant",
+    "db_name": "wp_example",
+    "db_user": "wp_user",
+    "db_host": "mariadb",
+    "db_password_present": true,
+    "issues": []
+  }
+}
+```
+
+The response never includes raw `DB_PASSWORD`, generated credentials, config paths, site roots, document roots, command output, or provider diagnostics.
 
 **POST /api/wordpress/database-credentials/rotate** — body:
 

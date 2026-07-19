@@ -442,7 +442,7 @@ Result: Complete. Added daemon command `wordpress-rotate-db-password` and CLI co
 
 ## WP-7 Site Detail GUI Action
 
-### [ ] WP-7.1 Add site detail credential status view
+### [x] WP-7.1 Add site detail credential status view
 
 Objective: Display non-secret WordPress database credential source/status on the Site detail page.
 
@@ -458,7 +458,9 @@ Acceptance criteria: Site detail shows DB name/user/host/source/support state an
 
 Commit message: `web: show WordPress credential status on site detail`.
 
-### [ ] WP-7.2 Add rotate action and job progress UI
+Result: Complete. Added `GET /api/wordpress/database-credentials/status?site_id=N` using `WordPressConfigService::public_view()` and added a Site Details card that displays only public-safe WordPress credential metadata: status, source, mutability, DB name/user/host, password-presence boolean, and sanitized issues. The card is not part of the Databases page and does not expose config paths, roots, raw passwords, generated credentials, command output, or provider diagnostics. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`58` test cases, `339` assertions), `build-wp0/tests/containercp_tests -tc="*API*"` (`18` test cases, `73` assertions), and `node --check web/app.js`.
+
+### [x] WP-7.2 Add rotate action and job progress UI
 
 Objective: Add typed domain confirmation, impact warning, API job submission, progress display, and duplicate-click prevention on Site detail page.
 
@@ -473,6 +475,8 @@ Focused tests: confirmation required, unsupported disabled, ambiguous disabled, 
 Acceptance criteria: GUI action is safe and does not touch Databases page.
 
 Commit message: `web: add site database password rotation action`.
+
+Result: Complete. Added Site Details typed-domain confirmation, disabled state for unsupported status or missing database linkage, job submission to `POST /api/wordpress/database-credentials/rotate`, toast notification with job id, and polling through `GET /api/jobs?id=N` until completed or failed. The UI sends only site id, database id, and typed confirmation, and the new static test verifies the WordPress UI block does not reference raw `DB_PASSWORD`, `new_password`, or `generated_password` fields. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotation*"` (`17` test cases, `131` assertions), `build-wp0/tests/containercp_tests -tc="*database*"` (`39` test cases, `323` assertions), `build-wp0/tests/containercp_tests -tc="*Command*"` (`17` test cases, `62` assertions), `build-wp0/tests/containercp_tests -tc="VestaSiteImporter*"` (`31` test cases, `79` assertions), full CTest (`1/1`), `node --check web/app.js`, and `git diff --check`.
 
 ## WP-8 Final Integration And Hardening
 

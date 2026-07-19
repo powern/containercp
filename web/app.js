@@ -570,6 +570,7 @@ async function loadSiteDetail(p, siteId) {
         <div id="site-cols-right" style="display:grid;gap:12px;align-content:start;"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;" id="site-cols-bottom"></div>
+      <div style="margin-top:12px;" id="site-wordpress-db"></div>
       <div style="margin-top:12px;" id="site-php-mail"></div>`}`;
 
     if (isSystem) return;
@@ -587,13 +588,100 @@ async function loadSiteDetail(p, siteId) {
     colLeft.innerHTML =
       makeCard('Domains', (domains.data||[]).filter(d=>d.site_id==site.id).map(d=>d.domain), '#3b82f6') +
       makeCard('SSL', (ssl.data||[]).filter(c=>c.site_id==site.id).map(c=>c.status + (c.https_enabled?' (ON)':'')), '#ec4899', 'ssl');
-    colRight.innerHTML = makeCard('Databases', (databases.data||[]).filter(d=>d.site_id==site.id).map(d=>d.name), '#8b5cf6');
+    const siteDatabases = (databases.data||[]).filter(d=>d.site_id==site.id);
+    colRight.innerHTML = makeCard('Databases', siteDatabases.map(d=>d.name), '#8b5cf6');
     colBottom.innerHTML =
       makeCard('Proxy', (proxy.data||[]).filter(p=>p.site_id==site.id).map(p=>p.status), '#06b6d4') +
       makeCard('Backups', (backups.data||[]).filter(b=>b.site_id==site.id).map(b=>b.filename), '#f97316');
+    loadWordPressCredentialCard(site.id, site.domain, siteDatabases[0] && siteDatabases[0].id);
     loadPhpMailCard(site.id, site.domain);
     loadRuntimeCard(site.id, site.domain, site.web_server);
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load site</div>'; }
+}
+
+/* ===== WORDPRESS DATABASE CREDENTIALS ===== */
+async function loadWordPressCredentialCard(siteId, domain, databaseId) {
+  const el = $('site-wordpress-db');
+  if (!el) return;
+  el.innerHTML = '<div class="card"><h3>WordPress Database Credentials</h3><div style="font-size:12px;color:var(--text3)">Loading...</div></div>';
+  try {
+    const res = await api('/api/wordpress/database-credentials/status?site_id=' + siteId);
+    renderWordPressCredentialCard(siteId, domain, databaseId, res.data || {});
+  } catch(e) {
+    el.innerHTML = '<div class="card"><h3>WordPress Database Credentials</h3>'
+      + '<div style="font-size:12px;color:#ef4444;margin-bottom:8px;">Unable to load WordPress credential status</div>'
+      + '<button class="btn btn-sm btn-outline" onclick="loadWordPressCredentialCard(' + siteId + ',\'' + esc(domain) + '\',' + (databaseId || 0) + ')">Retry</button>'
+      + '</div>';
+  }
+}
+
+function renderWordPressCredentialCard(siteId, domain, databaseId, status) {
+  const el = $('site-wordpress-db');
+  if (!el) return;
+  const badgeClass = status.available ? 'badge-ok' : (status.status === 'config_missing' ? 'badge-info' : 'badge-warn');
+  const rotateDisabled = !status.available || !databaseId;
+  const issues = (status.issues || []).map(i => '<div style="font-size:11px;color:' + (i.severity === 'error' ? '#ef4444' : '#f59e0b') + ';">' + esc(i.message || i.code) + '</div>').join('');
+  el.innerHTML = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;">
+        <h3 style="margin:0;">WordPress Database Credentials</h3>
+        <span class="badge ${badgeClass}">${esc(status.status || 'unknown')}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;font-size:12px;margin-bottom:10px;">
+        <div><span style="color:var(--text3)">DB Name:</span> ${esc(status.db_name || 'Not available')}</div>
+        <div><span style="color:var(--text3)">DB User:</span> ${esc(status.db_user || 'Not available')}</div>
+        <div><span style="color:var(--text3)">DB Host:</span> ${esc(status.db_host || 'Not available')}</div>
+        <div><span style="color:var(--text3)">Source:</span> ${esc(status.source || 'unknown')}</div>
+        <div><span style="color:var(--text3)">Mutability:</span> ${esc(status.mutability || 'unknown')}</div>
+        <div><span style="color:var(--text3)">Password:</span> ${status.db_password_present ? 'present' : 'not detected'}</div>
+      </div>
+      ${issues ? '<div style="display:grid;gap:4px;margin-bottom:10px;">' + issues + '</div>' : ''}
+      <div style="border-top:1px solid var(--border);padding-top:10px;display:grid;gap:8px;">
+        <div style="font-size:12px;color:var(--text2);">Rotate the database password only for supported direct WordPress configs. Type the domain to confirm.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <input id="wp-rotate-confirm" placeholder="${esc(domain)}" autocomplete="off" style="min-width:220px;flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" ${rotateDisabled ? 'disabled' : ''}>
+          <button id="wp-rotate-btn" class="btn btn-sm btn-warning" onclick="rotateWordPressDatabasePassword(${siteId},${databaseId || 0},'${esc(domain)}')" ${rotateDisabled ? 'disabled' : ''}>Rotate Password</button>
+        </div>
+        <div id="wp-rotate-msg" style="font-size:12px;color:${rotateDisabled ? 'var(--text3)' : 'var(--text2)'};">${rotateDisabled ? 'Rotation unavailable for this site or database.' : 'No password will be shown or stored in the browser.'}</div>
+      </div>
+    </div>`;
+}
+
+async function rotateWordPressDatabasePassword(siteId, databaseId, domain) {
+  const input = $('wp-rotate-confirm');
+  const btn = $('wp-rotate-btn');
+  const msg = $('wp-rotate-msg');
+  const confirmation = input ? input.value.trim() : '';
+  if (!databaseId) { if (msg) msg.textContent = 'No database is linked to this site.'; return; }
+  if (confirmation !== domain) { if (msg) msg.textContent = 'Confirmation must match ' + domain; return; }
+  if (btn) btn.disabled = true;
+  if (msg) msg.textContent = 'Queueing credential rotation...';
+  try {
+    const res = await apiPost('/api/wordpress/database-credentials/rotate', {site_id: siteId, database_id: databaseId, confirmation});
+    const jobId = res.data && res.data.job_id;
+    toast('Credential rotation queued' + (jobId ? ' (job #' + jobId + ')' : ''), 'success');
+    if (msg) msg.textContent = jobId ? 'Queued as job #' + jobId + '. Waiting for result...' : 'Rotation queued.';
+    if (jobId) pollWordPressRotationJob(jobId, siteId, domain, databaseId, 0);
+  } catch(e) {
+    if (btn) btn.disabled = false;
+    const apiErr = e.body && e.body.error && e.body.error.message;
+    if (msg) msg.textContent = apiErr || e.api_message || e.message || 'Failed to queue rotation';
+  }
+}
+
+async function pollWordPressRotationJob(jobId, siteId, domain, databaseId, attempts) {
+  if (attempts > 30) return;
+  try {
+    const res = await api('/api/jobs?id=' + jobId);
+    const job = res.data || {};
+    const msg = $('wp-rotate-msg');
+    if (msg) msg.textContent = 'Job #' + jobId + ': ' + (job.message || job.status || 'pending');
+    if (job.status === 'completed' || job.status === 'failed') {
+      loadWordPressCredentialCard(siteId, domain, databaseId);
+      return;
+    }
+  } catch(e) {}
+  setTimeout(() => pollWordPressRotationJob(jobId, siteId, domain, databaseId, attempts + 1), 2000);
 }
 
 /* ===== PHP MAIL CARD ===== */
