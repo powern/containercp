@@ -1,8 +1,17 @@
 #include "database/DatabaseCredentialRotationService.h"
+#include "database/DatabaseCredentialRotationAdapter.h"
 #include "database/DatabaseCredentialRotationJobService.h"
+#include "database/MariaDBCredentialProvider.h"
+#include "logger/Logger.h"
+#include "wordpress/WordPressConfigService.h"
+#include "wordpress/WordPressConfigUpdater.h"
+#include "wordpress/WordPressRuntimeVerifier.h"
 
 #include "doctest/doctest.h"
 
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <thread>
 #include <vector>
 
@@ -10,6 +19,8 @@ using namespace containercp::database;
 using namespace containercp;
 
 namespace {
+
+namespace fs = std::filesystem;
 
 struct FakeRotationDependencies : DatabaseCredentialRotationDependencies {
     std::vector<std::string> calls;
@@ -107,6 +118,148 @@ struct FakeRotationDependencies : DatabaseCredentialRotationDependencies {
     }
     DatabaseCredentialRotationStepResult restore_runtime(const DatabaseCredentialRotationRequest&) override {
         return ok("restore_runtime");
+    }
+};
+
+struct ParsedMariaDBBundle {
+    std::string defaults;
+    std::string sql;
+};
+
+ParsedMariaDBBundle parse_mariadb_bundle(const std::string& content) {
+    std::istringstream stream(content);
+    std::string magic;
+    std::string conf_len_text;
+    std::string sql_len_text;
+    std::getline(stream, magic);
+    std::getline(stream, conf_len_text);
+    std::getline(stream, sql_len_text);
+    const auto conf_len = static_cast<std::size_t>(std::stoull(conf_len_text));
+    const auto sql_len = static_cast<std::size_t>(std::stoull(sql_len_text));
+    ParsedMariaDBBundle parsed;
+    parsed.defaults.resize(conf_len);
+    stream.read(parsed.defaults.data(), static_cast<std::streamsize>(conf_len));
+    parsed.sql.resize(sql_len);
+    stream.read(parsed.sql.data(), static_cast<std::streamsize>(sql_len));
+    return parsed;
+}
+
+std::string read_test_file(const fs::path& path) {
+    std::ifstream in(path);
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    return buffer.str();
+}
+
+void write_test_file(const fs::path& path, const std::string& content) {
+    fs::create_directories(path.parent_path());
+    std::ofstream out(path);
+    out << content;
+}
+
+fs::path rotation_temp_root(const std::string& name) {
+    static int unique = 0;
+    return fs::temp_directory_path() / ("containercp_rotation_adapter_" + name + "_" + std::to_string(++unique));
+}
+
+std::string wp_config_content(const std::string& password) {
+    return "<?php\n"
+           "define('DB_NAME', 'wp_db');\n"
+           "define('DB_USER', 'wp_user');\n"
+           "define('DB_PASSWORD', '" + password + "');\n"
+           "define('DB_HOST', 'mariadb');\n";
+}
+
+struct FakeMariaDBAdapterRunner : MariaDBProcessRunner {
+    mutable std::vector<std::string> sql_statements;
+    mutable std::vector<std::string> defaults_files;
+    mutable std::string active_password = "oldpass";
+    int schema_grants = 1;
+
+    runtime::CommandResult run_with_stdin_file(const std::vector<std::string>&,
+                                               const std::string& stdin_file,
+                                               const std::string&) const override {
+        const auto parsed = parse_mariadb_bundle(read_test_file(stdin_file));
+        sql_statements.push_back(parsed.sql);
+        defaults_files.push_back(parsed.defaults);
+        runtime::CommandResult result;
+        result.exit_code = 0;
+        if (parsed.sql.find("mysql.user") != std::string::npos) {
+            result.out = "exact_identity\t1\nusername_identities\t1\nother_host_identities\t0\nschema_grants\t" +
+                         std::to_string(schema_grants) + "\n";
+        }
+        if (parsed.sql.find("ALTER USER") != std::string::npos) {
+            if (parsed.sql.find("newpass") != std::string::npos) {
+                active_password = "newpass";
+            } else if (parsed.sql.find("oldpass") != std::string::npos) {
+                active_password = "oldpass";
+            }
+        }
+        return result;
+    }
+};
+
+struct FakeWordPressAdapterRunner : wordpress::WordPressRuntimeCommandRunner {
+    mutable int calls = 0;
+
+    runtime::CommandResult run(const std::vector<std::string>&,
+                               const std::string&) const override {
+        ++calls;
+        runtime::CommandResult result;
+        result.exit_code = 0;
+        result.out = "ok";
+        return result;
+    }
+};
+
+struct AdapterFixture {
+    fs::path root;
+    site::SiteManager sites;
+    DatabaseManager databases;
+    wordpress::WordPressConfigService wordpress_service;
+    wordpress::WordPressConfigUpdater updater;
+    FakeMariaDBAdapterRunner mariadb_runner;
+    MariaDBCredentialProvider mariadb_provider;
+    FakeWordPressAdapterRunner wordpress_runner;
+    wordpress::WordPressRuntimeVerifier wordpress_verifier;
+    bool metadata_persisted = false;
+    bool runtime_applied = false;
+    bool health_checked = false;
+
+    explicit AdapterFixture(const std::string& name)
+        : root(rotation_temp_root(name))
+        , wordpress_service(sites, root)
+        , mariadb_provider(mariadb_runner)
+        , wordpress_verifier(wordpress_runner) {
+        fs::remove_all(root);
+        const auto site_id = sites.create("example.test", "admin", 1, "nginx");
+        databases.create("wp_db", "wp_user", "oldpass", 1, site_id);
+        write_test_file(root / "example.test" / "public" / "wp-config.php", wp_config_content("oldpass"));
+        write_test_file(root / "example.test" / ".env", "MYSQL_ROOT_PASSWORD=rootpass\n");
+    }
+
+    DatabaseCredentialRotationAdapter make_adapter() {
+        return DatabaseCredentialRotationAdapter(
+            sites,
+            databases,
+            wordpress_service,
+            updater,
+            mariadb_provider,
+            wordpress_verifier,
+            logger::Logger::instance(),
+            []() { return std::string("newpass"); },
+            [this]() {
+                metadata_persisted = true;
+                return true;
+            },
+            [this](const site::Site&) {
+                runtime_applied = true;
+                return true;
+            },
+            [this](const site::Site&) {
+                health_checked = true;
+                return true;
+            });
     }
 };
 
@@ -415,6 +568,86 @@ TEST_CASE("DatabaseCredentialRotationService requires manual recovery when runti
         "restore_wordpress_config",
         "restore_runtime",
     });
+}
+
+TEST_CASE("DatabaseCredentialRotationAdapter runs production-shaped happy path without exposing secrets") {
+    AdapterFixture fixture("happy");
+    auto adapter = fixture.make_adapter();
+    DatabaseCredentialRotationService service(adapter);
+
+    const auto result = service.rotate({1, 1, "example.test"});
+
+    CHECK(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::Completed);
+    CHECK(fixture.runtime_applied);
+    CHECK(fixture.health_checked);
+    CHECK(fixture.metadata_persisted);
+    REQUIRE(fixture.databases.find(1) != nullptr);
+    CHECK(fixture.databases.find(1)->db_password == "newpass");
+    const auto config = read_test_file(fixture.root / "example.test" / "public" / "wp-config.php");
+    CHECK(config.find("define('DB_PASSWORD', 'newpass');") != std::string::npos);
+    CHECK(fixture.mariadb_runner.sql_statements.size() == 4);
+    CHECK(fixture.wordpress_runner.calls == 1);
+    for (const auto& event : result.events) {
+        CHECK(event.code.find("oldpass") == std::string::npos);
+        CHECK(event.code.find("newpass") == std::string::npos);
+        CHECK(event.code.find("rootpass") == std::string::npos);
+        CHECK(event.message.find("oldpass") == std::string::npos);
+        CHECK(event.message.find("newpass") == std::string::npos);
+        CHECK(event.message.find("rootpass") == std::string::npos);
+    }
+}
+
+TEST_CASE("DatabaseCredentialRotationAdapter fails closed when admin credential source is missing") {
+    AdapterFixture fixture("missing_admin");
+    fs::remove(fixture.root / "example.test" / ".env");
+    auto adapter = fixture.make_adapter();
+    DatabaseCredentialRotationService service(adapter);
+
+    const auto result = service.rotate({1, 1, "example.test"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::Failed);
+    CHECK(result.code == "credential_source_unavailable");
+    CHECK(fixture.mariadb_runner.sql_statements.empty());
+    CHECK_FALSE(fixture.runtime_applied);
+    CHECK_FALSE(fixture.metadata_persisted);
+    CHECK(read_test_file(fixture.root / "example.test" / "public" / "wp-config.php").find("oldpass") != std::string::npos);
+}
+
+TEST_CASE("DatabaseCredentialRotationAdapter fails closed on WordPress/database metadata mismatch") {
+    AdapterFixture fixture("metadata_mismatch");
+    auto* database = fixture.databases.find(1);
+    REQUIRE(database != nullptr);
+    database->db_user = "different_user";
+    auto adapter = fixture.make_adapter();
+    DatabaseCredentialRotationService service(adapter);
+
+    const auto result = service.rotate({1, 1, "example.test"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "metadata_conflict");
+    CHECK(fixture.mariadb_runner.sql_statements.empty());
+    CHECK_FALSE(fixture.runtime_applied);
+    CHECK_FALSE(fixture.metadata_persisted);
+}
+
+TEST_CASE("DatabaseCredentialRotationAdapter clears pre-mutation context when shared user blocks rotation") {
+    AdapterFixture fixture("shared_block");
+    fixture.mariadb_runner.schema_grants = 2;
+    auto adapter = fixture.make_adapter();
+    DatabaseCredentialRotationService service(adapter);
+
+    const DatabaseCredentialRotationRequest request{1, 1, "example.test"};
+    const auto result = service.rotate(request);
+
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "shared_user_assessment_shared");
+    CHECK_FALSE(fixture.runtime_applied);
+    CHECK_FALSE(fixture.metadata_persisted);
+    const auto stale_context_check = adapter.verify_old_credential(request);
+    CHECK_FALSE(stale_context_check.success);
+    CHECK(stale_context_check.code == "rotation_context_missing");
 }
 
 TEST_CASE("DatabaseCredentialRotationJobService queues pending job without exposing secrets") {

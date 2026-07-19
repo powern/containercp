@@ -17,6 +17,7 @@
 #include "core/ResourceManager.h"
 #include "core/OperationResult.h"
 #include "core/RecoveryManager.h"
+#include "database/DatabaseCredentialRotationAdapter.h"
 #include "database/DatabaseCredentialRotationJobService.h"
 #include "database/DatabaseCredentialRotationService.h"
 #include "database/DatabaseManager.h"
@@ -55,6 +56,8 @@
 #include "storage/Storage.h"
 #include "user/UserManager.h"
 #include "wordpress/WordPressConfigService.h"
+#include "wordpress/WordPressConfigUpdater.h"
+#include "wordpress/WordPressRuntimeVerifier.h"
 
 #include <unordered_map>
 
@@ -144,7 +147,6 @@ private:
     database::DatabaseManager databases_;
     backup::BackupManager backups_;
     jobs::JobManager jobs_;
-    database::DatabaseCredentialRotationService database_credential_rotation_;
     backup::TarBackupProvider backup_provider_;
     access::AccessUserManager access_users_;
     access::AccessGrantManager access_grants_;
@@ -166,6 +168,14 @@ private:
     mail::DkimManager dkim_;
     mail::SiteMailCredentials mail_credentials_;
     storage::Storage storage_;
+    runtime::CommandExecutor credential_command_executor_;
+    database::MariaDBCommandExecutorRunner mariadb_command_runner_;
+    database::MariaDBCredentialProvider mariadb_credential_provider_;
+    wordpress::WordPressConfigUpdater wordpress_config_updater_;
+    wordpress::WordPressRuntimeCommandExecutorRunner wordpress_runtime_runner_;
+    wordpress::WordPressRuntimeVerifier wordpress_runtime_verifier_;
+    database::DatabaseCredentialRotationAdapter database_credential_rotation_adapter_;
+    database::DatabaseCredentialRotationService database_credential_rotation_;
     jobs::JobExecutor job_executor_;
     database::DatabaseCredentialRotationJobService database_credential_rotation_jobs_;
     ssl::RenewalScheduler renewal_scheduler_;

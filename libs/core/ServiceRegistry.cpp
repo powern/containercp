@@ -1,6 +1,7 @@
 #include "ServiceRegistry.h"
 #include "auth/AuthService.h"
 #include "template/web_templates.h"
+#include "utils/PasswordGenerator.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -37,6 +38,32 @@ ServiceRegistry::ServiceRegistry()
     , pem_cert_provider_(std::make_shared<ssl::PemCertificateProvider>(logger_))
     , dkim_(logger_)
     , storage_(config_.database_dir(), storage_backend_options(config_))
+    , mariadb_command_runner_(credential_command_executor_)
+    , mariadb_credential_provider_(mariadb_command_runner_)
+    , wordpress_runtime_runner_(credential_command_executor_)
+    , wordpress_runtime_verifier_(wordpress_runtime_runner_)
+    , database_credential_rotation_adapter_(
+          sites_,
+          databases_,
+          wordpress_config_,
+          wordpress_config_updater_,
+          mariadb_credential_provider_,
+          wordpress_runtime_verifier_,
+          logger_,
+          []() { return utils::PasswordGenerator::generate(48); },
+          [this]() {
+              storage_.save_databases(databases_.list());
+              return true;
+          },
+          [this](const site::Site& site_record) {
+              const auto compose_dir = (std::filesystem::path(config_.sites_dir()) / site_record.domain).string();
+              return runtime_action_executor_.restart_services(compose_dir, {"php"}).success;
+          },
+          [this](const site::Site& site_record) {
+              const auto status = site_runtime_.get_status(site_record.id, site_record.domain);
+              return status.php.status == "Running" && status.db.status == "Running";
+          })
+    , database_credential_rotation_(database_credential_rotation_adapter_)
     , job_executor_(jobs_, 2, 64)
     , database_credential_rotation_jobs_(sites_, databases_, jobs_, job_executor_, database_credential_rotation_)
     , renewal_scheduler_(logger_, cert_store_, jobs_, job_executor_, cert_providers_)

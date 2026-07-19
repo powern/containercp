@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Wire credential rotation dependencies
+
+**Summary:** Added WP-R4 production-shaped dependency wiring for WordPress database credential rotation. New `DatabaseCredentialRotationAdapter` implements `DatabaseCredentialRotationDependencies` and connects the rotation saga to site/database metadata, WordPress config inspection/update, MariaDB credential provider operations, WordPress/PHP runtime verification, runtime apply/site-health callbacks, metadata persistence, and compensation rollback handles. `ServiceRegistry` now constructs concrete command runners, providers, verifier/updater objects, the adapter, and a wired `DatabaseCredentialRotationService`, while API, CLI, Web UI, and job code remain clients of the service instead of owning rotation business logic.
+
+**Files changed:** `libs/database/DatabaseCredentialRotationAdapter.h`, `libs/database/DatabaseCredentialRotationAdapter.cpp`, `libs/core/ServiceRegistry.h`, `libs/core/ServiceRegistry.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/test_database_credential_rotation.cpp`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Rotation jobs now have concrete live dependencies behind the existing guarded workflow, but this change was not deployed or tested against a real site. Unsupported WordPress configs, missing site admin credential source, database/site mismatches, shared-user risks, provider failures, and verification failures continue to fail closed with redacted diagnostics.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused tests passed for `*DatabaseCredentialRotationAdapter*` (`4` cases, `107` assertions), `*DatabaseCredentialRotation*` (`26` cases, `259` assertions), and `*DatabaseCredentialRotation*,*database*,*WordPress*` (`105` cases, `779` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** The adapter uses the current site-root `.env` and compose layout contracts and has not been exercised against Docker or a real MariaDB/WordPress site in this task. Multi-database backend target resolution, metadata atomicity/rollback, runtime verifier trust-boundary hardening, endpoint/job safety, UI exact-target behavior, documentation readiness wording, and final full validation remain scheduled for WP-R5 through WP-R11.
+
+---
+
 ## 2026-07-19 | `this commit` | Database — Harden MariaDB secret transport
 
 **Summary:** Added WP-R3 hardening for MariaDB credential transport. The provider now sends a length-framed `CONTAINERCP-MARIADB-FRAME-V1` stdin payload instead of splitting a combined stream with the legacy `--CONTAINERCP-SQL--` delimiter. The in-container script writes separate protected defaults and SQL files using explicit byte lengths. Provider inputs are validated before any secret file is written using a strict 1-256 byte safe alphabet for option-file credentials, target `User` + `Host`, and SQL password literals. Newline, carriage return, NUL, tabs/control characters, option-file metacharacters, SQL delimiter text, spaces, equals, backslash, quotes, and overlong values fail closed with redacted diagnostics.
