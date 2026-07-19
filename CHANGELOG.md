@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-19 | `pending` | Test Fix — Build version binaries for release CI
+## 2026-07-19 | `778a43b` | Test Fix — Build version binaries for release CI
 
 **Summary:** Fixed release CI coverage for version output checks by making the `containercp_tests` target depend on the `containercp` and `containercpd` binaries. GitHub Actions builds only `containercp_tests`, so the version-output test now has the binaries it executes.
 
