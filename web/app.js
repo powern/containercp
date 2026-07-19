@@ -620,14 +620,23 @@ function renderWordPressCredentialCard(siteId, domain, status) {
   if (!el) return;
   const databaseId = status.database_target_available ? status.database_id : 0;
   const badgeClass = status.available ? 'badge-ok' : (status.status === 'config_missing' ? 'badge-info' : 'badge-warn');
+  const targetBadgeClass = status.database_target_available ? 'badge-ok' : (status.database_target_status === 'database_target_missing' ? 'badge-info' : 'badge-warn');
   const rotateDisabled = !status.available || !status.database_target_available || !databaseId;
   const issues = (status.issues || []).map(i => '<div style="font-size:11px;color:' + (i.severity === 'error' ? '#ef4444' : '#f59e0b') + ';">' + esc(i.message || i.code) + '</div>').join('');
   const targetText = status.database_target_available ? ('database #' + databaseId) : (status.database_target_message || 'No matching database target');
+  const disabledReason = !status.available
+    ? 'WordPress credentials are not in a supported mutable direct-constant state.'
+    : (!status.database_target_available
+      ? (status.database_target_message || 'No exact backend database target was resolved.')
+      : 'Rotation unavailable for this WordPress database target.');
   el.innerHTML = `
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;">
         <h3 style="margin:0;">WordPress Database Credentials</h3>
-        <span class="badge ${badgeClass}">${esc(status.status || 'unknown')}</span>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+          <span class="badge ${badgeClass}">config: ${esc(status.status || 'unknown')}</span>
+          <span class="badge ${targetBadgeClass}">target: ${esc(status.database_target_status || 'unknown')}</span>
+        </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;font-size:12px;margin-bottom:10px;">
         <div><span style="color:var(--text3)">DB Name:</span> ${esc(status.db_name || 'Not available')}</div>
@@ -645,7 +654,7 @@ function renderWordPressCredentialCard(siteId, domain, status) {
           <input id="wp-rotate-confirm" placeholder="${esc(domain)}" autocomplete="off" style="min-width:220px;flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" ${rotateDisabled ? 'disabled' : ''}>
           <button id="wp-rotate-btn" class="btn btn-sm btn-warning" onclick="rotateWordPressDatabasePassword(${siteId},${databaseId || 0},'${esc(domain)}')" ${rotateDisabled ? 'disabled' : ''}>Rotate Password</button>
         </div>
-        <div id="wp-rotate-msg" style="font-size:12px;color:${rotateDisabled ? 'var(--text3)' : 'var(--text2)'};">${rotateDisabled ? esc(status.database_target_message || 'Rotation unavailable for this WordPress database target.') : 'No password will be shown or stored in the browser.'}</div>
+        <div id="wp-rotate-msg" style="font-size:12px;color:${rotateDisabled ? 'var(--text3)' : 'var(--text2)'};">${rotateDisabled ? esc(disabledReason) : 'No password will be shown or stored in the browser.'}</div>
       </div>
     </div>`;
 }

@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Web — Harden WordPress credential rotation workflow
+
+**Summary:** Added WP-R9 Site Details UI hardening for WordPress credential rotation. The WordPress Database Credentials card now displays separate config and backend target status badges, consumes the backend-resolved `database_id` only from the status response, removes first-database selection, disables rotation unless both credential inspection and target resolution are safe, and shows precise disabled reasons for unsupported configs or unresolved targets.
+
+**Files changed:** `web/app.js`, `tests/test_api.cpp`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Operators now see whether the WordPress config is supported separately from whether ContainerCP resolved an exact database target. The rotate button is disabled until both are safe, preventing accidental first-database rotation on multi-database sites.
+
+**Validation:** `node --check web/app.js` passed. Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused tests passed for `*API*` (`18` cases, `73` assertions), `*WordPress*` (`64` cases, `379` assertions), and `*DatabaseCredentialRotation*` (`30` cases, `280` assertions). Full CTest (`1/1`) and `git diff --check` passed.
+
+**Known risks:** No browser automation or visual regression harness exists; coverage is JS syntax and static UI assertions. Documentation readiness cleanup and final validation remain scheduled for WP-R10 and WP-R11.
+
+---
+
 ## 2026-07-19 | `this commit` | API — Harden credential rotation endpoints
 
 **Summary:** Added WP-R8 queue and endpoint safety hardening for WordPress credential rotation. `DatabaseCredentialRotationJobService` now rejects empty, overlong, or control-character confirmation strings before resource lookup or job creation. Rotation jobs continue to use internally created immutable job ids and generic redacted job messages; new regression coverage verifies unsafe confirmations create no jobs and async rotation failures do not store secret-bearing dependency messages. The rotate endpoint keeps backend target resolution before queueing and returns bounded error codes/messages without echoing confirmations or credentials.

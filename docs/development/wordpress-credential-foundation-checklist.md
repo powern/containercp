@@ -606,11 +606,13 @@ Suggested commit: `api: harden credential rotation endpoints`.
 
 Result: Complete. Hardened the queue boundary for API/CLI callers by rejecting empty, overlong, or control-character domain confirmations before resource lookup or job creation. Rotation job execution already uses immutable internally created job ids, captures only site/database/confirmation request data, and stores generic redacted job messages; new tests assert unsafe confirmations create no job and async failures with secret-bearing internal dependency messages still store only `Credential rotation failed`. The rotate API continues to resolve the exact backend WordPress database target before queueing and maps unavailable target states to bounded HTTP errors without echoing submitted confirmation or credentials. Validation passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings, `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotationJobService*,*DatabaseCredentialRotation*"` (`30` cases, `280` assertions), `*API*` (`18` cases, `73` assertions), `*database*` (`54` cases, `485` assertions), and `*WordPress*` (`64` cases, `376` assertions). Full CTest (`1/1`) and `git diff --check` passed.
 
-### [ ] WP-R9 GUI corrections
+### [x] WP-R9 GUI corrections
 
 Objective: Update Site Details UI to consume backend-resolved database target and show/disable rotation based on precise safety states.
 
 Suggested commit: `web: harden WordPress credential rotation workflow`.
+
+Result: Complete. Hardened the Site Details WordPress Database Credentials card around backend-resolved safety states. The UI no longer receives or carries a caller-selected database id, displays separate config and target status badges, shows the backend-resolved target state/message, derives rotation enablement strictly from `available && database_target_available && database_id`, and presents a precise disabled reason for unsupported config versus unresolved database target. Static UI tests assert use of backend target fields, no `siteDatabases[0]` selection, and no raw password/generator strings in the WordPress block. Validation passed with `node --check web/app.js`, `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings, `build-wp0/tests/containercp_tests -tc="*API*"` (`18` cases, `73` assertions), `*WordPress*` (`64` cases, `379` assertions), and `*DatabaseCredentialRotation*` (`30` cases, `280` assertions). Full CTest (`1/1`) and `git diff --check` passed.
 
 ### [ ] WP-R10 Documentation consistency
 
