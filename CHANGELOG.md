@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Validate config updates before completion
+
+**Summary:** Added the WP-3.3 validation boundary for WordPress config credential updates. `WordPressConfigUpdater::update_file_atomic_validated()` now wraps the atomic writer with an injectable validator, reports success only after validation accepts the written file, automatically rolls back on validation failure, and returns a manual-recovery error state if rollback cannot complete. Validation diagnostics are intentionally generic and do not expose candidate password values.
+
+**Files changed:** `libs/wordpress/WordPressConfigUpdater.h`, `libs/wordpress/WordPressConfigUpdater.cpp`, `tests/test_wordpress_config_update.cpp`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. The validation boundary is not yet wired to runtime PHP execution, migration, REST API, CLI, Web UI, storage, or production site operations.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused WordPress tests passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`48` cases, `279` assertions), covering validation success, validation failure rollback, rollback failure/manual state, missing validator rejection, and redacted validation errors. Migration regression passed with `build-wp0/tests/containercp_tests -tc="VestaSiteImporter*"` (`31` cases, `79` assertions) and `build-wp0/tests/containercp_tests -tc="*Migration*"` (`39` cases, `254` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** Production PHP syntax validation is still an injected boundary rather than runtime-wired execution. Migration still uses its legacy file update path until WP-3.4.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Add atomic config credential updates
 
 **Summary:** Added the WP-3.2 atomic WordPress config file update primitive. `WordPressConfigUpdater::update_file_atomic()` validates the config path through the existing safety helper, rejects symlinks and unsafe paths, renders credential changes in memory, writes a protected same-directory temp file, fsyncs, atomically renames, preserves mode and root-only ownership metadata where allowed, cleans up temp files on failure, and returns an in-memory rollback handle. `rollback_file()` restores the previous content through the same atomic write path.

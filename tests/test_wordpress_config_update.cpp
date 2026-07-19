@@ -464,3 +464,97 @@ TEST_CASE("WordPress updater invalid rollback handle fails closed") {
     CHECK_FALSE(result.success);
     CHECK(result.code == "rollback_invalid");
 }
+
+TEST_CASE("WordPress updater validated update succeeds when validator accepts file") {
+    WordPressConfigUpdater updater;
+    const auto root = updater_test_root("validation_success");
+    const auto config = root / "public" / "wp-config.php";
+    write_test_file(config, "<?php\ndefine('DB_PASSWORD', 'old');\n");
+    bool validator_called = false;
+
+    const auto result = updater.update_file_atomic_validated(
+        root,
+        config,
+        WordPressConfigUpdateField::DbPassword,
+        "new",
+        [&](const fs::path& path) {
+            validator_called = true;
+            const bool path_matches = path == config.lexically_normal() || path.filename() == "wp-config.php";
+            CHECK(path_matches);
+            CHECK(read_test_file(path).find("define('DB_PASSWORD', 'new');") != std::string::npos);
+            return WordPressConfigValidationResult{true, "ok", "accepted"};
+        });
+
+    REQUIRE(result.success);
+    CHECK(validator_called);
+    CHECK(read_test_file(config).find("define('DB_PASSWORD', 'new');") != std::string::npos);
+    CHECK(result.rollback.valid);
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("WordPress updater validation failure restores previous file") {
+    WordPressConfigUpdater updater;
+    const auto root = updater_test_root("validation_failure");
+    const auto config = root / "public" / "wp-config.php";
+    const std::string original = "<?php\ndefine(\"DB_PASSWORD\", \"old\");\n";
+    write_test_file(config, original);
+
+    const auto result = updater.update_file_atomic_validated(
+        root,
+        config,
+        WordPressConfigUpdateField::DbPassword,
+        "new$secret",
+        [](const fs::path&) {
+            return WordPressConfigValidationResult{false, "php_lint_failed", "secret new$secret appeared in validator output"};
+        });
+
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "syntax_validation_failed");
+    CHECK(result.message.find("new$secret") == std::string::npos);
+    CHECK(read_test_file(config) == original);
+    CHECK_FALSE(has_temp_update_files(config.parent_path()));
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("WordPress updater validation failure reports manual state if rollback cannot complete") {
+    WordPressConfigUpdater updater;
+    const auto root = updater_test_root("validation_rollback_failure");
+    const auto config = root / "public" / "wp-config.php";
+    write_test_file(config, "<?php\ndefine('DB_PASSWORD', 'old');\n");
+
+    const auto result = updater.update_file_atomic_validated(
+        root,
+        config,
+        WordPressConfigUpdateField::DbPassword,
+        "new",
+        [&](const fs::path& path) {
+            fs::remove(path);
+            fs::create_directory(path);
+            return WordPressConfigValidationResult{false, "php_lint_failed", "invalid"};
+        });
+
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "validation_failed_rollback_failed");
+    CHECK(result.message.find("new") == std::string::npos);
+    CHECK(fs::is_directory(config));
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("WordPress updater validated update requires validator") {
+    WordPressConfigUpdater updater;
+    const auto root = updater_test_root("validation_missing");
+    const auto config = root / "public" / "wp-config.php";
+    write_test_file(config, "<?php\ndefine('DB_PASSWORD', 'old');\n");
+
+    const auto result = updater.update_file_atomic_validated(
+        root, config, WordPressConfigUpdateField::DbPassword, "new", WordPressConfigValidator{});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "validator_missing");
+    CHECK(read_test_file(config).find("old") != std::string::npos);
+
+    fs::remove_all(root);
+}

@@ -725,6 +725,35 @@ WordPressConfigFileUpdateResult WordPressConfigUpdater::update_file_atomic(const
     return result;
 }
 
+WordPressConfigFileUpdateResult WordPressConfigUpdater::update_file_atomic_validated(
+    const std::filesystem::path& site_root,
+    const std::filesystem::path& config_path,
+    WordPressConfigUpdateField field,
+    const std::string& new_value,
+    const WordPressConfigValidator& validator) const {
+    if (!validator) {
+        return file_failure("validator_missing", "WordPress config validation boundary is required");
+    }
+
+    auto update = update_file_atomic(site_root, config_path, field, new_value);
+    if (!update.success) {
+        return update;
+    }
+
+    const auto validation = validator(update.rollback.config_path);
+    if (validation.success) {
+        return update;
+    }
+
+    const auto rollback = rollback_file(update.rollback);
+    if (!rollback.success) {
+        return file_failure("validation_failed_rollback_failed",
+                            "WordPress config validation failed and automatic rollback did not complete");
+    }
+
+    return file_failure("syntax_validation_failed", "WordPress config validation failed and rollback completed");
+}
+
 WordPressConfigFileUpdateResult WordPressConfigUpdater::rollback_file(const WordPressConfigRollbackHandle& rollback) const {
     if (!rollback.valid) {
         return file_failure("rollback_invalid", "Rollback handle is invalid");

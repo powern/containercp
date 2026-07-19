@@ -3,6 +3,7 @@
 
 #include <string>
 #include <filesystem>
+#include <functional>
 
 namespace containercp::wordpress {
 
@@ -37,6 +38,14 @@ struct WordPressConfigFileUpdateResult {
     WordPressConfigRollbackHandle rollback;
 };
 
+struct WordPressConfigValidationResult {
+    bool success = false;
+    std::string code;
+    std::string message;
+};
+
+using WordPressConfigValidator = std::function<WordPressConfigValidationResult(const std::filesystem::path&)>;
+
 class WordPressConfigUpdater {
 public:
     WordPressConfigUpdateResult render_update(const std::string& content,
@@ -46,6 +55,11 @@ public:
                                                        const std::filesystem::path& config_path,
                                                        WordPressConfigUpdateField field,
                                                        const std::string& new_value) const;
+    WordPressConfigFileUpdateResult update_file_atomic_validated(const std::filesystem::path& site_root,
+                                                                 const std::filesystem::path& config_path,
+                                                                 WordPressConfigUpdateField field,
+                                                                 const std::string& new_value,
+                                                                 const WordPressConfigValidator& validator) const;
     WordPressConfigFileUpdateResult rollback_file(const WordPressConfigRollbackHandle& rollback) const;
 };
 

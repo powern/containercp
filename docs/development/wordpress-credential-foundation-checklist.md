@@ -236,7 +236,7 @@ Commit message: `wordpress: add atomic config credential updates`.
 
 Result: Complete. Added `WordPressConfigUpdater::update_file_atomic()` and `rollback_file()` with safe path classification, no-symlink regular-file checks, protected same-directory temp file creation, full write, mode preservation, root-only ownership preservation, fsync, atomic rename, parent-directory fsync, temp cleanup, and an in-memory rollback handle containing the previous content and metadata. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`44` test cases, `261` assertions), `build-wp0/tests/containercp_tests -tc="VestaSiteImporter*"` (`31` test cases, `79` assertions), `build-wp0/tests/containercp_tests -tc="*Migration*"` (`39` test cases, `254` assertions), and full CTest (`1/1`).
 
-### [ ] WP-3.3 Add PHP syntax validation boundary
+### [x] WP-3.3 Add PHP syntax validation boundary
 
 Objective: Validate updated PHP config through approved runtime or test substitute and restore atomically on validation failure.
 
@@ -251,6 +251,8 @@ Focused tests: syntax success, syntax failure rollback, validation output redact
 Acceptance criteria: No success until syntax validation passes; rollback verified.
 
 Commit message: `wordpress: validate config updates before completion`.
+
+Result: Complete. Added `WordPressConfigValidator`, `WordPressConfigValidationResult`, and `WordPressConfigUpdater::update_file_atomic_validated()` as an injectable validation boundary around the atomic writer. Updates succeed only after the validator accepts the written file. Validation failures automatically rollback through the same atomic rollback path and return redacted diagnostics; rollback failure reports a manual-recovery state. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`48` test cases, `279` assertions), `build-wp0/tests/containercp_tests -tc="VestaSiteImporter*"` (`31` test cases, `79` assertions), `build-wp0/tests/containercp_tests -tc="*Migration*"` (`39` test cases, `254` assertions), and full CTest (`1/1`).
 
 ### [ ] WP-3.4 Refactor migration config update to shared updater
 
