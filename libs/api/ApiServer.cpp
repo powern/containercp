@@ -667,6 +667,25 @@ bool ApiServer::start() {
         request.database_id = parsed_database_id.value;
         request.confirmation = json_extract(req.body, "confirmation");
 
+        const auto credential_status = s.wordpress_database_credentials().resolve_site(request.site_id);
+        if (!credential_status.target.available) {
+            if (credential_status.target.status == "site_not_found" || credential_status.target.status == "database_target_missing") {
+                r.status_code = 404;
+            } else if (credential_status.target.status == "database_target_ambiguous") {
+                r.status_code = 409;
+            } else {
+                r.status_code = 400;
+            }
+            r.body = "{\"success\":false,\"error\":{\"code\":\"" + JsonFormatter::escape(credential_status.target.status)
+                + "\",\"message\":\"" + JsonFormatter::escape(credential_status.target.message) + "\"}}";
+            return r;
+        }
+        if (credential_status.target.database_id != request.database_id) {
+            r.status_code = 409;
+            r.body = "{\"success\":false,\"error\":{\"code\":\"database_target_mismatch\",\"message\":\"Requested database does not match the WordPress credential target\"}}";
+            return r;
+        }
+
         const auto queued = s.database_credential_rotation_jobs().enqueue(request);
         if (!queued.success) {
             if (queued.code == "site_not_found" || queued.code == "database_not_found") {
@@ -725,8 +744,9 @@ bool ApiServer::start() {
             return r;
         }
 
-        const auto inspected = s.wordpress_config().inspect_site(parsed_site_id.value);
-        const auto view = s.wordpress_config().public_view(inspected);
+        const auto credential_status = s.wordpress_database_credentials().resolve_site(parsed_site_id.value);
+        const auto& view = credential_status.view;
+        const auto& target = credential_status.target;
 
         std::ostringstream json;
         json << "{\"success\":true,\"data\":{"
@@ -740,6 +760,10 @@ bool ApiServer::start() {
              << ",\"db_user\":\"" << JsonFormatter::escape(view.db_user) << "\""
              << ",\"db_host\":\"" << JsonFormatter::escape(view.db_host) << "\""
              << ",\"db_password_present\":" << (view.db_password_present ? "true" : "false")
+             << ",\"database_target_available\":" << (target.available ? "true" : "false")
+             << ",\"database_id\":" << target.database_id
+             << ",\"database_target_status\":\"" << JsonFormatter::escape(target.status) << "\""
+             << ",\"database_target_message\":\"" << JsonFormatter::escape(target.message) << "\""
              << ",\"issues\":[";
         for (size_t i = 0; i < view.issues.size(); ++i) {
             if (i > 0) json << ",";

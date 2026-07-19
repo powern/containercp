@@ -57,6 +57,7 @@
 #include "user/UserManager.h"
 #include "wordpress/WordPressConfigService.h"
 #include "wordpress/WordPressConfigUpdater.h"
+#include "wordpress/WordPressDatabaseCredentialResolver.h"
 #include "wordpress/WordPressRuntimeVerifier.h"
 
 #include <unordered_map>
@@ -113,6 +114,7 @@ public:
     auth::AuthService& auth();
     storage::Storage& storage();
     wordpress::WordPressConfigService& wordpress_config();
+    wordpress::WordPressDatabaseCredentialResolver& wordpress_database_credentials();
     core::RecoveryManager& recovery();
     // Detect Docker bridge gateway address for Web UI binding and proxy upstream.
     // Returns "host.docker.internal" if detection fails (works with --add-host flag).
@@ -145,6 +147,7 @@ private:
     php::PhpVersionManager php_versions_;
     profile::ProfileManager profiles_;
     database::DatabaseManager databases_;
+    wordpress::WordPressDatabaseCredentialResolver wordpress_database_credentials_;
     backup::BackupManager backups_;
     jobs::JobManager jobs_;
     backup::TarBackupProvider backup_provider_;

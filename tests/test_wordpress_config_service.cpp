@@ -1,4 +1,6 @@
 #include "wordpress/WordPressConfigService.h"
+#include "wordpress/WordPressDatabaseCredentialResolver.h"
+#include "database/DatabaseManager.h"
 
 #include "doctest/doctest.h"
 
@@ -23,6 +25,16 @@ void write_service_file(const fs::path& path, const std::string& content) {
     fs::create_directories(path.parent_path());
     std::ofstream out(path);
     out << content;
+}
+
+std::string service_wp_config(const std::string& db_name,
+                              const std::string& db_user,
+                              const std::string& db_host = "mariadb") {
+    return "<?php\n"
+           "define('DB_NAME', '" + db_name + "');\n"
+           "define('DB_USER', '" + db_user + "');\n"
+           "define('DB_PASSWORD', 'secret');\n"
+           "define('DB_HOST', '" + db_host + "');\n";
 }
 
 std::string read_service_file(const fs::path& path) {
@@ -288,6 +300,64 @@ define('DB_PASSWORD', 'secret');
     CHECK(view.db_password_present);
     REQUIRE_FALSE(view.issues.empty());
     CHECK(view.issues[0].code == "duplicate_constant");
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("WordPressDatabaseCredentialResolver resolves exact enabled database target") {
+    site::SiteManager sites;
+    database::DatabaseManager databases;
+    const uint64_t site_id = sites.create("resolver.test", "admin", 1, "nginx");
+    const uint64_t other_id = sites.create("other-resolver.test", "admin", 1, "nginx");
+    const auto root = service_root("resolver_exact");
+    write_service_file(root / "resolver.test" / "public" / "wp-config.php", service_wp_config("wp_exact", "wp_user"));
+    databases.create("wp_other", "wp_user", "otherpass", 1, site_id);
+    const uint64_t database_id = databases.create("wp_exact", "wp_user", "oldpass", 1, site_id);
+    databases.create("wp_exact", "wp_user", "wrongsite", 1, other_id);
+
+    WordPressConfigService service(sites, root);
+    WordPressDatabaseCredentialResolver resolver(service, databases);
+    const auto status = resolver.resolve_site(site_id);
+
+    CHECK(status.view.available);
+    CHECK(status.target.available);
+    CHECK(status.target.status == "resolved");
+    CHECK(status.target.database_id == database_id);
+    CHECK(status.target.db_name == "wp_exact");
+    CHECK(status.target.db_user == "wp_user");
+    CHECK(status.target.db_host == "mariadb");
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("WordPressDatabaseCredentialResolver fails closed for missing ambiguous and unmanaged targets") {
+    site::SiteManager sites;
+    database::DatabaseManager databases;
+    const uint64_t missing_site_id = sites.create("missing-db.test", "admin", 1, "nginx");
+    const uint64_t ambiguous_site_id = sites.create("ambiguous-db.test", "admin", 1, "nginx");
+    const uint64_t external_site_id = sites.create("external-db.test", "admin", 1, "nginx");
+    const auto root = service_root("resolver_failures");
+    write_service_file(root / "missing-db.test" / "public" / "wp-config.php", service_wp_config("wp_missing", "wp_user"));
+    write_service_file(root / "ambiguous-db.test" / "public" / "wp-config.php", service_wp_config("wp_dupe", "wp_user"));
+    write_service_file(root / "external-db.test" / "public" / "wp-config.php", service_wp_config("wp_ext", "wp_user", "external-db"));
+    databases.create("wp_dupe", "wp_user", "first", 1, ambiguous_site_id);
+    databases.create("wp_dupe", "wp_user", "second", 1, ambiguous_site_id);
+    databases.create("wp_ext", "wp_user", "external", 1, external_site_id);
+
+    WordPressConfigService service(sites, root);
+    WordPressDatabaseCredentialResolver resolver(service, databases);
+
+    const auto missing = resolver.resolve_site(missing_site_id);
+    CHECK_FALSE(missing.target.available);
+    CHECK(missing.target.status == "database_target_missing");
+
+    const auto ambiguous = resolver.resolve_site(ambiguous_site_id);
+    CHECK_FALSE(ambiguous.target.available);
+    CHECK(ambiguous.target.status == "database_target_ambiguous");
+
+    const auto external = resolver.resolve_site(external_site_id);
+    CHECK_FALSE(external.target.available);
+    CHECK(external.target.status == "database_host_unsupported");
 
     fs::remove_all(root);
 }

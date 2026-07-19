@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Resolve exact database credential target
+
+**Summary:** Added WP-R5 backend-owned target resolution for WordPress database credential rotation. New `WordPressDatabaseCredentialResolver` combines WordPress credential inspection with database metadata and resolves exactly one enabled database record for the same site whose `DB_NAME` and `DB_USER` match the active `wp-config.php` and whose host is the managed site MariaDB service. The status API now returns target availability, resolved `database_id`, target status, and target message. The rotate API rejects submitted `database_id` values that do not match the backend-resolved WordPress target. The rotation adapter now uses the same resolver before any mutation, and the Site Details UI no longer selects `siteDatabases[0]` for WordPress rotation.
+
+**Files changed:** `libs/wordpress/WordPressDatabaseCredentialResolver.h`, `libs/wordpress/WordPressDatabaseCredentialResolver.cpp`, `libs/core/ServiceRegistry.h`, `libs/core/ServiceRegistry.cpp`, `libs/database/DatabaseCredentialRotationAdapter.h`, `libs/database/DatabaseCredentialRotationAdapter.cpp`, `libs/api/ApiServer.cpp`, `web/app.js`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/test_wordpress_config_service.cpp`, `tests/test_database_credential_rotation.cpp`, `tests/test_api.cpp`, `docs/api/API_REFERENCE.md`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Site Details now rotates only the backend-resolved WordPress database target and disables rotation when no exact database record can be resolved. Multi-database sites no longer risk queuing rotation against the first database card entry when WordPress uses a different database.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused tests passed for `*WordPressDatabaseCredentialResolver*,*WordPressConfigService*` (`12` cases, `78` assertions), `*DatabaseCredentialRotation*` (`26` cases, `259` assertions), `*API*` (`18` cases, `73` assertions), `*WordPress*` (`61` cases, `365` assertions), `*database*` (`50` cases, `464` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). `node --check web/app.js`, full CTest (`1/1`), and `git diff --check` passed.
+
+**Known risks:** Full metadata atomicity and compensation consistency remain scheduled for WP-R6. Runtime verifier trust-boundary hardening, endpoint/job safety, UI safety-state polish, documentation readiness language, and final full validation remain scheduled for WP-R7 through WP-R11. Live rotation still has not been validated against a real Docker/MariaDB/WordPress site in this task.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Wire credential rotation dependencies
 
 **Summary:** Added WP-R4 production-shaped dependency wiring for WordPress database credential rotation. New `DatabaseCredentialRotationAdapter` implements `DatabaseCredentialRotationDependencies` and connects the rotation saga to site/database metadata, WordPress config inspection/update, MariaDB credential provider operations, WordPress/PHP runtime verification, runtime apply/site-health callbacks, metadata persistence, and compensation rollback handles. `ServiceRegistry` now constructs concrete command runners, providers, verifier/updater objects, the adapter, and a wired `DatabaseCredentialRotationService`, while API, CLI, Web UI, and job code remain clients of the service instead of owning rotation business logic.

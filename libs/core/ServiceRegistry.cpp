@@ -27,6 +27,7 @@ ServiceRegistry::ServiceRegistry()
     : config_(config::Config::instance())
     , logger_(logger::Logger::instance())
     , wordpress_config_(sites_)
+    , wordpress_database_credentials_(wordpress_config_, databases_)
     , backup_provider_(logger_)
     , access_provider_(logger_)
     , proxy_provider_(filesystem_, config_, logger_, ssl_, reverse_proxies_)
@@ -46,6 +47,7 @@ ServiceRegistry::ServiceRegistry()
           sites_,
           databases_,
           wordpress_config_,
+          wordpress_database_credentials_,
           wordpress_config_updater_,
           mariadb_credential_provider_,
           wordpress_runtime_verifier_,
@@ -734,6 +736,10 @@ storage::Storage& ServiceRegistry::storage() {
 
 wordpress::WordPressConfigService& ServiceRegistry::wordpress_config() {
     return wordpress_config_;
+}
+
+wordpress::WordPressDatabaseCredentialResolver& ServiceRegistry::wordpress_database_credentials() {
+    return wordpress_database_credentials_;
 }
 
 filesystem::Filesystem& ServiceRegistry::filesystem() {

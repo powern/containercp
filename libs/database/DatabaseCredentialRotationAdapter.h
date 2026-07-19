@@ -8,6 +8,7 @@
 #include "site/SiteManager.h"
 #include "wordpress/WordPressConfigService.h"
 #include "wordpress/WordPressConfigUpdater.h"
+#include "wordpress/WordPressDatabaseCredentialResolver.h"
 #include "wordpress/WordPressRuntimeVerifier.h"
 
 #include <filesystem>
@@ -28,6 +29,7 @@ public:
     DatabaseCredentialRotationAdapter(site::SiteManager& sites,
                                       DatabaseManager& databases,
                                       wordpress::WordPressConfigService& wordpress_config,
+                                      const wordpress::WordPressDatabaseCredentialResolver& wordpress_database_credentials,
                                       const wordpress::WordPressConfigUpdater& wordpress_updater,
                                       const MariaDBCredentialProvider& mariadb_provider,
                                       const wordpress::WordPressRuntimeVerifier& wordpress_verifier,
@@ -85,6 +87,7 @@ private:
     site::SiteManager& sites_;
     DatabaseManager& databases_;
     wordpress::WordPressConfigService& wordpress_config_;
+    const wordpress::WordPressDatabaseCredentialResolver& wordpress_database_credentials_;
     const wordpress::WordPressConfigUpdater& wordpress_updater_;
     const MariaDBCredentialProvider& mariadb_provider_;
     const wordpress::WordPressRuntimeVerifier& wordpress_verifier_;

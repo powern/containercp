@@ -47,6 +47,7 @@ bool wordpress_direct_complete(const wordpress::WordPressConfigServiceResult& re
 DatabaseCredentialRotationAdapter::DatabaseCredentialRotationAdapter(site::SiteManager& sites,
                                                                      DatabaseManager& databases,
                                                                      wordpress::WordPressConfigService& wordpress_config,
+                                                                     const wordpress::WordPressDatabaseCredentialResolver& wordpress_database_credentials,
                                                                      const wordpress::WordPressConfigUpdater& wordpress_updater,
                                                                      const MariaDBCredentialProvider& mariadb_provider,
                                                                      const wordpress::WordPressRuntimeVerifier& wordpress_verifier,
@@ -58,6 +59,7 @@ DatabaseCredentialRotationAdapter::DatabaseCredentialRotationAdapter(site::SiteM
     : sites_(sites)
     , databases_(databases)
     , wordpress_config_(wordpress_config)
+    , wordpress_database_credentials_(wordpress_database_credentials)
     , wordpress_updater_(wordpress_updater)
     , mariadb_provider_(mariadb_provider)
     , wordpress_verifier_(wordpress_verifier)
@@ -127,8 +129,12 @@ DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::inspect_
         return fail(inspected.code.empty() ? "wordpress_unsupported" : inspected.code,
                     "WordPress credential source is not supported");
     }
-    const auto& credentials = inspected.inspection.credentials;
-    if (credentials.db_name.value != database->db_name || credentials.db_user.value != database->db_user) {
+    const auto target = wordpress_database_credentials_.resolve_target(inspected);
+    if (!target.available) {
+        return fail(target.status.empty() ? "database_target_unavailable" : target.status,
+                    target.message.empty() ? "WordPress database target could not be resolved" : target.message);
+    }
+    if (target.database_id != request.database_id || database->id != target.database_id) {
         return fail("metadata_conflict", "WordPress credential metadata does not match the database record");
     }
 

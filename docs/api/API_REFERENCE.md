@@ -245,7 +245,7 @@ subsystems.
 
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|
-| GET | `/api/wordpress/database-credentials/status?site_id=N` | Public-safe WordPress credential status | `WordPressConfigService` |
+| GET | `/api/wordpress/database-credentials/status?site_id=N` | Public-safe WordPress credential status and backend-resolved database target | `WordPressDatabaseCredentialResolver` |
 | POST | `/api/wordpress/database-credentials/rotate` | Queue WordPress database credential rotation | `DatabaseCredentialRotationJobService` |
 
 **GET /api/wordpress/database-credentials/status?site_id=N** — returns public-safe credential status for Site Details UI:
@@ -264,12 +264,16 @@ subsystems.
     "db_user": "wp_user",
     "db_host": "mariadb",
     "db_password_present": true,
+    "database_target_available": true,
+    "database_id": 1,
+    "database_target_status": "resolved",
+    "database_target_message": "WordPress database credential target resolved",
     "issues": []
   }
 }
 ```
 
-The response never includes raw `DB_PASSWORD`, generated credentials, config paths, site roots, document roots, command output, or provider diagnostics.
+The response never includes raw `DB_PASSWORD`, generated credentials, config paths, site roots, document roots, command output, or provider diagnostics. Rotation clients must use the returned `database_id`; the server rejects rotate requests whose `database_id` does not match the backend-resolved WordPress credential target.
 
 **POST /api/wordpress/database-credentials/rotate** — body:
 

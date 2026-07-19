@@ -5,6 +5,7 @@
 #include "logger/Logger.h"
 #include "wordpress/WordPressConfigService.h"
 #include "wordpress/WordPressConfigUpdater.h"
+#include "wordpress/WordPressDatabaseCredentialResolver.h"
 #include "wordpress/WordPressRuntimeVerifier.h"
 
 #include "doctest/doctest.h"
@@ -217,6 +218,7 @@ struct AdapterFixture {
     site::SiteManager sites;
     DatabaseManager databases;
     wordpress::WordPressConfigService wordpress_service;
+    wordpress::WordPressDatabaseCredentialResolver wordpress_database_credentials;
     wordpress::WordPressConfigUpdater updater;
     FakeMariaDBAdapterRunner mariadb_runner;
     MariaDBCredentialProvider mariadb_provider;
@@ -229,6 +231,7 @@ struct AdapterFixture {
     explicit AdapterFixture(const std::string& name)
         : root(rotation_temp_root(name))
         , wordpress_service(sites, root)
+        , wordpress_database_credentials(wordpress_service, databases)
         , mariadb_provider(mariadb_runner)
         , wordpress_verifier(wordpress_runner) {
         fs::remove_all(root);
@@ -243,6 +246,7 @@ struct AdapterFixture {
             sites,
             databases,
             wordpress_service,
+            wordpress_database_credentials,
             updater,
             mariadb_provider,
             wordpress_verifier,
@@ -615,7 +619,7 @@ TEST_CASE("DatabaseCredentialRotationAdapter fails closed when admin credential 
     CHECK(read_test_file(fixture.root / "example.test" / "public" / "wp-config.php").find("oldpass") != std::string::npos);
 }
 
-TEST_CASE("DatabaseCredentialRotationAdapter fails closed on WordPress/database metadata mismatch") {
+TEST_CASE("DatabaseCredentialRotationAdapter fails closed on unresolved WordPress database target") {
     AdapterFixture fixture("metadata_mismatch");
     auto* database = fixture.databases.find(1);
     REQUIRE(database != nullptr);
@@ -626,7 +630,7 @@ TEST_CASE("DatabaseCredentialRotationAdapter fails closed on WordPress/database 
     const auto result = service.rotate({1, 1, "example.test"});
 
     CHECK_FALSE(result.success);
-    CHECK(result.code == "metadata_conflict");
+    CHECK(result.code == "database_target_missing");
     CHECK(fixture.mariadb_runner.sql_statements.empty());
     CHECK_FALSE(fixture.runtime_applied);
     CHECK_FALSE(fixture.metadata_persisted);
