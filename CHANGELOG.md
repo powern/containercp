@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-19 | `TBD` | Maintenance — Reduce clean-build compiler warning noise
+## 2026-07-19 | `d4d601a` | Maintenance — Reduce clean-build compiler warning noise
 
 **Summary:** Removed cosmetic compiler warning noise without changing product behavior. Replaced deprecated OpenSSL SHA256 calls with EVP SHA256 helpers, localized c-ares deprecation suppression behind compatibility wrappers, removed unused variables and helpers, fixed initializer-order and misleading-indentation warnings, and used size-correct legacy dataset indices where warnings were emitted.
 
