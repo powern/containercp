@@ -1,6 +1,6 @@
 # ContainerCP
 
-**Container-native hosting control panel — v0.5 Release Candidate 2**
+**Container-native hosting control panel - v0.7.0**
 
 ContainerCP is a modern, open-source hosting control panel built around
 containers. Every website runs as an isolated Docker Compose stack with
@@ -27,6 +27,8 @@ its own PHP, database, cache, and web server.
 - **Job tracking** — background operations with real-time progress
 - **Single instance** — PID file prevents multiple daemon instances
 - **Startup recovery** — auto-verifies network, proxy, directories
+- **SQLite storage backend** — explicit TXT-to-SQLite migration, strict
+  activation-state validation, fail-closed startup, and no silent TXT fallback
 
 ## Quick Install on Debian 13
 
@@ -60,7 +62,7 @@ Browser / CLI / curl
 
 ## Project Status
 
-**Version 0.6.0** — DNS and Mail release. See `docs/release-notes-v0.6.0.md`.
+**Version 0.7.0** - SQLite storage release. See `docs/releases/v0.7.0.md`.
 
 | Subsystem | Status | Completeness |
 |-----------|--------|-------------|
@@ -75,7 +77,8 @@ Browser / CLI / curl
 | SSL | Active | 75% |
 | Profiles/Templates | Stable | 90% |
 | Jobs | Active | 80% |
-| Tests | Growing | 60% |
+| Storage | SQLite active | 95% |
+| Tests | Growing | 70% |
 
 ## See Also
 
@@ -84,6 +87,7 @@ Browser / CLI / curl
 - [`scripts/update.sh`](scripts/update.sh) — Automatic update
 - [`AGENTS.md`](AGENTS.md) — AI agent rules and navigation
 - [`CHANGELOG.md`](CHANGELOG.md) — Release history
+- [`docs/releases/v0.7.0.md`](docs/releases/v0.7.0.md) — v0.7.0 release notes
 - [`docs/api/API_REFERENCE.md`](docs/api/API_REFERENCE.md) — REST API reference
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — System architecture
 - [`docs/runtime-architecture.md`](docs/runtime-architecture.md) — Runtime subsystem

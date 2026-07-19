@@ -6,6 +6,26 @@ Format: date | commit | summary
 
 ---
 
+## v0.7.0 — 2026-07-19
+
+**Summary:** ContainerCP v0.7.0 completes the SQLite storage backend release. Core runtime storage can now run on SQLite after explicit operator activation, while legacy TXT storage is preserved as migration source and archive data.
+
+**Storage architecture:** SQLite backend introduced as the active core storage backend after manual activation. Legacy TXT storage remains available as migration source/archive data. Migration is explicit through `containercp storage migrate-to-sqlite`; daemon startup does not run schema or data migration. SQLite startup failures do not silently fall back to TXT.
+
+**Migration and activation:** Added TXT-to-SQLite orchestration, verification before activation, immutable legacy archive creation, strict `storage-state.json` parsing, activation-state consistency validation, schema-version validation, and fail-closed daemon startup.
+
+**Reliability:** Added SQLite transaction handling for replacement writes, caller-visible propagation of failed SQLite writes, restart persistence validation, `site_id=0` compatibility, and production failure-path coverage.
+
+**Security:** Added validation for symlink rejection, regular-file requirements, directory/file permissions, ownership checks, and archive integrity before SQLite startup completes.
+
+**Validation:** Phase 11 production review checklist P11-R1 through P11-R7 is complete. A production-like deployment was successfully migrated and activated on SQLite, then validated in SQLite-only operation after legacy TXT runtime files were archived and removed. Release validation passed clean configure, clean rebuild without compiler warnings, full doctest (`669` cases, `4507` assertions, `0` skipped), CTest (`1/1`), and version output checks for `containercp` and `containercpd`. Release commit CI is required to pass before the `v0.7.0` tag is created.
+
+**Files changed:** `libs/core/Version.h`, `app/containercpd/main.cpp`, `CMakeLists.txt`, `README.md`, `AGENTS.md`, `CHANGELOG.md`, `docs/releases/v0.7.0.md`, `docs/development/sqlite-storage-api.md`, `docs/development/storage-schema.md`, `docs/development/legacy-archive-api.md`, `planning/project-status.md`, `tests/CMakeLists.txt`, `tests/test_version.cpp`
+
+**Known limitations:** SQLite activation remains explicit. Daemon startup validates but does not migrate. Invalid SQLite state fails startup. There is no automatic fallback to TXT. Archive retention/deletion is not automated. Existing legacy TXT fixtures and v0.6.0 release references remain for migration and historical validation.
+
+---
+
 ## 2026-07-19 | `a6ea3c9` | Bug Fix — Keep SQLite migration staging on target filesystem
 
 **Summary:** Fixed SQLite migration publishing when `/tmp` and `/srv/containercp/database` are on different filesystems. Migration staging now happens in a hidden directory next to the target SQLite database, so final publication can use atomic rename without failing with `Invalid cross-device link`.

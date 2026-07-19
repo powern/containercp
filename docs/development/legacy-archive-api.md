@@ -1,10 +1,10 @@
-# Legacy Archive API — Phase 10
+# Legacy Archive API - Phase 10 and Phase 11
 
 ## Purpose
 
-The `LegacyArchive` class creates a verified immutable archive of legacy TXT storage files after successful migration verification. Source files are never modified or deleted.
+The `LegacyArchive` class creates a verified immutable archive of legacy TXT storage files after successful migration verification. The archive is part of the explicit SQLite activation workflow and remains the recovery reference after runtime storage moves to SQLite.
 
-Phase 11 (startup migration gate) is not implemented. Manual invocation only.
+SQLite activation is explicit. The daemon does not run schema or data migration during startup; it only validates the previously published SQLite database and activation state.
 
 ## File
 
@@ -220,14 +220,13 @@ Archive directory: 0700. Files: 0440.
 
 Creating an archive with an existing migration ID returns `migration_id_already_archived` if the existing archive passes verification, or `existing_archive_invalid` if it fails. Creates a distinct archive for a different migration ID. Corrupt manifest in idempotency check returns `existing_archive_corrupt`.
 
-## No source deletion
+## Source deletion
 
-Source TXT files are never modified or deleted. Phase 11 not started.
+`LegacyArchive` itself never modifies or deletes source TXT files. Operators may remove legacy TXT files only after separate verification and backup/retention decisions outside the archive API.
 
 ## Known limitations
 
 - Unicode surrogate PAIRS not supported in \uXXXX (lone surrogates rejected)
-- Phase 11 startup migration gate not implemented
-- Archive retention/deletion not implemented
-- Manual invocation only
-- SQLite explicit-only (no implicit activation)
+- Archive retention/deletion is not automated
+- Manual migration invocation only
+- SQLite activation is explicit; invalid activation state fails startup

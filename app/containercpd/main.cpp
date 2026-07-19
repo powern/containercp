@@ -1,5 +1,6 @@
 #include "core/Application.h"
 #include "core/StartupManager.h"
+#include "core/Version.h"
 #include "api/ApiServer.h"
 #include "config/Config.h"
 #include "api/WebServer.h"
@@ -26,6 +27,13 @@ static int parse_arg(int argc, char* argv[], const std::string& name, int defaul
         }
     }
     return default_val;
+}
+
+static bool has_flag(int argc, char* argv[], const std::string& name) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == name) return true;
+    }
+    return false;
 }
 
 static int parse_env(const std::string& name, int default_val) {
@@ -70,6 +78,11 @@ static void release_single_instance() {
 }
 
 int main(int argc, char* argv[]) {
+    if (has_flag(argc, argv, "--version") || has_flag(argc, argv, "-v")) {
+        std::cout << "containercpd " << containercp::core::VERSION << std::endl;
+        return 0;
+    }
+
     // Ensure data directory exists for PID file
     ::mkdir("/srv/containercp", 0755);
 

@@ -527,5 +527,22 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 
 ---
 
-*Last updated: 2026-07-18*
-*Current Version: v0.6.0*
+## v0.7.0 — SQLite Storage Stable Release
+
+| Item | Status | Notes |
+|------|--------|-------|
+| SQLite backend | ✅ Active | Core runtime storage can run on `containercp.db` after explicit activation |
+| Manual migration | ✅ Implemented | `containercp storage migrate-to-sqlite` migrates legacy TXT into SQLite |
+| Activation gate | ✅ Implemented | `storage-state.json` plus `storage_backend=sqlite` required |
+| Startup validation | ✅ Implemented | Daemon validates activation state, SQLite schema, integrity, FK state, and filesystem safety |
+| Fail-closed behavior | ✅ Implemented | Invalid SQLite state stops startup; no silent TXT fallback |
+| Production validation | ✅ Completed | Production-like migration, activation, restart, and SQLite-only operation validated |
+
+**Release notes:** `docs/releases/v0.7.0.md`
+
+**Completed epic:** ARCH-008 / Phase 11 SQLite Activation
+
+---
+
+*Last updated: 2026-07-19*
+*Current Version: v0.7.0*

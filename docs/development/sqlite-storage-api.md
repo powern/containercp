@@ -1,24 +1,25 @@
 # SQLite Storage API
 
-## Phase 5 status
+## Runtime status
 
-Phase 5 introduces the `SQLiteStorage` implementation and makes it
-available through an **explicit opt-in mode**. SQLite is NOT active
-in the default runtime Storage backend.
+ContainerCP v0.7.0 completes the SQLite storage backend for core runtime
+resources. SQLite activation is explicit: operators must run the manual
+TXT-to-SQLite migration and then select the SQLite backend. Daemon startup
+does not run migrations and does not fall back to TXT if SQLite activation
+state is invalid.
 
 | Mode | Backend for core resources | Activation |
 |------|---------------------------|------------|
-| Default (`CoreStorageBackend::Txt`) | TXT for all resources | Default — no action needed |
-| Explicit (`CoreStorageBackend::SqlitePhase5`) | nodes, php_versions, profiles via SQLite | Pass `StorageOptions{ .core_backend = CoreStorageBackend::SqlitePhase5 }` to `Storage` |
+| Legacy (`CoreStorageBackend::Txt`) | TXT files | Default when no backend selector is present |
+| SQLite (`CoreStorageBackend::SqlitePhase5`) | SQLite for the supported runtime resource set | Successful manual migration, valid `storage-state.json`, and `storage_backend=sqlite` |
 
-**Default runtime behavior:** All resources, including nodes, PHP versions,
-and profiles, are TXT-backed. Existing TXT data remains visible.
+**Legacy mode:** TXT files remain supported as migration source/archive data
+and as the legacy runtime backend when explicitly selected.
 
-**Explicit SQLite mode:** Creates `containercp.db`, runs the schema
-migration, and delegates the three Phase 5 resources to SQLiteStorage.
-Other resources remain TXT-backed. If initialization or migration fails,
-`sqlite_ready()` returns false and core resource operations are no-ops
-(no silent TXT fallback).
+**SQLite mode:** Opens the already-published `containercp.db`, validates
+activation state, schema version, integrity, foreign keys, and filesystem
+safety, then serves reads and writes from SQLite. Failed SQLite writes are
+reported to callers. No runtime TXT fallback files are created.
 
 ---
 
@@ -603,9 +604,9 @@ Each key is updated independently — saving one does not erase the other.
 
 ## Non-goals
 
-- SQLite is NOT active in production runtime by default.
+- SQLite activation is not automatic on existing installations.
 - No automatic TXT→SQLite data import.
-- No startup migration gate.
+- No automatic startup migration. Startup only validates already-migrated SQLite state.
 - No TXT file deletion.
 
 ## Phase 9 — Checked loads and snapshots

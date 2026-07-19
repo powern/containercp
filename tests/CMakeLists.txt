@@ -25,6 +25,7 @@ add_executable(containercp_tests
     test_migration.cpp
     test_migration_api.cpp
     test_migrate_sqlite.cpp
+    test_version.cpp
     test_rollback_integration.cpp
     ${CMAKE_SOURCE_DIR}/libs/migration/VestaSiteImporter.cpp
     ${CMAKE_SOURCE_DIR}/libs/config/Config.cpp
@@ -121,6 +122,10 @@ target_compile_options(containercp_tests PRIVATE
 
 target_compile_definitions(containercp_tests PRIVATE
     TEST_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures"
+    TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    CONTAINERCP_CLI_BINARY="$<TARGET_FILE:containercp>"
+    CONTAINERCP_DAEMON_BINARY="$<TARGET_FILE:containercpd>"
+    CMAKE_PROJECT_VERSION_TEXT="${PROJECT_VERSION}"
 )
 
 target_link_libraries(containercp_tests PRIVATE

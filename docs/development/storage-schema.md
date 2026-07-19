@@ -476,7 +476,7 @@ Current values (set by migration v1):
 
 | Key | Value | Meaning |
 |-----|-------|---------|
-| `storage_backend` | `"sqlite_schema"` | Schema exists in SQLite; TXT is the active persistence backend |
+| `storage_backend` | `"sqlite_schema"` | SQLite schema exists and has completed schema migration v1 |
 | `schema_version` | `"1"` | Current schema version |
 | `migration_state` | `"schema_created"` | Schema migration completed |
 

@@ -5,7 +5,7 @@
 ContainerCP is a modern, open-source container-oriented hosting
 control panel for system administrators, developers, and hosting providers.
 
-**Current version:** v0.6.0
+**Current version:** v0.7.0
 
 ---
 
