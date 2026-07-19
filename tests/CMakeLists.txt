@@ -29,6 +29,7 @@ add_executable(containercp_tests
     test_wordpress_config_detector.cpp
     test_wordpress_config_service.cpp
     test_wordpress_config_types.cpp
+    test_wordpress_config_update.cpp
     test_rollback_integration.cpp
     ${CMAKE_SOURCE_DIR}/libs/migration/VestaSiteImporter.cpp
     ${CMAKE_SOURCE_DIR}/libs/config/Config.cpp
@@ -106,6 +107,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressConfigDetector.cpp
     ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressConfigService.cpp
     ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressConfigTypes.cpp
+    ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressConfigUpdater.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailAliasManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/DkimManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailDomain.cpp

@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Add safe credential update renderer
+
+**Summary:** Added the WP-3.1 in-memory WordPress credential update renderer. `WordPressConfigUpdater::render_update()` replaces exactly one supported direct string-literal `DB_NAME`, `DB_USER`, `DB_PASSWORD`, or `DB_HOST` definition while preserving surrounding content and quote style. It rejects missing, dynamic, included, duplicate, and conditional target definitions and keeps failure diagnostics free of secret values.
+
+**Files changed:** `libs/wordpress/WordPressConfigUpdater.h`, `libs/wordpress/WordPressConfigUpdater.cpp`, `tests/test_wordpress_config_update.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. The renderer is in-memory only and is not yet wired to filesystem writes, syntax validation, migration update, REST API, CLI, Web UI, runtime, storage, or production site operations.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused WordPress tests passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`31` cases, `180` assertions), covering DB password replacement, quote preservation, special-character escaping, unrelated content preservation, duplicate rejection, dynamic rejection, include rejection, conditional rejection, and redacted diagnostics. Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** Atomic file writing, ownership/mode preservation, PHP syntax validation, rollback, and migration update refactoring remain deferred to WP-3.2 through WP-3.4.
+
+---
+
 ## 2026-07-19 | `this commit` | Migration — Use shared WordPress credential detector
 
 **Summary:** Refactored the migration inspect-only `wp-config.php` credential parser for WP-2.3 to use `WordPressConfigDetector::inspect_content()`. The importer now relies on the shared WordPress detector for read-only DB constant parsing while preserving existing manifest behavior for found configs, direct-literal parse success, DB name/user/host fields, dynamic `DB_NAME` ambiguity, SQL dump lookup, and no-password migration output.

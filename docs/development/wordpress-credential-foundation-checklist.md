@@ -198,7 +198,7 @@ Result: Complete. Replaced the migration inspect-only `wp-config.php` credential
 
 ## WP-3 Safe Atomic WordPress Config Update
 
-### [ ] WP-3.1 Add in-memory direct-constant update renderer
+### [x] WP-3.1 Add in-memory direct-constant update renderer
 
 Objective: Render safe replacements for exactly one direct literal target while preserving unrelated content and quote style.
 
@@ -213,6 +213,8 @@ Focused tests: DB_PASSWORD replacement, single/double quote preservation, specia
 Acceptance criteria: Renderer mutates only supported literal definitions and exposes no secret diagnostics.
 
 Commit message: `wordpress: add safe credential update renderer`.
+
+Result: Complete. Added `WordPressConfigUpdater::render_update()` for in-memory replacement of exactly one supported direct string-literal credential constant. The renderer preserves quote style and unrelated content, escapes replacement values for the existing quote style, ignores commented definitions, and rejects missing, dynamic, included, duplicate, and conditional target definitions with redacted diagnostics. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`31` test cases, `180` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`).
 
 ### [ ] WP-3.2 Add atomic file writer and rollback handle
 
