@@ -1,5 +1,7 @@
 #include "VestaSiteImporter.h"
 
+#include "wordpress/WordPressConfigDetector.h"
+
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
@@ -292,62 +294,38 @@ bool VestaSiteImporter::extract_wp_config(
     std::string content = wp_buf.str();
     executor_.run({"rm", "-rf", wp_extract_dir});
 
-    bool found_any = false;
+    wordpress::WordPressConfigDetector detector;
+    const auto inspection = detector.inspect_content(content);
 
-    // Step 1: find the full define('DB_NAME', ...) expression
-    // Capture the WHOLE expression content between ( and )
-    // so we can check its second argument for ambiguity
-    std::regex define_name_re(R"(define\s*\(\s*['\"]DB_NAME['\"]\s*,\s*(.*?)\))");
-    std::smatch match;
+    const auto& db_name = inspection.credentials.db_name;
+    const auto& db_user = inspection.credentials.db_user;
+    const auto& db_host = inspection.credentials.db_host;
 
-    if (std::regex_search(content, match, define_name_re)) {
-        found_any = true;
-        std::string full_expr = match[0].str();
-        std::string second_arg = match[1].str();
+    const bool found_any = db_name.state != wordpress::WordPressCredentialValueState::Missing ||
+                           db_user.state != wordpress::WordPressCredentialValueState::Missing ||
+                           inspection.credentials.db_password.state != wordpress::WordPressCredentialValueState::Missing ||
+                           db_host.state != wordpress::WordPressCredentialValueState::Missing;
 
-        // Extract the DB_NAME value using a quoted-string regex
-        std::regex quote_re(R"(['\"]?([^'\",]+)['\"]?\s*\))");
-        std::smatch qm;
-
-        // The second_arg may be: 'simple_literal' or getenv(...) or $var etc.
-        // Check for ambiguity: contains $, getenv, or _SERVER (not in a comment)
-        bool has_dollar = second_arg.find('$') != std::string::npos;
-        bool has_getenv = second_arg.find("getenv") != std::string::npos;
-        bool has_server = second_arg.find("_SERVER") != std::string::npos;
-
-        if (!has_dollar && !has_getenv && !has_server) {
-            // Simple literal — extract the value
-            std::regex simple_val_re(R"(['\"]([^'\"]+)['\"])");
-            std::smatch sv;
-            if (std::regex_search(second_arg, sv, simple_val_re)) {
-                out_db_name = sv[1];
-                out_parsed = true;
-            }
-        } else {
-            // Ambiguous — but still try to find the last literal value
-            std::regex last_val_re(R"(['\"]([^'\"]+?)['\"]\s*\))");
-            std::smatch lv;
-            if (std::regex_search(second_arg, lv, last_val_re)) {
-                out_db_name = lv[1];
-                // Even though we found a value, it might be a fallback/default
-                // Mark as ambiguous so user can override with --database
-            }
-            out_ambiguous = true;
-        }
+    if (db_name.source == wordpress::WordPressCredentialSource::DirectConstant &&
+        db_name.state == wordpress::WordPressCredentialValueState::Present &&
+        !db_name.value.empty()) {
+        out_db_name = db_name.value;
+        out_parsed = true;
     }
 
-    // Parse DB_USER, DB_PASSWORD, DB_HOST similarly (simple pattern)
-    auto extract_simple = [&](const std::string& name, std::string& out) {
-        std::regex re(R"(define\s*\(\s*['\"])" + name + R"(['\"]\s*,\s*['\"]([^'\"]+)['\"])");
-        std::smatch m;
-        if (std::regex_search(content, m, re)) {
-            out = m[1];
-        }
-    };
+    if (db_user.source == wordpress::WordPressCredentialSource::DirectConstant &&
+        db_user.state == wordpress::WordPressCredentialValueState::Present) {
+        out_db_user = db_user.value;
+    }
+    if (db_host.source == wordpress::WordPressCredentialSource::DirectConstant &&
+        db_host.state == wordpress::WordPressCredentialValueState::Present) {
+        out_db_host = db_host.value;
+    }
 
-    extract_simple("DB_USER", out_db_user);
-    extract_simple("DB_PASSWORD", out_db_password);
-    extract_simple("DB_HOST", out_db_host);
+    out_db_password.clear();
+    out_ambiguous = inspection.status == wordpress::WordPressCredentialStatus::Ambiguous ||
+                    (db_name.source != wordpress::WordPressCredentialSource::Missing &&
+                     db_name.source != wordpress::WordPressCredentialSource::DirectConstant);
 
     return found_any; // wp_config_found
 }

@@ -178,7 +178,7 @@ Commit message: `wordpress: add public-safe config inspection view`.
 
 Result: Complete. Added `WordPressConfigPublicView` and `WordPressConfigService::public_view()` with site id, domain, status/source/mutability strings, DB name/user/host, password-presence boolean, and redacted issues only. The public view contains no config path, site root, document root, raw password, root password, or option-file path. Added read-only unsafe-permission warnings and byte-for-byte no-change tests. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`25` test cases, `162` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`).
 
-### [ ] WP-2.3 Refactor migration inspection to reuse detector
+### [x] WP-2.3 Refactor migration inspection to reuse detector
 
 Objective: Replace duplicated parse-only logic in `VestaSiteImporter` with shared detector helpers where safe while preserving existing behavior.
 
@@ -193,6 +193,8 @@ Focused tests: current migration inspect tests, realistic myVesta fixture tests,
 Acceptance criteria: Existing migration tests remain green; same user-visible inspect behavior.
 
 Commit message: `migration: use shared WordPress credential detector`.
+
+Result: Complete. Replaced the migration inspect-only `wp-config.php` credential parsing block with `WordPressConfigDetector::inspect_content()` while preserving `wp_config_found`, direct-literal `wp_config_parsed`, DB name/user/host manifest fields, dynamic `DB_NAME` ambiguity warnings, and no-password output behavior. Focused validation passed with `build-wp0/tests/containercp_tests -tc="VestaSiteImporter*"` (`31` test cases, `79` assertions), `build-wp0/tests/containercp_tests -tc="*Migration*"` (`39` test cases, `254` assertions), and `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`25` test cases, `162` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`).
 
 ## WP-3 Safe Atomic WordPress Config Update
 

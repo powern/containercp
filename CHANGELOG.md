@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Migration — Use shared WordPress credential detector
+
+**Summary:** Refactored the migration inspect-only `wp-config.php` credential parser for WP-2.3 to use `WordPressConfigDetector::inspect_content()`. The importer now relies on the shared WordPress detector for read-only DB constant parsing while preserving existing manifest behavior for found configs, direct-literal parse success, DB name/user/host fields, dynamic `DB_NAME` ambiguity, SQL dump lookup, and no-password migration output.
+
+**Files changed:** `libs/migration/VestaSiteImporter.cpp`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Migration inspect and dry-run output remain the same for supported direct-literal WordPress configs and dynamic `DB_NAME` ambiguity. `DB_PASSWORD` remains omitted from migration manifest/API/UI output and is no longer carried out of the inspect-only parser path.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused regression passed for `VestaSiteImporter*` (`31` cases, `79` assertions), `*Migration*` (`39` cases, `254` assertions), and `*WordPress*` (`25` cases, `162` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** Migration config update logic still uses its legacy replacement path until WP-3.4/WP-8.1. Unsupported WordPress config forms remain inspect-only/manual-selection paths; no rotation behavior exists yet.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Add public-safe config inspection view
 
 **Summary:** Added the WP-2.2 public-safe WordPress config inspection projection. `WordPressConfigPublicView` exposes status/source/mutability, site id, domain, non-secret DB name/user/host, password presence, and sanitized issues only. It intentionally omits config paths, site roots, document roots, root passwords, option-file paths, and raw `DB_PASSWORD` values. The service now also records read-only unsafe-permission warnings for group/other-accessible `wp-config.php` files.
