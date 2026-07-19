@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Add credential rotation state machine
+
+**Summary:** Added the WP-5.1 database credential rotation service foundation. `DatabaseCredentialRotationService` now defines the explicit saga state model, request/result/event structs, redacted event messages, and mutex-backed per-site/database locking. The service rejects unsupported `site_id=0`, rejects missing database ids, releases locks after failure, and fails closed until the remaining saga dependencies are wired.
+
+**Files changed:** `libs/database/DatabaseCredentialRotationService.h`, `libs/database/DatabaseCredentialRotationService.cpp`, `tests/test_database_credential_rotation.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. The service is not yet wired to providers, storage, jobs, REST API, CLI, Web UI, or production operations and cannot rotate credentials yet.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused rotation tests passed with `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotationService*"` (`5` cases, `26` assertions), covering state strings, `site_id=0` rejection, missing database rejection, lock release after failure, and redacted events. Focused regressions passed for `*database*` (`26` cases, `202` assertions), `*WordPress*` (`49` cases, `286` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** This is the state-machine foundation only. The MariaDB provider, WordPress updater, runtime application, verification, metadata persistence, compensation, API/CLI, and GUI wiring remain pending for later WP-5/WP-6/WP-7 stages.
+
+---
+
 ## 2026-07-19 | `this commit` | Documentation — Document MariaDB credential provider grants
 
 **Summary:** Added WP-4.3 documentation for the MariaDB credential provider. The document records provider scope, secret transport, minimum grant direction, root-as-break-glass guidance, shared-user risk handling, redacted failure behavior, and current fake-runner validation status.

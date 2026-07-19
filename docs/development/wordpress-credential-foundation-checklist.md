@@ -330,7 +330,7 @@ Result: Complete. Added `docs/development/mariadb-credential-provider.md` with p
 
 ## WP-5 DatabaseCredentialRotationService Saga
 
-### [ ] WP-5.1 Add rotation service state machine and lock
+### [x] WP-5.1 Add rotation service state machine and lock
 
 Objective: Add operation states, per-site/database lock, request/result structs, and no-op/fake dependencies for tests.
 
@@ -345,6 +345,8 @@ Focused tests: state order, concurrent conflict, lock release after success/fail
 Acceptance criteria: State machine and locking work with fakes.
 
 Commit message: `wordpress: add credential rotation state machine`.
+
+Result: Complete. Added `DatabaseCredentialRotationService` with explicit rotation states, request/result/event structs, redacted event messages, and mutex-backed per-site/database operation locking that releases on all current failure paths. The service rejects `site_id=0` and missing database ids before lock acquisition and currently fails closed until saga dependencies are wired. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotationService*"` (`5` test cases, `26` assertions), `build-wp0/tests/containercp_tests -tc="*database*"` (`26` test cases, `202` assertions), `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`49` test cases, `286` assertions), and full CTest (`1/1`).
 
 ### [ ] WP-5.2 Implement direct-constant rotation happy path
 
