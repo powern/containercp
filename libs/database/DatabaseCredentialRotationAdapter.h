@@ -15,6 +15,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 
 namespace containercp::database {
@@ -23,6 +24,7 @@ class DatabaseCredentialRotationAdapter : public DatabaseCredentialRotationDepen
 public:
     using PasswordGenerator = std::function<std::string()>;
     using MetadataPersist = std::function<bool()>;
+    using MetadataPasswordReader = std::function<std::optional<std::string>(uint64_t)>;
     using RuntimeApply = std::function<bool(const site::Site&)>;
     using SiteHealthVerifier = std::function<bool(const site::Site&)>;
 
@@ -36,6 +38,7 @@ public:
                                       logger::Logger& logger,
                                       PasswordGenerator password_generator,
                                       MetadataPersist metadata_persist,
+                                      MetadataPasswordReader metadata_password_reader,
                                       RuntimeApply runtime_apply,
                                       SiteHealthVerifier site_health_verifier);
 
@@ -97,6 +100,7 @@ private:
     logger::Logger& logger_;
     PasswordGenerator password_generator_;
     MetadataPersist metadata_persist_;
+    MetadataPasswordReader metadata_password_reader_;
     RuntimeApply runtime_apply_;
     SiteHealthVerifier site_health_verifier_;
     mutable std::mutex mutex_;

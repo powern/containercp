@@ -12,7 +12,9 @@
 
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -265,6 +267,12 @@ struct AdapterFixture {
     wordpress::WordPressRuntimeVerifier wordpress_verifier;
     bool metadata_persisted = false;
     bool metadata_persist_result = true;
+    bool metadata_persist_throws = false;
+    bool metadata_partial_update_on_failure = false;
+    bool metadata_skip_write_on_success = false;
+    bool metadata_reader_available = true;
+    bool metadata_reader_throws = false;
+    std::string stored_metadata_password = "oldpass";
     bool runtime_applied = false;
     bool health_checked = false;
 
@@ -294,7 +302,24 @@ struct AdapterFixture {
             []() { return std::string("newpass"); },
             [this]() {
                 metadata_persisted = true;
+                auto* database = databases.find(1);
+                if (database != nullptr && ((metadata_persist_result && !metadata_skip_write_on_success) ||
+                                            ((!metadata_persist_result || metadata_persist_throws) && metadata_partial_update_on_failure))) {
+                    stored_metadata_password = database->db_password;
+                }
+                if (metadata_persist_throws) {
+                    throw std::runtime_error("storage write failed");
+                }
                 return metadata_persist_result;
+            },
+            [this](uint64_t database_id) -> std::optional<std::string> {
+                if (metadata_reader_throws) {
+                    throw std::runtime_error("storage read failed");
+                }
+                if (!metadata_reader_available || database_id != 1) {
+                    return std::nullopt;
+                }
+                return stored_metadata_password;
             },
             [this](const site::Site&) {
                 runtime_applied = true;
@@ -819,6 +844,77 @@ TEST_CASE("DatabaseCredentialRotationAdapter restores metadata when metadata per
     REQUIRE(fixture.databases.find(1) != nullptr);
     CHECK(fixture.databases.find(1)->db_password == "oldpass");
     CHECK(read_test_file(fixture.root / "example.test" / "public" / "wp-config.php").find("oldpass") != std::string::npos);
+    CHECK(fixture.mariadb_runner.active_password == "oldpass");
+    CHECK(fixture.stored_metadata_password == "oldpass");
+}
+
+TEST_CASE("DatabaseCredentialRotationAdapter compensates when metadata success cannot be verified in storage") {
+    AdapterFixture fixture("metadata_success_unverified");
+    fixture.metadata_skip_write_on_success = true;
+    auto adapter = fixture.make_adapter();
+    DatabaseCredentialRotationService service(adapter);
+
+    const auto result = service.rotate({1, 1, "example.test"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::Compensated);
+    CHECK(result.code == "rotation_compensated");
+    REQUIRE(fixture.databases.find(1) != nullptr);
+    CHECK(fixture.databases.find(1)->db_password == "oldpass");
+    CHECK(fixture.stored_metadata_password == "oldpass");
+    CHECK(fixture.mariadb_runner.active_password == "oldpass");
+}
+
+TEST_CASE("DatabaseCredentialRotationAdapter requires manual recovery on partial metadata update") {
+    AdapterFixture fixture("metadata_partial_update");
+    fixture.metadata_persist_result = false;
+    fixture.metadata_partial_update_on_failure = true;
+    auto adapter = fixture.make_adapter();
+    DatabaseCredentialRotationService service(adapter);
+
+    const auto result = service.rotate({1, 1, "example.test"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::ManualRecoveryRequired);
+    CHECK(result.code == "manual_recovery_required");
+    REQUIRE(fixture.databases.find(1) != nullptr);
+    CHECK(fixture.databases.find(1)->db_password == "oldpass");
+    CHECK(fixture.stored_metadata_password == "newpass");
+    CHECK(fixture.mariadb_runner.active_password == "oldpass");
+}
+
+TEST_CASE("DatabaseCredentialRotationAdapter compensates when metadata persistence throws before storage update") {
+    AdapterFixture fixture("metadata_persist_throw_before_update");
+    fixture.metadata_persist_throws = true;
+    fixture.metadata_skip_write_on_success = true;
+    auto adapter = fixture.make_adapter();
+    DatabaseCredentialRotationService service(adapter);
+
+    const auto result = service.rotate({1, 1, "example.test"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::Compensated);
+    CHECK(result.code == "rotation_compensated");
+    REQUIRE(fixture.databases.find(1) != nullptr);
+    CHECK(fixture.databases.find(1)->db_password == "oldpass");
+    CHECK(fixture.stored_metadata_password == "oldpass");
+    CHECK(fixture.mariadb_runner.active_password == "oldpass");
+}
+
+TEST_CASE("DatabaseCredentialRotationAdapter requires manual recovery when metadata read-back throws") {
+    AdapterFixture fixture("metadata_reader_throw");
+    fixture.metadata_reader_throws = true;
+    auto adapter = fixture.make_adapter();
+    DatabaseCredentialRotationService service(adapter);
+
+    const auto result = service.rotate({1, 1, "example.test"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::ManualRecoveryRequired);
+    CHECK(result.code == "manual_recovery_required");
+    REQUIRE(fixture.databases.find(1) != nullptr);
+    CHECK(fixture.databases.find(1)->db_password == "oldpass");
+    CHECK(fixture.stored_metadata_password == "newpass");
     CHECK(fixture.mariadb_runner.active_password == "oldpass");
 }
 

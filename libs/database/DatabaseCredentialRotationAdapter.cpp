@@ -54,6 +54,7 @@ DatabaseCredentialRotationAdapter::DatabaseCredentialRotationAdapter(site::SiteM
                                                                      logger::Logger& logger,
                                                                      PasswordGenerator password_generator,
                                                                      MetadataPersist metadata_persist,
+                                                                     MetadataPasswordReader metadata_password_reader,
                                                                      RuntimeApply runtime_apply,
                                                                      SiteHealthVerifier site_health_verifier)
     : sites_(sites)
@@ -66,6 +67,7 @@ DatabaseCredentialRotationAdapter::DatabaseCredentialRotationAdapter(site::SiteM
     , logger_(logger)
     , password_generator_(std::move(password_generator))
     , metadata_persist_(std::move(metadata_persist))
+    , metadata_password_reader_(std::move(metadata_password_reader))
     , runtime_apply_(std::move(runtime_apply))
     , site_health_verifier_(std::move(site_health_verifier)) {
 }
@@ -292,9 +294,31 @@ DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::persist_
         return fail("database_not_found", "Database was not found for this site");
     }
     database->db_password = new_password;
-    if (metadata_persist_ && !metadata_persist_()) {
+    bool metadata_saved = true;
+    if (metadata_persist_) {
+        try {
+            metadata_saved = metadata_persist_();
+        } catch (...) {
+            metadata_saved = false;
+        }
+    }
+    if (!metadata_saved) {
         database->db_password = old_password;
         return fail("metadata_persist_failed", "Credential metadata persistence failed");
+    }
+    if (!metadata_password_reader_) {
+        database->db_password = old_password;
+        return fail("metadata_persist_unverified", "Credential metadata persistence could not be verified");
+    }
+    std::optional<std::string> stored_password;
+    try {
+        stored_password = metadata_password_reader_(request.database_id);
+    } catch (...) {
+        stored_password = std::nullopt;
+    }
+    if (!stored_password || *stored_password != new_password) {
+        database->db_password = old_password;
+        return fail("metadata_persist_unverified", "Credential metadata persistence could not be verified");
     }
     logger_.info("AUDIT", "WordPress credential rotation metadata persisted site=" + std::to_string(request.site_id) +
                             " database=" + std::to_string(request.database_id));
@@ -350,6 +374,18 @@ DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::verify_r
         return fail("database_not_found", "Database was not found for this site");
     }
     if (database->db_password != context->old_password) {
+        return fail("metadata_restore_mismatch", "Credential metadata does not match restored database credential");
+    }
+    if (!metadata_password_reader_) {
+        return fail("metadata_restore_unverified", "Credential metadata restore could not be verified");
+    }
+    std::optional<std::string> stored_password;
+    try {
+        stored_password = metadata_password_reader_(request.database_id);
+    } catch (...) {
+        stored_password = std::nullopt;
+    }
+    if (!stored_password || *stored_password != context->old_password) {
         return fail("metadata_restore_mismatch", "Credential metadata does not match restored database credential");
     }
     contexts_.erase(key(request));

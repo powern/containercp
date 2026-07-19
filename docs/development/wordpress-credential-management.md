@@ -78,6 +78,12 @@ The rotation saga mutates state only after preflight inspection and old-credenti
 
 If compensation cannot complete, the service reports `manual_recovery_required` with redacted diagnostics. Operators must then inspect the approved test site directly, compare MariaDB user state, WordPress config contents, and site runtime state, and restore the old known-good credential from approved secret sources. ContainerCP must not silently report success for partial rotations.
 
+## Metadata Atomicity
+
+Database metadata persistence is treated as a verified projection, not as an assumed transaction across MariaDB, the filesystem, and storage. After writing credential metadata, the rotation adapter reads the stored database record back and verifies that the persisted password matches the intended credential before reporting success.
+
+If metadata persistence fails or cannot be verified, the saga compensates MariaDB and `wp-config.php` back to the old credential. It reports `compensated` only when in-memory metadata and the stored database record both match the restored old credential. If storage was partially updated or cannot be read back consistently, the final state is `manual_recovery_required`.
+
 ## Secret Handling Rules
 
 The following values must never appear in API responses, CLI output, Web UI DOM/storage, URLs, logs, job messages, command argv, or diagnostic strings:

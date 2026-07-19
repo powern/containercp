@@ -57,6 +57,14 @@ ServiceRegistry::ServiceRegistry()
               storage_.save_databases(databases_.list());
               return true;
           },
+          [this](uint64_t database_id) -> std::optional<std::string> {
+              for (const auto& database : storage_.load_databases()) {
+                  if (database.id == database_id) {
+                      return database.db_password;
+                  }
+              }
+              return std::nullopt;
+          },
           [this](const site::Site& site_record) {
               const auto compose_dir = (std::filesystem::path(config_.sites_dir()) / site_record.domain).string();
               return runtime_action_executor_.restart_services(compose_dir, {"php"}).success;

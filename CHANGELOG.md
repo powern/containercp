@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Database — Harden metadata consistency verification
+
+**Summary:** Added WP-R2.2 metadata consistency hardening for WordPress credential rotation. Credential metadata is now treated as a verified storage projection rather than an assumed cross-resource transaction. The rotation adapter verifies storage read-back after metadata persistence before reporting success. During compensation, it verifies both in-memory metadata and the persisted database record match the restored old credential before reporting `compensated`; partial storage updates, thrown storage errors, or unverifiable storage return `manual_recovery_required`.
+
+**Files changed:** `libs/database/DatabaseCredentialRotationAdapter.h`, `libs/database/DatabaseCredentialRotationAdapter.cpp`, `libs/core/ServiceRegistry.cpp`, `tests/test_database_credential_rotation.cpp`, `docs/development/wordpress-credential-management.md`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Rollback success is now reported only after ContainerCP confirms MariaDB, WordPress config, runtime, in-memory metadata, and stored database metadata are consistent. Partial metadata writes no longer produce a misleading compensated result.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused tests passed for `*DatabaseCredentialRotation*` (`39` cases, `341` assertions), `*database*` (`63` cases, `546` assertions), and `*WordPress*` (`64` cases, `379` assertions). Full CTest (`1/1`) and `git diff --check` passed.
+
+**Known risks:** This does not make MariaDB, filesystem, and metadata updates a single durable transaction. It verifies the metadata projection before success/compensation and fails closed when consistency cannot be proven. Password transport breadth, shared-user assessment, site health semantics, temporary secret handling, and final validation remain in WP-R2.3 through WP-R2.7.
+
+---
+
 ## 2026-07-19 | `this commit` | Database — Harden post-mutation state detection
 
 **Summary:** Added WP-R2.1 production hardening for MariaDB password-change uncertainty. `DatabaseCredentialRotationService` no longer assumes a failed `ALTER USER` command means no mutation occurred. After a failed password-change command, it verifies both old and new credentials. If only the new password works, the saga treats the mutation as completed and continues so later failures can compensate. If only the old password works, the saga fails without compensation. If both or neither work, the saga returns `manual_recovery_required` because the actual credential state cannot be proven.
