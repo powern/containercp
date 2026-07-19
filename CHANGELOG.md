@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-19 | `PENDING` | Update — Install SQLite build dependency during updates
+## 2026-07-19 | `9b33697` | Update — Install SQLite build dependency during updates
 
 **Summary:** Updated `scripts/update.sh` so git-based updates install required build dependencies, including `libsqlite3-dev`, before running CMake. This prevents older installations from failing configuration after SQLite support is pulled.
 
