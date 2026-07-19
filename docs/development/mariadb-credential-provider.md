@@ -31,15 +31,16 @@ CONTAINERCP-MARIADB-FRAME-V1\n
 <defaults-bytes><sql-bytes>
 ```
 
-The old `--CONTAINERCP-SQL--` delimiter is no longer used and is explicitly rejected in credential transport values.
+The old `--CONTAINERCP-SQL--` delimiter is no longer used. Payload splitting is length-framed, so delimiter-like text inside a credential is data rather than syntax.
 
-Provider credential values are accepted only when they match the reviewed transport contract:
+Provider values are accepted only when they match the reviewed transport contract:
 
-- length: 1 to 256 bytes;
-- alphabet: `A-Z`, `a-z`, `0-9`, `_`, `-`, `.`, `@`, `%`, `:`, `$`;
-- rejected: newline, carriage return, NUL, tabs/control characters, `#`, `;`, `[section]`, leading/trailing spaces, `=`, backslash, quotes, legacy delimiter text, and overlong values.
+- MariaDB identity values (`User`, `Host`, client `user`, client `host`) must be 1 to 256 bytes and use `A-Z`, `a-z`, `0-9`, `_`, `-`, `.`, `@`, `%`, `:`, `$`.
+- Password values may be 0 to 256 bytes. Empty imported passwords are supported for verification and rollback.
+- Password values may contain spaces, quotes, backslashes, `#`, `;`, `=`, brackets, tabs, newlines, carriage returns, and non-ASCII bytes.
+- Password values reject NUL, unsupported control bytes, DEL, and overlong values because those cannot be represented safely across the MariaDB client option file and SQL literal paths.
 
-This validation applies independently to option-file credentials, target `User` + `Host` values, and SQL password literals before any secret bundle is written. Values outside the contract fail closed with a generic `credential_transport_invalid` error.
+Client option-file values are escaped before being written to the defaults payload. SQL password literals are escaped separately before `ALTER USER`. Values outside the contract fail closed with a generic `credential_transport_invalid` error before any secret bundle is written.
 
 Passwords are intentionally absent from:
 

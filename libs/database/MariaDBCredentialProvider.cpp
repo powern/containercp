@@ -187,11 +187,8 @@ bool write_protected_file(const fs::path& path, const std::string& content) {
     return ok;
 }
 
-bool is_safe_mariadb_transport_value(const std::string& value) {
+bool is_safe_mariadb_identity_value(const std::string& value) {
     if (value.empty() || value.size() > kMaxTransportValueLength) {
-        return false;
-    }
-    if (value.find("--CONTAINERCP-SQL--") != std::string::npos) {
         return false;
     }
     for (unsigned char c : value) {
@@ -204,12 +201,58 @@ bool is_safe_mariadb_transport_value(const std::string& value) {
     return true;
 }
 
+bool is_supported_mariadb_password_value(const std::string& value) {
+    if (value.size() > kMaxTransportValueLength) {
+        return false;
+    }
+    for (unsigned char c : value) {
+        if (c == '\0') {
+            return false;
+        }
+        if ((c < 0x20 && c != '\b' && c != '\t' && c != '\n' && c != '\r') || c == 0x7f) {
+            return false;
+        }
+    }
+    return true;
+}
+
 MariaDBCredentialResult transport_value_failure() {
     return failure("credential_transport_invalid", "MariaDB credential transport input is unsupported");
 }
 
 bool is_safe_identity(const MariaDBUserIdentity& identity) {
-    return is_safe_mariadb_transport_value(identity.user) && is_safe_mariadb_transport_value(identity.host);
+    return is_safe_mariadb_identity_value(identity.user) && is_safe_mariadb_identity_value(identity.host);
+}
+
+std::string mariadb_option_file_escape(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (unsigned char c : value) {
+        switch (c) {
+        case '\b':
+            escaped += "\\b";
+            break;
+        case '\t':
+            escaped += "\\t";
+            break;
+        case '\n':
+            escaped += "\\n";
+            break;
+        case '\r':
+            escaped += "\\r";
+            break;
+        case ' ':
+            escaped += "\\s";
+            break;
+        case '\\':
+            escaped += "\\\\";
+            break;
+        default:
+            escaped.push_back(static_cast<char>(c));
+            break;
+        }
+    }
+    return escaped;
 }
 
 fs::path make_bundle_path() {
@@ -223,7 +266,9 @@ std::string defaults_bundle(const std::string& user,
                             const std::string& password,
                             const std::string& host,
                             const std::string& sql) {
-    const std::string defaults = "[client]\nuser=" + user + "\npassword=" + password + "\nhost=" + host + "\n";
+    const std::string defaults = "[client]\nuser=" + mariadb_option_file_escape(user) +
+                                 "\npassword=" + mariadb_option_file_escape(password) +
+                                 "\nhost=" + mariadb_option_file_escape(host) + "\n";
     return "CONTAINERCP-MARIADB-FRAME-V1\n" + std::to_string(defaults.size()) + "\n" +
            std::to_string(sql.size()) + "\n" + defaults + sql;
 }
@@ -251,11 +296,38 @@ MariaDBCredentialProvider::MariaDBCredentialProvider(const MariaDBProcessRunner&
 
 std::string mariadb_quote_sql_string(const std::string& value) {
     std::string quoted = "'";
-    for (char c : value) {
-        if (c == '\\' || c == '\'') {
+    for (unsigned char c : value) {
+        switch (c) {
+        case '\0':
+            quoted += "\\0";
+            break;
+        case '\b':
+            quoted += "\\b";
+            break;
+        case '\n':
+            quoted += "\\n";
+            break;
+        case '\r':
+            quoted += "\\r";
+            break;
+        case '\t':
+            quoted += "\\t";
+            break;
+        case 26:
+            quoted += "\\Z";
+            break;
+        case '\\':
             quoted.push_back('\\');
+            quoted.push_back('\\');
+            break;
+        case '\'':
+            quoted.push_back('\\');
+            quoted.push_back('\'');
+            break;
+        default:
+            quoted.push_back(static_cast<char>(c));
+            break;
         }
-        quoted.push_back(c);
     }
     quoted.push_back('\'');
     return quoted;
@@ -293,9 +365,9 @@ MariaDBCredentialResult MariaDBCredentialProvider::execute_sql(const MariaDBConn
     if (target.compose_file.empty() || target.service.empty()) {
         return failure("target_invalid", "MariaDB target is incomplete");
     }
-    if (!is_safe_mariadb_transport_value(mysql_user) ||
-        !is_safe_mariadb_transport_value(mysql_password) ||
-        !is_safe_mariadb_transport_value(mysql_host)) {
+    if (!is_safe_mariadb_identity_value(mysql_user) ||
+        !is_supported_mariadb_password_value(mysql_password) ||
+        !is_safe_mariadb_identity_value(mysql_host)) {
         return transport_value_failure();
     }
 
@@ -334,7 +406,7 @@ MariaDBCredentialResult MariaDBCredentialProvider::change_password(const MariaDB
                                                                     const MariaDBAdminCredential& admin,
                                                                     const MariaDBUserIdentity& identity,
                                                                     const std::string& new_password) const {
-    if (!is_safe_identity(identity) || !is_safe_mariadb_transport_value(new_password)) {
+    if (!is_safe_identity(identity) || !is_supported_mariadb_password_value(new_password)) {
         return transport_value_failure();
     }
     return execute_sql(target, admin.user, admin.password, admin.host, alter_user_sql(identity, new_password), "password_changed");
@@ -344,7 +416,7 @@ MariaDBCredentialResult MariaDBCredentialProvider::restore_password(const MariaD
                                                                     const MariaDBAdminCredential& admin,
                                                                       const MariaDBUserIdentity& identity,
                                                                       const std::string& old_password) const {
-    if (!is_safe_identity(identity) || !is_safe_mariadb_transport_value(old_password)) {
+    if (!is_safe_identity(identity) || !is_supported_mariadb_password_value(old_password)) {
         return transport_value_failure();
     }
     return execute_sql(target, admin.user, admin.password, admin.host, alter_user_sql(identity, old_password), "password_restored");

@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <vector>
 
 using namespace containercp::database;
 using namespace containercp;
@@ -47,6 +48,29 @@ std::string shared_output(int exact, int username_identities, int other_hosts, i
            "schema_grants\t" + std::to_string(schema_grants) + "\n";
 }
 
+struct ParsedMariaDBBundle {
+    std::string defaults;
+    std::string sql;
+};
+
+ParsedMariaDBBundle parse_bundle(const std::string& content) {
+    std::istringstream stream(content);
+    std::string magic;
+    std::string conf_len_text;
+    std::string sql_len_text;
+    std::getline(stream, magic);
+    std::getline(stream, conf_len_text);
+    std::getline(stream, sql_len_text);
+    const auto conf_len = static_cast<std::size_t>(std::stoull(conf_len_text));
+    const auto sql_len = static_cast<std::size_t>(std::stoull(sql_len_text));
+    ParsedMariaDBBundle bundle;
+    bundle.defaults.resize(conf_len);
+    stream.read(bundle.defaults.data(), static_cast<std::streamsize>(conf_len));
+    bundle.sql.resize(sql_len);
+    stream.read(bundle.sql.data(), static_cast<std::streamsize>(sql_len));
+    return bundle;
+}
+
 } // namespace
 
 TEST_CASE("MariaDBCredentialProvider changes password without secret argv exposure") {
@@ -84,6 +108,56 @@ TEST_CASE("MariaDBCredentialProvider verifies target user password through stdin
     CHECK(runner.last_stdin_content.find("user=wp_user") != std::string::npos);
     CHECK(runner.last_stdin_content.find("password=current-secret") != std::string::npos);
     CHECK(runner.last_stdin_content.find("SELECT 1;") != std::string::npos);
+}
+
+TEST_CASE("MariaDBCredentialProvider accepts imported passwords through escaped option-file transport") {
+    FakeMariaDBRunner runner;
+    runner.result.exit_code = 0;
+    MariaDBCredentialProvider provider(runner);
+    std::string password = " leading #;=[]'\"\\\n\t\r";
+    password += "\xC3\xA9";
+
+    const auto result = provider.verify_password({"compose.yml", "mariadb"}, {"wp_user", "localhost"}, password);
+
+    CHECK(result.success);
+    CHECK(result.code == "verified");
+    const auto bundle = parse_bundle(runner.last_stdin_content);
+    CHECK(bundle.defaults.find("password=\\sleading") != std::string::npos);
+    CHECK(bundle.defaults.find("#;=[]'\"") != std::string::npos);
+    CHECK(bundle.defaults.find("\\\\") != std::string::npos);
+    CHECK(bundle.defaults.find("\\n") != std::string::npos);
+    CHECK(bundle.defaults.find("\\t") != std::string::npos);
+    CHECK(bundle.defaults.find("\\r") != std::string::npos);
+    CHECK(bundle.defaults.find("\xC3\xA9") != std::string::npos);
+    CHECK(bundle.sql == "SELECT 1;");
+    CHECK_FALSE(args_contain(runner.last_args, password));
+}
+
+TEST_CASE("MariaDBCredentialProvider supports empty imported passwords for verification") {
+    FakeMariaDBRunner runner;
+    runner.result.exit_code = 0;
+    MariaDBCredentialProvider provider(runner);
+
+    const auto result = provider.verify_password({"compose.yml", "mariadb"}, {"wp_user", "localhost"}, "");
+
+    CHECK(result.success);
+    const auto bundle = parse_bundle(runner.last_stdin_content);
+    CHECK(bundle.defaults.find("password=\n") != std::string::npos);
+}
+
+TEST_CASE("MariaDBCredentialProvider escapes imported passwords in ALTER USER SQL") {
+    FakeMariaDBRunner runner;
+    runner.result.exit_code = 0;
+    MariaDBCredentialProvider provider(runner);
+    const std::string password = "quote'back\\line\ncarriage\rtab\tsemi;space end";
+
+    const auto result = provider.change_password({"compose.yml", "mariadb"}, {"admin", "admin secret", "localhost"}, {"wp_user", "%"}, password);
+
+    CHECK(result.success);
+    const auto bundle = parse_bundle(runner.last_stdin_content);
+    CHECK(bundle.defaults.find("password=admin\\ssecret") != std::string::npos);
+    CHECK(bundle.sql.find("IDENTIFIED BY 'quote\\'back\\\\line\\ncarriage\\rtab\\tsemi;space end'") != std::string::npos);
+    CHECK_FALSE(args_contain(runner.last_args, password));
 }
 
 TEST_CASE("MariaDBCredentialProvider restores password with same safe command path") {
@@ -235,22 +309,11 @@ TEST_CASE("MariaDBCredentialProvider rejects incomplete target") {
     CHECK(runner.last_args.empty());
 }
 
-TEST_CASE("MariaDBCredentialProvider rejects unsafe transport values before writing secret files") {
+TEST_CASE("MariaDBCredentialProvider rejects technically unsupported password values before writing secret files") {
     const std::vector<std::string> invalid_passwords = {
-        "line\nbreak",
-        "carriage\rreturn",
         std::string("nul") + '\0' + "byte",
-        "tab\tchar",
-        "hash#comment",
-        "semi;colon",
-        "[section]",
-        " leading",
-        "trailing ",
-        "equals=value",
-        "back\\slash",
-        "quote'char",
-        "double\"quote",
-        "--CONTAINERCP-SQL--",
+        std::string("control") + '\x01' + "byte",
+        std::string("delete") + '\x7f' + "byte",
         std::string(300, 'a'),
     };
 

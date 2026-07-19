@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Database — Review production password transport
+
+**Summary:** Completed WP-R2.3 MariaDB password transport hardening for WordPress credential rotation. The provider keeps length-framed stdin transport but broadens password support for imported WordPress credentials by escaping MariaDB client option-file values and SQL password literals separately. Delimiter-like text is now data, not syntax. NUL, unsupported control bytes, DEL, and overlong passwords still fail closed before any secret file is written.
+
+**Files changed:** `libs/database/MariaDBCredentialProvider.cpp`, `tests/test_mariadb_credential_provider.cpp`, `docs/development/mariadb-credential-provider.md`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Credential rotation can now verify or restore imported MariaDB passwords containing common WordPress-safe characters such as spaces, quotes, backslashes, semicolons, hashes, equals signs, brackets, tabs, newlines, carriage returns, non-ASCII bytes, and empty old passwords. Passwords remain absent from command argv and provider failure messages.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused tests passed for `*MariaDBCredentialProvider*` (`16` cases, `104` assertions), `*DatabaseCredentialRotation*` (`39` cases, `341` assertions), `*database*` (`63` cases, `546` assertions), and `*WordPress*` (`64` cases, `379` assertions). Full CTest (`1/1`) and `git diff --check` passed.
+
+**Known risks:** This is repository/fake-runner validation only. Live MariaDB client parsing must still be confirmed in explicit operator-approved validation. Shared-user assessment, site health semantics, temporary secret handling, and final production-readiness validation remain in WP-R2.4 through WP-R2.7.
+
+---
+
 ## 2026-07-19 | `this commit` | Database — Harden metadata consistency verification
 
 **Summary:** Added WP-R2.2 metadata consistency hardening for WordPress credential rotation. Credential metadata is now treated as a verified storage projection rather than an assumed cross-resource transaction. The rotation adapter verifies storage read-back after metadata persistence before reporting success. During compensation, it verifies both in-memory metadata and the persisted database record match the restored old credential before reporting `compensated`; partial storage updates, thrown storage errors, or unverifiable storage return `manual_recovery_required`.
