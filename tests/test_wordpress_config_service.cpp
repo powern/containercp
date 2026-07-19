@@ -5,6 +5,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
 using namespace containercp::wordpress;
 using namespace containercp;
@@ -22,6 +23,13 @@ void write_service_file(const fs::path& path, const std::string& content) {
     fs::create_directories(path.parent_path());
     std::ofstream out(path);
     out << content;
+}
+
+std::string read_service_file(const fs::path& path) {
+    std::ifstream in(path);
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    return buffer.str();
 }
 
 } // namespace
@@ -124,4 +132,113 @@ TEST_CASE("WordPressConfigService rejects resolved site root escapes") {
     CHECK(result.code == "site_root_escape");
 
     fs::remove_all(root.parent_path());
+}
+
+TEST_CASE("WordPressConfigService public view redacts password and paths") {
+    site::SiteManager sites;
+    const uint64_t site_id = sites.create("public-view.test", "admin", 1);
+    const auto root = service_root("public_view");
+    write_service_file(root / "public-view.test" / "public" / "wp-config.php", R"PHP(<?php
+define('DB_NAME', 'wp_public');
+define('DB_USER', 'wp_user');
+define('DB_PASSWORD', 'do-not-expose');
+define('DB_HOST', 'mariadb');
+)PHP");
+
+    WordPressConfigService service(sites, root);
+    const auto result = service.inspect_site(site_id);
+    const auto view = service.public_view(result);
+
+    CHECK(view.available);
+    CHECK(view.site_id == site_id);
+    CHECK(view.domain == "public-view.test");
+    CHECK(view.status == "complete");
+    CHECK(view.source == "direct_constant");
+    CHECK(view.mutability == "mutable_direct_constant");
+    CHECK(view.db_name == "wp_public");
+    CHECK(view.db_user == "wp_user");
+    CHECK(view.db_host == "mariadb");
+    CHECK(view.db_password_present);
+    CHECK(view.db_name.find("do-not-expose") == std::string::npos);
+    CHECK(view.db_user.find("do-not-expose") == std::string::npos);
+    CHECK(view.db_host.find("do-not-expose") == std::string::npos);
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("WordPressConfigService inspection leaves config bytes unchanged") {
+    site::SiteManager sites;
+    const uint64_t site_id = sites.create("unchanged.test", "admin", 1);
+    const auto root = service_root("unchanged");
+    const auto config = root / "unchanged.test" / "public" / "wp-config.php";
+    const std::string content = R"PHP(<?php
+define('DB_NAME', 'wp_same');
+define('DB_USER', 'wp_user');
+define('DB_PASSWORD', 'secret');
+)PHP";
+    write_service_file(config, content);
+
+    WordPressConfigService service(sites, root);
+    const auto before = read_service_file(config);
+    const auto result = service.inspect_site(site_id);
+    const auto after = read_service_file(config);
+
+    CHECK(result.ok);
+    CHECK(before == content);
+    CHECK(after == before);
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("WordPressConfigService public view includes unsafe permission warning") {
+    site::SiteManager sites;
+    const uint64_t site_id = sites.create("permissions.test", "admin", 1);
+    const auto root = service_root("permissions");
+    const auto config = root / "permissions.test" / "public" / "wp-config.php";
+    write_service_file(config, R"PHP(<?php
+define('DB_NAME', 'wp_permissions');
+define('DB_USER', 'wp_user');
+define('DB_PASSWORD', 'secret');
+)PHP");
+    fs::permissions(config, fs::perms::owner_read | fs::perms::owner_write |
+                                fs::perms::group_read | fs::perms::others_read,
+                    fs::perm_options::replace);
+
+    WordPressConfigService service(sites, root);
+    const auto view = service.public_view(service.inspect_site(site_id));
+
+    bool found_warning = false;
+    for (const auto& issue : view.issues) {
+        if (issue.code == "unsafe_permissions" && issue.severity == WordPressConfigIssueSeverity::Warning) {
+            found_warning = true;
+        }
+        CHECK(issue.message.find(config.string()) == std::string::npos);
+    }
+    CHECK(found_warning);
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("WordPressConfigService public view preserves ambiguous status safely") {
+    site::SiteManager sites;
+    const uint64_t site_id = sites.create("ambiguous.test", "admin", 1);
+    const auto root = service_root("ambiguous");
+    write_service_file(root / "ambiguous.test" / "public" / "wp-config.php", R"PHP(<?php
+define('DB_NAME', 'wp_one');
+define('DB_NAME', 'wp_two');
+define('DB_USER', 'wp_user');
+define('DB_PASSWORD', 'secret');
+)PHP");
+
+    WordPressConfigService service(sites, root);
+    const auto view = service.public_view(service.inspect_site(site_id));
+
+    CHECK_FALSE(view.available);
+    CHECK(view.status == "ambiguous");
+    CHECK(view.mutability == "ambiguous");
+    CHECK(view.db_password_present);
+    REQUIRE_FALSE(view.issues.empty());
+    CHECK(view.issues[0].code == "duplicate_constant");
+
+    fs::remove_all(root);
 }

@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Add public-safe config inspection view
+
+**Summary:** Added the WP-2.2 public-safe WordPress config inspection projection. `WordPressConfigPublicView` exposes status/source/mutability, site id, domain, non-secret DB name/user/host, password presence, and sanitized issues only. It intentionally omits config paths, site roots, document roots, root passwords, option-file paths, and raw `DB_PASSWORD` values. The service now also records read-only unsafe-permission warnings for group/other-accessible `wp-config.php` files.
+
+**Files changed:** `libs/wordpress/WordPressConfigService.h`, `libs/wordpress/WordPressConfigService.cpp`, `tests/test_wordpress_config_service.cpp`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. The public view is an internal projection for future API/UI wiring and is not yet exposed through REST API, CLI, Web UI, migration, runtime, storage, or production site operations.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused WordPress tests passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`25` cases, `162` assertions), covering redaction, no path exposure, byte-for-byte no-change inspection, unsafe permission warnings, and ambiguous config state. Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** REST API and Web UI are not yet wired to this public view. Migration still uses its existing parser until WP-2.3.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Add read-only config inspection service
 
 **Summary:** Added `WordPressConfigService` for WP-2.1. The service resolves a site by id or domain, rejects `site_id=0`, confines the resolved site root to the configured sites directory, checks common document-root locations for an active `wp-config.php`, validates the candidate path through the detector safety helper, reads the file without mutation, and returns the detector inspection result.

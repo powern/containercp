@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace containercp::wordpress {
 
@@ -23,6 +24,20 @@ struct WordPressConfigServiceResult {
     WordPressConfigInspection inspection;
 };
 
+struct WordPressConfigPublicView {
+    bool available = false;
+    uint64_t site_id = 0;
+    std::string domain;
+    std::string status;
+    std::string source;
+    std::string mutability;
+    std::string db_name;
+    std::string db_user;
+    std::string db_host;
+    bool db_password_present = false;
+    std::vector<WordPressConfigIssue> issues;
+};
+
 class WordPressConfigService {
 public:
     explicit WordPressConfigService(site::SiteManager& sites);
@@ -30,6 +45,8 @@ public:
 
     WordPressConfigServiceResult inspect_site(uint64_t site_id) const;
     WordPressConfigServiceResult inspect_domain(const std::string& domain) const;
+
+    WordPressConfigPublicView public_view(const WordPressConfigServiceResult& result) const;
 
 private:
     WordPressConfigServiceResult inspect(const site::Site& site_record) const;

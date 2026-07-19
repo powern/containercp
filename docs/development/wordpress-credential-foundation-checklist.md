@@ -160,7 +160,7 @@ Commit message: `wordpress: add read-only config inspection service`.
 
 Result: Complete. Added `WordPressConfigService` with read-only inspection by site id and domain, explicit `site_id=0` rejection, site root resolution under the configured sites directory, document-root candidate resolution, safe active `wp-config.php` path validation through the detector helper, file read, and detector result return. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`21` test cases, `138` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`).
 
-### [ ] WP-2.2 Add public-safe redaction view
+### [x] WP-2.2 Add public-safe redaction view
 
 Objective: Provide a public-safe view suitable for API/UI use without exposing `DB_PASSWORD`.
 
@@ -175,6 +175,8 @@ Focused tests: redaction, byte-for-byte no-change, unsafe permissions warning, a
 Acceptance criteria: Public view contains source/mutability/status and non-secret values only.
 
 Commit message: `wordpress: add public-safe config inspection view`.
+
+Result: Complete. Added `WordPressConfigPublicView` and `WordPressConfigService::public_view()` with site id, domain, status/source/mutability strings, DB name/user/host, password-presence boolean, and redacted issues only. The public view contains no config path, site root, document root, raw password, root password, or option-file path. Added read-only unsafe-permission warnings and byte-for-byte no-change tests. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`25` test cases, `162` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`).
 
 ### [ ] WP-2.3 Refactor migration inspection to reuse detector
 

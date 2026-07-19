@@ -48,6 +48,23 @@ std::vector<fs::path> candidate_document_roots(const fs::path& site_root) {
     };
 }
 
+bool has_unsafe_permissions(const fs::path& path) {
+    std::error_code ec;
+    const auto permissions = fs::symlink_status(path, ec).permissions();
+    if (ec) {
+        return false;
+    }
+    using fs::perms;
+    return (permissions & (perms::group_read | perms::group_write | perms::group_exec |
+                           perms::others_read | perms::others_write | perms::others_exec)) != perms::none;
+}
+
+void add_permission_warning(WordPressConfigInspection& inspection) {
+    inspection.issues.push_back({WordPressConfigIssueSeverity::Warning,
+                                 "unsafe_permissions",
+                                 "WordPress config file is accessible by group or other users"});
+}
+
 } // namespace
 
 WordPressConfigService::WordPressConfigService(site::SiteManager& sites)
@@ -171,6 +188,9 @@ WordPressConfigServiceResult WordPressConfigService::inspect(const site::Site& s
         result.document_root = document_root;
         result.config_path = safety.config_path;
         result.inspection = detector_.inspect_content(content);
+        if (has_unsafe_permissions(safety.config_path)) {
+            add_permission_warning(result.inspection);
+        }
         result.status = result.inspection.status;
         result.ok = result.inspection.status == WordPressCredentialStatus::Complete;
         if (!result.ok) {
@@ -187,6 +207,28 @@ WordPressConfigServiceResult WordPressConfigService::inspect(const site::Site& s
         result.config_path = last_missing.config_path;
     }
     return result;
+}
+
+WordPressConfigPublicView WordPressConfigService::public_view(const WordPressConfigServiceResult& result) const {
+    WordPressConfigPublicView view;
+    view.available = result.ok;
+    view.site_id = result.site_id;
+    view.domain = result.domain;
+    view.status = credential_status_to_string(result.status);
+    view.source = credential_source_to_string(result.inspection.source);
+    view.mutability = credential_mutability_to_string(result.inspection.mutability);
+
+    const auto safe_inspection = result.inspection.public_safe();
+    view.db_name = safe_inspection.credentials.db_name.public_display_value();
+    view.db_user = safe_inspection.credentials.db_user.public_display_value();
+    view.db_host = safe_inspection.credentials.db_host.public_display_value();
+    view.db_password_present = safe_inspection.credentials.db_password.state == WordPressCredentialValueState::Redacted;
+    view.issues = safe_inspection.issues;
+
+    if (!result.ok && view.issues.empty() && !result.code.empty()) {
+        view.issues.push_back({WordPressConfigIssueSeverity::Error, result.code, result.message});
+    }
+    return view;
 }
 
 } // namespace containercp::wordpress
