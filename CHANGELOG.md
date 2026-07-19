@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Database — Harden temporary secret handling
+
+**Summary:** Completed WP-R2.6 temporary secret file hardening for the MariaDB credential provider. Host-side secret bundle paths now use `mkstemp` instead of a process-local static counter, and provider cleanup uses RAII unlinking after command execution or exceptional exits.
+
+**Files changed:** `libs/database/MariaDBCredentialProvider.cpp`, `tests/test_mariadb_credential_provider.cpp`, `docs/development/mariadb-credential-provider.md`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No API/CLI/UI behavior change. Credential provider temporary secret files are less predictable, safe for concurrent operations, and still removed after use. Passwords remain absent from command argv and provider failure messages.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused tests passed for `*MariaDBCredentialProvider*` (`17` cases, `115` assertions), `*DatabaseCredentialRotation*` (`41` cases, `357` assertions), `*database*` (`65` cases, `562` assertions), and `*WordPress*` (`64` cases, `379` assertions). Full CTest (`1/1`) and `git diff --check` passed.
+
+**Known risks:** This does not remove plaintext database credentials from existing metadata or site `.env` projections. Final production-readiness validation remains in WP-R2.7.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Clarify site health verification
 
 **Summary:** Completed WP-R2.5 site-health semantics clarification for WordPress credential rotation. The rotation stage now uses runtime container availability wording because the concrete check verifies that the selected site's `php` and `mariadb` services are `Running` through `SiteRuntimeManager`; it does not perform HTTP/application health checks.

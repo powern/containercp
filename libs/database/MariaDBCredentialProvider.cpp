@@ -8,6 +8,7 @@
 #include <sstream>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 namespace containercp::database {
 namespace {
@@ -155,9 +156,33 @@ MariaDBSharedCredentialAssessment assess_from_facts(const MariaDBUserIdentity& i
     return assessment;
 }
 
-bool write_protected_file(const fs::path& path, const std::string& content) {
-    const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, S_IRUSR | S_IWUSR);
+struct TempSecretFileCleanup {
+    fs::path path;
+    ~TempSecretFileCleanup() {
+        if (!path.empty()) {
+            (void)::unlink(path.c_str());
+        }
+    }
+};
+
+bool write_protected_temp_file(const std::string& content, fs::path& path) {
+    std::string path_template;
+    try {
+        path_template = (fs::temp_directory_path() / "containercp-mariadb-credentials-XXXXXX").string();
+    } catch (...) {
+        return false;
+    }
+    std::vector<char> path_buffer(path_template.begin(), path_template.end());
+    path_buffer.push_back('\0');
+    const int fd = ::mkstemp(path_buffer.data());
     if (fd < 0) {
+        return false;
+    }
+    path = path_buffer.data();
+    if (::fchmod(fd, S_IRUSR | S_IWUSR) != 0) {
+        (void)::close(fd);
+        (void)::unlink(path.c_str());
+        path.clear();
         return false;
     }
     const char* data = content.data();
@@ -170,11 +195,13 @@ bool write_protected_file(const fs::path& path, const std::string& content) {
             }
             (void)::close(fd);
             (void)::unlink(path.c_str());
+            path.clear();
             return false;
         }
         if (written == 0) {
             (void)::close(fd);
             (void)::unlink(path.c_str());
+            path.clear();
             return false;
         }
         data += written;
@@ -183,6 +210,7 @@ bool write_protected_file(const fs::path& path, const std::string& content) {
     const bool ok = ::fsync(fd) == 0 && ::close(fd) == 0;
     if (!ok) {
         (void)::unlink(path.c_str());
+        path.clear();
     }
     return ok;
 }
@@ -253,13 +281,6 @@ std::string mariadb_option_file_escape(const std::string& value) {
         }
     }
     return escaped;
-}
-
-fs::path make_bundle_path() {
-    static unsigned long counter = 0;
-    ++counter;
-    return fs::temp_directory_path() /
-           ("containercp-mariadb-credentials-" + std::to_string(::getpid()) + "-" + std::to_string(counter));
 }
 
 std::string defaults_bundle(const std::string& user,
@@ -371,10 +392,11 @@ MariaDBCredentialResult MariaDBCredentialProvider::execute_sql(const MariaDBConn
         return transport_value_failure();
     }
 
-    const fs::path bundle_path = make_bundle_path();
-    if (!write_protected_file(bundle_path, defaults_bundle(mysql_user, mysql_password, mysql_host, sql))) {
+    fs::path bundle_path;
+    if (!write_protected_temp_file(defaults_bundle(mysql_user, mysql_password, mysql_host, sql), bundle_path)) {
         return failure("secret_transport_failed", "MariaDB credential transport could not be prepared");
     }
+    TempSecretFileCleanup cleanup{bundle_path};
 
     const std::vector<std::string> args = {
         "docker", "compose", "-f", target.compose_file,
@@ -383,7 +405,6 @@ MariaDBCredentialResult MariaDBCredentialProvider::execute_sql(const MariaDBConn
     };
 
     const auto command = runner_.run_with_stdin_file(args, bundle_path.string());
-    (void)::unlink(bundle_path.c_str());
     if (command_out != nullptr) {
         *command_out = command;
     }

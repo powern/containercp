@@ -4,7 +4,11 @@
 
 #include <filesystem>
 #include <fstream>
+#include <atomic>
+#include <mutex>
+#include <set>
 #include <sstream>
+#include <thread>
 #include <vector>
 
 using namespace containercp::database;
@@ -17,17 +21,21 @@ struct FakeMariaDBRunner : MariaDBProcessRunner {
     mutable std::vector<std::string> last_args;
     mutable std::string last_stdin_file;
     mutable std::string last_stdin_content;
+    mutable std::vector<std::string> stdin_files;
+    mutable std::mutex mutex;
 
     runtime::CommandResult run_with_stdin_file(const std::vector<std::string>& args,
                                                const std::string& stdin_file,
                                                const std::string& workdir = "") const override {
         (void)workdir;
-        last_args = args;
-        last_stdin_file = stdin_file;
         std::ifstream in(stdin_file, std::ios::binary);
         std::ostringstream buffer;
         buffer << in.rdbuf();
+        std::lock_guard<std::mutex> guard(mutex);
+        last_args = args;
+        last_stdin_file = stdin_file;
         last_stdin_content = buffer.str();
+        stdin_files.push_back(stdin_file);
         return result;
     }
 };
@@ -186,6 +194,38 @@ TEST_CASE("MariaDBCredentialProvider redacts command failures") {
     CHECK(result.message.find("new-secret") == std::string::npos);
     CHECK(result.message.find("admin-secret") == std::string::npos);
     CHECK_FALSE(std::filesystem::exists(runner.last_stdin_file));
+}
+
+TEST_CASE("MariaDBCredentialProvider uses unique temporary secret files for concurrent operations") {
+    FakeMariaDBRunner runner;
+    runner.result.exit_code = 0;
+    MariaDBCredentialProvider provider(runner);
+    std::atomic<int> successes{0};
+
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 8; ++i) {
+        threads.emplace_back([&provider, &successes, i]() {
+            const auto result = provider.verify_password({"compose.yml", "mariadb"}, {"wp_user", "localhost"}, "secret-" + std::to_string(i));
+            if (result.success) {
+                ++successes;
+            }
+        });
+    }
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    std::set<std::string> unique_paths;
+    CHECK(successes == 8);
+    {
+        std::lock_guard<std::mutex> guard(runner.mutex);
+        REQUIRE(runner.stdin_files.size() == 8);
+        unique_paths.insert(runner.stdin_files.begin(), runner.stdin_files.end());
+    }
+    CHECK(unique_paths.size() == 8);
+    for (const auto& path : unique_paths) {
+        CHECK_FALSE(std::filesystem::exists(path));
+    }
 }
 
 TEST_CASE("MariaDBCredentialProvider assesses one exact non-shared user host") {

@@ -674,11 +674,13 @@ Suggested commit: `wordpress: clarify site health verification`.
 
 Result: Complete. Clarified that the rotation stage previously described as site health verifies runtime container availability only: the selected site's `php` and `mariadb` services must be reported as `Running` by `SiteRuntimeManager`. It does not perform HTTP, front-end, login, plugin/theme, or end-user application health checks. Runtime/job event wording now uses `verifying_runtime_availability` and “runtime container availability”; adapter success/failure codes now use `runtime_availability_verified` and `runtime_availability_verification_failed`. Documentation now records that separate HTTP/application validation is still required before live enablement. Validation passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings, `*DatabaseCredentialRotation*` (`41` cases, `357` assertions), `*database*` (`65` cases, `562` assertions), `*WordPress*` (`64` cases, `379` assertions), `*API*` (`18` cases, `73` assertions), full CTest (`1/1`), `node --check web/app.js`, and `git diff --check`.
 
-### [ ] WP-R2.6 Review temporary secret files
+### [x] WP-R2.6 Review temporary secret files
 
 Objective: Review temporary secret bundle filename generation, cleanup, and concurrent execution; make generation thread-safe if necessary.
 
 Suggested commit: `database: harden temporary secret handling`.
+
+Result: Complete. Replaced the process-local static-counter host secret bundle path with `mkstemp`, which creates an OS-selected unique `0600` file. Added RAII cleanup so host-side secret bundles are unlinked after command execution and during exceptional exits from the provider call. Existing in-container cleanup remains trap-based. Tests verify no secret argv exposure, host-side cleanup after success/failure, and unique temporary secret files across concurrent provider operations. Validation passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings, `*MariaDBCredentialProvider*` (`17` cases, `115` assertions), `*DatabaseCredentialRotation*` (`41` cases, `357` assertions), `*database*` (`65` cases, `562` assertions), `*WordPress*` (`64` cases, `379` assertions), full CTest (`1/1`), and `git diff --check`.
 
 ### [ ] WP-R2.7 Final validation
 

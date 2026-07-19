@@ -22,6 +22,8 @@ The provider writes a protected host-side stdin bundle with mode `0600`, passes 
 - runs `mariadb --batch --raw --skip-column-names --defaults-extra-file=<temp-client-file> < <temp-sql-file>`;
 - removes the temporary directory through `trap` cleanup.
 
+Host-side bundle paths are created with `mkstemp` using an OS-selected unique filename and are unlinked by RAII cleanup after command execution, including exceptional exits from the provider call. The path generator does not use a process-local counter and is safe for concurrent provider operations.
+
 The framed host payload format is:
 
 ```text
