@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-19 | `TBD` | Bug Fix — Keep SQLite migration staging on target filesystem
+## 2026-07-19 | `a6ea3c9` | Bug Fix — Keep SQLite migration staging on target filesystem
 
 **Summary:** Fixed SQLite migration publishing when `/tmp` and `/srv/containercp/database` are on different filesystems. Migration staging now happens in a hidden directory next to the target SQLite database, so final publication can use atomic rename without failing with `Invalid cross-device link`.
 
