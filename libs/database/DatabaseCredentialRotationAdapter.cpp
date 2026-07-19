@@ -178,7 +178,32 @@ DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::assess_s
     std::lock_guard<std::mutex> guard(mutex_);
     auto* context = context_for(request);
     if (context == nullptr) return fail("rotation_context_missing", "Credential rotation context is missing");
+
+    int metadata_reference_count = 0;
+    bool exact_metadata_reference = false;
+    for (const auto& database : databases_.list()) {
+        if (database.site_id != context->site_id || database.db_user != context->mariadb_identity.user) {
+            continue;
+        }
+        ++metadata_reference_count;
+        if (database.id == context->database_id) {
+            exact_metadata_reference = true;
+        }
+    }
+    if (metadata_reference_count != 1 || !exact_metadata_reference) {
+        DatabaseCredentialRotationStepResult result;
+        result.success = true;
+        result.code = "shared_user_assessed";
+        result.message = "Shared credential risk assessed";
+        result.shared_assessment.identity = context->mariadb_identity;
+        result.shared_assessment.state = MariaDBSharedCredentialAssessmentState::MetadataConflict;
+        result.shared_assessment.metadata_reference_count = metadata_reference_count;
+        contexts_.erase(key(request));
+        return result;
+    }
+
     auto provider_result = mariadb_provider_.detect_shared_user(context->mariadb_target, context->mariadb_admin, context->mariadb_identity);
+    provider_result.shared_assessment.metadata_reference_count = metadata_reference_count;
     DatabaseCredentialRotationStepResult result;
     result.success = provider_result.success;
     result.code = provider_result.success ? "shared_user_assessed" : provider_result.code;

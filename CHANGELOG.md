@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Database — Harden shared credential assessment
+
+**Summary:** Completed WP-R2.4 shared-user assessment hardening for WordPress credential rotation. The concrete rotation adapter now fails closed on same-site ContainerCP metadata disagreement before the live MariaDB shared-user query. If more than one database metadata record in the same site references the target MariaDB user, the adapter returns `metadata_conflict`, clears the pre-mutation context, and blocks rotation before password generation.
+
+**Files changed:** `libs/database/DatabaseCredentialRotationAdapter.cpp`, `tests/test_database_credential_rotation.cpp`, `docs/development/mariadb-credential-provider.md`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Rotations now block earlier when same-site ContainerCP metadata indicates the target MariaDB user may be referenced by more than the requested database. Missing identity, shared identity, multiple-host identity, unknown provider state, malformed provider output, and metadata conflict all fail closed before mutation.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused tests passed for `*DatabaseCredentialRotation*` (`41` cases, `354` assertions), `*MariaDBCredentialProvider*` (`16` cases, `104` assertions), `*database*` (`65` cases, `559` assertions), and `*WordPress*` (`64` cases, `379` assertions). Full CTest (`1/1`) and `git diff --check` passed.
+
+**Known risks:** This remains repository/fake-runner validation only. It does not perform live MariaDB inspection and assumes the one-site/one-database architecture. Site health semantics, temporary secret handling, and final production-readiness validation remain in WP-R2.5 through WP-R2.7.
+
+---
+
 ## 2026-07-19 | `this commit` | Database — Review production password transport
 
 **Summary:** Completed WP-R2.3 MariaDB password transport hardening for WordPress credential rotation. The provider keeps length-framed stdin transport but broadens password support for imported WordPress credentials by escaping MariaDB client option-file values and SQL password literals separately. Delimiter-like text is now data, not syntax. NUL, unsupported control bytes, DEL, and overlong passwords still fail closed before any secret file is written.

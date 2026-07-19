@@ -953,6 +953,42 @@ TEST_CASE("DatabaseCredentialRotationAdapter clears pre-mutation context when sh
     CHECK(stale_context_check.code == "rotation_context_missing");
 }
 
+TEST_CASE("DatabaseCredentialRotationAdapter blocks duplicate metadata references before shared-user query") {
+    AdapterFixture fixture("metadata_shared_user_conflict");
+    fixture.databases.create("other_db", "wp_user", "otherpass", 1, 1);
+    auto adapter = fixture.make_adapter();
+    DatabaseCredentialRotationService service(adapter);
+
+    const DatabaseCredentialRotationRequest request{1, 1, "example.test"};
+    const auto result = service.rotate(request);
+
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "shared_user_assessment_metadata_conflict");
+    CHECK(fixture.mariadb_runner.sql_statements.size() == 1);
+    CHECK(fixture.mariadb_runner.sql_statements.front().find("SELECT 1;") != std::string::npos);
+    CHECK_FALSE(fixture.runtime_applied);
+    CHECK_FALSE(fixture.metadata_persisted);
+    const auto stale_context_check = adapter.verify_old_credential(request);
+    CHECK_FALSE(stale_context_check.success);
+    CHECK(stale_context_check.code == "rotation_context_missing");
+}
+
+TEST_CASE("DatabaseCredentialRotationAdapter allows same database user in another site container") {
+    AdapterFixture fixture("metadata_same_user_other_site");
+    const auto other_site = fixture.sites.create("other.test", "admin", 1, "nginx");
+    fixture.databases.create("other_db", "wp_user", "otherpass", 1, other_site);
+    auto adapter = fixture.make_adapter();
+    DatabaseCredentialRotationService service(adapter);
+
+    const auto result = service.rotate({1, 1, "example.test"});
+
+    CHECK(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::Completed);
+    CHECK(fixture.metadata_persisted);
+    REQUIRE(fixture.databases.find(1) != nullptr);
+    CHECK(fixture.databases.find(1)->db_password == "newpass");
+}
+
 TEST_CASE("DatabaseCredentialRotationJobService queues pending job without exposing secrets") {
     site::SiteManager sites;
     DatabaseManager databases;
