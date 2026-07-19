@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Database — Harden MariaDB secret transport
+
+**Summary:** Added WP-R3 hardening for MariaDB credential transport. The provider now sends a length-framed `CONTAINERCP-MARIADB-FRAME-V1` stdin payload instead of splitting a combined stream with the legacy `--CONTAINERCP-SQL--` delimiter. The in-container script writes separate protected defaults and SQL files using explicit byte lengths. Provider inputs are validated before any secret file is written using a strict 1-256 byte safe alphabet for option-file credentials, target `User` + `Host`, and SQL password literals. Newline, carriage return, NUL, tabs/control characters, option-file metacharacters, SQL delimiter text, spaces, equals, backslash, quotes, and overlong values fail closed with redacted diagnostics.
+
+**Files changed:** `libs/database/MariaDBCredentialProvider.cpp`, `tests/test_mariadb_credential_provider.cpp`, `docs/development/mariadb-credential-provider.md`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No live rotation is enabled. Future MariaDB credential operations now reject unsupported credential characters before command execution instead of risking option-file, SQL, or delimiter confusion.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused tests passed for `*MariaDBCredentialProvider*` (`13` cases, `142` assertions), `*DatabaseCredentialRotation*` (`22` cases, `152` assertions), `*database*` (`44` cases, `344` assertions), `*WordPress*` (`58` cases, `344` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** The safe transport contract intentionally rejects imported credentials containing characters outside the reviewed alphabet; those sites will fail closed until a future protocol/prepared-statement provider supports a broader password set. Full centralized product-wide password generation policy remains part of later live dependency wiring and documentation consistency work.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Preserve valid system site identity
 
 **Summary:** Added WP-R2 `site_id=0` semantic fixes for WordPress credential operations. WordPress config inspection now resolves `site_id=0` through the site manager instead of rejecting it by numeric value; resolved system-site records without WordPress return `wordpress_not_detected`. Domain inspection no longer rejects a resolved site just because its id is `0`. Rotation and queue services no longer reject `site_id=0` before resource/dependency checks. The WordPress credential API now parses numeric identifiers strictly so literal `0` is distinct from missing, negative, or malformed IDs.

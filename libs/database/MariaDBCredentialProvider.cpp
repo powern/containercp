@@ -18,9 +18,16 @@ constexpr const char* kContainerScript =
     "tmpd=$(mktemp -d); "
     "trap 'rm -rf \"$tmpd\"' EXIT HUP INT TERM; "
     "conf=\"$tmpd/client.cnf\"; sql=\"$tmpd/query.sql\"; "
-    "awk 'BEGIN{part=\"conf\"} /^--CONTAINERCP-SQL--$/{part=\"sql\"; next} {if(part==\"conf\") print > c; else print > s}' c=\"$conf\" s=\"$sql\"; "
+    "IFS= read -r magic; [ \"$magic\" = CONTAINERCP-MARIADB-FRAME-V1 ]; "
+    "IFS= read -r conf_len; IFS= read -r sql_len; "
+    "case \"$conf_len\" in (''|*[!0-9]*) exit 64;; esac; "
+    "case \"$sql_len\" in (''|*[!0-9]*) exit 64;; esac; "
+    "dd bs=1 count=\"$conf_len\" of=\"$conf\" status=none; "
+    "dd bs=1 count=\"$sql_len\" of=\"$sql\" status=none; "
     "chmod 600 \"$conf\" \"$sql\"; "
     "mariadb --batch --raw --skip-column-names --defaults-extra-file=\"$conf\" < \"$sql\"";
+
+constexpr std::size_t kMaxTransportValueLength = 256;
 
 struct SharedUserFacts {
     int exact_identity = -1;
@@ -180,6 +187,31 @@ bool write_protected_file(const fs::path& path, const std::string& content) {
     return ok;
 }
 
+bool is_safe_mariadb_transport_value(const std::string& value) {
+    if (value.empty() || value.size() > kMaxTransportValueLength) {
+        return false;
+    }
+    if (value.find("--CONTAINERCP-SQL--") != std::string::npos) {
+        return false;
+    }
+    for (unsigned char c : value) {
+        const bool alpha_num = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+        const bool punctuation = c == '_' || c == '-' || c == '.' || c == '@' || c == '%' || c == ':' || c == '$';
+        if (!alpha_num && !punctuation) {
+            return false;
+        }
+    }
+    return true;
+}
+
+MariaDBCredentialResult transport_value_failure() {
+    return failure("credential_transport_invalid", "MariaDB credential transport input is unsupported");
+}
+
+bool is_safe_identity(const MariaDBUserIdentity& identity) {
+    return is_safe_mariadb_transport_value(identity.user) && is_safe_mariadb_transport_value(identity.host);
+}
+
 fs::path make_bundle_path() {
     static unsigned long counter = 0;
     ++counter;
@@ -191,8 +223,9 @@ std::string defaults_bundle(const std::string& user,
                             const std::string& password,
                             const std::string& host,
                             const std::string& sql) {
-    return "[client]\nuser=" + user + "\npassword=" + password + "\nhost=" + host +
-           "\n--CONTAINERCP-SQL--\n" + sql + "\n";
+    const std::string defaults = "[client]\nuser=" + user + "\npassword=" + password + "\nhost=" + host + "\n";
+    return "CONTAINERCP-MARIADB-FRAME-V1\n" + std::to_string(defaults.size()) + "\n" +
+           std::to_string(sql.size()) + "\n" + defaults + sql;
 }
 
 std::string alter_user_sql(const MariaDBUserIdentity& identity, const std::string& password) {
@@ -260,8 +293,10 @@ MariaDBCredentialResult MariaDBCredentialProvider::execute_sql(const MariaDBConn
     if (target.compose_file.empty() || target.service.empty()) {
         return failure("target_invalid", "MariaDB target is incomplete");
     }
-    if (mysql_user.empty()) {
-        return failure("credential_invalid", "MariaDB credential is incomplete");
+    if (!is_safe_mariadb_transport_value(mysql_user) ||
+        !is_safe_mariadb_transport_value(mysql_password) ||
+        !is_safe_mariadb_transport_value(mysql_host)) {
+        return transport_value_failure();
     }
 
     const fs::path bundle_path = make_bundle_path();
@@ -287,28 +322,44 @@ MariaDBCredentialResult MariaDBCredentialProvider::execute_sql(const MariaDBConn
 }
 
 MariaDBCredentialResult MariaDBCredentialProvider::verify_password(const MariaDBConnectionTarget& target,
-                                                                   const MariaDBUserIdentity& identity,
-                                                                   const std::string& password) const {
+                                                                    const MariaDBUserIdentity& identity,
+                                                                    const std::string& password) const {
+    if (!is_safe_identity(identity)) {
+        return transport_value_failure();
+    }
     return execute_sql(target, identity.user, password, "localhost", "SELECT 1;", "verified");
 }
 
 MariaDBCredentialResult MariaDBCredentialProvider::change_password(const MariaDBConnectionTarget& target,
-                                                                   const MariaDBAdminCredential& admin,
-                                                                   const MariaDBUserIdentity& identity,
-                                                                   const std::string& new_password) const {
+                                                                    const MariaDBAdminCredential& admin,
+                                                                    const MariaDBUserIdentity& identity,
+                                                                    const std::string& new_password) const {
+    if (!is_safe_identity(identity) || !is_safe_mariadb_transport_value(new_password)) {
+        return transport_value_failure();
+    }
     return execute_sql(target, admin.user, admin.password, admin.host, alter_user_sql(identity, new_password), "password_changed");
 }
 
 MariaDBCredentialResult MariaDBCredentialProvider::restore_password(const MariaDBConnectionTarget& target,
                                                                     const MariaDBAdminCredential& admin,
-                                                                    const MariaDBUserIdentity& identity,
-                                                                    const std::string& old_password) const {
+                                                                      const MariaDBUserIdentity& identity,
+                                                                      const std::string& old_password) const {
+    if (!is_safe_identity(identity) || !is_safe_mariadb_transport_value(old_password)) {
+        return transport_value_failure();
+    }
     return execute_sql(target, admin.user, admin.password, admin.host, alter_user_sql(identity, old_password), "password_restored");
 }
 
 MariaDBCredentialResult MariaDBCredentialProvider::detect_shared_user(const MariaDBConnectionTarget& target,
-                                                                      const MariaDBAdminCredential& admin,
-                                                                      const MariaDBUserIdentity& identity) const {
+                                                                       const MariaDBAdminCredential& admin,
+                                                                       const MariaDBUserIdentity& identity) const {
+    if (!is_safe_identity(identity)) {
+        auto result = transport_value_failure();
+        result.shared_assessment.identity = identity;
+        result.shared_assessment.state = MariaDBSharedCredentialAssessmentState::Unknown;
+        result.shared_user = true;
+        return result;
+    }
     const std::string quoted_user = mariadb_quote_sql_string(identity.user);
     const std::string quoted_host = mariadb_quote_sql_string(identity.host);
     const std::string sql =

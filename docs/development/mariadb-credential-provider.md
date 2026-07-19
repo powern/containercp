@@ -16,10 +16,30 @@
 The provider writes a protected host-side stdin bundle with mode `0600`, passes it through `CommandExecutor::run_with_stdin_file()`, and runs a fixed in-container script that:
 
 - creates a private temporary directory;
-- splits stdin into a MariaDB defaults file and SQL file;
+- reads a length-framed `CONTAINERCP-MARIADB-FRAME-V1` payload;
+- splits the framed payload into separate MariaDB defaults and SQL files without delimiter parsing;
 - sets both files to `0600`;
-- runs `mariadb --defaults-extra-file=<temp-client-file> < <temp-sql-file>`;
+- runs `mariadb --batch --raw --skip-column-names --defaults-extra-file=<temp-client-file> < <temp-sql-file>`;
 - removes the temporary directory through `trap` cleanup.
+
+The framed host payload format is:
+
+```text
+CONTAINERCP-MARIADB-FRAME-V1\n
+<defaults-byte-length>\n
+<sql-byte-length>\n
+<defaults-bytes><sql-bytes>
+```
+
+The old `--CONTAINERCP-SQL--` delimiter is no longer used and is explicitly rejected in credential transport values.
+
+Provider credential values are accepted only when they match the reviewed transport contract:
+
+- length: 1 to 256 bytes;
+- alphabet: `A-Z`, `a-z`, `0-9`, `_`, `-`, `.`, `@`, `%`, `:`, `$`;
+- rejected: newline, carriage return, NUL, tabs/control characters, `#`, `;`, `[section]`, leading/trailing spaces, `=`, backslash, quotes, legacy delimiter text, and overlong values.
+
+This validation applies independently to option-file credentials, target `User` + `Host` values, and SQL password literals before any secret bundle is written. Values outside the contract fail closed with a generic `credential_transport_invalid` error.
 
 Passwords are intentionally absent from:
 

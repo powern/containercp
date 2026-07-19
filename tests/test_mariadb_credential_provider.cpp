@@ -58,14 +58,16 @@ TEST_CASE("MariaDBCredentialProvider changes password without secret argv exposu
         {"/srv/containercp/sites/example.com/docker-compose.yml", "mariadb"},
         {"ccp_admin", "admin$secret", "localhost"},
         {"wp_user", "%"},
-        "new'p\\ass$word");
+        "new.Pass-123$word");
 
     CHECK(result.success);
     CHECK(result.code == "password_changed");
     CHECK_FALSE(args_contain(runner.last_args, "admin$secret"));
-    CHECK_FALSE(args_contain(runner.last_args, "new'p"));
+    CHECK_FALSE(args_contain(runner.last_args, "new.Pass-123"));
+    CHECK(runner.last_stdin_content.find("CONTAINERCP-MARIADB-FRAME-V1\n") == 0);
     CHECK(runner.last_stdin_content.find("password=admin$secret") != std::string::npos);
-    CHECK(runner.last_stdin_content.find("ALTER USER 'wp_user'@'%' IDENTIFIED BY 'new\\'p\\\\ass$word'") != std::string::npos);
+    CHECK(runner.last_stdin_content.find("--CONTAINERCP-SQL--") == std::string::npos);
+    CHECK(runner.last_stdin_content.find("ALTER USER 'wp_user'@'%' IDENTIFIED BY 'new.Pass-123$word'") != std::string::npos);
     CHECK_FALSE(std::filesystem::exists(runner.last_stdin_file));
 }
 
@@ -231,4 +233,38 @@ TEST_CASE("MariaDBCredentialProvider rejects incomplete target") {
     CHECK_FALSE(result.success);
     CHECK(result.code == "target_invalid");
     CHECK(runner.last_args.empty());
+}
+
+TEST_CASE("MariaDBCredentialProvider rejects unsafe transport values before writing secret files") {
+    const std::vector<std::string> invalid_passwords = {
+        "line\nbreak",
+        "carriage\rreturn",
+        std::string("nul") + '\0' + "byte",
+        "tab\tchar",
+        "hash#comment",
+        "semi;colon",
+        "[section]",
+        " leading",
+        "trailing ",
+        "equals=value",
+        "back\\slash",
+        "quote'char",
+        "double\"quote",
+        "--CONTAINERCP-SQL--",
+        std::string(300, 'a'),
+    };
+
+    for (const auto& password : invalid_passwords) {
+        FakeMariaDBRunner runner;
+        runner.result.exit_code = 0;
+        MariaDBCredentialProvider provider(runner);
+
+        const auto result = provider.change_password({"compose.yml", "mariadb"}, {"admin", "adminSecret1"}, {"wp_user", "%"}, password);
+
+        CHECK_FALSE(result.success);
+        CHECK(result.code == "credential_transport_invalid");
+        CHECK(result.message.find(password) == std::string::npos);
+        CHECK(runner.last_args.empty());
+        CHECK(runner.last_stdin_file.empty());
+    }
 }
