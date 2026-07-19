@@ -614,11 +614,13 @@ Suggested commit: `web: harden WordPress credential rotation workflow`.
 
 Result: Complete. Hardened the Site Details WordPress Database Credentials card around backend-resolved safety states. The UI no longer receives or carries a caller-selected database id, displays separate config and target status badges, shows the backend-resolved target state/message, derives rotation enablement strictly from `available && database_target_available && database_id`, and presents a precise disabled reason for unsupported config versus unresolved database target. Static UI tests assert use of backend target fields, no `siteDatabases[0]` selection, and no raw password/generator strings in the WordPress block. Validation passed with `node --check web/app.js`, `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings, `build-wp0/tests/containercp_tests -tc="*API*"` (`18` cases, `73` assertions), `*WordPress*` (`64` cases, `379` assertions), and `*DatabaseCredentialRotation*` (`30` cases, `280` assertions). Full CTest (`1/1`) and `git diff --check` passed.
 
-### [ ] WP-R10 Documentation consistency
+### [x] WP-R10 Documentation consistency
 
 Objective: Correct readiness language and document the final shared-user, database-target, transport, dependency, compensation, runtime, and live-enable boundaries.
 
 Suggested commit: `docs: correct WordPress credential readiness status`.
+
+Result: Complete. Corrected WordPress credential-management readiness wording after WP-R4 through WP-R9. The runbook now states that production-shaped dependencies are wired in code but live rotation is not release-enabled until WP-R11 final validation and explicit live-site validation approval. It documents backend-owned exact database target resolution, unsupported target states, shared-user assessment, restored-state compensation checks, runtime verifier trust boundary, and the current no-production-validation boundary. Validation passed with `git diff --check`.
 
 ### [ ] WP-R11 Final validation
 

@@ -4,7 +4,7 @@
 
 This document describes the WordPress database credential-management foundation added for ContainerCP v0.8. It defines the supported configuration model, security boundaries, operator workflow, and residual risks for database password rotation.
 
-The foundation is intentionally conservative: status inspection and rotation requests are available through REST API, CLI, and Site Details UI, but queued live rotation still fails closed until the remaining production wiring and validation are explicitly approved.
+The foundation is intentionally conservative: status inspection and rotation requests are available through REST API, CLI, and Site Details UI, and production-shaped dependencies are wired in code. Live credential rotation is still not release-enabled until WP-R11 final validation and one explicit operator-approved real-site validation pass are completed.
 
 ## Supported Scope
 
@@ -15,6 +15,7 @@ Supported for inspection:
 - Direct literal definitions for `DB_NAME`, `DB_USER`, `DB_PASSWORD`, and `DB_HOST`.
 - Apache and nginx document-root mappings handled by `WordPressConfigService`.
 - Public-safe API/UI display of source, mutability, status, DB name, DB user, DB host, password-present flag, and sanitized issues.
+- Backend-resolved database target display with `database_id`, target status, and target message when exactly one managed same-site database record matches `DB_NAME` + `DB_USER` and `DB_HOST=mariadb`.
 
 Supported for credential update by the shared updater:
 
@@ -30,7 +31,8 @@ Unsupported and fail-closed:
 - Missing, symlinked, backup, temporary, non-regular, or path-escaping `wp-config.php` files.
 - Environment-backed, `$_ENV`, `$_SERVER`, variable, concatenated, helper-call, included, duplicate, conditional, or otherwise ambiguous credential definitions.
 - Shared database users unless a future operator-approved policy explicitly handles the impact.
-- Production credential mutation before explicit validation approval.
+- Missing, ambiguous, disabled, external-host, or multi-match backend database targets.
+- Production credential mutation before WP-R11 final validation and explicit live validation approval.
 
 ## Single Source Of Truth
 
@@ -38,6 +40,7 @@ Credential ownership is split by concern:
 
 - Database metadata is owned by `DatabaseManager` and storage.
 - WordPress config parsing, public status, path safety, and verifier request projection are owned by `WordPressConfigService` and `WordPressConfigDetector`.
+- Exact WordPress database target resolution is owned by `WordPressDatabaseCredentialResolver`.
 - WordPress credential file mutation is owned by `WordPressConfigUpdater`.
 - MariaDB credential operations are owned by `MariaDBCredentialProvider`.
 - Rotation ordering, compensation, manual-recovery state, and redacted events are owned by `DatabaseCredentialRotationService`.
@@ -51,13 +54,14 @@ Use only an approved migrated test site until live rotation is explicitly enable
 
 1. Inspect the site in the Site Details page or call `GET /api/wordpress/database-credentials/status?site_id=N`.
 2. Confirm the response reports a supported direct-constant source and mutable status.
-3. Confirm the database record belongs to the same site and that the database user is not shared with another application.
-4. Queue rotation through `POST /api/wordpress/database-credentials/rotate` with `site_id`, `database_id`, and typed domain confirmation, or through `containercp wordpress rotate-db-password <site_id> <database_id> --confirm <domain>`.
-5. Track the returned job id through `GET /api/jobs?id=N` or the Site Details job polling UI.
-6. Treat `completed` as success only when the rotation service has verified MariaDB access with the new password, verified WordPress/PHP DB access, verified site health, and persisted metadata.
-7. Treat `failed`, `compensated`, or `manual_recovery_required` as operator-review states; do not retry blindly.
+3. Confirm the response reports `database_target_available=true` and use only the backend-resolved `database_id` from the status response.
+4. Confirm the database user is not shared with another application. The rotation saga independently performs a strict MariaDB shared-user assessment before mutation.
+5. Queue rotation through `POST /api/wordpress/database-credentials/rotate` with `site_id`, backend-resolved `database_id`, and typed domain confirmation, or through `containercp wordpress rotate-db-password <site_id> <database_id> --confirm <domain>`.
+6. Track the returned job id through `GET /api/jobs?id=N` or the Site Details job polling UI.
+7. Treat `completed` as success only when the rotation service has verified MariaDB access with the new password, verified WordPress/PHP DB access, verified site health, and persisted metadata.
+8. Treat `failed`, `compensated`, or `manual_recovery_required` as operator-review states; do not retry blindly.
 
-Current v0.8 foundation behavior: API/CLI/UI can queue a job, but live dependencies remain intentionally unwired, so jobs fail safely rather than changing production credentials.
+Current v0.8 review-fix behavior: API/CLI/UI can queue a guarded job and production-shaped dependencies are wired in code, but this must remain limited to repository/test validation until WP-R11 and explicit live validation approval are complete.
 
 ## Compensation And Manual Recovery
 
@@ -67,7 +71,10 @@ The rotation saga mutates state only after preflight inspection and old-credenti
 - restore WordPress config if it was changed;
 - reapply or restore runtime state when needed;
 - verify old database access again;
-- report `compensated` only when rollback succeeds.
+- verify restored WordPress/PHP database access;
+- verify restored site health;
+- verify restored credential metadata;
+- report `compensated` only when rollback and restored-state checks succeed.
 
 If compensation cannot complete, the service reports `manual_recovery_required` with redacted diagnostics. Operators must then inspect the approved test site directly, compare MariaDB user state, WordPress config contents, and site runtime state, and restore the old known-good credential from approved secret sources. ContainerCP must not silently report success for partial rotations.
 
@@ -111,7 +118,7 @@ Residual risks:
 - Exact narrow MariaDB grant requirements require validation against the deployed MariaDB version before live rotation.
 - Runtime WordPress verification executes the selected site's own `wp-config.php`; hardening restricts the request boundary but does not make site-controlled PHP code trusted.
 - No production browser automation exists for the Site Details workflow; coverage is unit/static validation plus manual operator review.
-- Queueing exists before live dependency wiring, so current jobs fail closed by design.
+- Code-level live dependencies are wired, but real Docker/MariaDB/WordPress validation is still pending and must not be performed on production without explicit approval.
 
 ## Validation Requirements Before Live Enablement
 

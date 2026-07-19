@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Docs — Correct WordPress credential readiness status
+
+**Summary:** Added WP-R10 documentation consistency updates after the live-wiring review fixes. The WordPress credential runbook now states that production-shaped dependencies are wired in code, but live rotation remains not release-enabled until WP-R11 final validation and explicit live-site validation approval. It documents exact backend database target resolution, unsupported target states, shared-user assessment, restored-state compensation checks, runtime verifier trust boundary, and the current no-production-validation boundary.
+
+**Files changed:** `docs/development/wordpress-credential-management.md`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Documentation now matches the actual post-WP-R9 state and no longer says live dependencies are unwired. No runtime behavior change.
+
+**Validation:** `git diff --check` passed.
+
+**Known risks:** Final clean build, full/focused tests, JS syntax validation, secret-surface checks, clean status, and CI reporting remain scheduled for WP-R11.
+
+---
+
 ## 2026-07-19 | `this commit` | Web — Harden WordPress credential rotation workflow
 
 **Summary:** Added WP-R9 Site Details UI hardening for WordPress credential rotation. The WordPress Database Credentials card now displays separate config and backend target status badges, consumes the backend-resolved `database_id` only from the status response, removes first-database selection, disables rotation unless both credential inspection and target resolution are safe, and shows precise disabled reasons for unsupported configs or unresolved targets.
