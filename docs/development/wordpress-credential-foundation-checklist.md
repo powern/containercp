@@ -310,7 +310,7 @@ Commit message: `database: protect MariaDB credential transport`.
 
 Result: Complete. Implemented protected host-side stdin bundles (`0600`) and a fixed in-container shell script that splits stdin into protected temporary option and SQL files, executes `mariadb`, and cleans up. Passwords and SQL are never placed in command argv or result messages; command failures return redacted diagnostics and cleanup is verified in tests.
 
-### [ ] WP-4.3 Document minimum grant model
+### [x] WP-4.3 Document minimum grant model
 
 Objective: Record exact grant assumptions for provider operations before saga integration.
 
@@ -325,6 +325,8 @@ Focused tests: documentation-only; no code tests required beyond `git diff --che
 Acceptance criteria: Operator can review privilege requirements and residual root compatibility risks.
 
 Commit message: `docs: document MariaDB credential provider grants`.
+
+Result: Complete. Added `docs/development/mariadb-credential-provider.md` with provider scope, secret transport, minimum grant direction, root-as-break-glass guidance, shared-user risk, failure handling, and validation status. Validation passed with `git diff --check`.
 
 ## WP-5 DatabaseCredentialRotationService Saga
 

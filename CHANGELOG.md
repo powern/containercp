@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Documentation — Document MariaDB credential provider grants
+
+**Summary:** Added WP-4.3 documentation for the MariaDB credential provider. The document records provider scope, secret transport, minimum grant direction, root-as-break-glass guidance, shared-user risk handling, redacted failure behavior, and current fake-runner validation status.
+
+**Files changed:** `docs/development/mariadb-credential-provider.md`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. This documentation does not enable API, CLI, GUI, jobs, production rotation, or live MariaDB access.
+
+**Validation:** Documentation-only `git diff --check` passed.
+
+**Known risks:** Exact narrow-account grant requirements must be verified against the MariaDB version used by the validation site before real rotation is enabled. Root remains documented only as bootstrap/break-glass compatibility, not the preferred runtime path.
+
+---
+
 ## 2026-07-19 | `this commit` | Database — Add MariaDB credential provider
 
 **Summary:** Added the WP-4.1/WP-4.2 MariaDB credential provider boundary. `MariaDBCredentialProvider` provides fakeable operations for password verification, password change, password restore, and shared-user detection using `MariaDBProcessRunner` plus a `CommandExecutor` adapter. Secrets are transported through protected host-side stdin bundles and fixed in-container temporary option/SQL files; passwords are not placed in command argv, shell strings, result messages, logs, API, CLI, or UI.
