@@ -142,7 +142,7 @@ Result: Complete. Added `WordPressConfigPathSafety`, `WordPressConfigDetector::i
 
 ## WP-2 Read-Only WordPressConfigService
 
-### [ ] WP-2.1 Add `WordPressConfigService` inspection by site/domain
+### [x] WP-2.1 Add `WordPressConfigService` inspection by site/domain
 
 Objective: Resolve site/domain, site root, document root, active config path, and detector result through a reusable service.
 
@@ -157,6 +157,8 @@ Focused tests: valid migrated site, missing site, missing root, missing config, 
 Acceptance criteria: Structured internal inspection returned; no file changes after inspection.
 
 Commit message: `wordpress: add read-only config inspection service`.
+
+Result: Complete. Added `WordPressConfigService` with read-only inspection by site id and domain, explicit `site_id=0` rejection, site root resolution under the configured sites directory, document-root candidate resolution, safe active `wp-config.php` path validation through the detector helper, file read, and detector result return. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`21` test cases, `138` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`).
 
 ### [ ] WP-2.2 Add public-safe redaction view
 

@@ -109,6 +109,7 @@ set(CONTAINERCP_SOURCES
     libs/utils/StringUtils.cpp
     libs/utils/Validator.cpp
     libs/wordpress/WordPressConfigDetector.cpp
+    libs/wordpress/WordPressConfigService.cpp
     libs/wordpress/WordPressConfigTypes.cpp
 )
 

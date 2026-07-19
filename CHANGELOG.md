@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Add read-only config inspection service
+
+**Summary:** Added `WordPressConfigService` for WP-2.1. The service resolves a site by id or domain, rejects `site_id=0`, confines the resolved site root to the configured sites directory, checks common document-root locations for an active `wp-config.php`, validates the candidate path through the detector safety helper, reads the file without mutation, and returns the detector inspection result.
+
+**Files changed:** `libs/wordpress/WordPressConfigService.h`, `libs/wordpress/WordPressConfigService.cpp`, `tests/test_wordpress_config_service.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. The service is not yet exposed through REST API, CLI, Web UI, migration, runtime, storage, or production site operations.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused WordPress tests passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`21` cases, `138` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** The result is still internal and not a public-safe API view; WP-2.2 will add the explicit public-safe projection. Migration still uses its existing parser until WP-2.3.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Harden config detector path safety
 
 **Summary:** Added read-only filesystem safety helpers for WP-1.3. `WordPressConfigDetector::inspect_config_path()` now classifies candidate `wp-config.php` paths under an approved site root and fails closed for missing inputs, missing roots/files, backup or temp filenames, path traversal outside the root, symlinked roots/path components/config files, non-directory parents, and non-regular config files.
