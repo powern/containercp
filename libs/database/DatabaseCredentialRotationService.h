@@ -74,6 +74,10 @@ public:
     virtual DatabaseCredentialRotationStepResult verify_site_health(const DatabaseCredentialRotationRequest& request) = 0;
     virtual DatabaseCredentialRotationStepResult persist_metadata(const DatabaseCredentialRotationRequest& request,
                                                                   const std::string& new_password) = 0;
+    virtual DatabaseCredentialRotationStepResult restore_mariadb_password(const DatabaseCredentialRotationRequest& request,
+                                                                          const std::string& new_password) = 0;
+    virtual DatabaseCredentialRotationStepResult restore_wordpress_config(const DatabaseCredentialRotationRequest& request) = 0;
+    virtual DatabaseCredentialRotationStepResult restore_runtime(const DatabaseCredentialRotationRequest& request) = 0;
 };
 
 class DatabaseCredentialRotationService {
@@ -104,6 +108,11 @@ private:
     static std::string lock_key(uint64_t site_id, uint64_t database_id);
 
     void release_lock(const std::string& key);
+    DatabaseCredentialRotationResult compensate_after_failure(DatabaseCredentialRotationResult result,
+                                                             const DatabaseCredentialRotationRequest& request,
+                                                             const std::string& new_password,
+                                                             bool config_updated,
+                                                             bool runtime_apply_attempted);
 
     mutable std::mutex mutex_;
     std::set<std::string> active_locks_;

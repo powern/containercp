@@ -96,6 +96,63 @@ bool DatabaseCredentialRotationService::is_locked(uint64_t site_id, uint64_t dat
     return active_locks_.count(lock_key(site_id, database_id)) != 0;
 }
 
+DatabaseCredentialRotationResult DatabaseCredentialRotationService::compensate_after_failure(DatabaseCredentialRotationResult result,
+                                                                                             const DatabaseCredentialRotationRequest& request,
+                                                                                             const std::string& new_password,
+                                                                                             bool config_updated,
+                                                                                             bool runtime_apply_attempted) {
+    result.events.push_back(event(DatabaseCredentialRotationState::Compensating,
+                                  "compensating",
+                                  "Compensating failed credential rotation"));
+
+    auto manual_recovery = [&](const std::string& code, const std::string& message) {
+        return fail_with(std::move(result), DatabaseCredentialRotationState::ManualRecoveryRequired, code, message);
+    };
+
+    result.events.push_back(event(DatabaseCredentialRotationState::Compensating,
+                                  "restoring_mariadb_password",
+                                  "Restoring MariaDB password"));
+    auto step = dependencies_->restore_mariadb_password(request, new_password);
+    if (!step.success) {
+        return manual_recovery("manual_recovery_required", "Credential rotation requires manual recovery");
+    }
+
+    if (config_updated) {
+        result.events.push_back(event(DatabaseCredentialRotationState::Compensating,
+                                      "restoring_wordpress_config",
+                                      "Restoring WordPress config"));
+        step = dependencies_->restore_wordpress_config(request);
+        if (!step.success) {
+            return manual_recovery("manual_recovery_required", "Credential rotation requires manual recovery");
+        }
+    }
+
+    if (config_updated || runtime_apply_attempted) {
+        result.events.push_back(event(DatabaseCredentialRotationState::Compensating,
+                                      "restoring_runtime",
+                                      "Restoring runtime state"));
+        step = dependencies_->restore_runtime(request);
+        if (!step.success) {
+            return manual_recovery("manual_recovery_required", "Credential rotation requires manual recovery");
+        }
+    }
+
+    result.events.push_back(event(DatabaseCredentialRotationState::Compensating,
+                                  "verifying_restored_credential",
+                                  "Verifying restored database credential"));
+    step = dependencies_->verify_old_credential(request);
+    if (!step.success) {
+        return manual_recovery("manual_recovery_required", "Credential rotation requires manual recovery");
+    }
+
+    result.success = false;
+    result.final_state = DatabaseCredentialRotationState::Compensated;
+    result.code = "rotation_compensated";
+    result.message = "Credential rotation failed and was safely rolled back";
+    result.events.push_back(event(result.final_state, result.code, result.message));
+    return result;
+}
+
 DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const DatabaseCredentialRotationRequest& request) {
     DatabaseCredentialRotationResult result;
     if (request.site_id == 0) {
@@ -155,6 +212,13 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const
                          "Replacement database credential generation failed");
     }
     const std::string new_password = step.generated_password;
+    bool config_updated = false;
+    bool runtime_apply_attempted = false;
+
+    auto fail_after_mutation = [&](const std::string& code, const std::string& message) {
+        result.events.push_back(event(DatabaseCredentialRotationState::Failed, code, message));
+        return compensate_after_failure(std::move(result), request, new_password, config_updated, runtime_apply_attempted);
+    };
 
     step = run_step(DatabaseCredentialRotationState::ChangingMariaDBPassword,
                     "changing_mariadb_password",
@@ -170,17 +234,19 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const
                     "Updating WordPress config",
                     [&] { return dependencies_->update_wordpress_config(request, new_password); });
     if (!step.success) {
-        return fail_with(std::move(result), DatabaseCredentialRotationState::Failed, step.code.empty() ? "wordpress_config_update_failed" : step.code,
-                         "WordPress config update failed");
+        return fail_after_mutation(step.code.empty() ? "wordpress_config_update_failed" : step.code,
+                                   "WordPress config update failed");
     }
+    config_updated = true;
 
+    runtime_apply_attempted = true;
     step = run_step(DatabaseCredentialRotationState::ApplyingRuntime,
                     "applying_runtime",
                     "Applying runtime changes",
                     [&] { return dependencies_->apply_runtime(request); });
     if (!step.success) {
-        return fail_with(std::move(result), DatabaseCredentialRotationState::Failed, step.code.empty() ? "runtime_apply_failed" : step.code,
-                         "Runtime apply failed");
+        return fail_after_mutation(step.code.empty() ? "runtime_apply_failed" : step.code,
+                                   "Runtime apply failed");
     }
 
     step = run_step(DatabaseCredentialRotationState::VerifyingMariaDBPassword,
@@ -188,8 +254,8 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const
                     "Verifying new MariaDB credential",
                     [&] { return dependencies_->verify_new_credential(request, new_password); });
     if (!step.success) {
-        return fail_with(std::move(result), DatabaseCredentialRotationState::Failed, step.code.empty() ? "new_credential_verification_failed" : step.code,
-                         "New database credential verification failed");
+        return fail_after_mutation(step.code.empty() ? "new_credential_verification_failed" : step.code,
+                                   "New database credential verification failed");
     }
 
     step = run_step(DatabaseCredentialRotationState::VerifyingWordPress,
@@ -197,8 +263,8 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const
                     "Verifying WordPress database access",
                     [&] { return dependencies_->verify_wordpress(request); });
     if (!step.success) {
-        return fail_with(std::move(result), DatabaseCredentialRotationState::Failed, step.code.empty() ? "wordpress_verification_failed" : step.code,
-                         "WordPress verification failed");
+        return fail_after_mutation(step.code.empty() ? "wordpress_verification_failed" : step.code,
+                                   "WordPress verification failed");
     }
 
     step = run_step(DatabaseCredentialRotationState::VerifyingSiteHealth,
@@ -206,8 +272,8 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const
                     "Verifying site health",
                     [&] { return dependencies_->verify_site_health(request); });
     if (!step.success) {
-        return fail_with(std::move(result), DatabaseCredentialRotationState::Failed, step.code.empty() ? "site_health_verification_failed" : step.code,
-                         "Site health verification failed");
+        return fail_after_mutation(step.code.empty() ? "site_health_verification_failed" : step.code,
+                                   "Site health verification failed");
     }
 
     step = run_step(DatabaseCredentialRotationState::PersistingMetadata,
@@ -215,8 +281,8 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const
                     "Persisting credential metadata",
                     [&] { return dependencies_->persist_metadata(request, new_password); });
     if (!step.success) {
-        return fail_with(std::move(result), DatabaseCredentialRotationState::Failed, step.code.empty() ? "metadata_persist_failed" : step.code,
-                         "Credential metadata persistence failed");
+        return fail_after_mutation(step.code.empty() ? "metadata_persist_failed" : step.code,
+                                   "Credential metadata persistence failed");
     }
 
     result.success = true;

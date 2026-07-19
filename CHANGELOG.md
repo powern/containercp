@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Add credential rotation compensation
+
+**Summary:** Added WP-5.3 compensation and manual-recovery handling to `DatabaseCredentialRotationService`. Failures after MariaDB password mutation now enter a single rollback attempt that restores the MariaDB password, restores WordPress config when it was changed, reapplies/restores runtime when required, verifies the old credential again, and reports `compensated` only when rollback completes. Failed rollback steps now return `manual_recovery_required` with generic redacted diagnostics.
+
+**Files changed:** `libs/database/DatabaseCredentialRotationService.h`, `libs/database/DatabaseCredentialRotationService.cpp`, `tests/test_database_credential_rotation.cpp`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. Compensation is still internal and fake-driven; real provider/runtime/storage/API/CLI/Web UI wiring remains pending and no production credential rotation is enabled.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused rotation tests passed with `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotationService*"` (`13` cases, `114` assertions), covering config-update failure after DB mutation, verification failure rollback, DB restore failure, config restore failure, runtime restore failure, manual recovery state, lock release, and no secret-bearing diagnostics. Focused regressions passed for `*database*` (`34` cases, `290` assertions), `*WordPress*` (`49` cases, `286` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** Live compensation still depends on later wiring to actual MariaDB, WordPress config rollback handles, runtime operations, and storage. The WordPress/PHP-level verification boundary remains pending for WP-5.4.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Add database credential rotation saga
 
 **Summary:** Added the WP-5.2 happy-path database credential rotation saga. `DatabaseCredentialRotationService` now accepts an injected dependency boundary and executes the ordered rotation workflow with fakes: WordPress credential inspection, old credential verification, replacement password generation, MariaDB password change, WordPress config update, runtime application, new MariaDB credential verification, WordPress verification, site health verification, and metadata persistence. Unsupported inspection fails before mutation, generated passwords are only passed to dependency calls, and dependency failure messages are not surfaced to callers.

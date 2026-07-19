@@ -366,7 +366,7 @@ Commit message: `wordpress: add database credential rotation saga`.
 
 Result: Complete. Added the dependency-injected happy-path rotation saga in `DatabaseCredentialRotationService`. The service now executes the approved order with fakes: WordPress inspection, old credential verification, password generation, MariaDB password change, WordPress config update, runtime apply, new MariaDB verification, WordPress verification, site health verification, and metadata persistence before reporting success. Unsupported inspection fails before mutation, generated passwords are passed only to dependency calls, dependency failure messages are not surfaced, and post-verification failure currently stops before metadata persistence. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotationService*"` (`9` test cases, `70` assertions), `build-wp0/tests/containercp_tests -tc="*database*"` (`30` test cases, `246` assertions), `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`49` test cases, `286` assertions), `build-wp0/tests/containercp_tests -tc="VestaSiteImporter*"` (`31` test cases, `79` assertions), and full CTest (`1/1`). `git diff --check` passed.
 
-### [ ] WP-5.3 Implement compensation and manual recovery states
+### [x] WP-5.3 Implement compensation and manual recovery states
 
 Objective: Restore old MariaDB password, restore old config, reapply runtime, verify old access, and produce manual recovery state if compensation fails.
 
@@ -381,6 +381,8 @@ Focused tests: config update fails after DB mutation, DB verification fails, Wor
 Acceptance criteria: Every post-mutation failure path compensates or clearly reports manual recovery.
 
 Commit message: `wordpress: add credential rotation compensation`.
+
+Result: Complete. Added single-attempt compensation for failures after MariaDB mutation. The rotation service now restores the MariaDB password, restores WordPress config when it was updated, reapplies/restores runtime when config or runtime apply was touched, verifies the restored old credential, and reports `compensated` when rollback completes. Failed rollback steps report `manual_recovery_required` with generic redacted diagnostics. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotationService*"` (`13` test cases, `114` assertions), `build-wp0/tests/containercp_tests -tc="*database*"` (`34` test cases, `290` assertions), `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`49` test cases, `286` assertions), `build-wp0/tests/containercp_tests -tc="VestaSiteImporter*"` (`31` test cases, `79` assertions), and full CTest (`1/1`). `git diff --check` passed.
 
 ### [ ] WP-5.4 Add WordPress/PHP-level verification boundary
 
