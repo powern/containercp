@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Validate credential review fixes
+
+**Summary:** Completed WP-R11 final repository/test validation for WordPress credential review fixes WP-R1 through WP-R10. Validation was repository/test-only: no production deployment, no real site access, no real database access, and no live credential rotation were performed.
+
+**Files changed:** `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No runtime behavior change. The review-fix phase is validated in the repository test environment; live rotation still requires explicit operator-approved real-site validation before production use.
+
+**Validation:** Clean configure passed with `cmake -S . -B build-wp-r11 -G Ninja -DCMAKE_BUILD_TYPE=Release`. Clean build passed with `cmake --build build-wp-r11 --target containercp_tests containercp containercpd -- -j1`; earlier 120s and 300s tool timeouts occurred while compilation was still progressing, then the same build completed with a 600s timeout and no compiler warnings. Full doctest passed with `build-wp-r11/tests/containercp_tests` (`774` cases, `5288` assertions). Sequential focused suites passed for `*DatabaseCredentialRotation*` (`30` cases, `280` assertions), `VestaSiteImporter*` (`31` cases, `79` assertions), `*database*` (`54` cases, `485` assertions), `*WordPress*` (`64` cases, `379` assertions), `*API*` (`18` cases, `73` assertions), and `*Command*` (`18` cases, `67` assertions). Full CTest passed (`1/1`). `node --check web/app.js`, `build-wp-r11/containercp --version`, `build-wp-r11/containercpd --version`, and `git diff --check` passed. Static secret-surface scans found no WordPress database credential exposure in Web UI/API/CLI/daemon/job surfaces. `gh` is not installed and `.github/workflows` is absent, so no remote CI status is available.
+
+**Known risks:** Live Docker/MariaDB/WordPress rotation has still not been performed in this task and must not be run on production without explicit approval. Current storage still contains plaintext database credentials in metadata and site `.env` projections until a future secret-store design replaces that model.
+
+---
+
 ## 2026-07-19 | `this commit` | Docs — Correct WordPress credential readiness status
 
 **Summary:** Added WP-R10 documentation consistency updates after the live-wiring review fixes. The WordPress credential runbook now states that production-shaped dependencies are wired in code, but live rotation remains not release-enabled until WP-R11 final validation and explicit live-site validation approval. It documents exact backend database target resolution, unsupported target states, shared-user assessment, restored-state compensation checks, runtime verifier trust boundary, and the current no-production-validation boundary.
