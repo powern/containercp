@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Documentation — Add WordPress credential implementation checklist
+
+**Summary:** Added the executable WP-0 through WP-8 implementation checklist for the approved v0.8 WordPress database credential-management foundation. The checklist maps current source behavior, records existing credential duplication and intended single-source ownership, defines incremental commit-sized work items, and captures clean baseline validation before implementation begins.
+
+**Files changed:** `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. This is documentation and validation evidence only; it does not create API endpoints, change the Web UI, modify SQLite schema, alter Docker Compose generation, rotate credentials, edit real `wp-config.php` files, or touch production/server state.
+
+**Validation:** Clean configure/build passed with `cmake -S . -B build-wp0 -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused baseline tests passed for `VestaSiteImporter*` (`31` cases, `79` assertions), `*database*` (`21` cases, `176` assertions), `*Runtime*` (`12` cases, `106` assertions), and `*JsonFormatter*` (`6` cases, `6` assertions). Full doctest passed (`669` cases, `4507` assertions). Standalone CTest passed (`1/1`). Version checks passed for `containercp` and `containercpd` (`0.7.0`).
+
+**Known risks:** This is not yet an implementation. Current WordPress config parsing and replacement still live in migration code, credentials remain duplicated across SQLite/TXT storage, site `.env`, and imported `wp-config.php`, and rotation/API/CLI/UI support remains pending for later WP stages.
+
+---
+
 ## 2026-07-19 | `this commit` | Architecture — Design WordPress credential rotation foundation
 
 **Summary:** Added the v0.8 WordPress database credential-management architecture package. The design introduces `WordPressConfigService` as the reusable owner for WordPress config discovery, credential source classification, read-only inspection, safe atomic direct-constant updates, syntax validation, and rollback. It also defines the `DatabaseCredentialRotationService` saga for coordinating MariaDB password changes with ContainerCP metadata, site `.env`, and `wp-config.php`, documents the rotation threat model, and reviews WP-CLI integration options. DB-1 and the Databases GUI are now explicitly postponed behind this credential foundation unless DB-1 remains strictly read-only and uses the approved inspection boundary.
