@@ -555,5 +555,23 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 
 ---
 
+## Version 0.8 — WordPress Credential Foundation
+
+| Task | Status | Notes |
+|------|--------|-------|
+| WordPress credential source detector | ✅ | Direct constants, unsupported/dynamic states, path safety, redacted public values |
+| Read-only WordPress config service | ✅ | Site/domain inspection, public-safe view, `site_id=0` rejection |
+| Shared credential updater | ✅ | Direct-literal renderer, atomic writes, PHP validation boundary, rollback |
+| Migration credential consolidation | ✅ | Migration parser/update path delegates to shared WordPress detector/updater |
+| MariaDB credential provider boundary | ✅ | Fake-tested provider with no-secret argv and protected stdin transport |
+| Rotation saga foundation | ✅ | State machine, verification order, compensation, manual-recovery states |
+| REST API and CLI queueing | ✅ | Status and rotate endpoints, CLI command, redacted job messages |
+| Site Details UI action | ✅ | Public-safe credential card, typed confirmation, job polling |
+| Operator/security documentation | ✅ | `docs/development/wordpress-credential-management.md` |
+
+**Scope note:** The foundation exposes inspection and guarded queueing, but live production credential rotation remains fail-closed until explicit wiring and validation approval. Databases GUI, Adminer, SQL import/export, and full WordPress site creation remain deferred.
+
+---
+
 *Last updated: 2026-07-19*
 *Current Version: v0.7.0*

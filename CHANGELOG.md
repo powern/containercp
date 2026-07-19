@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Document credential operations and finalize WP-8 hardening
+
+**Summary:** Added the WP-8 operator/security documentation for the WordPress database credential foundation. The new runbook documents supported direct-constant configs, unsupported fail-closed states, single-source ownership, API/CLI/GUI workflow, compensation and manual-recovery behavior, secret-handling rules, threat model, residual plaintext SQLite/`.env` risk, and live-validation requirements. The API reference now records rotation operational notes and the current fail-closed foundation behavior. The project tracker now lists the v0.8 WordPress Credential Foundation status. The final migration audit confirmed credential parsing and credential updates are already delegated to shared WordPress services; remaining migration `wp-config.php` handling is archive discovery, backup/rollback, container path mapping, and trusted-proxy insertion rather than duplicate credential ownership.
+
+**Files changed:** `docs/development/wordpress-credential-management.md`, `docs/development/wordpress-credential-foundation-checklist.md`, `docs/api/API_REFERENCE.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No runtime behavior change. Operators now have a documented WordPress credential-management workflow and threat model. Inspection and guarded queueing remain available, while live production credential rotation continues to fail closed until explicitly wired and validated. Databases GUI, Adminer, SQL import/export, and full WordPress site creation remain out of scope.
+
+**Validation:** Configure passed with `cmake -S . -B build-wp0 -G Ninja -DCMAKE_BUILD_TYPE=Release`. Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` (`ninja: no work to do`, no compiler warnings emitted). Focused tests passed for `*WordPress*` (`58` cases, `339` assertions), `*DatabaseCredentialRotation*` (`17` cases, `131` assertions), `*API*` (`18` cases, `73` assertions), `*database*` (`39` cases, `323` assertions), `*Command*` (`17` cases, `62` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full doctest passed with `build-wp0/tests/containercp_tests` (`749` cases, `4992` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `node --check web/app.js`, `build-wp0/containercp --version`, `build-wp0/containercpd --version`, and `git diff --check` passed. Static secret-surface checks found only expected existing auth password-change fields, internal provider/saga password variables, docs, and the public boolean `db_password_present`; no WordPress UI/API/CLI surface exposes generated or raw database passwords.
+
+**Known risks:** Current storage still persists database passwords in plaintext SQLite/TXT metadata and site `.env` files. Live MariaDB grant requirements and real rotation remain unvalidated on a test site. Current queue jobs still fail closed by design because live dependencies are intentionally unwired.
+
+---
+
 ## 2026-07-19 | `this commit` | Web — Add Site Details WordPress credential rotation UI
 
 **Summary:** Added WP-7 Site Details integration for WordPress database credentials. The backend now exposes `GET /api/wordpress/database-credentials/status?site_id=N`, backed by `WordPressConfigService::public_view()`, and `ServiceRegistry` owns the shared WordPress config service. The Site Details page now shows a WordPress Database Credentials card with public-safe status/source/mutability, DB name/user/host, password-presence boolean, sanitized issues, typed domain confirmation, queue submission, job id toast, and job polling through the existing Jobs API.

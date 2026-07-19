@@ -480,7 +480,7 @@ Result: Complete. Added Site Details typed-domain confirmation, disabled state f
 
 ## WP-8 Final Integration And Hardening
 
-### [ ] WP-8.1 Remove remaining duplicate WordPress parser/update logic
+### [x] WP-8.1 Remove remaining duplicate WordPress parser/update logic
 
 Objective: Complete safe refactor of `VestaSiteImporter` to shared services after regression tests prove equivalent behavior.
 
@@ -496,7 +496,9 @@ Acceptance criteria: Shared WordPress subsystem is the SSOT for parsing/update.
 
 Commit message: `wordpress: consolidate migration credential handling`.
 
-### [ ] WP-8.2 Update operator/API/security documentation
+Result: Complete by audit and prior refactor. `VestaSiteImporter` already delegates credential inspection to `WordPressConfigDetector::inspect_content()` and credential replacement to `WordPressConfigUpdater::update_file_atomic_validated()`. Remaining migration `wp-config.php` handling is archive discovery, public-path lookup, safety backup/rollback, container path mapping, and trusted-proxy insertion; those paths are migration concerns rather than duplicate credential parser/update ownership. No additional code rewrite was made because forcing trusted-proxy or archive-discovery behavior into credential services would broaden the WordPress credential SSOT and risk migration regressions without reducing credential duplication.
+
+### [x] WP-8.2 Update operator/API/security documentation
 
 Objective: Document supported/unsupported configs, rotation workflow, compensation/manual recovery, API/CLI/GUI behavior, and residual risks.
 
@@ -512,7 +514,9 @@ Acceptance criteria: Operator has clear deployment/test procedure for one approv
 
 Commit message: `docs: document WordPress credential operations`.
 
-### [ ] WP-8.3 Run final secret-leak and release validation
+Result: Complete. Added `docs/development/wordpress-credential-management.md` with supported and unsupported config forms, single-source ownership, operator workflow, compensation/manual-recovery behavior, secret-handling rules, threat model, residual plaintext SQLite/`.env` risk, and live-validation requirements for an approved migrated test site. Expanded the API reference with rotation operational notes and fail-closed foundation behavior. Updated `planning/project-status.md` with the v0.8 WordPress Credential Foundation status.
+
+### [x] WP-8.3 Run final secret-leak and release validation
 
 Objective: Run complete clean configure/build/tests/static secret checks, record exact counts, and ensure working tree clean after final commit.
 
@@ -527,3 +531,5 @@ Focused tests: secret-leak grep/static checks, CLI help/version, API regression,
 Acceptance criteria: Clean configure, clean rebuild, full doctest, CTest, version checks, `git diff --check`, `git status --short`, and CI pass.
 
 Commit message: `wordpress: finalize credential rotation foundation`.
+
+Result: Complete. Configure passed with `cmake -S . -B build-wp0 -G Ninja -DCMAKE_BUILD_TYPE=Release`. Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` (`ninja: no work to do`, no compiler warnings emitted). Focused validation passed for `*WordPress*` (`58` cases, `339` assertions), `*DatabaseCredentialRotation*` (`17` cases, `131` assertions), `*API*` (`18` cases, `73` assertions), `*database*` (`39` cases, `323` assertions), `*Command*` (`17` cases, `62` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full doctest passed with `build-wp0/tests/containercp_tests` (`749` cases, `4992` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `node --check web/app.js`, `build-wp0/containercp --version`, `build-wp0/containercpd --version`, and `git diff --check` passed. Static secret-surface checks found only expected existing auth password-change fields, internal provider/saga password variables, docs, and the public boolean `db_password_present`; no WordPress UI/API/CLI surface exposes generated or raw database passwords.

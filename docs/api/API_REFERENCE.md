@@ -296,6 +296,16 @@ Returns HTTP `202 Accepted` with a job id only:
 
 The request never accepts current or replacement passwords. The response never includes `DB_PASSWORD`, generated credentials, config paths, command output, or provider diagnostics.
 
+Operational notes:
+
+- `confirmation` must exactly match the target site domain.
+- The endpoint is API-first; CLI and Web UI clients delegate to this queueing boundary.
+- Current v0.8 foundation builds queue jobs but fail closed until live rotation dependencies are explicitly wired and validated.
+- A successful future rotation must verify MariaDB access with the new password, WordPress/PHP database access, site health, and metadata persistence before reporting completion.
+- Post-mutation failures must compensate or report `manual_recovery_required`; partial rotation must never be reported as success.
+
+See `docs/development/wordpress-credential-management.md` for supported config forms, threat model, operator workflow, and residual risks.
+
 ### 2.12 Access (SFTP)
 
 | Method | Path | Purpose | Owner |
