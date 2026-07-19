@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Queue credential rotation jobs through API and CLI
+
+**Summary:** Added WP-6 API/CLI job entrypoints for WordPress database credential rotation. New `DatabaseCredentialRotationJobService` validates site id, database id, typed domain confirmation, database ownership, duplicate queued rotations, and queue availability before creating an async job. `POST /api/wordpress/database-credentials/rotate` returns HTTP `202` with job id/status only. The daemon command `wordpress-rotate-db-password` and CLI command `containercp wordpress rotate-db-password <site_id> <database_id> --confirm <domain>` delegate to the same queue service.
+
+**Files changed:** `libs/database/DatabaseCredentialRotationJobService.h`, `libs/database/DatabaseCredentialRotationJobService.cpp`, `libs/core/ServiceRegistry.h`, `libs/core/ServiceRegistry.cpp`, `libs/api/ApiServer.cpp`, `libs/daemon/DaemonApp.cpp`, `libs/cli/CommandDispatcher.cpp`, `tests/test_database_credential_rotation.cpp`, `tests/test_api.cpp`, `tests/test_daemon.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `docs/api/API_REFERENCE.md`, `docs/development/api-rules.md`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Operators can request a WordPress database credential rotation job through the REST API or CLI and receive a job id. The job currently fails safely until live rotation dependencies are wired; no production credential mutation is enabled by this stage.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused queue/rotation tests passed with `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotation*"` (`17` cases, `131` assertions), covering queued jobs, confirmation mismatch, database ownership, duplicate queued rotations, redacted job messages, and rotation state regressions. Focused regressions passed for `*database*` (`39` cases, `323` assertions), `*API*` (`18` cases, `73` assertions), `*Command*` (`17` cases, `62` assertions), `*WordPress*` (`57` cases, `331` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). CLI help/version checks passed with `build-wp0/containercp --help` and `build-wp0/containercp --version`. `git diff --check` passed.
+
+**Known risks:** The queue/API/CLI layer is now present, but live provider/runtime/storage dependencies are still not wired, so queued jobs fail closed instead of rotating real credentials. API authentication remains according to the existing API server auth model; no additional role model was added in this stage.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Verify rotated credentials through PHP runtime
 
 **Summary:** Added WP-5.4 WordPress/PHP runtime verification boundary. New `WordPressRuntimeVerifier` uses an injectable runner plus a `CommandExecutor` adapter to execute a fixed PHP script through vector-argv `docker compose exec -T php php -r ...`. The script loads `wp-config.php` inside the site PHP container, verifies required DB constants, and checks `mysqli` database access with `SELECT 1` without passing credentials through argv, shell strings, logs, or result messages. `WordPressConfigService` now records the PHP container document root and can produce verifier requests from safe inspection results, including default Apache and nginx mount paths.

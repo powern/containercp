@@ -17,6 +17,8 @@
 #include "core/ResourceManager.h"
 #include "core/OperationResult.h"
 #include "core/RecoveryManager.h"
+#include "database/DatabaseCredentialRotationJobService.h"
+#include "database/DatabaseCredentialRotationService.h"
 #include "database/DatabaseManager.h"
 #include "dns/DnsCheckService.h"
 #include "network/NetworkService.h"
@@ -71,6 +73,7 @@ public:
     php::PhpVersionManager& php_versions();
     profile::ProfileManager& profiles();
     database::DatabaseManager& databases();
+    database::DatabaseCredentialRotationJobService& database_credential_rotation_jobs();
     backup::BackupManager& backups();
     backup::BackupProvider& backup_provider();
     jobs::JobManager& jobs();
@@ -138,6 +141,7 @@ private:
     database::DatabaseManager databases_;
     backup::BackupManager backups_;
     jobs::JobManager jobs_;
+    database::DatabaseCredentialRotationService database_credential_rotation_;
     backup::TarBackupProvider backup_provider_;
     access::AccessUserManager access_users_;
     access::AccessGrantManager access_grants_;
@@ -160,6 +164,7 @@ private:
     mail::SiteMailCredentials mail_credentials_;
     storage::Storage storage_;
     jobs::JobExecutor job_executor_;
+    database::DatabaseCredentialRotationJobService database_credential_rotation_jobs_;
     ssl::RenewalScheduler renewal_scheduler_;
     auth::AuthUserManager auth_users_;
     auth::AuthService auth_;

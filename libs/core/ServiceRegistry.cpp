@@ -37,6 +37,7 @@ ServiceRegistry::ServiceRegistry()
     , dkim_(logger_)
     , storage_(config_.database_dir(), storage_backend_options(config_))
     , job_executor_(jobs_, 2, 64)
+    , database_credential_rotation_jobs_(sites_, databases_, jobs_, job_executor_, database_credential_rotation_)
     , renewal_scheduler_(logger_, cert_store_, jobs_, job_executor_, cert_providers_)
     , auth_(*this)
     , runtime_(logger_, config_.sites_dir())
@@ -589,6 +590,10 @@ profile::ProfileManager& ServiceRegistry::profiles() {
 
 database::DatabaseManager& ServiceRegistry::databases() {
     return databases_;
+}
+
+database::DatabaseCredentialRotationJobService& ServiceRegistry::database_credential_rotation_jobs() {
+    return database_credential_rotation_jobs_;
 }
 
 backup::BackupManager& ServiceRegistry::backups() {

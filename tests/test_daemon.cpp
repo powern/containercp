@@ -87,3 +87,17 @@ TEST_CASE("migrate-to-sqlite missing --confirm rejected") {
     }
     CHECK_FALSE(has_confirm);
 }
+
+TEST_CASE("wordpress rotate db password command wire format contains no password") {
+    std::string cmd = "wordpress-rotate-db-password|7|9|example.com";
+
+    auto decoded = containercp::daemon::Command::decode(cmd);
+
+    CHECK(decoded.name == "wordpress-rotate-db-password");
+    REQUIRE(decoded.args.size() == 3);
+    CHECK(decoded.args[0] == "7");
+    CHECK(decoded.args[1] == "9");
+    CHECK(decoded.args[2] == "example.com");
+    CHECK(cmd.find("DB_PASSWORD") == std::string::npos);
+    CHECK(cmd.find("secret") == std::string::npos);
+}

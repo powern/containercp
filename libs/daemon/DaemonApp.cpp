@@ -246,6 +246,25 @@ std::string DaemonApp::handle_command(const std::string& command_line) {
         return result.success ? Command::success("Status OK") : Command::error(result.message);
     }
 
+    if (cmd.name == "wordpress-rotate-db-password" && cmd.args.size() >= 3) {
+        auto parse_uint = [](const std::string& value) -> uint64_t {
+            try {
+                return value.empty() ? 0 : std::stoull(value);
+            } catch (...) {
+                return 0;
+            }
+        };
+        database::DatabaseCredentialRotationJobRequest request;
+        request.site_id = parse_uint(cmd.args[0]);
+        request.database_id = parse_uint(cmd.args[1]);
+        request.confirmation = cmd.args[2];
+        const auto queued = s.database_credential_rotation_jobs().enqueue(request);
+        if (!queued.success) {
+            return Command::error(queued.message);
+        }
+        return Command::success("Job ID: " + std::to_string(queued.job_id) + "\nStatus: pending");
+    }
+
     if (cmd.name == "database-list") {
         auto& databases = s.databases().list();
         std::ostringstream out;

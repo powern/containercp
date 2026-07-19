@@ -196,6 +196,19 @@ TEST_CASE("SSL job response format") {
     CHECK(json.find("\"status\":\"completed\"") != std::string::npos);
 }
 
+TEST_CASE("WordPress credential rotation API returns job id only") {
+    std::string json = "{\"success\":true,\"data\":{"
+        "\"job_id\":42,"
+        "\"status\":\"pending\","
+        "\"message\":\"Credential rotation queued\""
+        "}}";
+
+    CHECK(json.find("\"job_id\":42") != std::string::npos);
+    CHECK(json.find("\"status\":\"pending\"") != std::string::npos);
+    CHECK(json.find("DB_PASSWORD") == std::string::npos);
+    CHECK(json.find("secret") == std::string::npos);
+}
+
 TEST_CASE("SSL providers response format") {
     std::string json = "{\"success\":true,\"data\":["
         "{\"id\":\"letsencrypt\",\"name\":\"Let's Encrypt\",\"supports_auto_renew\":true,\"supports_dns\":false}"

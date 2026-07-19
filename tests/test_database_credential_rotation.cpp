@@ -1,4 +1,5 @@
 #include "database/DatabaseCredentialRotationService.h"
+#include "database/DatabaseCredentialRotationJobService.h"
 
 #include "doctest/doctest.h"
 
@@ -6,6 +7,7 @@
 #include <vector>
 
 using namespace containercp::database;
+using namespace containercp;
 
 namespace {
 
@@ -307,4 +309,88 @@ TEST_CASE("DatabaseCredentialRotationService requires manual recovery when runti
         "restore_wordpress_config",
         "restore_runtime",
     });
+}
+
+TEST_CASE("DatabaseCredentialRotationJobService queues pending job without exposing secrets") {
+    site::SiteManager sites;
+    DatabaseManager databases;
+    jobs::JobManager jobs;
+    jobs::JobExecutor executor(jobs, 0, 4);
+    executor.start();
+    DatabaseCredentialRotationService rotation;
+    DatabaseCredentialRotationJobService queue(sites, databases, jobs, executor, rotation);
+
+    const uint64_t site_id = sites.create("example.com", "admin", 1);
+    const uint64_t database_id = databases.create("wp_example", "wp_user", "stored-secret", 1, site_id);
+
+    const auto result = queue.enqueue({site_id, database_id, "example.com"});
+
+    CHECK(result.success);
+    CHECK(result.job_id == 1);
+    CHECK(result.message.find("stored-secret") == std::string::npos);
+    auto* job = jobs.find(result.job_id);
+    REQUIRE(job != nullptr);
+    CHECK(job->type == "wordpress-db-credential-rotation");
+    CHECK(job->status == "pending");
+    CHECK(job->message.find("stored-secret") == std::string::npos);
+}
+
+TEST_CASE("DatabaseCredentialRotationJobService rejects confirmation mismatch before job creation") {
+    site::SiteManager sites;
+    DatabaseManager databases;
+    jobs::JobManager jobs;
+    jobs::JobExecutor executor(jobs, 0, 4);
+    executor.start();
+    DatabaseCredentialRotationService rotation;
+    DatabaseCredentialRotationJobService queue(sites, databases, jobs, executor, rotation);
+
+    const uint64_t site_id = sites.create("example.com", "admin", 1);
+    const uint64_t database_id = databases.create("wp_example", "wp_user", "stored-secret", 1, site_id);
+
+    const auto result = queue.enqueue({site_id, database_id, "wrong.example"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "confirmation_mismatch");
+    CHECK(jobs.list().empty());
+}
+
+TEST_CASE("DatabaseCredentialRotationJobService rejects database from another site") {
+    site::SiteManager sites;
+    DatabaseManager databases;
+    jobs::JobManager jobs;
+    jobs::JobExecutor executor(jobs, 0, 4);
+    executor.start();
+    DatabaseCredentialRotationService rotation;
+    DatabaseCredentialRotationJobService queue(sites, databases, jobs, executor, rotation);
+
+    const uint64_t site_id = sites.create("example.com", "admin", 1);
+    const uint64_t other_site_id = sites.create("other.example", "admin", 1);
+    const uint64_t database_id = databases.create("wp_other", "wp_user", "stored-secret", 1, other_site_id);
+
+    const auto result = queue.enqueue({site_id, database_id, "example.com"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "database_not_found");
+    CHECK(jobs.list().empty());
+}
+
+TEST_CASE("DatabaseCredentialRotationJobService rejects duplicate queued rotation") {
+    site::SiteManager sites;
+    DatabaseManager databases;
+    jobs::JobManager jobs;
+    jobs::JobExecutor executor(jobs, 0, 4);
+    executor.start();
+    DatabaseCredentialRotationService rotation;
+    DatabaseCredentialRotationJobService queue(sites, databases, jobs, executor, rotation);
+
+    const uint64_t site_id = sites.create("example.com", "admin", 1);
+    const uint64_t database_id = databases.create("wp_example", "wp_user", "stored-secret", 1, site_id);
+
+    const auto first = queue.enqueue({site_id, database_id, "example.com"});
+    const auto second = queue.enqueue({site_id, database_id, "example.com"});
+
+    CHECK(first.success);
+    CHECK_FALSE(second.success);
+    CHECK(second.code == "rotation_already_running");
+    CHECK(jobs.list().size() == 1);
 }

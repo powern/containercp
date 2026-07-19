@@ -404,7 +404,7 @@ Result: Complete. Added `WordPressRuntimeVerifier` with an injectable command ru
 
 ## WP-6 CLI And REST API
 
-### [ ] WP-6.1 Add API-first rotation endpoint
+### [x] WP-6.1 Add API-first rotation endpoint
 
 Objective: Add REST endpoint that queues a rotation job through the same rotation service and returns job id only.
 
@@ -420,7 +420,9 @@ Acceptance criteria: API returns accepted/job id and never password.
 
 Commit message: `api: expose WordPress database credential rotation`.
 
-### [ ] WP-6.2 Add CLI client command
+Result: Complete. Added `DatabaseCredentialRotationJobService` as the shared queueing boundary and exposed `POST /api/wordpress/database-credentials/rotate`. The endpoint validates `site_id`, `database_id`, and typed domain confirmation through the job service, queues an async job through `JobExecutor`, returns HTTP `202` with job id/status only, and returns coded validation errors for missing site/database, confirmation mismatch, duplicate queued rotation, or unavailable queue. Responses and job messages do not include passwords, generated credentials, config paths, command output, or provider diagnostics. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotation*"` (`17` test cases, `131` assertions), `build-wp0/tests/containercp_tests -tc="*database*"` (`39` test cases, `323` assertions), `build-wp0/tests/containercp_tests -tc="*API*"` (`18` test cases, `73` assertions), and full CTest (`1/1`). `git diff --check` passed.
+
+### [x] WP-6.2 Add CLI client command
 
 Objective: Add CLI command that requests rotation through daemon/service boundary and prints job/status without passwords.
 
@@ -435,6 +437,8 @@ Focused tests: command parsing, confirmation required, output redaction, nonzero
 Acceptance criteria: CLI is client/orchestrator only, not a second implementation.
 
 Commit message: `cli: add WordPress database password rotation command`.
+
+Result: Complete. Added daemon command `wordpress-rotate-db-password` and CLI command `containercp wordpress rotate-db-password <site_id> <database_id> --confirm <domain>`. The CLI only sends IDs and typed confirmation through the existing daemon socket, and the daemon delegates to `DatabaseCredentialRotationJobService`; neither accepts current/new passwords nor prints secret values. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*Command*"` (`17` test cases, `62` assertions), `build-wp0/containercp --help`, and `build-wp0/containercp --version`.
 
 ## WP-7 Site Detail GUI Action
 

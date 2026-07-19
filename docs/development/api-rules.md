@@ -228,6 +228,7 @@ format.  No business logic, no direct I/O, no Docker commands.
 | Auth | `POST /api/auth/login\|logout\|check` | session auth | `AuthService` |
 | Health | `GET /api/health` | daemon health | — |
 | Databases | `GET /api/databases` | database listing | `DatabaseManager` |
+| WordPress | `POST /api/wordpress/database-credentials/rotate` | queue DB credential rotation | `DatabaseCredentialRotationJobService` |
 | Access | `GET /api/access-users` | SFTP access users | `AccessUserManager` |
 
 ---

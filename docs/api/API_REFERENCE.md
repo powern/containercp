@@ -241,6 +241,37 @@ subsystems.
 | GET | `/api/databases` | List databases | `DatabaseManager` |
 | POST | `/api/databases/remove` | Remove a database record | `DatabaseManager` |
 
+### 2.11a WordPress Database Credentials
+
+| Method | Path | Purpose | Owner |
+|--------|------|---------|-------|
+| POST | `/api/wordpress/database-credentials/rotate` | Queue WordPress database credential rotation | `DatabaseCredentialRotationJobService` |
+
+**POST /api/wordpress/database-credentials/rotate** — body:
+
+```json
+{
+  "site_id": 1,
+  "database_id": 1,
+  "confirmation": "example.com"
+}
+```
+
+Returns HTTP `202 Accepted` with a job id only:
+
+```json
+{
+  "success": true,
+  "data": {
+    "job_id": 42,
+    "status": "pending",
+    "message": "Credential rotation queued"
+  }
+}
+```
+
+The request never accepts current or replacement passwords. The response never includes `DB_PASSWORD`, generated credentials, config paths, command output, or provider diagnostics.
+
 ### 2.12 Access (SFTP)
 
 | Method | Path | Purpose | Owner |

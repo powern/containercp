@@ -79,6 +79,7 @@ void print_help() {
         << "  site start <domain>     Start site stack\n"
         << "  site stop <domain>      Stop site stack\n"
         << "  site status <domain>    Show site status\n"
+        << "  wordpress rotate-db-password <site_id> <database_id> --confirm <domain>\n"
         << "  profile list            List profiles\n"
         << "  profile show <name>     Show profile details\n"
         << "  profile default         Show default profile\n"
@@ -204,6 +205,15 @@ int CommandDispatcher::run(int argc, char* argv[]) {
 
     if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "status") {
         return print_response(send_command("site-status|" + std::string(argv[3])));
+    }
+
+    if (argc == 7 && arg1 == "wordpress" && std::string(argv[2]) == "rotate-db-password" && std::string(argv[5]) == "--confirm") {
+        return print_response(send_command("wordpress-rotate-db-password|" + std::string(argv[3]) + "|" + std::string(argv[4]) + "|" + std::string(argv[6])));
+    }
+
+    if (arg1 == "wordpress" && argc >= 3 && std::string(argv[2]) == "rotate-db-password") {
+        std::cout << "Usage: containercp wordpress rotate-db-password <site_id> <database_id> --confirm <domain>\n";
+        return 1;
     }
 
     if (argc == 4 && arg1 == "site" && std::string(argv[2]) == "remove") {

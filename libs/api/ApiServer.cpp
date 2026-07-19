@@ -626,6 +626,44 @@ bool ApiServer::start() {
         return r;
     });
 
+    // POST /api/wordpress/database-credentials/rotate — queue WordPress DB credential rotation
+    router_.add("POST", "/api/wordpress/database-credentials/rotate", [&s](const Request& req) {
+        Response r;
+        auto parse_uint = [](const std::string& value) -> uint64_t {
+            try {
+                return value.empty() ? 0 : std::stoull(value);
+            } catch (...) {
+                return 0;
+            }
+        };
+
+        database::DatabaseCredentialRotationJobRequest request;
+        request.site_id = parse_uint(json_extract(req.body, "site_id"));
+        request.database_id = parse_uint(json_extract(req.body, "database_id"));
+        request.confirmation = json_extract(req.body, "confirmation");
+
+        const auto queued = s.database_credential_rotation_jobs().enqueue(request);
+        if (!queued.success) {
+            if (queued.code == "site_not_found" || queued.code == "database_not_found") {
+                r.status_code = 404;
+            } else if (queued.code == "rotation_already_running") {
+                r.status_code = 409;
+            } else if (queued.code == "queue_unavailable") {
+                r.status_code = 503;
+            } else {
+                r.status_code = 400;
+            }
+            r.body = "{\"success\":false,\"error\":{\"code\":\"" + JsonFormatter::escape(queued.code)
+                + "\",\"message\":\"" + JsonFormatter::escape(queued.message) + "\"}}";
+            return r;
+        }
+
+        r.status_code = 202;
+        r.body = "{\"success\":true,\"data\":{\"job_id\":" + std::to_string(queued.job_id)
+            + ",\"status\":\"pending\",\"message\":\"Credential rotation queued\"}}";
+        return r;
+    });
+
     router_.add("GET", "/api/settings", [&s](const Request&) {
         Response r;
         std::ostringstream json;
