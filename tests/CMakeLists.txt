@@ -128,6 +128,8 @@ target_compile_definitions(containercp_tests PRIVATE
     CMAKE_PROJECT_VERSION_TEXT="${PROJECT_VERSION}"
 )
 
+add_dependencies(containercp_tests containercp containercpd)
+
 target_link_libraries(containercp_tests PRIVATE
     cares
     curl

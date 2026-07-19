@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `pending` | Test Fix — Build version binaries for release CI
+
+**Summary:** Fixed release CI coverage for version output checks by making the `containercp_tests` target depend on the `containercp` and `containercpd` binaries. GitHub Actions builds only `containercp_tests`, so the version-output test now has the binaries it executes.
+
+**Files changed:** `tests/CMakeLists.txt`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. Release CI now validates `containercp --version` and `containercpd --version` instead of failing because the binaries were not built by the workflow target.
+
+**Validation:** Clean configure passed with `cmake -S . -B build-release-fix -G Ninja -DCMAKE_BUILD_TYPE=Release`. CI-equivalent target build passed with `cmake --build build-release-fix --target containercp_tests -- -j1`, including `containercp` and `containercpd` through the new dependency. Full doctest passed (`669` cases, `4507` assertions). CTest passed (`1/1`). Version output checks passed for `build-release-fix/containercp --version` and `build-release-fix/containercpd --version`.
+
+**Known risks:** Building `containercp_tests` now also builds the CLI and daemon binaries, increasing CI build scope slightly while preserving the focused version-output assertions.
+
+---
+
 ## v0.7.0 — 2026-07-19
 
 **Summary:** ContainerCP v0.7.0 completes the SQLite storage backend release. Core runtime storage can now run on SQLite after explicit operator activation, while legacy TXT storage is preserved as migration source and archive data.
