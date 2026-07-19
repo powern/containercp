@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Database — Implement strict shared credential assessment
+
+**Summary:** Added WP-R1 strict shared-user assessment for WordPress database credential rotation. `MariaDBCredentialProvider::detect_shared_user()` now returns a structured `MariaDBSharedCredentialAssessment` instead of relying on a boolean-only result, queries machine-readable batch output for exact `User` + `Host`, username host variants, and schema grant count, and fails closed on empty, malformed, duplicate, unexpected, ambiguous, or command-failure output. `DatabaseCredentialRotationService` now runs an explicit pre-mutation `assess_shared_user()` step after old-credential verification and before password generation; every state except `not_shared` blocks rotation before any password mutation.
+
+**Files changed:** `libs/database/MariaDBCredentialProvider.h`, `libs/database/MariaDBCredentialProvider.cpp`, `libs/database/DatabaseCredentialRotationService.h`, `libs/database/DatabaseCredentialRotationService.cpp`, `tests/test_mariadb_credential_provider.cpp`, `tests/test_database_credential_rotation.cpp`, `docs/development/mariadb-credential-provider.md`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No live rotation is enabled. Future rotation attempts through the saga are now blocked before mutation when MariaDB shared-user assessment is `shared`, `unknown`, `identity_missing`, `multiple_host_identities`, or `metadata_conflict`.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused tests passed for `*MariaDBCredentialProvider*` (`12` cases, `65` assertions), `*DatabaseCredentialRotationService*` (`17` cases, `132` assertions), `*DatabaseCredentialRotation*` (`21` cases, `149` assertions), `*database*` (`43` cases, `341` assertions), `*WordPress*` (`58` cases, `339` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed. Static secret-surface checks found only expected internal provider/saga variables and redaction-test literals.
+
+**Known risks:** Provider-level assessment uses `mysql.user` and `mysql.db` runtime facts only. Full ContainerCP metadata and cross-site WordPress credential correlation is represented by the `metadata_conflict` state but will be completed in the real dependency adapter and exact database-target resolution phases. MariaDB secret transport hardening is still scheduled for WP-R3.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Document credential operations and finalize WP-8 hardening
 
 **Summary:** Added the WP-8 operator/security documentation for the WordPress database credential foundation. The new runbook documents supported direct-constant configs, unsupported fail-closed states, single-source ownership, API/CLI/GUI workflow, compensation and manual-recovery behavior, secret-handling rules, threat model, residual plaintext SQLite/`.env` risk, and live-validation requirements. The API reference now records rotation operational notes and the current fail-closed foundation behavior. The project tracker now lists the v0.8 WordPress Credential Foundation status. The final migration audit confirmed credential parsing and credential updates are already delegated to shared WordPress services; remaining migration `wp-config.php` handling is archive discovery, backup/rollback, container path mapping, and trusted-proxy insertion rather than duplicate credential ownership.

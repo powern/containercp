@@ -533,3 +533,79 @@ Acceptance criteria: Clean configure, clean rebuild, full doctest, CTest, versio
 Commit message: `wordpress: finalize credential rotation foundation`.
 
 Result: Complete. Configure passed with `cmake -S . -B build-wp0 -G Ninja -DCMAKE_BUILD_TYPE=Release`. Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` (`ninja: no work to do`, no compiler warnings emitted). Focused validation passed for `*WordPress*` (`58` cases, `339` assertions), `*DatabaseCredentialRotation*` (`17` cases, `131` assertions), `*API*` (`18` cases, `73` assertions), `*database*` (`39` cases, `323` assertions), `*Command*` (`17` cases, `62` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full doctest passed with `build-wp0/tests/containercp_tests` (`749` cases, `4992` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `node --check web/app.js`, `build-wp0/containercp --version`, `build-wp0/containercpd --version`, and `git diff --check` passed. Static secret-surface checks found only expected existing auth password-change fields, internal provider/saga password variables, docs, and the public boolean `db_password_present`; no WordPress UI/API/CLI surface exposes generated or raw database passwords.
+
+## WP-R Review Fixes And Live Wiring
+
+Status: In progress. This correction phase is required before live credential rotation or Databases module work. Do not modify `web2.softico.ua`, rotate real credentials, or deploy these changes to a real site without explicit operator approval.
+
+### [x] WP-R1 Fix shared database user detection
+
+Objective: Replace boolean/default-false shared-user detection with a structured, strict shared-credential assessment that preserves exact MariaDB `User` + `Host`, parses machine-readable provider output, combines runtime and ContainerCP metadata where available, and blocks rotation for `shared` or `unknown` assessments.
+
+Expected files: `libs/database/MariaDBCredentialProvider.*`, `libs/database/DatabaseCredentialRotationService.*`, tests, `CHANGELOG.md`.
+
+Required tests: one exact non-shared user@host, exact identity used by another site, exact identity referenced by several database records, same username with different Host values, identity missing, malformed command output, empty output, command failure, metadata/runtime disagreement, unknown state blocks rotation, exact user@host preservation, no password or grants in diagnostics.
+
+Suggested commit: `database: implement strict shared credential assessment`.
+
+Result: Complete. Added `MariaDBSharedCredentialAssessmentState` and `MariaDBSharedCredentialAssessment` with structured states for `not_shared`, `shared`, `unknown`, `identity_missing`, `multiple_host_identities`, and `metadata_conflict`. `MariaDBCredentialProvider::detect_shared_user()` now runs batch/raw/skip-column machine-readable queries for exact `User` + `Host`, username identities, other host identities, and schema grant count; it strictly parses tab-delimited output and fails closed on missing, malformed, duplicate, unexpected, empty, or command-failure output instead of defaulting shared state to false. `DatabaseCredentialRotationService` now runs an explicit `assess_shared_user()` dependency step after old-credential verification and before password generation; every state except `not_shared` blocks rotation before mutation. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*MariaDBCredentialProvider*"` (`12` cases, `65` assertions), `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotationService*"` (`17` cases, `132` assertions), `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotation*"` (`21` cases, `149` assertions), `build-wp0/tests/containercp_tests -tc="*database*"` (`43` cases, `341` assertions), `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`58` cases, `339` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Incremental build passed with no compiler warnings. Full CTest passed (`1/1`), `git diff --check` passed, and static secret-surface checks found only expected internal provider/saga variables and redaction-test literals.
+
+### [ ] WP-R2 Fix site_id=0 semantics
+
+Objective: Treat `site_id=0` as a valid identifier and resolve eligibility by site/resource capability rather than numeric value.
+
+Suggested commit: `wordpress: preserve valid system site identity`.
+
+### [ ] WP-R3 Harden MariaDB secret transport
+
+Objective: Replace or harden the current combined credential/SQL stream so option-file and SQL transport cannot be confused by newlines, control characters, delimiters, option-file syntax, or future password-generator changes.
+
+Suggested commit: `database: harden MariaDB secret transport`.
+
+### [ ] WP-R4 Complete real dependency wiring
+
+Objective: Add a concrete production adapter behind `DatabaseCredentialRotationDependencies` without enabling or testing it on a real server.
+
+Suggested commit: `wordpress: wire credential rotation dependencies`.
+
+### [ ] WP-R5 Fix database selection for multi-database sites
+
+Objective: Resolve the exact WordPress database target on the backend and remove GUI first-database selection.
+
+Suggested commit: `wordpress: resolve exact WordPress database target`.
+
+### [ ] WP-R6 Review rotation and compensation order
+
+Objective: Define metadata atomicity, add rollback/transaction boundaries, and verify restored MariaDB, WordPress/PHP, site health, and metadata consistency after compensation.
+
+Suggested commit: `wordpress: harden credential rotation compensation`.
+
+### [ ] WP-R7 Review runtime verification safety
+
+Objective: Harden `WordPressRuntimeVerifier` request validation and document the `wp-config.php` execution trust boundary.
+
+Suggested commit: `wordpress: harden runtime credential verification`.
+
+### [ ] WP-R8 API, authorization and job safety
+
+Objective: Harden status/rotate endpoint parsing, authorization behavior, queue semantics, immutable job identifiers, and information-leak boundaries.
+
+Suggested commit: `api: harden credential rotation endpoints`.
+
+### [ ] WP-R9 GUI corrections
+
+Objective: Update Site Details UI to consume backend-resolved database target and show/disable rotation based on precise safety states.
+
+Suggested commit: `web: harden WordPress credential rotation workflow`.
+
+### [ ] WP-R10 Documentation consistency
+
+Objective: Correct readiness language and document the final shared-user, database-target, transport, dependency, compensation, runtime, and live-enable boundaries.
+
+Suggested commit: `docs: correct WordPress credential readiness status`.
+
+### [ ] WP-R11 Final validation
+
+Objective: Run clean build in a new directory, full/focused tests, JavaScript syntax validation, secret-surface checks, `git diff --check`, clean status, push all commits, and report CI status or explicit CI absence.
+
+Suggested commit: `wordpress: validate credential review fixes`.

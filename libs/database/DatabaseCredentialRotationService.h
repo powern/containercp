@@ -1,6 +1,8 @@
 #ifndef CONTAINERCP_DATABASE_DATABASE_CREDENTIAL_ROTATION_SERVICE_H
 #define CONTAINERCP_DATABASE_DATABASE_CREDENTIAL_ROTATION_SERVICE_H
 
+#include "MariaDBCredentialProvider.h"
+
 #include <cstdint>
 #include <mutex>
 #include <set>
@@ -14,6 +16,7 @@ enum class DatabaseCredentialRotationState {
     LockAcquired,
     InspectingWordPress,
     VerifyingOldCredential,
+    AssessingSharedUser,
     GeneratingPassword,
     ChangingMariaDBPassword,
     UpdatingWordPressConfig,
@@ -54,6 +57,7 @@ struct DatabaseCredentialRotationStepResult {
     std::string code;
     std::string message;
     std::string generated_password;
+    MariaDBSharedCredentialAssessment shared_assessment;
 };
 
 class DatabaseCredentialRotationDependencies {
@@ -62,6 +66,7 @@ public:
 
     virtual DatabaseCredentialRotationStepResult inspect_wordpress(const DatabaseCredentialRotationRequest& request) = 0;
     virtual DatabaseCredentialRotationStepResult verify_old_credential(const DatabaseCredentialRotationRequest& request) = 0;
+    virtual DatabaseCredentialRotationStepResult assess_shared_user(const DatabaseCredentialRotationRequest& request) = 0;
     virtual DatabaseCredentialRotationStepResult generate_password(const DatabaseCredentialRotationRequest& request) = 0;
     virtual DatabaseCredentialRotationStepResult change_mariadb_password(const DatabaseCredentialRotationRequest& request,
                                                                          const std::string& new_password) = 0;

@@ -17,13 +17,21 @@ struct FakeRotationDependencies : DatabaseCredentialRotationDependencies {
     std::string fail_call;
     std::string compensation_fail_call;
     std::string seen_password;
+    MariaDBSharedCredentialAssessmentState shared_state = MariaDBSharedCredentialAssessmentState::NotShared;
 
     DatabaseCredentialRotationStepResult ok(const std::string& call) {
         calls.push_back(call);
+        DatabaseCredentialRotationStepResult result;
         if (call == fail_call || call == compensation_fail_call) {
-            return {false, call + "_failed", "failure with secret new-secret", ""};
+            result.success = false;
+            result.code = call + "_failed";
+            result.message = "failure with secret new-secret";
+            return result;
         }
-        return {true, "ok", "ok", ""};
+        result.success = true;
+        result.code = "ok";
+        result.message = "ok";
+        return result;
     }
 
     DatabaseCredentialRotationStepResult inspect_wordpress(const DatabaseCredentialRotationRequest&) override {
@@ -32,12 +40,38 @@ struct FakeRotationDependencies : DatabaseCredentialRotationDependencies {
     DatabaseCredentialRotationStepResult verify_old_credential(const DatabaseCredentialRotationRequest&) override {
         return ok("verify_old_credential");
     }
+    DatabaseCredentialRotationStepResult assess_shared_user(const DatabaseCredentialRotationRequest&) override {
+        calls.push_back("assess_shared_user");
+        if (fail_call == "assess_shared_user") {
+            DatabaseCredentialRotationStepResult result;
+            result.success = false;
+            result.code = "assess_shared_user_failed";
+            result.message = "failure with secret new-secret";
+            return result;
+        }
+        DatabaseCredentialRotationStepResult result;
+        result.success = true;
+        result.code = "ok";
+        result.message = "ok";
+        result.shared_assessment.state = shared_state;
+        result.shared_assessment.identity = {"wp_user", "%"};
+        return result;
+    }
     DatabaseCredentialRotationStepResult generate_password(const DatabaseCredentialRotationRequest&) override {
         calls.push_back("generate_password");
         if (fail_call == "generate_password") {
-            return {false, "generate_password_failed", "failure with secret new-secret", ""};
+            DatabaseCredentialRotationStepResult result;
+            result.success = false;
+            result.code = "generate_password_failed";
+            result.message = "failure with secret new-secret";
+            return result;
         }
-        return {true, "ok", "ok", generated};
+        DatabaseCredentialRotationStepResult result;
+        result.success = true;
+        result.code = "ok";
+        result.message = "ok";
+        result.generated_password = generated;
+        return result;
     }
     DatabaseCredentialRotationStepResult change_mariadb_password(const DatabaseCredentialRotationRequest&, const std::string& new_password) override {
         seen_password = new_password;
@@ -81,6 +115,7 @@ struct FakeRotationDependencies : DatabaseCredentialRotationDependencies {
 TEST_CASE("DatabaseCredentialRotationService state strings are stable") {
     CHECK(database_credential_rotation_state_to_string(DatabaseCredentialRotationState::NotStarted) == "not_started");
     CHECK(database_credential_rotation_state_to_string(DatabaseCredentialRotationState::LockAcquired) == "lock_acquired");
+    CHECK(database_credential_rotation_state_to_string(DatabaseCredentialRotationState::AssessingSharedUser) == "assessing_shared_user");
     CHECK(database_credential_rotation_state_to_string(DatabaseCredentialRotationState::Compensating) == "compensating");
     CHECK(database_credential_rotation_state_to_string(DatabaseCredentialRotationState::ManualRecoveryRequired) == "manual_recovery_required");
     CHECK(database_credential_rotation_state_to_string(DatabaseCredentialRotationState::Completed) == "completed");
@@ -143,6 +178,7 @@ TEST_CASE("DatabaseCredentialRotationService executes happy path in order") {
     CHECK(deps.calls == std::vector<std::string>{
         "inspect_wordpress",
         "verify_old_credential",
+        "assess_shared_user",
         "generate_password",
         "change_mariadb_password",
         "update_wordpress_config",
@@ -170,6 +206,71 @@ TEST_CASE("DatabaseCredentialRotationService rejects unsupported inspection befo
     }
     CHECK(deps.calls == std::vector<std::string>{"inspect_wordpress"});
     CHECK_FALSE(service.is_locked(10, 20));
+}
+
+TEST_CASE("DatabaseCredentialRotationService blocks shared credential before password generation") {
+    FakeRotationDependencies deps;
+    deps.shared_state = MariaDBSharedCredentialAssessmentState::Shared;
+    DatabaseCredentialRotationService service(deps);
+
+    const auto result = service.rotate({10, 20, "example.com"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "shared_user_assessment_shared");
+    CHECK(result.message.find("new-secret") == std::string::npos);
+    CHECK(deps.calls == std::vector<std::string>{
+        "inspect_wordpress",
+        "verify_old_credential",
+        "assess_shared_user",
+    });
+}
+
+TEST_CASE("DatabaseCredentialRotationService blocks unknown shared credential state") {
+    FakeRotationDependencies deps;
+    deps.shared_state = MariaDBSharedCredentialAssessmentState::Unknown;
+    DatabaseCredentialRotationService service(deps);
+
+    const auto result = service.rotate({10, 20, "example.com"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "shared_user_assessment_unknown");
+    CHECK(deps.calls == std::vector<std::string>{
+        "inspect_wordpress",
+        "verify_old_credential",
+        "assess_shared_user",
+    });
+}
+
+TEST_CASE("DatabaseCredentialRotationService blocks multiple host identities") {
+    FakeRotationDependencies deps;
+    deps.shared_state = MariaDBSharedCredentialAssessmentState::MultipleHostIdentities;
+    DatabaseCredentialRotationService service(deps);
+
+    const auto result = service.rotate({10, 20, "example.com"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "shared_user_assessment_multiple_host_identities");
+    CHECK(deps.calls == std::vector<std::string>{
+        "inspect_wordpress",
+        "verify_old_credential",
+        "assess_shared_user",
+    });
+}
+
+TEST_CASE("DatabaseCredentialRotationService blocks metadata conflict shared assessment") {
+    FakeRotationDependencies deps;
+    deps.shared_state = MariaDBSharedCredentialAssessmentState::MetadataConflict;
+    DatabaseCredentialRotationService service(deps);
+
+    const auto result = service.rotate({10, 20, "example.com"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "shared_user_assessment_metadata_conflict");
+    CHECK(deps.calls == std::vector<std::string>{
+        "inspect_wordpress",
+        "verify_old_credential",
+        "assess_shared_user",
+    });
 }
 
 TEST_CASE("DatabaseCredentialRotationService passes generated password only to dependency calls") {
@@ -201,6 +302,7 @@ TEST_CASE("DatabaseCredentialRotationService compensates when config update fail
     CHECK(deps.calls == std::vector<std::string>{
         "inspect_wordpress",
         "verify_old_credential",
+        "assess_shared_user",
         "generate_password",
         "change_mariadb_password",
         "update_wordpress_config",
@@ -222,6 +324,7 @@ TEST_CASE("DatabaseCredentialRotationService compensates before metadata when ve
     CHECK(deps.calls == std::vector<std::string>{
         "inspect_wordpress",
         "verify_old_credential",
+        "assess_shared_user",
         "generate_password",
         "change_mariadb_password",
         "update_wordpress_config",
@@ -253,6 +356,7 @@ TEST_CASE("DatabaseCredentialRotationService requires manual recovery when compe
     CHECK(deps.calls == std::vector<std::string>{
         "inspect_wordpress",
         "verify_old_credential",
+        "assess_shared_user",
         "generate_password",
         "change_mariadb_password",
         "update_wordpress_config",
@@ -277,6 +381,7 @@ TEST_CASE("DatabaseCredentialRotationService requires manual recovery when datab
     CHECK(deps.calls == std::vector<std::string>{
         "inspect_wordpress",
         "verify_old_credential",
+        "assess_shared_user",
         "generate_password",
         "change_mariadb_password",
         "update_wordpress_config",
@@ -300,6 +405,7 @@ TEST_CASE("DatabaseCredentialRotationService requires manual recovery when runti
     CHECK(deps.calls == std::vector<std::string>{
         "inspect_wordpress",
         "verify_old_credential",
+        "assess_shared_user",
         "generate_password",
         "change_mariadb_password",
         "update_wordpress_config",

@@ -24,11 +24,33 @@ struct MariaDBAdminCredential {
     std::string host = "localhost";
 };
 
+enum class MariaDBSharedCredentialAssessmentState {
+    NotShared,
+    Shared,
+    Unknown,
+    IdentityMissing,
+    MultipleHostIdentities,
+    MetadataConflict,
+};
+
+struct MariaDBSharedCredentialAssessment {
+    MariaDBSharedCredentialAssessmentState state = MariaDBSharedCredentialAssessmentState::Unknown;
+    MariaDBUserIdentity identity;
+    bool exact_identity_exists = false;
+    bool username_has_other_hosts = false;
+    int exact_identity_count = -1;
+    int username_identity_count = -1;
+    int other_host_identity_count = -1;
+    int schema_grant_count = -1;
+    int metadata_reference_count = -1;
+};
+
 struct MariaDBCredentialResult {
     bool success = false;
     std::string code;
     std::string message;
     bool shared_user = false;
+    MariaDBSharedCredentialAssessment shared_assessment;
 };
 
 class MariaDBProcessRunner {
@@ -79,12 +101,15 @@ private:
                                         const std::string& mysql_password,
                                         const std::string& mysql_host,
                                         const std::string& sql,
-                                        const std::string& success_code) const;
+                                        const std::string& success_code,
+                                        runtime::CommandResult* command_out = nullptr) const;
 
     const MariaDBProcessRunner& runner_;
 };
 
 std::string mariadb_quote_sql_string(const std::string& value);
+std::string mariadb_shared_credential_assessment_state_to_string(MariaDBSharedCredentialAssessmentState state);
+bool mariadb_shared_credential_rotation_allowed(MariaDBSharedCredentialAssessmentState state);
 
 } // namespace containercp::database
 

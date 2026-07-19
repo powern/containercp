@@ -37,6 +37,8 @@ std::string database_credential_rotation_state_to_string(DatabaseCredentialRotat
         return "inspecting_wordpress";
     case DatabaseCredentialRotationState::VerifyingOldCredential:
         return "verifying_old_credential";
+    case DatabaseCredentialRotationState::AssessingSharedUser:
+        return "assessing_shared_user";
     case DatabaseCredentialRotationState::GeneratingPassword:
         return "generating_password";
     case DatabaseCredentialRotationState::ChangingMariaDBPassword:
@@ -201,6 +203,21 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const
     if (!step.success) {
         return fail_with(std::move(result), DatabaseCredentialRotationState::Failed, step.code.empty() ? "old_credential_verification_failed" : step.code,
                          "Existing database credential verification failed");
+    }
+
+    step = run_step(DatabaseCredentialRotationState::AssessingSharedUser,
+                    "assessing_shared_user",
+                    "Assessing shared database credential risk",
+                    [&] { return dependencies_->assess_shared_user(request); });
+    if (!step.success) {
+        return fail_with(std::move(result), DatabaseCredentialRotationState::Failed, step.code.empty() ? "shared_user_assessment_failed" : step.code,
+                         "Shared credential assessment failed");
+    }
+    if (!mariadb_shared_credential_rotation_allowed(step.shared_assessment.state)) {
+        const auto state = mariadb_shared_credential_assessment_state_to_string(step.shared_assessment.state);
+        return fail_with(std::move(result), DatabaseCredentialRotationState::Failed,
+                         state == "unknown" ? "shared_user_assessment_unknown" : "shared_user_assessment_" + state,
+                         "Shared credential assessment blocks rotation");
     }
 
     step = run_step(DatabaseCredentialRotationState::GeneratingPassword,

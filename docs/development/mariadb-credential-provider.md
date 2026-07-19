@@ -54,7 +54,18 @@ MariaDB privilege behavior for `ALTER USER` varies by version and server configu
 
 ## Shared-User Risk
 
-Before rotating a password, the saga must check whether the same MariaDB username is used by more than the intended account scope. A shared user can affect multiple databases or applications. The provider exposes a shared-user detection query boundary; WP-5 must consume that signal before mutation and fail closed or require explicit operator handling.
+Before rotating a password, the saga must check whether the exact MariaDB `User` + `Host` identity is shared beyond the intended account scope. A shared user can affect multiple databases or applications.
+
+`MariaDBCredentialProvider::detect_shared_user()` returns a structured assessment rather than a boolean-only result:
+
+- `not_shared` — exactly one `User` + `Host` identity exists, the username has no other host identities, and the exact identity has one schema grant.
+- `shared` — the exact identity appears reusable across multiple schema grants.
+- `unknown` — command output is missing, malformed, ambiguous, or otherwise insufficient.
+- `identity_missing` — the exact identity does not exist.
+- `multiple_host_identities` — the same username exists under other `Host` values or the exact host is missing while other hosts exist.
+- `metadata_conflict` — ContainerCP metadata/runtime comparison found conflicting identity ownership; this is produced by higher-level dependency wiring rather than the low-level provider.
+
+The provider queries machine-readable tab-delimited output and parses it strictly. Empty, malformed, duplicate, missing, unexpected, or command-failure output fails closed as `unknown`; it never silently defaults to `not_shared`. The rotation saga blocks every state except `not_shared` before password generation or mutation.
 
 ## Failure Handling
 
