@@ -1,8 +1,10 @@
 #include "WordPressConfigUpdater.h"
 
 #include <cctype>
+#include <cstdio>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace containercp::wordpress {
@@ -60,15 +62,109 @@ std::size_t skip_spaces(const std::string& content, std::size_t pos) {
     return pos;
 }
 
-bool looks_conditional(const std::string& content, std::size_t define_offset) {
-    const std::size_t start = define_offset > 180 ? define_offset - 180 : 0;
-    const std::string prefix = content.substr(start, define_offset - start);
+bool is_control_keyword(std::string_view token) {
     static constexpr std::string_view controls[] = {"if", "elseif", "else", "switch", "foreach", "for", "while"};
-    for (std::size_t i = 0; i < prefix.size(); ++i) {
-        for (auto control : controls) {
-            if (has_identifier_at(prefix, i, control)) {
-                return true;
+    for (auto control : controls) {
+        if (token == control) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool inside_conditional_block(const std::string& content, std::size_t define_offset) {
+    bool in_single = false;
+    bool in_double = false;
+    bool in_line_comment = false;
+    bool in_block_comment = false;
+    bool pending_control = false;
+    std::vector<bool> block_stack;
+
+    for (std::size_t i = 0; i < define_offset && i < content.size(); ++i) {
+        char c = content[i];
+        char next = i + 1 < define_offset && i + 1 < content.size() ? content[i + 1] : '\0';
+        if (in_line_comment) {
+            if (c == '\n' || c == '\r') {
+                in_line_comment = false;
             }
+            continue;
+        }
+        if (in_block_comment) {
+            if (c == '*' && next == '/') {
+                in_block_comment = false;
+                ++i;
+            }
+            continue;
+        }
+        if (in_single) {
+            if (c == '\\') {
+                ++i;
+            } else if (c == '\'') {
+                in_single = false;
+            }
+            continue;
+        }
+        if (in_double) {
+            if (c == '\\') {
+                ++i;
+            } else if (c == '"') {
+                in_double = false;
+            }
+            continue;
+        }
+
+        if (c == '/' && next == '/') {
+            in_line_comment = true;
+            ++i;
+            continue;
+        }
+        if (c == '#') {
+            in_line_comment = true;
+            continue;
+        }
+        if (c == '/' && next == '*') {
+            in_block_comment = true;
+            ++i;
+            continue;
+        }
+        if (c == '\'') {
+            in_single = true;
+            continue;
+        }
+        if (c == '"') {
+            in_double = true;
+            continue;
+        }
+
+        if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+            const std::size_t token_start = i;
+            while (i < define_offset && i < content.size() && is_identifier_char(content[i])) {
+                ++i;
+            }
+            const std::string_view token(content.data() + token_start, i - token_start);
+            if ((token_start == 0 || content[token_start - 1] != '$') && is_control_keyword(token)) {
+                pending_control = true;
+            }
+            --i;
+            continue;
+        }
+
+        if (c == '{') {
+            block_stack.push_back(pending_control);
+            pending_control = false;
+        } else if (c == '}') {
+            if (!block_stack.empty()) {
+                block_stack.pop_back();
+            }
+            pending_control = false;
+        } else if (c == ';') {
+            pending_control = false;
+        }
+    }
+
+    for (bool conditional : block_stack) {
+        if (conditional) {
+            return true;
         }
     }
     return false;
@@ -338,11 +434,11 @@ std::vector<ReplacementSpan> find_target_spans(const std::string& content, const
         if (args.size() >= 2) {
             auto constant_name = parse_string_literal(args[0]);
             if (constant_name && *constant_name == target_name) {
-                auto span = literal_value_span(args[1], looks_conditional(content, i));
+                auto span = literal_value_span(args[1], inside_conditional_block(content, i));
                 if (span) {
                     spans.push_back(*span);
                 } else {
-                    spans.push_back({0, 0, '\'', looks_conditional(content, i)});
+                    spans.push_back({0, 0, '\'', inside_conditional_block(content, i)});
                 }
             }
         }
@@ -351,21 +447,58 @@ std::vector<ReplacementSpan> find_target_spans(const std::string& content, const
     return spans;
 }
 
-bool contains_unsupported_source(const std::string& content, const std::string& target_name) {
-    const auto spans = find_target_spans(content, target_name);
-    return spans.empty();
-}
-
-std::string escape_for_quote(const std::string& value, char quote) {
-    std::string escaped;
-    escaped.reserve(value.size());
-    for (char c : value) {
-        if (c == '\\' || c == quote) {
-            escaped.push_back('\\');
+std::optional<std::string> encode_php_literal_value(const std::string& value, char quote) {
+    std::string encoded;
+    encoded.reserve(value.size());
+    for (unsigned char c : value) {
+        if (quote == '\'') {
+            if (c == '\\' || c == '\'') {
+                encoded.push_back('\\');
+                encoded.push_back(static_cast<char>(c));
+            } else if (c == '\n' || c == '\r' || c == '\t') {
+                encoded.push_back(static_cast<char>(c));
+            } else if (c < 0x20 || c == 0x7f) {
+                return std::nullopt;
+            } else {
+                encoded.push_back(static_cast<char>(c));
+            }
+            continue;
         }
-        escaped.push_back(c);
+
+        switch (c) {
+        case '\\':
+            encoded += "\\\\";
+            break;
+        case '"':
+            encoded += "\\\"";
+            break;
+        case '$':
+            encoded += "\\$";
+            break;
+        case '\n':
+            encoded += "\\n";
+            break;
+        case '\r':
+            encoded += "\\r";
+            break;
+        case '\t':
+            encoded += "\\t";
+            break;
+        case '\0':
+            encoded += "\\0";
+            break;
+        default:
+            if (c < 0x20 || c == 0x7f) {
+                char buffer[5] = {'\\', 'x', '0', '0', '\0'};
+                std::snprintf(buffer, sizeof(buffer), "\\x%02X", c);
+                encoded += buffer;
+            } else {
+                encoded.push_back(static_cast<char>(c));
+            }
+            break;
+        }
     }
-    return escaped;
+    return encoded;
 }
 
 WordPressConfigUpdateResult failure(std::string code, std::string message) {
@@ -397,7 +530,7 @@ WordPressConfigUpdateResult WordPressConfigUpdater::render_update(const std::str
                                                                   const std::string& new_value) const {
     const std::string target_name = wordpress_update_field_name(field);
     const auto spans = find_target_spans(content, target_name);
-    if (spans.empty() || contains_unsupported_source(content, target_name)) {
+    if (spans.empty()) {
         return failure("unsupported_credential_source", target_name + " is missing or is not a direct string literal");
     }
     if (spans.size() != 1) {
@@ -410,12 +543,16 @@ WordPressConfigUpdateResult WordPressConfigUpdater::render_update(const std::str
         return failure("unsupported_credential_source", target_name + " is not a direct string literal");
     }
 
+    auto encoded_value = encode_php_literal_value(new_value, spans[0].quote);
+    if (!encoded_value) {
+        return failure("unsupported_credential_value", target_name + " value cannot be safely represented in existing PHP quote style");
+    }
+
     WordPressConfigUpdateResult result;
     result.success = true;
     result.code = "ok";
     result.message = "WordPress credential rendered";
-    result.content = content.substr(0, spans[0].value_start) + escape_for_quote(new_value, spans[0].quote) +
-                     content.substr(spans[0].value_end);
+    result.content = content.substr(0, spans[0].value_start) + *encoded_value + content.substr(spans[0].value_end);
     return result;
 }
 

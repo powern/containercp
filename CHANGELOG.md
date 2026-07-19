@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Bug Fix — Safely encode WordPress credential literals
+
+**Summary:** Fixed the WP-3.1 WordPress config renderer before filesystem writes. Double-quoted PHP credentials now escape dollar signs to prevent variable interpolation and encode newline, carriage return, tab, NUL, and other control characters with PHP string semantics. Single-quoted credentials now keep PHP single-quote semantics by escaping backslash and single quote and rejecting unsupported NUL/control values rather than silently changing the password. Conditional detection was also changed from proximity-based scanning to block-aware scanning so completed unrelated `if`/loop blocks, comments, and strings do not make an unconditional `DB_PASSWORD` unwritable, while genuinely conditional target definitions remain rejected.
+
+**Files changed:** `libs/wordpress/WordPressConfigUpdater.cpp`, `tests/test_wordpress_config_update.cpp`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. The renderer remains in-memory only and still is not wired to filesystem writes, syntax validation, migration update, REST API, CLI, Web UI, runtime, storage, or production site operations.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused WordPress tests passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`38` cases, `232` assertions). Migration regression passed with `build-wp0/tests/containercp_tests -tc="VestaSiteImporter*"` (`31` cases, `79` assertions) and `build-wp0/tests/containercp_tests -tc="*Migration*"` (`39` cases, `254` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** Single-quoted existing credential definitions reject NUL and non-newline/carriage-return/tab control characters because PHP single-quoted strings cannot safely represent those values through escape syntax. Atomic file writing, ownership/mode preservation, PHP syntax validation, rollback, and migration update refactoring remain deferred to WP-3.2 through WP-3.4.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Add safe credential update renderer
 
 **Summary:** Added the WP-3.1 in-memory WordPress credential update renderer. `WordPressConfigUpdater::render_update()` replaces exactly one supported direct string-literal `DB_NAME`, `DB_USER`, `DB_PASSWORD`, or `DB_HOST` definition while preserving surrounding content and quote style. It rejects missing, dynamic, included, duplicate, and conditional target definitions and keeps failure diagnostics free of secret values.
