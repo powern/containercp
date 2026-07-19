@@ -83,6 +83,9 @@ public:
                                                                           const std::string& new_password) = 0;
     virtual DatabaseCredentialRotationStepResult restore_wordpress_config(const DatabaseCredentialRotationRequest& request) = 0;
     virtual DatabaseCredentialRotationStepResult restore_runtime(const DatabaseCredentialRotationRequest& request) = 0;
+    virtual DatabaseCredentialRotationStepResult verify_restored_wordpress(const DatabaseCredentialRotationRequest& request) = 0;
+    virtual DatabaseCredentialRotationStepResult verify_restored_site_health(const DatabaseCredentialRotationRequest& request) = 0;
+    virtual DatabaseCredentialRotationStepResult verify_restored_metadata(const DatabaseCredentialRotationRequest& request) = 0;
 };
 
 class DatabaseCredentialRotationService {

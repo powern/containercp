@@ -147,6 +147,30 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::compensate_a
         return manual_recovery("manual_recovery_required", "Credential rotation requires manual recovery");
     }
 
+    result.events.push_back(event(DatabaseCredentialRotationState::Compensating,
+                                  "verifying_restored_wordpress",
+                                  "Verifying restored WordPress database access"));
+    step = dependencies_->verify_restored_wordpress(request);
+    if (!step.success) {
+        return manual_recovery("manual_recovery_required", "Credential rotation requires manual recovery");
+    }
+
+    result.events.push_back(event(DatabaseCredentialRotationState::Compensating,
+                                  "verifying_restored_site_health",
+                                  "Verifying restored site health"));
+    step = dependencies_->verify_restored_site_health(request);
+    if (!step.success) {
+        return manual_recovery("manual_recovery_required", "Credential rotation requires manual recovery");
+    }
+
+    result.events.push_back(event(DatabaseCredentialRotationState::Compensating,
+                                  "verifying_restored_metadata",
+                                  "Verifying restored credential metadata"));
+    step = dependencies_->verify_restored_metadata(request);
+    if (!step.success) {
+        return manual_recovery("manual_recovery_required", "Credential rotation requires manual recovery");
+    }
+
     result.success = false;
     result.final_state = DatabaseCredentialRotationState::Compensated;
     result.code = "rotation_compensated";

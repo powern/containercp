@@ -120,6 +120,15 @@ struct FakeRotationDependencies : DatabaseCredentialRotationDependencies {
     DatabaseCredentialRotationStepResult restore_runtime(const DatabaseCredentialRotationRequest&) override {
         return ok("restore_runtime");
     }
+    DatabaseCredentialRotationStepResult verify_restored_wordpress(const DatabaseCredentialRotationRequest&) override {
+        return ok("verify_restored_wordpress");
+    }
+    DatabaseCredentialRotationStepResult verify_restored_site_health(const DatabaseCredentialRotationRequest&) override {
+        return ok("verify_restored_site_health");
+    }
+    DatabaseCredentialRotationStepResult verify_restored_metadata(const DatabaseCredentialRotationRequest&) override {
+        return ok("verify_restored_metadata");
+    }
 };
 
 struct ParsedMariaDBBundle {
@@ -225,6 +234,7 @@ struct AdapterFixture {
     FakeWordPressAdapterRunner wordpress_runner;
     wordpress::WordPressRuntimeVerifier wordpress_verifier;
     bool metadata_persisted = false;
+    bool metadata_persist_result = true;
     bool runtime_applied = false;
     bool health_checked = false;
 
@@ -254,7 +264,7 @@ struct AdapterFixture {
             []() { return std::string("newpass"); },
             [this]() {
                 metadata_persisted = true;
-                return true;
+                return metadata_persist_result;
             },
             [this](const site::Site&) {
                 runtime_applied = true;
@@ -465,6 +475,9 @@ TEST_CASE("DatabaseCredentialRotationService compensates when config update fail
         "update_wordpress_config",
         "restore_mariadb_password",
         "verify_old_credential",
+        "verify_restored_wordpress",
+        "verify_restored_site_health",
+        "verify_restored_metadata",
     });
 }
 
@@ -491,6 +504,9 @@ TEST_CASE("DatabaseCredentialRotationService compensates before metadata when ve
         "restore_wordpress_config",
         "restore_runtime",
         "verify_old_credential",
+        "verify_restored_wordpress",
+        "verify_restored_site_health",
+        "verify_restored_metadata",
     });
 }
 
@@ -574,6 +590,36 @@ TEST_CASE("DatabaseCredentialRotationService requires manual recovery when runti
     });
 }
 
+TEST_CASE("DatabaseCredentialRotationService requires manual recovery when restored metadata verification fails") {
+    FakeRotationDependencies deps;
+    deps.fail_call = "verify_new_credential";
+    deps.compensation_fail_call = "verify_restored_metadata";
+    DatabaseCredentialRotationService service(deps);
+
+    const auto result = service.rotate({10, 20, "example.com"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::ManualRecoveryRequired);
+    CHECK(result.code == "manual_recovery_required");
+    CHECK(deps.calls == std::vector<std::string>{
+        "inspect_wordpress",
+        "verify_old_credential",
+        "assess_shared_user",
+        "generate_password",
+        "change_mariadb_password",
+        "update_wordpress_config",
+        "apply_runtime",
+        "verify_new_credential",
+        "restore_mariadb_password",
+        "restore_wordpress_config",
+        "restore_runtime",
+        "verify_old_credential",
+        "verify_restored_wordpress",
+        "verify_restored_site_health",
+        "verify_restored_metadata",
+    });
+}
+
 TEST_CASE("DatabaseCredentialRotationAdapter runs production-shaped happy path without exposing secrets") {
     AdapterFixture fixture("happy");
     auto adapter = fixture.make_adapter();
@@ -617,6 +663,23 @@ TEST_CASE("DatabaseCredentialRotationAdapter fails closed when admin credential 
     CHECK_FALSE(fixture.runtime_applied);
     CHECK_FALSE(fixture.metadata_persisted);
     CHECK(read_test_file(fixture.root / "example.test" / "public" / "wp-config.php").find("oldpass") != std::string::npos);
+}
+
+TEST_CASE("DatabaseCredentialRotationAdapter restores metadata when metadata persistence fails") {
+    AdapterFixture fixture("metadata_persist_fail");
+    fixture.metadata_persist_result = false;
+    auto adapter = fixture.make_adapter();
+    DatabaseCredentialRotationService service(adapter);
+
+    const auto result = service.rotate({1, 1, "example.test"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::Compensated);
+    CHECK(result.code == "rotation_compensated");
+    REQUIRE(fixture.databases.find(1) != nullptr);
+    CHECK(fixture.databases.find(1)->db_password == "oldpass");
+    CHECK(read_test_file(fixture.root / "example.test" / "public" / "wp-config.php").find("oldpass") != std::string::npos);
+    CHECK(fixture.mariadb_runner.active_password == "oldpass");
 }
 
 TEST_CASE("DatabaseCredentialRotationAdapter fails closed on unresolved WordPress database target") {

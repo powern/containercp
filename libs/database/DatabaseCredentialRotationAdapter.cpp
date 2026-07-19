@@ -280,12 +280,20 @@ DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::verify_s
 
 DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::persist_metadata(const DatabaseCredentialRotationRequest& request,
                                                                                          const std::string& new_password) {
+    std::string old_password;
+    {
+        std::lock_guard<std::mutex> guard(mutex_);
+        const auto* context = context_for(request);
+        if (context == nullptr) return fail("rotation_context_missing", "Credential rotation context is missing");
+        old_password = context->old_password;
+    }
     auto* database = databases_.find(request.database_id);
     if (database == nullptr || database->site_id != request.site_id) {
         return fail("database_not_found", "Database was not found for this site");
     }
     database->db_password = new_password;
     if (metadata_persist_ && !metadata_persist_()) {
+        database->db_password = old_password;
         return fail("metadata_persist_failed", "Credential metadata persistence failed");
     }
     logger_.info("AUDIT", "WordPress credential rotation metadata persisted site=" + std::to_string(request.site_id) +
@@ -322,8 +330,30 @@ DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::restore_
     if (runtime_apply_ && !runtime_apply_(*site)) {
         return fail("runtime_restore_failed", "Runtime restore failed");
     }
-    erase_context(request);
     return ok("runtime_restored", "Runtime restored");
+}
+
+DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::verify_restored_wordpress(const DatabaseCredentialRotationRequest& request) {
+    return verify_wordpress(request);
+}
+
+DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::verify_restored_site_health(const DatabaseCredentialRotationRequest& request) {
+    return verify_site_health(request);
+}
+
+DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::verify_restored_metadata(const DatabaseCredentialRotationRequest& request) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    const auto* context = context_for(request);
+    if (context == nullptr) return fail("rotation_context_missing", "Credential rotation context is missing");
+    const auto* database = databases_.find(request.database_id);
+    if (database == nullptr || database->site_id != request.site_id) {
+        return fail("database_not_found", "Database was not found for this site");
+    }
+    if (database->db_password != context->old_password) {
+        return fail("metadata_restore_mismatch", "Credential metadata does not match restored database credential");
+    }
+    contexts_.erase(key(request));
+    return ok("metadata_restored", "Credential metadata restored");
 }
 
 } // namespace containercp::database

@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Harden credential rotation compensation
+
+**Summary:** Added WP-R6 compensation hardening for WordPress database credential rotation. The rotation saga now verifies restored WordPress/PHP database access, restored site health, and restored credential metadata after rollback before reporting `rotation_compensated`. Failures in any restored-state verification now return `manual_recovery_required`. The concrete adapter now restores in-memory database metadata to the old password when metadata persistence fails and keeps compensation context until restored metadata consistency has been verified.
+
+**Files changed:** `libs/database/DatabaseCredentialRotationService.h`, `libs/database/DatabaseCredentialRotationService.cpp`, `libs/database/DatabaseCredentialRotationAdapter.h`, `libs/database/DatabaseCredentialRotationAdapter.cpp`, `tests/test_database_credential_rotation.cpp`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Failed rotations after mutation now report safe rollback only after MariaDB, WordPress/PHP, site health, and metadata consistency checks all pass. If restored-state verification fails, operators receive `manual_recovery_required` instead of a misleading compensated result.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused tests passed for `*DatabaseCredentialRotation*` (`28` cases, `270` assertions), `*database*` (`52` cases, `475` assertions), `*WordPress*` (`61` cases, `365` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full CTest (`1/1`) and `git diff --check` passed.
+
+**Known risks:** Metadata persistence is still not a durable multi-resource transaction across MariaDB, filesystem, and storage; this stage makes rollback verification stricter and restores in-memory metadata on persistence failure, but real crash-recovery semantics remain outside this foundation. Runtime verifier trust-boundary hardening, endpoint/job safety, UI polish, documentation readiness language, and final validation remain scheduled for WP-R7 through WP-R11.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Resolve exact database credential target
 
 **Summary:** Added WP-R5 backend-owned target resolution for WordPress database credential rotation. New `WordPressDatabaseCredentialResolver` combines WordPress credential inspection with database metadata and resolves exactly one enabled database record for the same site whose `DB_NAME` and `DB_USER` match the active `wp-config.php` and whose host is the managed site MariaDB service. The status API now returns target availability, resolved `database_id`, target status, and target message. The rotate API rejects submitted `database_id` values that do not match the backend-resolved WordPress target. The rotation adapter now uses the same resolver before any mutation, and the Site Details UI no longer selects `siteDatabases[0]` for WordPress rotation.

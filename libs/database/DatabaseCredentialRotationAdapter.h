@@ -58,6 +58,9 @@ public:
                                                                   const std::string& new_password) override;
     DatabaseCredentialRotationStepResult restore_wordpress_config(const DatabaseCredentialRotationRequest& request) override;
     DatabaseCredentialRotationStepResult restore_runtime(const DatabaseCredentialRotationRequest& request) override;
+    DatabaseCredentialRotationStepResult verify_restored_wordpress(const DatabaseCredentialRotationRequest& request) override;
+    DatabaseCredentialRotationStepResult verify_restored_site_health(const DatabaseCredentialRotationRequest& request) override;
+    DatabaseCredentialRotationStepResult verify_restored_metadata(const DatabaseCredentialRotationRequest& request) override;
 
 private:
     struct Context {
