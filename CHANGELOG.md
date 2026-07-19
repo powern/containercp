@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `PENDING` | Update — Install SQLite build dependency during updates
+
+**Summary:** Updated `scripts/update.sh` so git-based updates install required build dependencies, including `libsqlite3-dev`, before running CMake. This prevents older installations from failing configuration after SQLite support is pulled.
+
+**Files changed:** `scripts/update.sh`, `CHANGELOG.md`
+
+**User-visible behavior:** Running `./scripts/update.sh` on an existing Debian installation now installs the SQLite development package required by CMake before building ContainerCP.
+
+**Validation:** `bash -n scripts/update.sh` passed.
+
+**Known risks:** Requires update execution with sufficient privileges to run `apt-get`; non-APT systems still need manual dependency installation.
+
+---
+
 ## 2026-07-18 | `c9c09b3` | Phase 11 — Final SQLite production validation report
 
 **Summary:** Completed the final Phase 11 production validation report for SQLite activation review fixes. The report records commit hashes, focused-test evidence, full-suite evidence, clean rebuild evidence, git status evidence, CI status, and production readiness conclusions for P11-R1 through P11-R7.
