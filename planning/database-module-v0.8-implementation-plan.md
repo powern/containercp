@@ -1,4 +1,4 @@
-# Databases Module v0.7.1 Implementation Plan
+# Databases Module v0.8 Implementation Plan
 
 ## Status
 
@@ -15,11 +15,11 @@ Planning document only. Do not implement this plan until the architecture is rev
 
 ## Phase 0: Approval Gate
 
-- [ ] Review `planning/database-module-v0.7.1-architecture.md`.
-- [ ] Review `planning/database-module-v0.7.1-open-source-review.md`.
-- [ ] Review `planning/database-module-v0.7.1-threat-model.md`.
-- [ ] Decide whether v0.7.1 supports one database per site or multiple databases per site.
-- [ ] Decide whether password reveal is forbidden or allowed through a break-glass workflow.
+- [ ] Review `planning/database-module-v0.8-architecture.md`.
+- [ ] Review `planning/database-module-v0.8-open-source-review.md`.
+- [ ] Review `planning/database-module-v0.8-threat-model.md`.
+- [x] Support one site with many databases; never assume exactly one database per site.
+- [x] Use rotate/replace as the normal password workflow; password reveal is not required for normal administration.
 - [ ] Decide whether existing `POST /api/databases/remove` is deprecated, repurposed as metadata-only recovery, or replaced.
 - [ ] Create an Architecture Proposal if this work is treated as an Epic.
 
@@ -39,8 +39,23 @@ Backend tasks:
 - [ ] Add `DatabaseViewService` that joins database records to sites by `site_id`.
 - [ ] Reuse `SiteRuntimeManager` or `RuntimeActionExecutor` for MariaDB runtime status.
 - [ ] Update `GET /api/databases` to return enriched records through the view service.
+- [ ] Add database detail response data without exposing secrets.
+- [ ] Return site domain alongside internal `site_id`.
+- [ ] Return engine profile/version and size fields.
+- [ ] Surface restart capability through existing `restart-db` runtime behavior.
+- [ ] Surface database logs capability through existing runtime/log behavior where available.
 - [ ] Keep `db_password` out of every response.
 - [ ] Update `docs/api/API_REFERENCE.md` for the response contract.
+
+Web UI tasks:
+
+- [ ] Show domain instead of only raw `site_id`.
+- [ ] Add database detail view.
+- [ ] Show runtime status, engine profile/version, and size.
+- [ ] Add restart button using the existing runtime restart DB API.
+- [ ] Add logs link/view only through existing backend log APIs.
+- [ ] Add safe delete confirmation UI while preserving current metadata-only delete semantics.
+- [ ] Label delete behavior clearly as metadata-only until physical lifecycle is implemented.
 
 Tests:
 
@@ -48,6 +63,7 @@ Tests:
 - [ ] Unit test missing site relation returns a clear state.
 - [ ] Unit test JSON output does not contain `db_password`, `DB_PASSWORD`, `MYSQL_ROOT_PASSWORD`, or password values.
 - [ ] Runtime mapping tests remain green for `ServiceRole::Database` and `restart-db`.
+- [ ] API/UI tests prove DB-1 does not create, drop physically, import, export, rotate passwords, or deploy Adminer.
 
 Validation:
 
@@ -58,7 +74,7 @@ Validation:
 Exit criteria:
 
 - Databases API is richer but still read-only for physical state.
-- Web UI remains unchanged unless explicitly approved after API completion.
+- Web UI only consumes DB-1 read-only API/runtime behavior and does not change physical delete semantics.
 
 ## Phase 2: Safe Physical Lifecycle Service
 
@@ -69,12 +85,15 @@ Backend tasks:
 - [ ] Add name validation for MariaDB database names and user names.
 - [ ] Add SQL identifier helper that rejects unsupported names instead of broad escaping.
 - [ ] Add `MariaDBProvider` command wrapper using `CommandExecutor` argument vectors.
+- [ ] Add provider/profile boundary so future engines extend providers instead of rewriting API or storage.
+- [ ] Add ContainerCP database service account bootstrap and runtime-auth design.
 - [ ] Add temporary option-file handling for credentials with owner-only permissions.
 - [ ] Add `DatabaseLifecycleService` with create, verify, and drop operations.
 - [ ] Make normal drop remove physical database, user/grants, then metadata.
 - [ ] Preserve metadata-only removal as a clearly named recovery operation if needed.
 - [ ] Add rollback for partial create failures.
 - [ ] Add audit log entries for create, drop, verify, and repair.
+- [ ] Ensure `MYSQL_ROOT_PASSWORD` is bootstrap-only and not used for normal runtime operations.
 
 REST API tasks:
 
@@ -117,7 +136,8 @@ Backend tasks:
 - [ ] Update MariaDB user password, `DatabaseManager` metadata, and site `.env` consistently.
 - [ ] Restart only required containers after `.env` update if needed.
 - [ ] Redact passwords from logs, job messages, and API errors.
-- [ ] Decide whether `MYSQL_ROOT_PASSWORD` should continue as the administrative credential source.
+- [ ] Ensure service-account grants are sufficient for rotation without normal root authentication.
+- [ ] Keep break-glass password recovery optional, disabled by default, and approval-gated if implemented.
 
 REST API tasks:
 
@@ -202,10 +222,12 @@ Backend tasks:
 - [ ] Add `DatabaseAdminService`.
 - [ ] Add per-site Adminer enable/disable state if approved.
 - [ ] Add short-lived admin-session token storage.
-- [ ] Add Adminer sidecar deployment approach or shared isolated service approach.
+- [ ] Document Adminer deployment alternatives in implementation notes, with on-demand temporary container as the default.
+- [ ] Implement on-demand temporary Adminer unless implementation evidence justifies a safer alternative.
 - [ ] Expose Adminer only through authenticated ContainerCP proxy routes.
 - [ ] Revoke and clean up Adminer sessions after expiry.
 - [ ] Log session creation, access, and revocation.
+- [ ] Ensure credentials never enter URLs, browser history, JavaScript variables, local storage, logs, or job messages.
 
 REST API tasks:
 
@@ -230,7 +252,7 @@ Tests:
 
 Exit criteria:
 
-- Adminer is available only through authenticated, time-limited, auditable launch flow.
+- Adminer is available only through authenticated, time-limited, auditable, on-demand launch flow.
 
 ## Phase 7: Web UI Completion
 
@@ -280,7 +302,7 @@ Validation tasks:
 
 Exit criteria:
 
-- v0.7.1 Databases module can be released without misleading users about backup, delete, or admin-tool safety.
+- v0.8 Databases module can be released without misleading users about backup, delete, or admin-tool safety.
 
 ## Implementation Risks
 

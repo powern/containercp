@@ -1,4 +1,4 @@
-# Databases Module v0.7.1 Open-Source Review
+# Databases Module v0.8 Open-Source Review
 
 ## Status
 
@@ -6,20 +6,20 @@ Research note for architecture planning. No component is approved for deployment
 
 ## Recommendation
 
-Use Adminer as the default v0.7.1 database administration tool candidate, but do not deploy it until ContainerCP has safe database lifecycle APIs, credential hygiene, authenticated launch tokens, and audit logging.
+Use Adminer as the default v0.8 database administration tool candidate, but do not deploy it until ContainerCP has safe database lifecycle APIs, credential hygiene, authenticated launch tokens, and audit logging.
 
-Use MariaDB command-line tools for import/export and backup integration. Prefer logical backups with `mariadb-dump` in v0.7.1. Defer physical online backup tooling with `mariadb-backup` to a later release.
+Use MariaDB command-line tools for import/export and backup integration. Prefer logical backups with `mariadb-dump` in v0.8. Defer physical online backup tooling with `mariadb-backup` to a later release.
 
 ## Reviewed Components
 
 | Component | License | Fit | Recommendation |
 |-----------|---------|-----|----------------|
 | Adminer | Apache License 2.0 or GPL 2 | Lightweight PHP database admin tool with MariaDB/MySQL support and export/import features | Preferred admin UI candidate |
-| phpMyAdmin | GPL-2.0 | Mature MySQL/MariaDB administration UI, broader feature set, larger footprint | Reference or future option, not v0.7.1 default |
-| CloudBeaver Community | Apache-2.0 | Rich multi-database web manager, Java backend and React UI, heavier operational footprint | Not v0.7.1 default |
-| `mariadb-dump` | MariaDB client utility | Official logical dump utility; appropriate for per-site SQL exports | Preferred v0.7.1 export/backup tool |
-| `mariadb` client | MariaDB client utility | Official command-line import/query client | Preferred v0.7.1 import/lifecycle execution tool |
-| `mariadb-backup` | Open-source MariaDB physical backup tool | Production-grade hot physical backups, but restore model and privileges are complex | Defer beyond v0.7.1 |
+| phpMyAdmin | GPL-2.0 | Mature MySQL/MariaDB administration UI, broader feature set, larger footprint | Reference or future option, not v0.8 default |
+| CloudBeaver Community | Apache-2.0 | Rich multi-database web manager, Java backend and React UI, heavier operational footprint | Not v0.8 default |
+| `mariadb-dump` | MariaDB client utility | Official logical dump utility; appropriate for per-site SQL exports | Preferred v0.8 export/backup tool |
+| `mariadb` client | MariaDB client utility | Official command-line import/query client | Preferred v0.8 import/lifecycle execution tool |
+| `mariadb-backup` | Open-source MariaDB physical backup tool | Production-grade hot physical backups, but restore model and privileges are complex | Defer beyond v0.8 |
 
 ## Adminer
 
@@ -53,7 +53,7 @@ Required controls before adoption:
 - Clear update strategy for Adminer image/file version.
 - Per-site network isolation.
 
-Decision: preferred v0.7.1 admin UI candidate, but only after lifecycle, backup, and threat-model controls are implemented.
+Decision: preferred v0.8 admin UI candidate, but only after lifecycle, backup, and threat-model controls are implemented.
 
 ## phpMyAdmin
 
@@ -66,7 +66,7 @@ Strengths:
 - Rich import/export and user privilege features.
 - Familiar to many hosting users.
 
-Risks for ContainerCP v0.7.1:
+Risks for ContainerCP v0.8:
 
 - Heavier footprint than Adminer.
 - MySQL/MariaDB-specific, while Adminer leaves future multi-engine room.
@@ -74,7 +74,7 @@ Risks for ContainerCP v0.7.1:
 - More configuration and session-management complexity.
 - GPL-2.0 integration and distribution implications need deliberate review if bundled.
 
-Decision: keep as a future option or reference. Do not use as v0.7.1 default.
+Decision: keep as a future option or reference. Do not use as v0.8 default.
 
 ## CloudBeaver Community
 
@@ -87,7 +87,7 @@ Strengths:
 - Broad driver ecosystem.
 - Apache-2.0 license.
 
-Risks for ContainerCP v0.7.1:
+Risks for ContainerCP v0.8:
 
 - Significantly larger runtime footprint than Adminer.
 - Requires Java server management and additional persistent configuration.
@@ -95,9 +95,11 @@ Risks for ContainerCP v0.7.1:
 - More complex to make per-site and time-limited.
 - Changelog shows frequent security dependency updates, increasing maintenance burden.
 
-Decision: not a v0.7.1 default. Revisit for a future advanced database-workbench feature if ContainerCP needs a multi-engine SQL workspace.
+Decision: not a v0.8 default. Revisit for a future advanced database-workbench feature if ContainerCP needs a multi-engine SQL workspace.
 
 ## MariaDB Command-Line Tools
+
+v0.8 implements MariaDB only, but tool choices should live behind a Database Profile and provider boundary. Future MySQL or PostgreSQL support should select different provider commands without changing the public inventory API.
 
 ### `mariadb-dump`
 
@@ -117,7 +119,7 @@ Risks:
 - Passwords passed on command line are insecure; option files are required.
 - Routines/events require additional privileges and explicit options.
 
-Decision: preferred v0.7.1 export and backup-dump tool.
+Decision: preferred v0.8 export and backup-dump tool.
 
 ### `mariadb` Client
 
@@ -131,7 +133,7 @@ Required controls:
 - Sanitized stderr in API responses.
 - Job-based execution for long operations.
 
-Decision: preferred v0.7.1 import and lifecycle command tool.
+Decision: preferred v0.8 import and lifecycle command tool.
 
 ### `mariadb-backup`
 
@@ -143,7 +145,7 @@ Strengths:
 - Better for large databases and advanced recovery needs.
 - Supports incremental backup and PITR workflows in advanced scenarios.
 
-Risks for ContainerCP v0.7.1:
+Risks for ContainerCP v0.8:
 
 - Overkill for initial per-site database management.
 - Physical restore is harder to combine safely with per-site multi-tenant stacks.
@@ -151,11 +153,11 @@ Risks for ContainerCP v0.7.1:
 - Partial restore workflows are complex.
 - Unknown option behavior requires careful operational discipline.
 
-Decision: defer beyond v0.7.1. Use logical `mariadb-dump` first.
+Decision: defer beyond v0.8. Use logical `mariadb-dump` first.
 
 ## Password and Secret Handling Options
 
-Current ContainerCP generates alphanumeric passwords with `PasswordGenerator` and stores DB credentials in SQLite and site `.env`. v0.7.1 should not introduce an external secret store until requirements are explicit, but it must stop avoidable leaks.
+Current ContainerCP generates alphanumeric passwords with `PasswordGenerator` and stores DB credentials in SQLite and site `.env`. v0.8 should not introduce an external secret store until requirements are explicit, but it must stop avoidable leaks.
 
 Minimum recommended approach:
 
@@ -172,9 +174,18 @@ Future options:
 - Integration with systemd credentials, age, SOPS, or a future provider abstraction.
 - Per-operation temporary database users for Adminer/export/import.
 
+## Adminer Lifecycle Model Review
+
+| Model | Attack surface | RAM usage | Startup latency | Docker network isolation | Cleanup complexity | Credential lifetime | Maintenance | Multi-node compatibility |
+|-------|----------------|-----------|-----------------|--------------------------|--------------------|---------------------|-------------|--------------------------|
+| Permanent sidecar | Higher because the admin surface is always running | Higher baseline per site | Low after site start | Good if attached only to the site network | Lower per session, higher long-term container management | Longer-lived session plumbing is more likely | Continuous patching and monitoring for every site | More idle containers across nodes |
+| On-demand temporary container | Lower because Adminer exists only during approved sessions | Near zero while inactive | Higher at launch | Good if attached only to target site network | Higher because route, token, and container cleanup must be reliable | Shortest; token and credentials can share a strict TTL | Fewer running components; image still needs patch policy | Better default because work occurs only on target node when requested |
+
+Recommendation: on-demand temporary Adminer. It minimizes attack surface, RAM usage, and credential lifetime. The tradeoff is cleanup complexity; implementation must include token expiry, route revocation, container removal, audit events, and retryable cleanup recovery.
+
 ## Final Recommendation
 
-For v0.7.1, build the Databases module around these defaults:
+For v0.8, build the Databases module around these defaults:
 
 - MariaDB only.
 - Adminer as optional, authenticated, on-demand admin UI.

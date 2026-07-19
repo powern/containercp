@@ -1,4 +1,4 @@
-# Databases Module v0.7.1 Threat Model
+# Databases Module v0.8 Threat Model
 
 ## Status
 
@@ -15,6 +15,7 @@ The Databases module must let an authenticated administrator manage per-site Mar
 | Customer database data | Full application data breach or corruption |
 | Database user password | Application database compromise |
 | MariaDB root password | Full per-site MariaDB compromise |
+| ContainerCP database service account | Privilege escalation path for lifecycle operations |
 | ContainerCP SQLite storage | Credential disclosure and metadata tampering |
 | Site `.env` files | Credential disclosure for DB, root DB, Redis, and site metadata |
 | SQL dump files | Full data disclosure and possible credential leakage |
@@ -60,14 +61,17 @@ The Databases module must let an authenticated administrator manage per-site Mar
 | Adminer exposed publicly | No host port; route only through authenticated ContainerCP proxy |
 | Adminer token replay | Short TTL, server-side token storage, one-site scope, explicit revoke |
 | Adminer credential exposure in URL | Never put credentials in URL, query string, fragment, or generated HTML link |
+| Adminer credential exposure in browser runtime | Never put credentials in JavaScript variables, DOM attributes, local storage, or session storage |
+| Expired Adminer session remains usable | Expiry must revoke token, proxy route, and temporary container; cleanup failures must be logged and retried |
 | Import file path traversal | Canonical path containment checks and staging outside web roots |
 | Import overwrites production data | Require explicit target and destructive confirmation |
 | Oversized import causes disk exhaustion | Size limit before accepting upload and before decompressing |
 | Malicious compressed import expands excessively | Compression ratio and decompressed-size limits |
 | Backup succeeds without DB dump | Fail backup job if expected database dump fails |
 | Restore imports into wrong site | Bind backup manifest to site ID/domain and require confirmation on mismatch |
-| Compromised site container reaches other site DB | Per-site Docker networks; no shared MariaDB service in v0.7.1 |
+| Compromised site container reaches other site DB | Per-site Docker networks; no shared database service in v0.8 |
 | Root DB password overuse | Prefer least-privilege admin account or document root use as temporary risk |
+| Service account overprivileged | Define grants per operation and audit elevated operations |
 | Stale `.env` after password rotation | Update metadata and `.env` in one operation and restart dependent services if required |
 | Secrets included in downloadable backup metadata | Redact manifests and document `.env` inclusion explicitly |
 
@@ -85,6 +89,7 @@ Required API controls:
 - Require explicit confirmation strings for destructive actions.
 - Use database IDs for mutation endpoints and include site relation checks.
 - Update `docs/api/API_REFERENCE.md` for every endpoint.
+- Do not expose credentials in JavaScript-visible response fields, even transiently.
 
 Negative tests required:
 
@@ -109,6 +114,8 @@ Required controls:
 - Verify the target site directory belongs to the intended site.
 - Sanitize stderr before returning it to API callers.
 
+`MYSQL_ROOT_PASSWORD` is bootstrap-only. Runtime commands must authenticate with the dedicated service account or scoped database user. Any root/elevated credential use after bootstrap is break-glass and must be explicit, logged, and approval-gated.
+
 Negative tests required:
 
 - Database name with shell metacharacters is rejected.
@@ -120,13 +127,14 @@ Negative tests required:
 
 Current state stores `db_password` in SQLite and writes credentials into `.env`. This is acceptable only as a known inherited risk for v0.7.0, not as a final security posture.
 
-v0.7.1 minimum:
+v0.8 minimum:
 
 - Do not increase credential exposure.
 - Do not add password reveal unless explicitly approved.
 - Add password rotation before Adminer is considered complete.
 - Document `.env` and SQLite credential storage clearly for operators.
 - Ensure database backup archives do not accidentally create additional plaintext copies beyond the documented `.env` and dump artifacts.
+- Treat credential lifetime as bounded by operation, token, or rotation policy. Long-lived credentials must be documented as residual risk.
 
 Future hardening:
 
@@ -145,16 +153,20 @@ Required controls before enabling:
 - Time-limited launch sessions.
 - Server-side token maps to database credentials; browser receives only token or proxied session.
 - Token scoped to database ID and site ID.
+- Token scoped to user/session, node, nonce, database ID, and site ID.
 - Token expiry and revoke path.
+- Replay protection through nonce, TTL, and one active session policy per user/database where practical.
 - No host port exposure.
 - Reverse proxy route requires ContainerCP authentication.
 - Audit log for launch, access, expiry, and revoke.
 - Adminer image/file version is pinned and updateable.
+- Cleanup after expiration removes token state, proxy route, and on-demand container.
 
 Not allowed:
 
 - Public `/adminer.php` in customer document root.
 - Credentials in URL parameters.
+- Credentials in browser history, JavaScript variables, local storage, session storage, DOM attributes, logs, or job messages.
 - Shared long-lived Adminer login across sites.
 - Adminer access for deleted or disabled databases.
 
@@ -192,7 +204,7 @@ Import mitigations:
 
 ## Backup/Restore Threats
 
-The current tar backup does not create logical SQL dumps. If v0.7.1 presents backups as database-aware, backup jobs must fail when DB dumps fail.
+The current tar backup does not create logical SQL dumps. If v0.8 presents backups as database-aware, backup jobs must fail when DB dumps fail.
 
 Required controls:
 
@@ -216,6 +228,8 @@ Required controls:
 - [ ] Backup fails if database dump fails.
 - [ ] Adminer has no public host port.
 - [ ] Adminer token expires and can be revoked.
+- [ ] Adminer cleanup removes expired token, proxy route, and temporary container.
+- [ ] Audit logs cover Adminer launch, access, expiry, revoke, cleanup failure, and cleanup retry.
 - [ ] Full tests pass and VM validation is complete before production rollout.
 
 ## Residual Risks
@@ -223,7 +237,7 @@ Required controls:
 - SQLite and `.env` still contain plaintext database credentials until a secret store or encryption design is implemented.
 - Adminer remains a high-value target even when gated.
 - Logical dump consistency depends on engine behavior and concurrent DDL.
-- A malicious administrator can intentionally destroy data; v0.7.1 controls mainly prevent accidental or unauthenticated damage.
+- A malicious administrator can intentionally destroy data; v0.8 controls mainly prevent accidental or unauthenticated damage.
 - Recovery from partial password rotation or import failure needs strong operator documentation.
 
 ## Required Review Before Implementation

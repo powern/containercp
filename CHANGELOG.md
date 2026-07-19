@@ -6,11 +6,11 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-19 | `this commit` | Architecture — Design Databases module v0.7.1
+## 2026-07-19 | `this commit` | Architecture — Finalize Databases module v0.8 decisions
 
-**Summary:** Added the post-v0.7.0 Databases module architecture package covering current implementation baseline, target v0.7.1 backend ownership, phased implementation, open-source tooling review, and focused threat model. The design keeps v0.7.1 MariaDB-first, recommends Adminer only as a gated future admin surface, and requires API-first lifecycle, import/export, backup, credential, and validation controls before implementation.
+**Summary:** Finalized the post-v0.7.0 Databases module architecture package after architecture review. The approved design keeps Databases as a v0.8 major subsystem, supports one site with many databases, introduces Database Profiles and provider boundaries, makes `MYSQL_ROOT_PASSWORD` bootstrap-only, prefers rotate-not-reveal credential workflows, recommends on-demand Adminer, strengthens credential/security ownership, and keeps DB-1 as read-only inventory.
 
-**Files changed:** `planning/database-module-v0.7.1-architecture.md`, `planning/database-module-v0.7.1-implementation-plan.md`, `planning/database-module-v0.7.1-open-source-review.md`, `planning/database-module-v0.7.1-threat-model.md`, `planning/database-module-architecture.md`, `CHANGELOG.md`
+**Files changed:** `planning/database-module-v0.8-architecture.md`, `planning/database-module-v0.8-implementation-plan.md`, `planning/database-module-v0.8-open-source-review.md`, `planning/database-module-v0.8-threat-model.md`, `planning/database-module-architecture.md`, `CHANGELOG.md`
 
 **User-visible behavior:** No product behavior change. This is documentation/planning only and does not create API endpoints, change the Web UI, modify Docker Compose generation, change database schema, deploy Adminer, or alter production data.
 
