@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Validate credential hardening final state
+
+**Summary:** Completed WP-R2.7 final repository validation for WordPress credential rotation production hardening WP-R2.1 through WP-R2.6. Validation was repository/test-only and did not execute live credential rotation, production deployment, production database access, or production `wp-config.php` access.
+
+**Files changed:** `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No runtime behavior change. WP-R2 hardening is validated in the repository test environment. Live rotation still requires explicit operator-approved real-site validation before production use.
+
+**Validation:** Clean configure passed with `cmake -S . -B build-wp-r27 -G Ninja -DCMAKE_BUILD_TYPE=Release`. The first clean build command hit the 600s tool timeout while compilation was still progressing; rerunning `cmake --build build-wp-r27 --target containercp_tests containercp containercpd -- -j1` completed with no compiler warnings. Full doctest passed from `build-wp-r27` (`789` cases, `5338` assertions). Focused suites passed for `*DatabaseCredentialRotation*` (`41` cases, `357` assertions), `*MariaDBCredentialProvider*` (`17` cases, `115` assertions), `*database*` (`65` cases, `562` assertions), `*WordPress*` (`64` cases, `379` assertions), `*API*` (`18` cases, `73` assertions), `*Command*` (`18` cases, `67` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full CTest passed (`1/1`). `node --check web/app.js`, `build-wp-r27/containercp --version`, `build-wp-r27/containercpd --version`, and `git diff --check` passed. Static secret-surface scans found only expected auth password-change fields and the `db_password_present` boolean in Web/API surfaces; no WordPress database credential value exposure was found in Web UI/API/daemon/CLI surfaces. `gh` is unavailable and `.github/workflows` is absent, so no remote CI status is available.
+
+**Known risks:** No live Docker/MariaDB/WordPress rotation was performed. Current storage still contains plaintext database credentials in metadata and site `.env` projections until a future secret-store design replaces that model. `git status --short` contains only untracked local validation build directories: `build-wp0/`, `build-wp-r11/`, and `build-wp-r27/`.
+
+---
+
 ## 2026-07-19 | `this commit` | Database — Harden temporary secret handling
 
 **Summary:** Completed WP-R2.6 temporary secret file hardening for the MariaDB credential provider. Host-side secret bundle paths now use `mkstemp` instead of a process-local static counter, and provider cleanup uses RAII unlinking after command execution or exceptional exits.
