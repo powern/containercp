@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Add atomic config credential updates
+
+**Summary:** Added the WP-3.2 atomic WordPress config file update primitive. `WordPressConfigUpdater::update_file_atomic()` validates the config path through the existing safety helper, rejects symlinks and unsafe paths, renders credential changes in memory, writes a protected same-directory temp file, fsyncs, atomically renames, preserves mode and root-only ownership metadata where allowed, cleans up temp files on failure, and returns an in-memory rollback handle. `rollback_file()` restores the previous content through the same atomic write path.
+
+**Files changed:** `libs/wordpress/WordPressConfigUpdater.h`, `libs/wordpress/WordPressConfigUpdater.cpp`, `tests/test_wordpress_config_update.cpp`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. The atomic writer is not yet wired to migration, syntax validation, REST API, CLI, Web UI, runtime, storage, or production site operations.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused WordPress tests passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`44` cases, `261` assertions), covering atomic replacement, rollback, mode preservation, temp cleanup, symlink rejection, path escape rejection, failure no-change behavior, and no secret in failure messages. Migration regression passed with `build-wp0/tests/containercp_tests -tc="VestaSiteImporter*"` (`31` cases, `79` assertions) and `build-wp0/tests/containercp_tests -tc="*Migration*"` (`39` cases, `254` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** PHP syntax validation and validation-failure rollback are deferred to WP-3.3. Migration still uses its legacy file update path until WP-3.4. Ownership preservation only changes file owner/group when running as root; non-root tests preserve mode and content.
+
+---
+
 ## 2026-07-19 | `this commit` | Bug Fix — Safely encode WordPress credential literals
 
 **Summary:** Fixed the WP-3.1 WordPress config renderer before filesystem writes. Double-quoted PHP credentials now escape dollar signs to prevent variable interpolation and encode newline, carriage return, tab, NUL, and other control characters with PHP string semantics. Single-quoted credentials now keep PHP single-quote semantics by escaping backslash and single quote and rejecting unsupported NUL/control values rather than silently changing the password. Conditional detection was also changed from proximity-based scanning to block-aware scanning so completed unrelated `if`/loop blocks, comments, and strings do not make an unconditional `DB_PASSWORD` unwritable, while genuinely conditional target definitions remain rejected.

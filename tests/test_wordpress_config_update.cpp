@@ -3,12 +3,19 @@
 #include "doctest/doctest.h"
 
 #include <cctype>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <optional>
+#include <sstream>
 #include <string>
+#include <sys/stat.h>
 
 using namespace containercp::wordpress;
 
 namespace {
+
+namespace fs = std::filesystem;
 
 struct PhpLiteral {
     char quote = '\'';
@@ -140,6 +147,33 @@ void check_rendered_password_semantics(const std::string& template_content, cons
     auto decoded = decode_php_literal(*literal);
     REQUIRE(decoded.has_value());
     CHECK(*decoded == password);
+}
+
+fs::path updater_test_root(const std::string& name) {
+    const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
+    return fs::temp_directory_path() / ("containercp_wp_update_" + name + "_" + std::to_string(unique));
+}
+
+void write_test_file(const fs::path& path, const std::string& content) {
+    fs::create_directories(path.parent_path());
+    std::ofstream out(path, std::ios::binary);
+    out << content;
+}
+
+std::string read_test_file(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    return buffer.str();
+}
+
+bool has_temp_update_files(const fs::path& dir) {
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        if (entry.path().filename().string().find(".containercp-tmp-") != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace
@@ -322,4 +356,111 @@ define('DB_PASSWORD', 'old');
     const auto result = updater.render_update(input, WordPressConfigUpdateField::DbPassword, "new");
     REQUIRE(result.success);
     CHECK(result.content.find("define('DB_PASSWORD', 'new');") != std::string::npos);
+}
+
+TEST_CASE("WordPress updater atomically updates file and preserves mode") {
+    WordPressConfigUpdater updater;
+    const auto root = updater_test_root("atomic_success");
+    const auto config = root / "public" / "wp-config.php";
+    const std::string original = "<?php\ndefine('DB_PASSWORD', 'old');\n$table_prefix = 'wp_';\n";
+    write_test_file(config, original);
+    fs::permissions(config, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace);
+
+    const auto result = updater.update_file_atomic(root, config, WordPressConfigUpdateField::DbPassword, "new");
+    REQUIRE(result.success);
+    CHECK(result.rollback.valid);
+    CHECK(result.rollback.previous_content == original);
+    CHECK(read_test_file(config).find("define('DB_PASSWORD', 'new');") != std::string::npos);
+    CHECK(read_test_file(config).find("$table_prefix = 'wp_';") != std::string::npos);
+    CHECK_FALSE(has_temp_update_files(config.parent_path()));
+
+    struct stat st {};
+    REQUIRE(::stat(config.c_str(), &st) == 0);
+    CHECK((st.st_mode & 0777) == 0600);
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("WordPress updater rollback restores previous file content") {
+    WordPressConfigUpdater updater;
+    const auto root = updater_test_root("rollback");
+    const auto config = root / "public" / "wp-config.php";
+    const std::string original = "<?php\ndefine(\"DB_PASSWORD\", \"old\");\n";
+    write_test_file(config, original);
+
+    const auto update = updater.update_file_atomic(root, config, WordPressConfigUpdateField::DbPassword, "new$secret");
+    REQUIRE(update.success);
+    CHECK(read_test_file(config).find("new\\$secret") != std::string::npos);
+
+    const auto rollback = updater.rollback_file(update.rollback);
+    REQUIRE(rollback.success);
+    CHECK(read_test_file(config) == original);
+    CHECK_FALSE(has_temp_update_files(config.parent_path()));
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("WordPress updater failed file render leaves original content and cleans temp files") {
+    WordPressConfigUpdater updater;
+    const auto root = updater_test_root("render_failure");
+    const auto config = root / "public" / "wp-config.php";
+    const std::string original = R"PHP(<?php
+define('DB_PASSWORD', 'one');
+define('DB_PASSWORD', 'two');
+)PHP";
+    write_test_file(config, original);
+
+    const auto result = updater.update_file_atomic(root, config, WordPressConfigUpdateField::DbPassword, "new-secret");
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "ambiguous_credential_source");
+    CHECK(result.message.find("new-secret") == std::string::npos);
+    CHECK(read_test_file(config) == original);
+    CHECK_FALSE(has_temp_update_files(config.parent_path()));
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("WordPress updater rejects symlink config file without touching target") {
+    WordPressConfigUpdater updater;
+    const auto root = updater_test_root("symlink_reject");
+    const auto target = root / "public" / "target.php";
+    const auto link = root / "public" / "wp-config.php";
+    write_test_file(target, "<?php\ndefine('DB_PASSWORD', 'target');\n");
+    std::error_code ec;
+    fs::create_symlink(target, link, ec);
+    REQUIRE_FALSE(ec);
+
+    const auto result = updater.update_file_atomic(root, link, WordPressConfigUpdateField::DbPassword, "new-secret");
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "symlink_rejected");
+    CHECK(read_test_file(target).find("target") != std::string::npos);
+    CHECK_FALSE(has_temp_update_files(target.parent_path()));
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("WordPress updater rejects path outside site root") {
+    WordPressConfigUpdater updater;
+    const auto base = updater_test_root("path_escape");
+    const auto root = base / "site";
+    const auto outside = base / "outside" / "wp-config.php";
+    fs::create_directories(root);
+    write_test_file(outside, "<?php\ndefine('DB_PASSWORD', 'outside');\n");
+
+    const auto result = updater.update_file_atomic(root, root / ".." / "outside" / "wp-config.php", WordPressConfigUpdateField::DbPassword, "new");
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "path_outside_root");
+    CHECK(read_test_file(outside).find("outside") != std::string::npos);
+    CHECK_FALSE(has_temp_update_files(outside.parent_path()));
+
+    fs::remove_all(base);
+}
+
+TEST_CASE("WordPress updater invalid rollback handle fails closed") {
+    WordPressConfigUpdater updater;
+    const WordPressConfigRollbackHandle rollback;
+
+    const auto result = updater.rollback_file(rollback);
+    CHECK_FALSE(result.success);
+    CHECK(result.code == "rollback_invalid");
 }

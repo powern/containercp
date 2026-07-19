@@ -1,14 +1,26 @@
 #include "WordPressConfigUpdater.h"
 
+#include "wordpress/WordPressConfigDetector.h"
+
+#include <cerrno>
 #include <cctype>
 #include <cstdio>
+#include <fcntl.h>
+#include <filesystem>
+#include <fstream>
 #include <optional>
+#include <sstream>
 #include <string_view>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
 namespace containercp::wordpress {
 namespace {
+
+namespace fs = std::filesystem;
 
 struct ArgumentSpan {
     std::size_t start = 0;
@@ -509,6 +521,114 @@ WordPressConfigUpdateResult failure(std::string code, std::string message) {
     return result;
 }
 
+WordPressConfigFileUpdateResult file_failure(std::string code, std::string message) {
+    WordPressConfigFileUpdateResult result;
+    result.success = false;
+    result.code = std::move(code);
+    result.message = std::move(message);
+    return result;
+}
+
+std::optional<std::string> read_file(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) {
+        return std::nullopt;
+    }
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    return buffer.str();
+}
+
+bool write_all(int fd, const std::string& content) {
+    const char* data = content.data();
+    std::size_t remaining = content.size();
+    while (remaining > 0) {
+        const ssize_t written = ::write(fd, data, remaining);
+        if (written < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        if (written == 0) {
+            return false;
+        }
+        data += written;
+        remaining -= static_cast<std::size_t>(written);
+    }
+    return true;
+}
+
+void fsync_parent_dir(const fs::path& path) {
+    const int dir_fd = ::open(path.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dir_fd >= 0) {
+        (void)::fsync(dir_fd);
+        (void)::close(dir_fd);
+    }
+}
+
+fs::path make_temp_path(const fs::path& config_path) {
+    static unsigned long counter = 0;
+    ++counter;
+    return config_path.parent_path() /
+           ("." + config_path.filename().string() + ".containercp-tmp-" + std::to_string(::getpid()) + "-" +
+            std::to_string(counter));
+}
+
+bool write_atomic_preserving_metadata(const fs::path& config_path,
+                                      const std::string& content,
+                                      mode_t mode,
+                                      uid_t uid,
+                                      gid_t gid,
+                                      std::string& error_code) {
+    const fs::path temp_path = make_temp_path(config_path);
+    const int fd = ::open(temp_path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, S_IRUSR | S_IWUSR);
+    if (fd < 0) {
+        error_code = "temp_create_failed";
+        return false;
+    }
+
+    bool ok = write_all(fd, content);
+    if (ok && ::fchmod(fd, mode) != 0) {
+        ok = false;
+        error_code = "metadata_preserve_failed";
+    }
+    if (ok && ::geteuid() == 0 && ::fchown(fd, uid, gid) != 0) {
+        ok = false;
+        error_code = "metadata_preserve_failed";
+    }
+    if (ok && ::fsync(fd) != 0) {
+        ok = false;
+        error_code = "temp_sync_failed";
+    }
+    if (::close(fd) != 0 && ok) {
+        ok = false;
+        error_code = "temp_close_failed";
+    }
+    if (!ok) {
+        (void)::unlink(temp_path.c_str());
+        if (error_code.empty()) {
+            error_code = "temp_write_failed";
+        }
+        return false;
+    }
+
+    struct stat before_rename {};
+    if (::lstat(config_path.c_str(), &before_rename) != 0 || !S_ISREG(before_rename.st_mode) || S_ISLNK(before_rename.st_mode)) {
+        (void)::unlink(temp_path.c_str());
+        error_code = "unsafe_path";
+        return false;
+    }
+
+    if (::rename(temp_path.c_str(), config_path.c_str()) != 0) {
+        (void)::unlink(temp_path.c_str());
+        error_code = "atomic_rename_failed";
+        return false;
+    }
+    fsync_parent_dir(config_path);
+    return true;
+}
+
 } // namespace
 
 std::string wordpress_update_field_name(WordPressConfigUpdateField field) {
@@ -553,6 +673,83 @@ WordPressConfigUpdateResult WordPressConfigUpdater::render_update(const std::str
     result.code = "ok";
     result.message = "WordPress credential rendered";
     result.content = content.substr(0, spans[0].value_start) + *encoded_value + content.substr(spans[0].value_end);
+    return result;
+}
+
+WordPressConfigFileUpdateResult WordPressConfigUpdater::update_file_atomic(const std::filesystem::path& site_root,
+                                                                          const std::filesystem::path& config_path,
+                                                                          WordPressConfigUpdateField field,
+                                                                          const std::string& new_value) const {
+    WordPressConfigDetector detector;
+    const auto safety = detector.inspect_config_path(site_root, config_path);
+    if (!safety.safe) {
+        return file_failure(safety.code, safety.message);
+    }
+
+    struct stat metadata {};
+    if (::lstat(safety.config_path.c_str(), &metadata) != 0 || !S_ISREG(metadata.st_mode) || S_ISLNK(metadata.st_mode)) {
+        return file_failure("unsafe_path", "WordPress config path is not a regular file");
+    }
+
+    auto current_content = read_file(safety.config_path);
+    if (!current_content) {
+        return file_failure("config_read_failed", "WordPress config file could not be read");
+    }
+
+    const auto rendered = render_update(*current_content, field, new_value);
+    if (!rendered.success) {
+        return file_failure(rendered.code, rendered.message);
+    }
+
+    std::string error_code;
+    if (!write_atomic_preserving_metadata(safety.config_path,
+                                          rendered.content,
+                                          metadata.st_mode & 07777,
+                                          metadata.st_uid,
+                                          metadata.st_gid,
+                                          error_code)) {
+        return file_failure(error_code, "WordPress config file could not be updated atomically");
+    }
+
+    WordPressConfigFileUpdateResult result;
+    result.success = true;
+    result.code = "ok";
+    result.message = "WordPress config file updated atomically";
+    result.rollback.valid = true;
+    result.rollback.site_root = safety.site_root;
+    result.rollback.config_path = safety.config_path;
+    result.rollback.previous_content = *current_content;
+    result.rollback.mode = static_cast<unsigned int>(metadata.st_mode & 07777);
+    result.rollback.uid = static_cast<unsigned int>(metadata.st_uid);
+    result.rollback.gid = static_cast<unsigned int>(metadata.st_gid);
+    return result;
+}
+
+WordPressConfigFileUpdateResult WordPressConfigUpdater::rollback_file(const WordPressConfigRollbackHandle& rollback) const {
+    if (!rollback.valid) {
+        return file_failure("rollback_invalid", "Rollback handle is invalid");
+    }
+
+    WordPressConfigDetector detector;
+    const auto safety = detector.inspect_config_path(rollback.site_root, rollback.config_path);
+    if (!safety.safe) {
+        return file_failure(safety.code, safety.message);
+    }
+
+    std::string error_code;
+    if (!write_atomic_preserving_metadata(safety.config_path,
+                                          rollback.previous_content,
+                                          static_cast<mode_t>(rollback.mode),
+                                          static_cast<uid_t>(rollback.uid),
+                                          static_cast<gid_t>(rollback.gid),
+                                          error_code)) {
+        return file_failure(error_code, "WordPress config file could not be rolled back atomically");
+    }
+
+    WordPressConfigFileUpdateResult result;
+    result.success = true;
+    result.code = "ok";
+    result.message = "WordPress config file rolled back atomically";
     return result;
 }
 

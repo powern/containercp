@@ -218,7 +218,7 @@ Result: Complete. Added `WordPressConfigUpdater::render_update()` for in-memory 
 
 Follow-up blocker fix: Complete. Fixed PHP literal encoding so double-quoted credentials escape `$` and encode newline, carriage return, tab, NUL, and other control characters with PHP semantics; single-quoted credentials escape backslash and single quote and reject unsupported NUL/control values. Replaced proximity-based conditional detection with block-aware scanning that ignores comments and strings while preserving fail-closed rejection for genuinely conditional target definitions. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`38` test cases, `232` assertions), `build-wp0/tests/containercp_tests -tc="VestaSiteImporter*"` (`31` test cases, `79` assertions), `build-wp0/tests/containercp_tests -tc="*Migration*"` (`39` test cases, `254` assertions), and full CTest (`1/1`).
 
-### [ ] WP-3.2 Add atomic file writer and rollback handle
+### [x] WP-3.2 Add atomic file writer and rollback handle
 
 Objective: Write updated config with temp file, fsync, atomic rename, mode/ownership preservation, cleanup, and rollback handle.
 
@@ -233,6 +233,8 @@ Focused tests: ownership/mode preservation where portable, unrelated content pre
 Acceptance criteria: Supported config updates atomically; failures leave original content intact or report rollback state.
 
 Commit message: `wordpress: add atomic config credential updates`.
+
+Result: Complete. Added `WordPressConfigUpdater::update_file_atomic()` and `rollback_file()` with safe path classification, no-symlink regular-file checks, protected same-directory temp file creation, full write, mode preservation, root-only ownership preservation, fsync, atomic rename, parent-directory fsync, temp cleanup, and an in-memory rollback handle containing the previous content and metadata. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`44` test cases, `261` assertions), `build-wp0/tests/containercp_tests -tc="VestaSiteImporter*"` (`31` test cases, `79` assertions), `build-wp0/tests/containercp_tests -tc="*Migration*"` (`39` test cases, `254` assertions), and full CTest (`1/1`).
 
 ### [ ] WP-3.3 Add PHP syntax validation boundary
 
