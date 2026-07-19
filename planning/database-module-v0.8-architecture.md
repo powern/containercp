@@ -63,6 +63,7 @@ The current system already has a Database resource, but it does not manage physi
 | Password workflow | Prefer generate, rotate, replace; normal admin flow must not depend on reveal |
 | Adminer lifecycle | Prefer on-demand temporary Adminer to minimize attack surface |
 | First implementation phase | DB-1 is read-only inventory only; no physical lifecycle changes |
+| Legacy imports | myVestaCP/imported databases must be represented without assuming ContainerCP created or owns the physical database, user, or password |
 
 ## Site And Database Model
 
@@ -141,6 +142,45 @@ The v0.8 MariaDB profile maps to the existing `mariadb` Compose service. Future 
 
 Hidden duplication is not allowed. Any future copy of database credentials, engine state, or site relationship must be documented as either a cache, runtime projection, or secret transport with explicit synchronization and cleanup rules.
 
+### Imported myVestaCP Credential Boundary
+
+Migrated myVestaCP sites can already contain a working application database connection even when ContainerCP did not create the physical database, did not create the database user, and does not have a stored password in SQLite.
+
+DB-1 must resolve imported connection metadata through an approved secret-handling boundary, not by exposing or permanently copying secrets into API responses. The boundary may inspect migrated site configuration such as application config files or generated environment files, but it must return only structured availability and verification results to the API layer.
+
+Rules for imported databases:
+
+- Do not assume ContainerCP created the physical database.
+- Do not assume ContainerCP created the database user.
+- Do not assume the password exists in ContainerCP SQLite.
+- Do not treat missing recoverable credentials as a missing physical database.
+- Never return the password in normal API responses.
+- Keep any recovered credential in memory only for the verification operation unless a later approved adoption workflow stores or rotates it.
+- Do not rewrite application configuration, grants, users, or passwords during DB-1.
+
+The imported credential resolver should report credential state independently from runtime and connection state. If credentials cannot be recovered safely, the database view should clearly show `credentials_unavailable` instead of hiding the database or marking it as absent.
+
+## Database State Model
+
+DB-1 must expose independent states instead of collapsing all database health into one status string.
+
+| State dimension | Meaning | Example values |
+|-----------------|---------|----------------|
+| Runtime status | Container/service state from existing runtime integration | `Running`, `Stopped`, `Starting`, `Unhealthy`, `Unknown` |
+| Connection verification | Result of a non-destructive login/select verification | `not_checked`, `verified`, `connection_failed`, `verification_required` |
+| Credential availability | Whether ContainerCP can safely obtain credentials for verification or later actions | `available`, `credentials_unavailable`, `stored`, `resolved_from_site_config`, `not_required` |
+| Management ownership | Whether ContainerCP owns lifecycle authority for the physical DB/user/grants | `managed`, `imported`, `verification_required`, `credentials_unavailable`, `connection_failed` |
+
+Management states:
+
+- `managed`: ContainerCP created or adopted the database/user and owns lifecycle operations.
+- `imported`: Database was discovered or migrated from myVestaCP/site configuration and is represented read-only.
+- `verification_required`: Metadata exists but the physical connection has not been verified yet.
+- `credentials_unavailable`: The database may exist, but credentials are not safely available to ContainerCP.
+- `connection_failed`: Credentials were available, but non-destructive verification failed.
+
+These states are independent. For example, runtime can be `Running` while credential availability is `credentials_unavailable`, or management ownership can be `imported` while connection verification is `verified`.
+
 ## Proposed Components
 
 ### `DatabaseViewService`
@@ -159,6 +199,9 @@ Fields should include:
 - `site_domain`
 - `enabled`
 - `runtime_status`
+- `connection_verification_status`
+- `credential_availability_status`
+- `management_ownership_status`
 - `size_bytes`
 - `last_backup_status`
 - `detail_url` or detail route identifier
@@ -169,6 +212,8 @@ Fields should include:
 - `has_admin_tool`
 
 The service must never include `db_password`, `MYSQL_ROOT_PASSWORD`, or one-time Adminer tokens.
+
+For imported myVestaCP databases, the view service should show the database as imported even if ContainerCP metadata is incomplete, provided the migrated site configuration exposes enough non-secret metadata to identify the connection. Password values remain hidden and are used only inside the approved verification boundary.
 
 ### `DatabaseLifecycleService`
 
@@ -254,7 +299,7 @@ Elevated operations are limited to create/drop user, create/drop database, grant
 
 ## DB-1 Read-Only Phase
 
-DB-1 is the first implementation phase and remains read-only with respect to physical database state. It must not create databases, drop physical databases, deploy Adminer, import SQL, export SQL, or rotate passwords.
+DB-1 is the first implementation phase and remains read-only with respect to physical database state. It must not create databases, drop physical databases, deploy Adminer, import SQL, export SQL, rotate passwords, change grants, recreate users, or rewrite site/application configuration.
 
 DB-1 delivers:
 
@@ -268,8 +313,30 @@ DB-1 delivers:
 - Restart action routed through existing `restart-db` behavior.
 - Logs view routed through existing runtime/log retrieval behavior where available.
 - Safe delete confirmation UI around the current metadata-only delete semantics.
+- Imported myVestaCP database inventory.
+- Non-destructive connection verification for imported databases when credentials are safely available.
+- Independent runtime, connection verification, credential availability, and management ownership states.
 
 DB-1 must clearly label delete behavior as metadata-only until the physical lifecycle service is implemented. It must not silently change the existing `POST /api/databases/remove` semantics.
+
+For imported databases, DB-1 verification is limited to a non-destructive connection check such as opening a connection and running a safe read-only probe. DB-1 must not rotate passwords, change grants, create users, revoke users, recreate the database, or write application configuration.
+
+## Imported Database Adoption Workflow
+
+Adoption is a later explicit workflow, not DB-1. It converts an imported database into a managed database only after safe verification and compensation planning.
+
+Adopt database workflow:
+
+1. Verify the existing connection using the approved secret boundary.
+2. Create a new managed user or select an existing managed user according to provider policy.
+3. Grant only the required privileges for the target database.
+4. Update the application secret/configuration through the owning configuration service.
+5. Reload or restart only the affected service required to pick up the new credential.
+6. Verify the application/database connection with the new credential.
+7. Revoke old credentials only after successful verification.
+8. If any step fails, compensate safely by preserving the original credential/configuration and restoring service operability.
+
+Adoption must produce audit events for verification, user creation/selection, configuration update, service reload, final verification, old credential revoke, and compensation.
 
 ### `DatabaseDumpService`
 

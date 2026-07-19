@@ -44,6 +44,11 @@ Backend tasks:
 - [ ] Return engine profile/version and size fields.
 - [ ] Surface restart capability through existing `restart-db` runtime behavior.
 - [ ] Surface database logs capability through existing runtime/log behavior where available.
+- [ ] Discover and represent migrated myVestaCP/imported database connections without assuming ContainerCP created the physical database or user.
+- [ ] Resolve imported connection metadata from migrated site configuration through the approved secret-handling boundary.
+- [ ] Return independent state fields for runtime status, connection verification, credential availability, and management ownership.
+- [ ] Perform only non-destructive connection verification for imported databases when credentials are safely available.
+- [ ] Report `credentials_unavailable` clearly when credentials cannot be recovered safely.
 - [ ] Keep `db_password` out of every response.
 - [ ] Update `docs/api/API_REFERENCE.md` for the response contract.
 
@@ -56,6 +61,7 @@ Web UI tasks:
 - [ ] Add logs link/view only through existing backend log APIs.
 - [ ] Add safe delete confirmation UI while preserving current metadata-only delete semantics.
 - [ ] Label delete behavior clearly as metadata-only until physical lifecycle is implemented.
+- [ ] Display imported/managed/verification-required/credentials-unavailable/connection-failed states separately from runtime status.
 
 Tests:
 
@@ -64,6 +70,13 @@ Tests:
 - [ ] Unit test JSON output does not contain `db_password`, `DB_PASSWORD`, `MYSQL_ROOT_PASSWORD`, or password values.
 - [ ] Runtime mapping tests remain green for `ServiceRole::Database` and `restart-db`.
 - [ ] API/UI tests prove DB-1 does not create, drop physically, import, export, rotate passwords, or deploy Adminer.
+- [ ] Imported database with valid existing credentials is shown as imported and verifies successfully.
+- [ ] Imported database with missing credentials is shown as `credentials_unavailable`, not as missing.
+- [ ] Imported database with invalid credentials is shown as `connection_failed`.
+- [ ] Imported database with nonstandard `user@host` is represented without normalization that changes semantics.
+- [ ] Legacy Compose service naming is handled without assuming the current generated `mariadb` service name.
+- [ ] Physical database present but metadata incomplete is represented as requiring verification/adoption, not silently dropped.
+- [ ] Site files/configuration remain byte-for-byte unchanged after DB-1 read-only verification.
 
 Validation:
 
@@ -94,6 +107,7 @@ Backend tasks:
 - [ ] Add rollback for partial create failures.
 - [ ] Add audit log entries for create, drop, verify, and repair.
 - [ ] Ensure `MYSQL_ROOT_PASSWORD` is bootstrap-only and not used for normal runtime operations.
+- [ ] Add later explicit Adopt Database workflow for imported databases; do not include it in DB-1.
 
 REST API tasks:
 
@@ -154,6 +168,34 @@ Tests:
 Exit criteria:
 
 - Password rotation is safe enough for Adminer launch design.
+
+## Phase 3a: Adopt Imported Database
+
+Purpose: explicitly convert an imported myVestaCP database into a managed ContainerCP database. This is not DB-1.
+
+Backend tasks:
+
+- [ ] Verify the existing imported connection through the approved secret boundary.
+- [ ] Create or select a managed database user.
+- [ ] Grant required privileges to the managed user.
+- [ ] Update application secret/configuration through the owning configuration service.
+- [ ] Reload only the affected service required to pick up the new credential.
+- [ ] Verify the new connection.
+- [ ] Revoke old credentials only after successful verification.
+- [ ] Compensate safely on failure by preserving or restoring the original working configuration.
+- [ ] Emit audit events for every adoption step and compensation path.
+
+Tests:
+
+- [ ] Adoption succeeds from a valid imported credential without interrupting site operation.
+- [ ] Adoption failure before configuration update leaves the site unchanged.
+- [ ] Adoption failure after configuration update restores the original configuration or reports a safe manual-recovery state.
+- [ ] Old credentials are not revoked until the new connection verifies.
+- [ ] Nonstandard `user@host` handling is preserved or explicitly migrated with operator approval.
+
+Exit criteria:
+
+- Imported database adoption is explicit, auditable, compensating, and never triggered by read-only inventory.
 
 ## Phase 4: Logical Export and Import
 

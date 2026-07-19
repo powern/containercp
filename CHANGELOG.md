@@ -8,7 +8,7 @@ Format: date | commit | summary
 
 ## 2026-07-19 | `this commit` | Architecture — Finalize Databases module v0.8 decisions
 
-**Summary:** Finalized the post-v0.7.0 Databases module architecture package after architecture review. The approved design keeps Databases as a v0.8 major subsystem, supports one site with many databases, introduces Database Profiles and provider boundaries, makes `MYSQL_ROOT_PASSWORD` bootstrap-only, prefers rotate-not-reveal credential workflows, recommends on-demand Adminer, strengthens credential/security ownership, and keeps DB-1 as read-only inventory.
+**Summary:** Finalized the post-v0.7.0 Databases module architecture package after architecture review. The approved design keeps Databases as a v0.8 major subsystem, supports one site with many databases, introduces Database Profiles and provider boundaries, makes `MYSQL_ROOT_PASSWORD` bootstrap-only, prefers rotate-not-reveal credential workflows, recommends on-demand Adminer, explicitly includes migrated myVestaCP/imported databases, strengthens credential/security ownership, and keeps DB-1 as read-only inventory.
 
 **Files changed:** `planning/database-module-v0.8-architecture.md`, `planning/database-module-v0.8-implementation-plan.md`, `planning/database-module-v0.8-open-source-review.md`, `planning/database-module-v0.8-threat-model.md`, `planning/database-module-architecture.md`, `CHANGELOG.md`
 

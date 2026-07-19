@@ -18,6 +18,7 @@ The Databases module must let an authenticated administrator manage per-site Mar
 | ContainerCP database service account | Privilege escalation path for lifecycle operations |
 | ContainerCP SQLite storage | Credential disclosure and metadata tampering |
 | Site `.env` files | Credential disclosure for DB, root DB, Redis, and site metadata |
+| Migrated application configuration | Source of imported DB connection metadata and possible secrets |
 | SQL dump files | Full data disclosure and possible credential leakage |
 | Import files | Code/data injection path into customer DB |
 | Adminer session/token | Interactive database compromise |
@@ -72,6 +73,9 @@ The Databases module must let an authenticated administrator manage per-site Mar
 | Compromised site container reaches other site DB | Per-site Docker networks; no shared database service in v0.8 |
 | Root DB password overuse | Prefer least-privilege admin account or document root use as temporary risk |
 | Service account overprivileged | Define grants per operation and audit elevated operations |
+| Imported database treated as managed | Track management ownership separately and block destructive operations until explicit adoption |
+| Missing imported credentials treated as missing database | Report `credentials_unavailable` and preserve site operation |
+| Read-only verification mutates legacy site | DB-1 verification must not rewrite config, rotate passwords, change grants, or recreate users |
 | Stale `.env` after password rotation | Update metadata and `.env` in one operation and restart dependent services if required |
 | Secrets included in downloadable backup metadata | Redact manifests and document `.env` inclusion explicitly |
 
@@ -143,6 +147,10 @@ Future hardening:
 - Per-operation temporary credentials.
 - File permission validation for site `.env` and backup staging.
 
+Imported myVestaCP credentials add a separate boundary. The resolver may inspect migrated site configuration to perform verification, but normal API responses receive only availability and verification states. If credentials cannot be recovered safely, the API reports `credentials_unavailable`; it must not infer that the physical database is missing.
+
+DB-1 imported database verification must be non-destructive. It may open a connection and run a safe read-only probe when credentials are available. It must not rotate passwords, modify grants, create users, revoke users, rewrite site configuration, or normalize nonstandard `user@host` values.
+
 ## Adminer Threats
 
 Adminer must be treated as full database access.
@@ -152,7 +160,6 @@ Required controls before enabling:
 - Disabled by default.
 - Time-limited launch sessions.
 - Server-side token maps to database credentials; browser receives only token or proxied session.
-- Token scoped to database ID and site ID.
 - Token scoped to user/session, node, nonce, database ID, and site ID.
 - Token expiry and revoke path.
 - Replay protection through nonce, TTL, and one active session policy per user/database where practical.
@@ -231,6 +238,10 @@ Required controls:
 - [ ] Adminer cleanup removes expired token, proxy route, and temporary container.
 - [ ] Audit logs cover Adminer launch, access, expiry, revoke, cleanup failure, and cleanup retry.
 - [ ] Full tests pass and VM validation is complete before production rollout.
+- [ ] Imported database with valid existing credentials verifies without exposing the password.
+- [ ] Imported database with missing credentials reports `credentials_unavailable`.
+- [ ] Imported database with invalid credentials reports `connection_failed`.
+- [ ] Imported database verification leaves site configuration unchanged.
 
 ## Residual Risks
 
