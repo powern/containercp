@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Database — Harden post-mutation state detection
+
+**Summary:** Added WP-R2.1 production hardening for MariaDB password-change uncertainty. `DatabaseCredentialRotationService` no longer assumes a failed `ALTER USER` command means no mutation occurred. After a failed password-change command, it verifies both old and new credentials. If only the new password works, the saga treats the mutation as completed and continues so later failures can compensate. If only the old password works, the saga fails without compensation. If both or neither work, the saga returns `manual_recovery_required` because the actual credential state cannot be proven.
+
+**Files changed:** `libs/database/DatabaseCredentialRotationService.cpp`, `tests/test_database_credential_rotation.cpp`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Ambiguous MariaDB mutation failures now fail safer. Operators will see manual recovery required when ContainerCP cannot prove whether old or new credentials are authoritative after a failed change command.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused tests passed for `*DatabaseCredentialRotation*` (`35` cases, `312` assertions), `*database*` (`59` cases, `517` assertions), and `*WordPress*` (`64` cases, `379` assertions). Full CTest (`1/1`) and `git diff --check` passed.
+
+**Known risks:** This does not execute live MariaDB validation and does not claim production readiness. Metadata consistency, password transport breadth, shared-user decision documentation, site health semantics, temporary secret handling, and final validation remain in WP-R2.2 through WP-R2.7.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Validate credential review fixes
 
 **Summary:** Completed WP-R11 final repository/test validation for WordPress credential review fixes WP-R1 through WP-R10. Validation was repository/test-only: no production deployment, no real site access, no real database access, and no live credential rotation were performed.

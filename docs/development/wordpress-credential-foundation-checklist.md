@@ -629,3 +629,49 @@ Objective: Run clean build in a new directory, full/focused tests, JavaScript sy
 Suggested commit: `wordpress: validate credential review fixes`.
 
 Result: Complete. Ran final repository/test validation only; no production deployment, no real site access, no real database access, and no live credential rotation were performed. Clean configure passed with `cmake -S . -B build-wp-r11 -G Ninja -DCMAKE_BUILD_TYPE=Release`. Clean build passed with `cmake --build build-wp-r11 --target containercp_tests containercp containercpd -- -j1`; two earlier invocations hit tool timeouts at 120s/300s while still compiling, then the same build completed with a 600s timeout and no compiler warnings. Full doctest passed with `build-wp-r11/tests/containercp_tests` (`774` cases, `5288` assertions). Focused validation was rerun sequentially after one discarded parallel focused run hit shared `/tmp` fixture interference; sequential focused suites passed for `*DatabaseCredentialRotation*` (`30` cases, `280` assertions), `VestaSiteImporter*` (`31` cases, `79` assertions), `*database*` (`54` cases, `485` assertions), `*WordPress*` (`64` cases, `379` assertions), `*API*` (`18` cases, `73` assertions), and `*Command*` (`18` cases, `67` assertions). Full CTest passed (`1/1`). `node --check web/app.js`, `build-wp-r11/containercp --version`, `build-wp-r11/containercpd --version`, and `git diff --check` passed. Static secret-surface scans of Web UI/API/CLI/daemon/job surfaces found only existing auth password-change fields and no WordPress database credential exposure; internal/provider/test scans found only expected credential constants, provider stdin defaults construction, and internal saga/adapter/test variable names. `gh` is not installed and `.github/workflows` does not exist, so no remote CI status is available from this repository. Tracked files are clean before this documentation update; untracked local build directories `build-wp0/` and `build-wp-r11/` remain intentionally unstaged.
+
+## WP-R2 WordPress Credential Rotation Production Hardening
+
+Status: In progress. This production-hardening phase is limited to correctness and safety fixes for the approved one-site/one-WordPress/one-MariaDB/one-database architecture. Do not redesign for multi-database or multi-WordPress-per-site scenarios. Do not modify `web2.softico.ua`, rotate real credentials, deploy changes, or execute live credential rotation without explicit operator approval.
+
+### [x] WP-R2.1 Review post-mutation failure handling
+
+Objective: Never assume a failed MariaDB command means `ALTER USER` did not mutate state. After a failed password-change command, prove whether old or new credentials work before deciding to continue, fail without compensation, or require manual recovery.
+
+Suggested commit: `database: harden post-mutation state detection`.
+
+Result: Complete. `DatabaseCredentialRotationService` now treats a failed `change_mariadb_password()` after password generation as an uncertain mutation boundary. It verifies both the old and new credentials: if only the new password works, it records the mutation as confirmed and continues the saga so later failures are compensated; if only the old password works, it fails without compensation because mutation was not performed; if both or neither work, it reports `manual_recovery_required` because the actual state cannot be proven. Regression tests cover command failure after successful `ALTER USER`, timeout after `ALTER USER`, old-password-valid, new-password-valid, both-valid ambiguous state, and neither-valid unknown state. Validation passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings, `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotation*"` (`35` cases, `312` assertions), `*database*` (`59` cases, `517` assertions), `*WordPress*` (`64` cases, `379` assertions), full CTest (`1/1`), and `git diff --check`.
+
+### [ ] WP-R2.2 Review metadata consistency
+
+Objective: Define metadata atomicity, verify storage consistency after rollback, and return `manual_recovery_required` if consistency cannot be proven.
+
+Suggested commit: `database: harden metadata consistency verification`.
+
+### [ ] WP-R2.3 Review password transport
+
+Objective: Keep binary-safe MariaDB transport while supporting valid imported WordPress credentials unless rejection is technically required.
+
+Suggested commit: `database: review production password transport`.
+
+### [ ] WP-R2.4 Review shared user assessment
+
+Objective: Ensure metadata/runtime disagreement, missing identity, ambiguous state, shared identity, and unknown state all fail closed under the approved one-site/one-database architecture.
+
+Suggested commit: `database: harden shared credential assessment`.
+
+### [ ] WP-R2.5 Review site health verification
+
+Objective: Clarify whether the stage verifies runtime container availability or application health, rename or extend accordingly, and document the guarantee.
+
+Suggested commit: `wordpress: clarify site health verification`.
+
+### [ ] WP-R2.6 Review temporary secret files
+
+Objective: Review temporary secret bundle filename generation, cleanup, and concurrent execution; make generation thread-safe if necessary.
+
+Suggested commit: `database: harden temporary secret handling`.
+
+### [ ] WP-R2.7 Final validation
+
+Objective: Run clean configure/build in a new directory, full and focused tests, `git diff --check`, clean status, push all commits, and report production-readiness assessment without executing live tests.

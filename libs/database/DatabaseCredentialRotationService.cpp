@@ -10,15 +10,20 @@ DatabaseCredentialRotationEvent event(DatabaseCredentialRotationState state, std
 }
 
 DatabaseCredentialRotationResult fail_with(DatabaseCredentialRotationResult result,
-                                          DatabaseCredentialRotationState state,
-                                          std::string code,
-                                          std::string message) {
+                                           DatabaseCredentialRotationState state,
+                                           std::string code,
+                                           std::string message) {
     result.success = false;
     result.final_state = state;
     result.code = std::move(code);
     result.message = std::move(message);
     result.events.push_back(event(result.final_state, result.code, result.message));
     return result;
+}
+
+DatabaseCredentialRotationResult manual_recovery(DatabaseCredentialRotationResult result) {
+    return fail_with(std::move(result), DatabaseCredentialRotationState::ManualRecoveryRequired,
+                     "manual_recovery_required", "Credential rotation requires manual recovery");
 }
 
 } // namespace
@@ -262,8 +267,27 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const
                     "Changing MariaDB password",
                     [&] { return dependencies_->change_mariadb_password(request, new_password); });
     if (!step.success) {
-        return fail_with(std::move(result), DatabaseCredentialRotationState::Failed, step.code.empty() ? "mariadb_password_change_failed" : step.code,
-                         "MariaDB password change failed");
+        const std::string change_failure_code = step.code.empty() ? "mariadb_password_change_failed" : step.code;
+        result.events.push_back(event(DatabaseCredentialRotationState::VerifyingMariaDBPassword,
+                                      "determining_mariadb_password_state",
+                                      "Determining MariaDB password state after failed change command"));
+        const auto old_check = dependencies_->verify_old_credential(request);
+        const auto new_check = dependencies_->verify_new_credential(request, new_password);
+        if (new_check.success && !old_check.success) {
+            result.events.push_back(event(DatabaseCredentialRotationState::ChangingMariaDBPassword,
+                                          "mariadb_password_change_confirmed",
+                                          "MariaDB password change confirmed after command failure"));
+        } else if (old_check.success && !new_check.success) {
+            return fail_with(std::move(result), DatabaseCredentialRotationState::Failed, change_failure_code,
+                             "MariaDB password change failed");
+        } else {
+            result.events.push_back(event(DatabaseCredentialRotationState::ManualRecoveryRequired,
+                                          old_check.success && new_check.success
+                                              ? "mariadb_password_state_ambiguous"
+                                              : "mariadb_password_state_unknown",
+                                          "MariaDB password state could not be proven after change command failure"));
+            return manual_recovery(std::move(result));
+        }
     }
 
     step = run_step(DatabaseCredentialRotationState::UpdatingWordPressConfig,

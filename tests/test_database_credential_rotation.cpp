@@ -30,6 +30,11 @@ struct FakeRotationDependencies : DatabaseCredentialRotationDependencies {
     std::string compensation_fail_call;
     std::string seen_password;
     MariaDBSharedCredentialAssessmentState shared_state = MariaDBSharedCredentialAssessmentState::NotShared;
+    bool force_mariadb_change_failure = false;
+    bool mariadb_change_attempted = false;
+    std::string mariadb_change_failure_code = "mariadb_command_failed";
+    bool old_password_valid_after_failed_change = false;
+    bool new_password_valid_after_failed_change = true;
 
     DatabaseCredentialRotationStepResult ok(const std::string& call) {
         calls.push_back(call);
@@ -50,6 +55,14 @@ struct FakeRotationDependencies : DatabaseCredentialRotationDependencies {
         return ok("inspect_wordpress");
     }
     DatabaseCredentialRotationStepResult verify_old_credential(const DatabaseCredentialRotationRequest&) override {
+        if (force_mariadb_change_failure && mariadb_change_attempted) {
+            calls.push_back("verify_old_credential");
+            DatabaseCredentialRotationStepResult result;
+            result.success = old_password_valid_after_failed_change;
+            result.code = result.success ? "ok" : "old_credential_verification_failed";
+            result.message = "ok";
+            return result;
+        }
         return ok("verify_old_credential");
     }
     DatabaseCredentialRotationStepResult assess_shared_user(const DatabaseCredentialRotationRequest&) override {
@@ -87,6 +100,15 @@ struct FakeRotationDependencies : DatabaseCredentialRotationDependencies {
     }
     DatabaseCredentialRotationStepResult change_mariadb_password(const DatabaseCredentialRotationRequest&, const std::string& new_password) override {
         seen_password = new_password;
+        if (force_mariadb_change_failure) {
+            mariadb_change_attempted = true;
+            calls.push_back("change_mariadb_password");
+            DatabaseCredentialRotationStepResult result;
+            result.success = false;
+            result.code = mariadb_change_failure_code;
+            result.message = "failure with secret new-secret";
+            return result;
+        }
         return ok("change_mariadb_password");
     }
     DatabaseCredentialRotationStepResult update_wordpress_config(const DatabaseCredentialRotationRequest&, const std::string& new_password) override {
@@ -98,6 +120,14 @@ struct FakeRotationDependencies : DatabaseCredentialRotationDependencies {
     }
     DatabaseCredentialRotationStepResult verify_new_credential(const DatabaseCredentialRotationRequest&, const std::string& new_password) override {
         seen_password = new_password;
+        if (force_mariadb_change_failure && mariadb_change_attempted) {
+            calls.push_back("verify_new_credential");
+            DatabaseCredentialRotationStepResult result;
+            result.success = new_password_valid_after_failed_change;
+            result.code = result.success ? "ok" : "new_credential_verification_failed";
+            result.message = "ok";
+            return result;
+        }
         return ok("verify_new_credential");
     }
     DatabaseCredentialRotationStepResult verify_wordpress(const DatabaseCredentialRotationRequest&) override {
@@ -454,6 +484,116 @@ TEST_CASE("DatabaseCredentialRotationService passes generated password only to d
         CHECK(event.message.find("super-secret-generated") == std::string::npos);
     }
     CHECK(result.message.find("super-secret-generated") == std::string::npos);
+}
+
+TEST_CASE("DatabaseCredentialRotationService continues when failed MariaDB change actually applied new password") {
+    FakeRotationDependencies deps;
+    deps.force_mariadb_change_failure = true;
+    deps.old_password_valid_after_failed_change = false;
+    deps.new_password_valid_after_failed_change = true;
+    DatabaseCredentialRotationService service(deps);
+
+    const auto result = service.rotate({10, 20, "example.com"});
+
+    CHECK(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::Completed);
+    CHECK(deps.calls == std::vector<std::string>{
+        "inspect_wordpress",
+        "verify_old_credential",
+        "assess_shared_user",
+        "generate_password",
+        "change_mariadb_password",
+        "verify_old_credential",
+        "verify_new_credential",
+        "update_wordpress_config",
+        "apply_runtime",
+        "verify_new_credential",
+        "verify_wordpress",
+        "verify_site_health",
+        "persist_metadata",
+    });
+}
+
+TEST_CASE("DatabaseCredentialRotationService treats timeout after MariaDB change as applied when new password verifies") {
+    FakeRotationDependencies deps;
+    deps.force_mariadb_change_failure = true;
+    deps.mariadb_change_failure_code = "mariadb_command_timeout";
+    deps.old_password_valid_after_failed_change = false;
+    deps.new_password_valid_after_failed_change = true;
+    DatabaseCredentialRotationService service(deps);
+
+    const auto result = service.rotate({10, 20, "example.com"});
+
+    CHECK(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::Completed);
+    for (const auto& event : result.events) {
+        CHECK(event.message.find("new-secret") == std::string::npos);
+    }
+}
+
+TEST_CASE("DatabaseCredentialRotationService fails without compensation when failed MariaDB change left old password valid") {
+    FakeRotationDependencies deps;
+    deps.force_mariadb_change_failure = true;
+    deps.old_password_valid_after_failed_change = true;
+    deps.new_password_valid_after_failed_change = false;
+    DatabaseCredentialRotationService service(deps);
+
+    const auto result = service.rotate({10, 20, "example.com"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::Failed);
+    CHECK(result.code == "mariadb_command_failed");
+    CHECK(deps.calls == std::vector<std::string>{
+        "inspect_wordpress",
+        "verify_old_credential",
+        "assess_shared_user",
+        "generate_password",
+        "change_mariadb_password",
+        "verify_old_credential",
+        "verify_new_credential",
+    });
+}
+
+TEST_CASE("DatabaseCredentialRotationService requires manual recovery when failed MariaDB change leaves both passwords valid") {
+    FakeRotationDependencies deps;
+    deps.force_mariadb_change_failure = true;
+    deps.old_password_valid_after_failed_change = true;
+    deps.new_password_valid_after_failed_change = true;
+    DatabaseCredentialRotationService service(deps);
+
+    const auto result = service.rotate({10, 20, "example.com"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::ManualRecoveryRequired);
+    CHECK(result.code == "manual_recovery_required");
+    bool ambiguous = false;
+    for (const auto& event : result.events) {
+        if (event.code == "mariadb_password_state_ambiguous") {
+            ambiguous = true;
+        }
+    }
+    CHECK(ambiguous);
+}
+
+TEST_CASE("DatabaseCredentialRotationService requires manual recovery when failed MariaDB change state is unknown") {
+    FakeRotationDependencies deps;
+    deps.force_mariadb_change_failure = true;
+    deps.old_password_valid_after_failed_change = false;
+    deps.new_password_valid_after_failed_change = false;
+    DatabaseCredentialRotationService service(deps);
+
+    const auto result = service.rotate({10, 20, "example.com"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::ManualRecoveryRequired);
+    CHECK(result.code == "manual_recovery_required");
+    bool unknown = false;
+    for (const auto& event : result.events) {
+        if (event.code == "mariadb_password_state_unknown") {
+            unknown = true;
+        }
+    }
+    CHECK(unknown);
 }
 
 TEST_CASE("DatabaseCredentialRotationService compensates when config update fails after MariaDB mutation") {
