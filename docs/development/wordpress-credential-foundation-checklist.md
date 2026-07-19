@@ -348,7 +348,7 @@ Commit message: `wordpress: add credential rotation state machine`.
 
 Result: Complete. Added `DatabaseCredentialRotationService` with explicit rotation states, request/result/event structs, redacted event messages, and mutex-backed per-site/database operation locking that releases on all current failure paths. The service rejects `site_id=0` and missing database ids before lock acquisition and currently fails closed until saga dependencies are wired. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotationService*"` (`5` test cases, `26` assertions), `build-wp0/tests/containercp_tests -tc="*database*"` (`26` test cases, `202` assertions), `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`49` test cases, `286` assertions), and full CTest (`1/1`).
 
-### [ ] WP-5.2 Implement direct-constant rotation happy path
+### [x] WP-5.2 Implement direct-constant rotation happy path
 
 Objective: Orchestrate site/database resolution, config inspection, old connection verification, new password generation, provider change, config update, runtime apply, DB verification, WordPress verification, site health verification, metadata persistence.
 
@@ -363,6 +363,8 @@ Focused tests: supported migrated direct-literal config, unsupported source reje
 Acceptance criteria: Full happy path passes with fakes and no password leakage.
 
 Commit message: `wordpress: add database credential rotation saga`.
+
+Result: Complete. Added the dependency-injected happy-path rotation saga in `DatabaseCredentialRotationService`. The service now executes the approved order with fakes: WordPress inspection, old credential verification, password generation, MariaDB password change, WordPress config update, runtime apply, new MariaDB verification, WordPress verification, site health verification, and metadata persistence before reporting success. Unsupported inspection fails before mutation, generated passwords are passed only to dependency calls, dependency failure messages are not surfaced, and post-verification failure currently stops before metadata persistence. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotationService*"` (`9` test cases, `70` assertions), `build-wp0/tests/containercp_tests -tc="*database*"` (`30` test cases, `246` assertions), `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`49` test cases, `286` assertions), `build-wp0/tests/containercp_tests -tc="VestaSiteImporter*"` (`31` test cases, `79` assertions), and full CTest (`1/1`). `git diff --check` passed.
 
 ### [ ] WP-5.3 Implement compensation and manual recovery states
 

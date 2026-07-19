@@ -49,8 +49,38 @@ struct DatabaseCredentialRotationResult {
     std::vector<DatabaseCredentialRotationEvent> events;
 };
 
+struct DatabaseCredentialRotationStepResult {
+    bool success = false;
+    std::string code;
+    std::string message;
+    std::string generated_password;
+};
+
+class DatabaseCredentialRotationDependencies {
+public:
+    virtual ~DatabaseCredentialRotationDependencies() = default;
+
+    virtual DatabaseCredentialRotationStepResult inspect_wordpress(const DatabaseCredentialRotationRequest& request) = 0;
+    virtual DatabaseCredentialRotationStepResult verify_old_credential(const DatabaseCredentialRotationRequest& request) = 0;
+    virtual DatabaseCredentialRotationStepResult generate_password(const DatabaseCredentialRotationRequest& request) = 0;
+    virtual DatabaseCredentialRotationStepResult change_mariadb_password(const DatabaseCredentialRotationRequest& request,
+                                                                         const std::string& new_password) = 0;
+    virtual DatabaseCredentialRotationStepResult update_wordpress_config(const DatabaseCredentialRotationRequest& request,
+                                                                         const std::string& new_password) = 0;
+    virtual DatabaseCredentialRotationStepResult apply_runtime(const DatabaseCredentialRotationRequest& request) = 0;
+    virtual DatabaseCredentialRotationStepResult verify_new_credential(const DatabaseCredentialRotationRequest& request,
+                                                                       const std::string& new_password) = 0;
+    virtual DatabaseCredentialRotationStepResult verify_wordpress(const DatabaseCredentialRotationRequest& request) = 0;
+    virtual DatabaseCredentialRotationStepResult verify_site_health(const DatabaseCredentialRotationRequest& request) = 0;
+    virtual DatabaseCredentialRotationStepResult persist_metadata(const DatabaseCredentialRotationRequest& request,
+                                                                  const std::string& new_password) = 0;
+};
+
 class DatabaseCredentialRotationService {
 public:
+    DatabaseCredentialRotationService() = default;
+    explicit DatabaseCredentialRotationService(DatabaseCredentialRotationDependencies& dependencies);
+
     DatabaseCredentialRotationResult rotate(const DatabaseCredentialRotationRequest& request);
     bool is_locked(uint64_t site_id, uint64_t database_id) const;
 
@@ -77,6 +107,7 @@ private:
 
     mutable std::mutex mutex_;
     std::set<std::string> active_locks_;
+    DatabaseCredentialRotationDependencies* dependencies_ = nullptr;
 };
 
 std::string database_credential_rotation_state_to_string(DatabaseCredentialRotationState state);

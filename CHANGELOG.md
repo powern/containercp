@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Add database credential rotation saga
+
+**Summary:** Added the WP-5.2 happy-path database credential rotation saga. `DatabaseCredentialRotationService` now accepts an injected dependency boundary and executes the ordered rotation workflow with fakes: WordPress credential inspection, old credential verification, replacement password generation, MariaDB password change, WordPress config update, runtime application, new MariaDB credential verification, WordPress verification, site health verification, and metadata persistence. Unsupported inspection fails before mutation, generated passwords are only passed to dependency calls, and dependency failure messages are not surfaced to callers.
+
+**Files changed:** `libs/database/DatabaseCredentialRotationService.h`, `libs/database/DatabaseCredentialRotationService.cpp`, `tests/test_database_credential_rotation.cpp`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. The saga remains internal and fake-driven; it is not yet wired to real storage, runtime, jobs, REST API, CLI, Web UI, production MariaDB, or production WordPress files.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused rotation tests passed with `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotationService*"` (`9` cases, `70` assertions), covering happy-path order, unsupported inspection before mutation, generated-password handling, redaction of dependency failure messages, post-verification stop before metadata, and lock release. Focused regressions passed for `*database*` (`30` cases, `246` assertions), `*WordPress*` (`49` cases, `286` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** WP-5.2 does not yet compensate after post-mutation failures. WP-5.3 must restore MariaDB/config/runtime or enter explicit manual recovery for failures after password mutation. Live provider/storage/runtime integration remains pending.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Add credential rotation state machine
 
 **Summary:** Added the WP-5.1 database credential rotation service foundation. `DatabaseCredentialRotationService` now defines the explicit saga state model, request/result/event structs, redacted event messages, and mutex-backed per-site/database locking. The service rejects unsupported `site_id=0`, rejects missing database ids, releases locks after failure, and fails closed until the remaining saga dependencies are wired.
