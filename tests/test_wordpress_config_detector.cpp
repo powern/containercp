@@ -2,7 +2,28 @@
 
 #include "doctest/doctest.h"
 
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+
 using namespace containercp::wordpress;
+
+namespace {
+
+namespace fs = std::filesystem;
+
+fs::path test_root(const std::string& name) {
+    const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
+    return fs::temp_directory_path() / ("containercp_wp_detector_" + name + "_" + std::to_string(unique));
+}
+
+void write_file(const fs::path& path, const std::string& content) {
+    fs::create_directories(path.parent_path());
+    std::ofstream out(path);
+    out << content;
+}
+
+} // namespace
 
 TEST_CASE("WordPress detector reads direct constants without exposing password") {
     WordPressConfigDetector detector;
@@ -121,4 +142,84 @@ TEST_CASE("WordPress detector reports missing content and missing credentials") 
     CHECK(missing.credentials.db_password.value.empty());
     REQUIRE_FALSE(missing.issues.empty());
     CHECK(missing.issues.back().code == "credentials_missing");
+}
+
+TEST_CASE("WordPress detector accepts only regular active wp-config path inside site root") {
+    WordPressConfigDetector detector;
+    const auto root = test_root("valid_path");
+    const auto config = root / "public" / "wp-config.php";
+    write_file(config, "<?php define('DB_NAME', 'wp');");
+
+    const auto result = detector.inspect_config_path(root, config);
+    CHECK(result.safe);
+    CHECK(result.status == WordPressCredentialStatus::Complete);
+    CHECK(result.code == "ok");
+    CHECK(result.config_path.filename() == "wp-config.php");
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("WordPress detector rejects backup temp and missing wp-config paths") {
+    WordPressConfigDetector detector;
+    const auto root = test_root("reject_names");
+    fs::create_directories(root / "public");
+    write_file(root / "public" / "wp-config.php.bak", "backup");
+
+    auto backup = detector.inspect_config_path(root, root / "public" / "wp-config.php.bak");
+    CHECK_FALSE(backup.safe);
+    CHECK(backup.status == WordPressCredentialStatus::UnsafePath);
+    CHECK(backup.code == "not_active_config");
+
+    auto temp = detector.inspect_config_path(root, root / "public" / ".wp-config.php.swp");
+    CHECK_FALSE(temp.safe);
+    CHECK(temp.code == "not_active_config");
+
+    auto missing = detector.inspect_config_path(root, root / "public" / "wp-config.php");
+    CHECK_FALSE(missing.safe);
+    CHECK(missing.status == WordPressCredentialStatus::ConfigMissing);
+    CHECK(missing.code == "config_missing");
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("WordPress detector rejects traversal outside site root") {
+    WordPressConfigDetector detector;
+    const auto root = test_root("path_escape") / "site";
+    const auto outside = root.parent_path() / "outside" / "wp-config.php";
+    fs::create_directories(root);
+    write_file(outside, "<?php define('DB_NAME', 'outside');");
+
+    const auto result = detector.inspect_config_path(root, root / ".." / "outside" / "wp-config.php");
+    CHECK_FALSE(result.safe);
+    CHECK(result.status == WordPressCredentialStatus::UnsafePath);
+    CHECK(result.code == "path_outside_root");
+
+    fs::remove_all(root.parent_path());
+}
+
+TEST_CASE("WordPress detector rejects symlinked config paths") {
+    WordPressConfigDetector detector;
+    const auto root = test_root("symlink");
+    const auto target = root / "target.php";
+    const auto link = root / "wp-config.php";
+    write_file(target, "<?php define('DB_NAME', 'wp');");
+
+    std::error_code ec;
+    fs::create_symlink(target, link, ec);
+    REQUIRE_FALSE(ec);
+
+    const auto result = detector.inspect_config_path(root, link);
+    CHECK_FALSE(result.safe);
+    CHECK(result.status == WordPressCredentialStatus::UnsafePath);
+    CHECK(result.code == "symlink_rejected");
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("WordPress detector rejects empty site root utility input") {
+    WordPressConfigDetector detector;
+    const auto result = detector.inspect_config_path({}, "wp-config.php");
+    CHECK_FALSE(result.safe);
+    CHECK(result.status == WordPressCredentialStatus::UnsafePath);
+    CHECK(result.code == "site_root_missing");
 }

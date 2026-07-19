@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <filesystem>
 #include <map>
 #include <set>
 #include <string_view>
@@ -11,6 +12,8 @@
 
 namespace containercp::wordpress {
 namespace {
+
+namespace fs = std::filesystem;
 
 struct DefineCall {
     std::size_t offset = 0;
@@ -411,7 +414,119 @@ void add_issue(std::vector<WordPressConfigIssue>& issues,
     issues.push_back({severity, std::move(code), std::move(message)});
 }
 
+WordPressConfigPathSafety unsafe_path(std::string code,
+                                      std::string message,
+                                      const fs::path& site_root,
+                                      const fs::path& config_path,
+                                      WordPressCredentialStatus status = WordPressCredentialStatus::UnsafePath) {
+    WordPressConfigPathSafety result;
+    result.safe = false;
+    result.status = status;
+    result.code = std::move(code);
+    result.message = std::move(message);
+    result.site_root = site_root;
+    result.config_path = config_path;
+    return result;
+}
+
+WordPressConfigPathSafety safe_path(const fs::path& site_root, const fs::path& config_path) {
+    WordPressConfigPathSafety result;
+    result.safe = true;
+    result.status = WordPressCredentialStatus::Complete;
+    result.code = "ok";
+    result.message = "Active wp-config.php path is safe";
+    result.site_root = site_root;
+    result.config_path = config_path;
+    return result;
+}
+
+bool path_has_prefix(const fs::path& path, const fs::path& root) {
+    auto path_it = path.begin();
+    auto root_it = root.begin();
+    for (; root_it != root.end(); ++root_it, ++path_it) {
+        if (path_it == path.end() || *path_it != *root_it) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
+
+bool WordPressConfigDetector::is_active_config_filename(const std::filesystem::path& path) {
+    return path.filename() == "wp-config.php";
+}
+
+WordPressConfigPathSafety WordPressConfigDetector::inspect_config_path(const std::filesystem::path& site_root,
+                                                                       const std::filesystem::path& candidate_path) const {
+    std::error_code ec;
+    if (site_root.empty()) {
+        return unsafe_path("site_root_missing", "Site root is required", site_root, candidate_path);
+    }
+    if (candidate_path.empty()) {
+        return unsafe_path("config_path_missing", "WordPress config path is required", site_root, candidate_path,
+                           WordPressCredentialStatus::ConfigMissing);
+    }
+
+    const fs::path root_abs = fs::absolute(site_root, ec).lexically_normal();
+    if (ec) {
+        return unsafe_path("site_root_invalid", "Site root could not be resolved", site_root, candidate_path);
+    }
+
+    const fs::path candidate_abs = (candidate_path.is_absolute()
+                                        ? fs::absolute(candidate_path, ec)
+                                        : fs::absolute(root_abs / candidate_path, ec))
+                                       .lexically_normal();
+    if (ec) {
+        return unsafe_path("config_path_invalid", "WordPress config path could not be resolved", root_abs, candidate_path);
+    }
+
+    if (!is_active_config_filename(candidate_abs)) {
+        return unsafe_path("not_active_config", "Only active wp-config.php files are accepted", root_abs, candidate_abs);
+    }
+
+    if (!path_has_prefix(candidate_abs, root_abs)) {
+        return unsafe_path("path_outside_root", "WordPress config path escapes the site root", root_abs, candidate_abs);
+    }
+
+    const fs::file_status root_status = fs::symlink_status(root_abs, ec);
+    if (ec || !fs::exists(root_status)) {
+        return unsafe_path("site_root_missing", "Site root does not exist", root_abs, candidate_abs,
+                           WordPressCredentialStatus::ConfigMissing);
+    }
+    if (fs::is_symlink(root_status)) {
+        return unsafe_path("symlink_rejected", "Site root must not be a symlink", root_abs, candidate_abs);
+    }
+    if (!fs::is_directory(root_status)) {
+        return unsafe_path("site_root_not_directory", "Site root must be a directory", root_abs, candidate_abs);
+    }
+
+    fs::path current = root_abs;
+    const fs::path relative = candidate_abs.lexically_relative(root_abs);
+    for (const auto& part : relative) {
+        current /= part;
+        const fs::file_status status = fs::symlink_status(current, ec);
+        if (ec || !fs::exists(status)) {
+            if (current == candidate_abs) {
+                return unsafe_path("config_missing", "WordPress config file does not exist", root_abs, candidate_abs,
+                                   WordPressCredentialStatus::ConfigMissing);
+            }
+            return unsafe_path("parent_missing", "WordPress config parent path does not exist", root_abs, candidate_abs,
+                               WordPressCredentialStatus::ConfigMissing);
+        }
+        if (fs::is_symlink(status)) {
+            return unsafe_path("symlink_rejected", "WordPress config path contains a symlink", root_abs, candidate_abs);
+        }
+        if (current != candidate_abs && !fs::is_directory(status)) {
+            return unsafe_path("parent_not_directory", "WordPress config parent path is not a directory", root_abs, candidate_abs);
+        }
+        if (current == candidate_abs && !fs::is_regular_file(status)) {
+            return unsafe_path("config_not_regular", "WordPress config path is not a regular file", root_abs, candidate_abs);
+        }
+    }
+
+    return safe_path(root_abs, candidate_abs);
+}
 
 WordPressConfigInspection WordPressConfigDetector::inspect_content(const std::string& content) const {
     WordPressConfigInspection inspection;

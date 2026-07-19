@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Harden config detector path safety
+
+**Summary:** Added read-only filesystem safety helpers for WP-1.3. `WordPressConfigDetector::inspect_config_path()` now classifies candidate `wp-config.php` paths under an approved site root and fails closed for missing inputs, missing roots/files, backup or temp filenames, path traversal outside the root, symlinked roots/path components/config files, non-directory parents, and non-regular config files.
+
+**Files changed:** `libs/wordpress/WordPressConfigDetector.h`, `libs/wordpress/WordPressConfigDetector.cpp`, `tests/test_wordpress_config_detector.cpp`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. These helpers are not yet wired into migration, REST API, CLI, Web UI, runtime, storage, or production site operations.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused WordPress tests passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`16` cases, `110` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** Site/domain resolution and `site_id=0` service-level rejection remain deferred to WP-2. The path helper is internal and read-only; it does not yet discover active configs automatically.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Add credential source detector
 
 **Summary:** Added the read-only WordPress credential source detector for WP-1.2. The detector scans `define(...)` calls outside PHP comments and strings, extracts supported direct string-literal database constants, redacts `DB_PASSWORD`, and classifies unsupported or ambiguous sources such as `getenv()`, `$_ENV`, `$_SERVER`, variable references, includes, concatenation expressions, helper calls, duplicates, conditionals, missing content, and missing credentials.

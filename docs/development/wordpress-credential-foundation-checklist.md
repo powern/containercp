@@ -122,7 +122,7 @@ Commit message: `wordpress: add credential source detector`.
 
 Result: Complete. Added `WordPressConfigDetector::inspect_content()` as a read-only parser for `define(...)` calls outside comments/strings. The detector supports direct literal constants, preserves public DB name/user/host values, redacts password presence, classifies environment/server variables, variable references, includes, concatenation expressions, helper calls, duplicates, conditionals, and missing content without interpreting PHP or mutating files. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`11` test cases, `88` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`).
 
-### [ ] WP-1.3 Add detector filesystem safety helpers
+### [x] WP-1.3 Add detector filesystem safety helpers
 
 Objective: Add read-only helpers to classify active `wp-config.php` paths and reject backups, temp files, symlinks, and path escapes.
 
@@ -137,6 +137,8 @@ Focused tests: missing file, backup file ignored, symlink rejected, path travers
 Acceptance criteria: Unsafe paths fail closed and leave files untouched.
 
 Commit message: `wordpress: harden config detector path safety`.
+
+Result: Complete. Added `WordPressConfigPathSafety`, `WordPressConfigDetector::inspect_config_path()`, and active filename classification. The helper accepts only regular `wp-config.php` files inside the provided site root and rejects missing roots/files, backup/temp names, traversal outside root, symlinked roots/path components/config files, non-directory parents, and non-regular config paths without reading or mutating file content. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`16` test cases, `110` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`).
 
 ## WP-2 Read-Only WordPressConfigService
 
