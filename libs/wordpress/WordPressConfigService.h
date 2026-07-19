@@ -3,6 +3,7 @@
 
 #include "site/SiteManager.h"
 #include "wordpress/WordPressConfigDetector.h"
+#include "wordpress/WordPressRuntimeVerifier.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -21,6 +22,7 @@ struct WordPressConfigServiceResult {
     std::filesystem::path site_root;
     std::filesystem::path document_root;
     std::filesystem::path config_path;
+    std::string container_document_root;
     WordPressConfigInspection inspection;
 };
 
@@ -47,6 +49,7 @@ public:
     WordPressConfigServiceResult inspect_domain(const std::string& domain) const;
 
     WordPressConfigPublicView public_view(const WordPressConfigServiceResult& result) const;
+    WordPressRuntimeVerificationRequest runtime_verification_request(const WordPressConfigServiceResult& result) const;
 
 private:
     WordPressConfigServiceResult inspect(const site::Site& site_record) const;

@@ -384,7 +384,7 @@ Commit message: `wordpress: add credential rotation compensation`.
 
 Result: Complete. Added single-attempt compensation for failures after MariaDB mutation. The rotation service now restores the MariaDB password, restores WordPress config when it was updated, reapplies/restores runtime when config or runtime apply was touched, verifies the restored old credential, and reports `compensated` when rollback completes. Failed rollback steps report `manual_recovery_required` with generic redacted diagnostics. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotationService*"` (`13` test cases, `114` assertions), `build-wp0/tests/containercp_tests -tc="*database*"` (`34` test cases, `290` assertions), `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`49` test cases, `286` assertions), `build-wp0/tests/containercp_tests -tc="VestaSiteImporter*"` (`31` test cases, `79` assertions), and full CTest (`1/1`). `git diff --check` passed.
 
-### [ ] WP-5.4 Add WordPress/PHP-level verification boundary
+### [x] WP-5.4 Add WordPress/PHP-level verification boundary
 
 Objective: Prove updated `wp-config.php` can establish DB access through scoped PHP execution or safe fake in tests.
 
@@ -399,6 +399,8 @@ Focused tests: verification success/failure, command scoping, redaction.
 Acceptance criteria: Rotation requires direct MariaDB verification, WordPress-level verification, and site health verification.
 
 Commit message: `wordpress: verify rotated credentials through PHP runtime`.
+
+Result: Complete. Added `WordPressRuntimeVerifier` with an injectable command runner and `CommandExecutor` adapter. The verifier builds vector-argv Docker Compose execution for the scoped PHP service, runs a fixed PHP script that loads `wp-config.php` inside the site container, verifies required DB constants, and attempts `mysqli` `SELECT 1` without placing credentials in argv or diagnostics. `WordPressConfigService` now records the PHP container document root and can produce a verifier request from a safe inspection result, including Apache and nginx mount-path handling. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPressRuntimeVerifier*"` (`5` test cases, `26` assertions), `build-wp0/tests/containercp_tests -tc="*WordPressConfigService*"` (`10` test cases, `60` assertions), `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`55` test cases, `320` assertions), `build-wp0/tests/containercp_tests -tc="*DatabaseCredentialRotationService*"` (`13` test cases, `114` assertions), and full CTest (`1/1`). `git diff --check` passed.
 
 ## WP-6 CLI And REST API
 

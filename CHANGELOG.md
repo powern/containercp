@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Verify rotated credentials through PHP runtime
+
+**Summary:** Added WP-5.4 WordPress/PHP runtime verification boundary. New `WordPressRuntimeVerifier` uses an injectable runner plus a `CommandExecutor` adapter to execute a fixed PHP script through vector-argv `docker compose exec -T php php -r ...`. The script loads `wp-config.php` inside the site PHP container, verifies required DB constants, and checks `mysqli` database access with `SELECT 1` without passing credentials through argv, shell strings, logs, or result messages. `WordPressConfigService` now records the PHP container document root and can produce verifier requests from safe inspection results, including default Apache and nginx mount paths.
+
+**Files changed:** `libs/wordpress/WordPressRuntimeVerifier.h`, `libs/wordpress/WordPressRuntimeVerifier.cpp`, `libs/wordpress/WordPressConfigService.h`, `libs/wordpress/WordPressConfigService.cpp`, `tests/test_wordpress_runtime_verifier.cpp`, `tests/test_wordpress_config_service.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. The verifier is internal and fake-tested only; it is not exposed through REST API, CLI, Web UI, jobs, production MariaDB, or production WordPress sites.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused verifier tests passed with `build-wp0/tests/containercp_tests -tc="*WordPressRuntimeVerifier*"` (`5` cases, `26` assertions), covering scoped argv construction, unsafe config-path rejection, stderr redaction, no credential literals, and PHP path escaping. Focused service tests passed with `*WordPressConfigService*` (`10` cases, `60` assertions). Broader regressions passed for `*WordPress*` (`55` cases, `320` assertions), `*DatabaseCredentialRotationService*` (`13` cases, `114` assertions), `*database*` (`35` cases, `306` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** Live PHP execution remains unwired to jobs/API/CLI and must be connected through the rotation dependencies in a later wiring stage. Runtime verification assumes the site Compose project and PHP service are healthy enough to run `php`; operational retries/backoff are deferred.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Add credential rotation compensation
 
 **Summary:** Added WP-5.3 compensation and manual-recovery handling to `DatabaseCredentialRotationService`. Failures after MariaDB password mutation now enter a single rollback attempt that restores the MariaDB password, restores WordPress config when it was changed, reapplies/restores runtime when required, verifies the old credential again, and reports `compensated` only when rollback completes. Failed rollback steps now return `manual_recovery_required` with generic redacted diagnostics.

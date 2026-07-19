@@ -65,6 +65,13 @@ void add_permission_warning(WordPressConfigInspection& inspection) {
                                  "WordPress config file is accessible by group or other users"});
 }
 
+std::string container_document_root_for_site(const site::Site& site_record) {
+    if (site_record.web_server == "apache") {
+        return "/usr/local/apache2/htdocs";
+    }
+    return "/var/www/html";
+}
+
 } // namespace
 
 WordPressConfigService::WordPressConfigService(site::SiteManager& sites)
@@ -187,6 +194,7 @@ WordPressConfigServiceResult WordPressConfigService::inspect(const site::Site& s
         result.site_root = safety.site_root;
         result.document_root = document_root;
         result.config_path = safety.config_path;
+        result.container_document_root = container_document_root_for_site(site_record);
         result.inspection = detector_.inspect_content(content);
         if (has_unsafe_permissions(safety.config_path)) {
             add_permission_warning(result.inspection);
@@ -229,6 +237,17 @@ WordPressConfigPublicView WordPressConfigService::public_view(const WordPressCon
         view.issues.push_back({WordPressConfigIssueSeverity::Error, result.code, result.message});
     }
     return view;
+}
+
+WordPressRuntimeVerificationRequest WordPressConfigService::runtime_verification_request(const WordPressConfigServiceResult& result) const {
+    WordPressRuntimeVerificationRequest request;
+    request.compose_dir = result.site_root;
+    request.document_root = result.document_root;
+    request.config_path = result.config_path;
+    if (!result.container_document_root.empty()) {
+        request.container_document_root = result.container_document_root;
+    }
+    return request;
 }
 
 } // namespace containercp::wordpress

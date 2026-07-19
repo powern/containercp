@@ -114,6 +114,7 @@ set(CONTAINERCP_SOURCES
     libs/wordpress/WordPressConfigService.cpp
     libs/wordpress/WordPressConfigTypes.cpp
     libs/wordpress/WordPressConfigUpdater.cpp
+    libs/wordpress/WordPressRuntimeVerifier.cpp
 )
 
 # Daemon binary

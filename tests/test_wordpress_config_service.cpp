@@ -53,12 +53,41 @@ define('DB_HOST', 'mariadb');
     CHECK(by_id.domain == "example.com");
     CHECK(by_id.document_root.filename() == "public");
     CHECK(by_id.config_path.filename() == "wp-config.php");
+    CHECK(by_id.container_document_root == "/usr/local/apache2/htdocs");
     CHECK(by_id.inspection.credentials.db_name.value == "wp_example");
     CHECK(by_id.inspection.credentials.db_password.value.empty());
+
+    const auto verification = service.runtime_verification_request(by_id);
+    CHECK(verification.compose_dir == by_id.site_root);
+    CHECK(verification.document_root == by_id.document_root);
+    CHECK(verification.config_path == by_id.config_path);
+    CHECK(verification.container_document_root == "/usr/local/apache2/htdocs");
 
     const auto by_domain = service.inspect_domain("example.com");
     CHECK(by_domain.ok);
     CHECK(by_domain.site_id == site_id);
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("WordPressConfigService maps nginx runtime verification document root") {
+    site::SiteManager sites;
+    const uint64_t site_id = sites.create("nginx.test", "admin", 1, "nginx");
+    const auto root = service_root("nginx_runtime");
+    write_service_file(root / "nginx.test" / "public" / "wp-config.php", R"PHP(<?php
+define('DB_NAME', 'wp_nginx');
+define('DB_USER', 'wp_user');
+define('DB_PASSWORD', 'secret');
+define('DB_HOST', 'mariadb');
+)PHP");
+
+    WordPressConfigService service(sites, root);
+    const auto result = service.inspect_site(site_id);
+    const auto verification = service.runtime_verification_request(result);
+
+    CHECK(result.ok);
+    CHECK(result.container_document_root == "/var/www/html");
+    CHECK(verification.container_document_root == "/var/www/html");
 
     fs::remove_all(root);
 }
