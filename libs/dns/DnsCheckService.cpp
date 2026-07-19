@@ -42,6 +42,21 @@ ares_dns_rec_type_t ares_type_from_string(const std::string& type) {
     return ARES_REC_TYPE_ANY;
 }
 
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+int ares_fds_compat(ares_channel_t* channel, fd_set* read_fds, fd_set* write_fds) {
+    return ares_fds(channel, read_fds, write_fds);
+}
+
+void ares_process_compat(ares_channel_t* channel, fd_set* read_fds, fd_set* write_fds) {
+    ares_process(channel, read_fds, write_fds);
+}
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
 struct QueryState {
     std::string type_name;
     PerTypeResult* result_out;
@@ -478,13 +493,13 @@ DnsCheckResult DnsCheckService::do_check(const std::string& domain,
             struct timeval tv, *tv_out;
 
             tv_out = ares_timeout(channel, nullptr, &tv);
-            nfds = ares_fds(channel, &read_fds, &write_fds);
+            nfds = ares_fds_compat(channel, &read_fds, &write_fds);
             if (nfds == 0) break;
 
             int sel_ret = select(nfds, &read_fds, &write_fds, nullptr, tv_out);
             if (sel_ret < 0) break;
 
-            ares_process(channel, &read_fds, &write_fds);
+            ares_process_compat(channel, &read_fds, &write_fds);
         }
     }
 

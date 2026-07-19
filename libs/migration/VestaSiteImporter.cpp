@@ -359,6 +359,8 @@ bool VestaSiteImporter::find_db_in_archive(
     size_t& out_size,
     bool& size_known,
     std::string& out_type) {
+    out_size = 0;
+    size_known = false;
 
     // Helper: check if an entry matches db/<name>/<name>.<type>.sql.gz
     auto parse_entry = [&](const std::string& entry, const std::string& expected_db,
@@ -1425,17 +1427,6 @@ bool VestaSiteImporter::update_wp_config_db_credentials(
         std::regex hre(R"(define\s*\(\s*['\"]DB_HOST['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
         content = std::regex_replace(content, hre, "define('DB_HOST', '" + new_db_host + "')");
     }
-
-    // Verify all 4 constants were updated
-    auto check_val = [&](const std::string& define_name, const std::string& expected) -> bool {
-        std::regex re(R"(define\s*\(\s*['\"]" + define_name + "['\"]\s*,\s*['\"]([^'\"]+?)['\"]\s*\))");
-        std::smatch m;
-        std::string search = content;
-        if (std::regex_search(search, m, re)) {
-            return m[1] == expected;
-        }
-        return false;
-    };
 
     std::ofstream out(config_path);
     if (!out.is_open()) return false;

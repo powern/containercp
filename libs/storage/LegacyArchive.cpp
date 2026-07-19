@@ -8,7 +8,7 @@
 #include <set>
 #include <sstream>
 #include <iomanip>
-#include <openssl/sha.h>
+#include <openssl/evp.h>
 #include <ctime>
 #include <cerrno>
 #include <unistd.h>
@@ -112,13 +112,16 @@ bool LegacyArchive::safe_version(const std::string& v) {
         return true;
     };
     if (!parse_num()) return false;
-    if (pos >= v.size() || v[pos] != '.') return false; ++pos;
+    if (pos >= v.size() || v[pos] != '.') return false;
+    ++pos;
     if (!parse_num()) return false;
-    if (pos >= v.size() || v[pos] != '.') return false; ++pos;
+    if (pos >= v.size() || v[pos] != '.') return false;
+    ++pos;
     if (!parse_num()) return false;
     // Optional suffix: -alphanumeric
     if (pos < v.size()) {
-        if (v[pos] != '-') return false; ++pos;
+        if (v[pos] != '-') return false;
+        ++pos;
         if (pos >= v.size()) return false;
         while (pos < v.size()) {
             char c = v[pos];
@@ -130,18 +133,45 @@ bool LegacyArchive::safe_version(const std::string& v) {
     return pos == v.size();
 }
 
-std::string LegacyArchive::sha256_file(const std::string& path) {
-    unsigned char hash[SHA256_DIGEST_LENGTH]; SHA256_CTX ctx;
-    SHA256_Init(&ctx);
-    std::ifstream f(path, std::ios::binary); if (!f) return "";
-    char buf[8192];
-    while (f.read(buf, sizeof(buf)).gcount() > 0) SHA256_Update(&ctx, buf, f.gcount());
-    if (f.bad()) return "";
-    SHA256_Final(hash, &ctx); std::string out; out.reserve(64);
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
+static std::string sha256_hex_from_ctx(EVP_MD_CTX* ctx) {
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int hash_len = 0;
+    if (EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) return "";
+
+    std::string out;
+    out.reserve(hash_len * 2);
+    for (unsigned int i = 0; i < hash_len; ++i) {
         out += "0123456789abcdef"[(hash[i] >> 4) & 0xf];
         out += "0123456789abcdef"[hash[i] & 0xf];
     }
+    return out;
+}
+
+std::string LegacyArchive::sha256_file(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return "";
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx) return "";
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) != 1) {
+        EVP_MD_CTX_free(ctx);
+        return "";
+    }
+
+    char buf[8192];
+    while (f.read(buf, sizeof(buf)).gcount() > 0) {
+        if (EVP_DigestUpdate(ctx, buf, static_cast<size_t>(f.gcount())) != 1) {
+            EVP_MD_CTX_free(ctx);
+            return "";
+        }
+    }
+    if (f.bad()) {
+        EVP_MD_CTX_free(ctx);
+        return "";
+    }
+
+    std::string out = sha256_hex_from_ctx(ctx);
+    EVP_MD_CTX_free(ctx);
     return out;
 }
 
@@ -161,29 +191,35 @@ std::string LegacyArchive::normalize_archive_identity_path(const std::string& pa
 
 static std::string sha256_fd(int fd) {
     if (fd < 0) return "";
-    unsigned char hash[SHA256_DIGEST_LENGTH]; SHA256_CTX ctx;
-    SHA256_Init(&ctx);
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx) return "";
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) != 1) {
+        EVP_MD_CTX_free(ctx);
+        return "";
+    }
+
     char buf[8192];
     while (true) {
         ssize_t n; do { n = read(fd, buf, sizeof(buf)); } while (n < 0 && errno == EINTR);
-        if (n < 0) return "";
+        if (n < 0) {
+            EVP_MD_CTX_free(ctx);
+            return "";
+        }
         if (n == 0) break;
-        SHA256_Update(&ctx, buf, n);
+        if (EVP_DigestUpdate(ctx, buf, static_cast<size_t>(n)) != 1) {
+            EVP_MD_CTX_free(ctx);
+            return "";
+        }
     }
-    SHA256_Final(hash, &ctx); std::string out; out.reserve(64);
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
-        out += "0123456789abcdef"[(hash[i] >> 4) & 0xf];
-        out += "0123456789abcdef"[hash[i] & 0xf];
-    }
+
+    std::string out = sha256_hex_from_ctx(ctx);
+    EVP_MD_CTX_free(ctx);
     return out;
 }
 
 static uint64_t file_size_or_zero(const std::string& path) {
     std::error_code ec; auto sz = fs::file_size(path, ec); return ec ? 0 : sz;
-}
-
-static bool file_unchanged(const std::string& path, uint64_t sz, const std::string& sha) {
-    return file_size_or_zero(path) == sz && LegacyArchive::sha256_file(path) == sha;
 }
 
 LegacyArchive::RecordCountResult LegacyArchive::count_records(const std::string& sd, const std::string& fn) {

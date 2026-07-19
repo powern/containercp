@@ -867,7 +867,8 @@ DatabaseVerificationResult Verification::verify_all() {
                 ms_snap.present, ms_snap.success ? ms_snap.value : "", 
                 sh_snap.present, sh_snap.success ? sh_snap.value : ""));
             ConnectionPool cp;
-            bool checked_ok = false; std::string checked_checksum; uint64_t checked_count = 0;
+            bool checked_ok = false;
+            std::string checked_checksum;
             if (make_pool(cp, "reopen_mc")) {
                 SQLiteSnapshotReader snap(cp);
                 auto cms = snap.read_mail_config_key("module_state");
@@ -875,7 +876,6 @@ DatabaseVerificationResult Verification::verify_all() {
                 cp.shutdown();
                 if (cms.success && csh.success) {
                     checked_ok = true;
-                    checked_count = (cms.present ? 1 : 0) + (csh.present ? 1 : 0);
                     checked_checksum = sha256(canonical_mail_config(cms.present, cms.value, csh.present, csh.value));
                 }
             }

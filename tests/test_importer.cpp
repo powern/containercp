@@ -626,7 +626,6 @@ TEST_CASE("source files remain unchanged after import") {
     cleanup(dir); fs::create_directories(dir);
     write_file(dir + "nodes.db", "1|main|web\n");
     auto before_size = fs::file_size(dir + "nodes.db");
-    auto before_time = fs::last_write_time(dir + "nodes.db");
 
     ConnectionPool pool;
     init_pool(pool, dir);

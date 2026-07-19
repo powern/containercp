@@ -26,7 +26,7 @@ bool SpfAnalyzer::check_mechanism_ip6(const std::string& mech_value,
 
 bool SpfAnalyzer::check_ip4_mechanism(const std::string& cidr,
                                        const std::string& ip) {
-    struct in_addr addr, net, mask;
+    struct in_addr addr, net;
     if (inet_pton(AF_INET, ip.c_str(), &addr) != 1) return false;
 
     // Parse CIDR

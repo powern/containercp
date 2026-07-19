@@ -19,9 +19,9 @@
 #include "user/User.h"
 
 #include <algorithm>
+#include <openssl/evp.h>
 #include <string>
 #include <vector>
-#include <openssl/sha.h>
 
 namespace containercp::storage {
 
@@ -35,10 +35,21 @@ struct StorageCanonicalizer {
         append_field(out, std::to_string(value));
     }
     static std::string sha256(const std::string& data) {
-        unsigned char hash[SHA256_DIGEST_LENGTH]; SHA256_CTX ctx;
-        SHA256_Init(&ctx); SHA256_Update(&ctx, data.data(), data.size()); SHA256_Final(hash, &ctx);
-        std::string out; out.reserve(64);
-        for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
+        unsigned char hash[EVP_MAX_MD_SIZE];
+        unsigned int hash_len = 0;
+        EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+        if (!ctx) return "";
+        if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) != 1 ||
+            EVP_DigestUpdate(ctx, data.data(), data.size()) != 1 ||
+            EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
+            EVP_MD_CTX_free(ctx);
+            return "";
+        }
+        EVP_MD_CTX_free(ctx);
+
+        std::string out;
+        out.reserve(hash_len * 2);
+        for (unsigned int i = 0; i < hash_len; ++i) {
             out += "0123456789abcdef"[(hash[i] >> 4) & 0xf];
             out += "0123456789abcdef"[hash[i] & 0xf];
         }

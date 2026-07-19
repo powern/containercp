@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `TBD` | Maintenance — Reduce clean-build compiler warning noise
+
+**Summary:** Removed cosmetic compiler warning noise without changing product behavior. Replaced deprecated OpenSSL SHA256 calls with EVP SHA256 helpers, localized c-ares deprecation suppression behind compatibility wrappers, removed unused variables and helpers, fixed initializer-order and misleading-indentation warnings, and used size-correct legacy dataset indices where warnings were emitted.
+
+**Files changed:** `libs/core/ServiceRegistry.cpp`, `libs/dns/DnsCheckService.cpp`, `libs/dns/SpfAnalyzer.cpp`, `libs/migration/VestaSiteImporter.cpp`, `libs/network/NetworkService.cpp`, `libs/operations/SiteCreateOperation.cpp`, `libs/proxy/NginxProxyProvider.cpp`, `libs/storage/LegacyArchive.cpp`, `libs/storage/LegacyDatasetReader.cpp`, `libs/storage/MigrationEngine.cpp`, `libs/storage/StorageCanonicalizer.h`, `libs/storage/Verification.cpp`, `tests/test_dns_api.cpp`, `tests/test_fixture_loader.cpp`, `tests/test_importer.cpp`, `tests/test_migration.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** No intended product behavior change. Build output is cleaner and no longer reports the addressed warning categories during clean local rebuilds.
+
+**Validation:** Clean rebuild passed without compiler warnings for `containercp_tests` and `containercpd` using `cmake --build build2 --clean-first --target containercp_tests containercpd -- -j1`, continued after tool timeouts with target-specific build commands. Full suite passed directly with `build2/tests/containercp_tests` (`666` cases, `4491` assertions). A valid standalone CTest run passed (`1/1`). An earlier concurrent `ctest` run was invalid because it ran the full test binary in parallel with a direct full-suite run and hit shared test resources.
+
+**Known risks:** c-ares event-loop behavior is intentionally unchanged; deprecated c-ares calls remain behind local compatibility wrappers until a dedicated API migration is planned and tested.
+
+---
+
 ## 2026-07-19 | `9b33697` | Update — Install SQLite build dependency during updates
 
 **Summary:** Updated `scripts/update.sh` so git-based updates install required build dependencies, including `libsqlite3-dev`, before running CMake. This prevents older installations from failing configuration after SQLite support is pulled.

@@ -1290,8 +1290,12 @@ static void write_all_required(const std::string& dir, int profiles_count = 2,
     write_txt(dir, "nodes.db", "1|main|web\n2|node2|db\n");
     write_txt(dir, "php_versions.db", "1|8.2|php:8.2|1|1\n2|8.3|php:8.3|1|0\n");
     write_txt(dir, "profiles.db", [&]() -> std::string {
-        std::string s; for (int i = 1; i <= profiles_count; ++i)
-            s += std::to_string(i) + "|profile" + std::to_string(i) + "|WEB_SERVER|apache|static|/tpl||1|1\n"; return s; }());
+        std::string s;
+        for (int i = 1; i <= profiles_count; ++i) {
+            s += std::to_string(i) + "|profile" + std::to_string(i) + "|WEB_SERVER|apache|static|/tpl||1|1\n";
+        }
+        return s;
+    }());
     write_txt(dir, "users.db", "1|admin|1000|/home/admin|/bin/bash|1\n2|user1|1001|/home/user1|/bin/sh|1\n");
     write_txt(dir, "sites.db", "1|example.com|admin|1|apache|1\n2|test.local|user1|1|nginx|1\n");
     write_txt(dir, "domains.db", "1|example.com|1|1|8.2|1|1|primary|\n2|test.local|2|1|8.3|1|1|alias|example.com\n");

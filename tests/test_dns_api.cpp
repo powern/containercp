@@ -211,6 +211,7 @@ TEST_CASE("API handler: ?refresh=1 bypasses cache via real handler — clear_cac
     FakeDnsCheckService fake;
     fake.set_check_hook([&](const std::string& domain,
                              const std::vector<std::string>& types) {
+        (void)types;
         DnsCheckResult r;
         r.domain = domain;
         r.success = true;
@@ -268,6 +269,7 @@ TEST_CASE("API handler: missing refresh param does not call clear_cache") {
     FakeDnsCheckService fake;
     fake.set_check_hook([&](const std::string& domain,
                              const std::vector<std::string>& types) {
+        (void)types;
         DnsCheckResult r;
         r.domain = domain;
         r.success = true;
@@ -355,6 +357,7 @@ TEST_CASE("API handler: NXDOMAIN returns 200 with valid structure") {
     FakeDnsCheckService fake;
     fake.set_check_hook([](const std::string& domain,
                             const std::vector<std::string>& types) {
+        (void)types;
         DnsCheckResult r;
         r.domain = domain;
         r.success = true;
@@ -385,6 +388,7 @@ TEST_CASE("API handler: SERVFAIL returns 502") {
     FakeDnsCheckService fake;
     fake.set_check_hook([](const std::string& domain,
                             const std::vector<std::string>& types) {
+        (void)types;
         DnsCheckResult r;
         r.domain = domain;
         r.success = false;

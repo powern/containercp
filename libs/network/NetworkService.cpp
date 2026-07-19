@@ -25,6 +25,25 @@ bool is_valid_ipv6(const std::string& s) {
     return inet_pton(AF_INET6, s.c_str(), &addr) == 1;
 }
 
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+int ares_fds_compat(ares_channel_t* channel, fd_set* read_fds, fd_set* write_fds) {
+    return ares_fds(channel, read_fds, write_fds);
+}
+
+void ares_process_compat(ares_channel_t* channel, fd_set* read_fds, fd_set* write_fds) {
+    ares_process(channel, read_fds, write_fds);
+}
+
+int ares_set_servers_compat(ares_channel_t* channel, ares_addr_node* servers) {
+    return ares_set_servers(channel, servers);
+}
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
 // Check if IPv4 is in a private/reserved range
 bool is_private_ipv4(uint32_t ip) {
     // 127.0.0.0/8 loopback
@@ -333,7 +352,6 @@ IpDetectionResult NetworkService::detect_from_external_dns(bool ipv6) {
     // not through system DNS (which may forward to another resolver).
     const char* hostname = "myip.opendns.com";
     const char* dns_servers[] = {"208.67.222.222", "208.67.220.220"};
-    const size_t num_servers = 2;
 
     // Initialize c-ares channel (no servers — will set via ares_set_servers)
     ares_channel_t* channel = nullptr;
@@ -361,7 +379,7 @@ IpDetectionResult NetworkService::detect_from_external_dns(bool ipv6) {
     inet_pton(AF_INET, dns_servers[1], &second.addr.addr4);
     second.next = nullptr;
 
-    ares_set_servers(channel, &head);
+    ares_set_servers_compat(channel, &head);
 
     ares_dns_rec_type_t rectype = ipv6 ? ARES_REC_TYPE_AAAA : ARES_REC_TYPE_A;
     std::string detected_ip;
@@ -408,10 +426,10 @@ IpDetectionResult NetworkService::detect_from_external_dns(bool ipv6) {
         fd_set rfds, wfds;
         FD_ZERO(&rfds); FD_ZERO(&wfds);
         struct timeval tv, *tvp = ares_timeout(channel, nullptr, &tv);
-        int n = ares_fds(channel, &rfds, &wfds);
+        int n = ares_fds_compat(channel, &rfds, &wfds);
         if (n == 0) break;
         select(n, &rfds, &wfds, nullptr, tvp);
-        ares_process(channel, &rfds, &wfds);
+        ares_process_compat(channel, &rfds, &wfds);
     }
 
     ares_destroy(channel);
@@ -489,10 +507,10 @@ IpDetectionResult NetworkService::detect_from_hostname_dns(bool ipv6) {
         fd_set rfds, wfds;
         FD_ZERO(&rfds); FD_ZERO(&wfds);
         timeval tv, *tvp = ares_timeout(channel, nullptr, &tv);
-        int n = ares_fds(channel, &rfds, &wfds);
+        int n = ares_fds_compat(channel, &rfds, &wfds);
         if (n == 0) break;
         select(n, &rfds, &wfds, nullptr, tvp);
-        ares_process(channel, &rfds, &wfds);
+        ares_process_compat(channel, &rfds, &wfds);
     }
 
     ares_destroy(channel);

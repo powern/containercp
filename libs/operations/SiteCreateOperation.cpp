@@ -50,6 +50,7 @@ static void do_rollback(CreateState& st,
                         proxy::ProxyProvider& proxy_provider_,
                         filesystem::Filesystem& fs_,
                         config::Config& cfg_) {
+    (void)cfg_;
 
     // 1. Remove proxy config if it was created
     proxy_provider_.remove_proxy(st.domain);

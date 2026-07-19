@@ -639,15 +639,12 @@ TEST_CASE("Fixture loader: malformed invalid_int throws") {
     }
     containercp::storage::Storage st(tmp + "/");
     // std::stoull("notanumber") should throw std::invalid_argument
-    bool threw = false;
     try {
         auto sites = st.load_sites();
         // In some environments the parser may not reach the int field
         CHECK(sites.size() >= 0);
     } catch (const std::invalid_argument&) {
-        threw = true;
     } catch (const std::exception&) {
-        threw = true;
     }
     // Either it threw or returned partial — document current behavior
     INFO("Current parser either throws on invalid int or returns partial data");
@@ -663,16 +660,7 @@ TEST_CASE("Fixture loader: malformed multiline_corruption") {
     containercp::storage::Storage st(tmp + "/");
     // Multiline corruption: the split line "site|admin|1|nginx|0" contains
     // "site" as an id field → std::stoull("site") throws.
-    bool threw = false;
-    try {
-        auto sites = st.load_sites();
-        // May return partial data before exception, or complete if corruption
-        // happens to parse differently
-        CHECK(sites.size() >= 0);
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    CHECK(threw == true);
+    CHECK_THROWS_AS(st.load_sites(), std::exception);
     fs::remove_all(tmp);
 }
 

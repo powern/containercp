@@ -32,7 +32,7 @@ std::string NginxProxyProvider::proxy_name() const {
 
 // Detect Docker bridge gateway IP for host access from inside containers.
 // Tries host.docker.internal first, then falls back to gateway detection.
-static std::string detect_host_gateway() {
+[[maybe_unused]] static std::string detect_host_gateway() {
     // Try host.docker.internal via getent (only works with --add-host flag)
     {
         std::string out_file = "/tmp/containercp-gateway-check.txt";

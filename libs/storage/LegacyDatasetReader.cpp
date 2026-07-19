@@ -265,7 +265,7 @@ DatasetResult<domain::Domain> LegacyDatasetReader::read_domains() {
     LineParser lp(p, "domains.db");
     while (lp.next()) {
         if (lp.empty_line()) continue;
-        auto f = lp.split(); int i = 0;
+        auto f = lp.split(); size_t i = 0;
         if (f.size() < 7) { r.error = "invalid_field_count"; return r; }
         domain::Domain d; std::string err;
         { uint64_t tmp; if (!LineParser::parse_uint64(f[i++], tmp, err)) { r.error = "invalid_integer" + err; return r; } d.id = tmp; }
@@ -442,7 +442,7 @@ DatasetResult<ssl::SslCertificate> LegacyDatasetReader::read_ssl_certificates() 
     LineParser lp(p, "ssl_certificates.db");
     while (lp.next()) {
         if (lp.empty_line()) continue;
-        auto f = lp.split(); int i = 0;
+        auto f = lp.split(); size_t i = 0;
         if (f.size() < 6) { r.error = "invalid_field_count"; return r; }
         ssl::SslCertificate c; std::string err;
         { uint64_t tmp; if (!LineParser::parse_uint64(f[i++], tmp, err)) { r.error = "invalid_integer" + err; return r; } c.id = tmp; }
@@ -487,7 +487,7 @@ DatasetResult<mail::MailDomain> LegacyDatasetReader::read_mail_domains() {
     LineParser lp(p, "mail_domains.db");
     while (lp.next()) {
         if (lp.empty_line()) continue;
-        auto f = lp.split(); int i = 0;
+        auto f = lp.split(); size_t i = 0;
         int pipes = lp.count_pipes();
         if (f.size() < 10) { r.error = "invalid_field_count"; return r; }
         mail::MailDomain m; std::string err;
