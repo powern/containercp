@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Database — Add MariaDB credential provider
+
+**Summary:** Added the WP-4.1/WP-4.2 MariaDB credential provider boundary. `MariaDBCredentialProvider` provides fakeable operations for password verification, password change, password restore, and shared-user detection using `MariaDBProcessRunner` plus a `CommandExecutor` adapter. Secrets are transported through protected host-side stdin bundles and fixed in-container temporary option/SQL files; passwords are not placed in command argv, shell strings, result messages, logs, API, CLI, or UI.
+
+**Files changed:** `libs/database/MariaDBCredentialProvider.h`, `libs/database/MariaDBCredentialProvider.cpp`, `tests/test_mariadb_credential_provider.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. The provider is not yet wired into the rotation saga, REST API, CLI, Web UI, jobs, storage, migration, or production operations.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused provider tests passed with `build-wp0/tests/containercp_tests -tc="*MariaDBCredentialProvider*"` (`6` cases, `29` assertions), covering no-secret argv construction, stdin bundle content, cleanup, SQL quoting, command failure redaction, restore path, shared-user query construction, and invalid target rejection. Focused regressions passed for `*database*` (`21` cases, `176` assertions), `*WordPress*` (`49` cases, `286` assertions), and `VestaSiteImporter*` (`31` cases, `79` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** Live MariaDB execution is not yet integration-tested and is not exposed to operators. Shared-user detection currently establishes the query/provider boundary and returns a safe default until WP-5 consumes parsed provider output. Minimum grants are documented separately in WP-4.3.
+
+---
+
 ## 2026-07-19 | `this commit` | Migration — Use shared WordPress config updater
 
 **Summary:** Refactored migration SQL import `wp-config.php` credential updates for WP-3.4 to use the shared `WordPressConfigUpdater`. The migration path now updates `DB_NAME`, `DB_USER`, `DB_PASSWORD`, and `DB_HOST` through one atomic sequence update, uses the shared PHP literal encoder, validates with the existing vector-argv container `php -l` check through the updater validation boundary, and relies on updater rollback before migration database rollback continues on failure.

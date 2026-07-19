@@ -34,6 +34,7 @@ set(CONTAINERCP_SOURCES
     libs/daemon/CommandProtocol.cpp
     libs/daemon/DaemonApp.cpp
     libs/database/Database.cpp
+    libs/database/MariaDBCredentialProvider.cpp
     libs/database/DatabaseManager.cpp
     libs/domain/Domain.cpp
     libs/domain/DomainManager.cpp

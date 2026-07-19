@@ -274,7 +274,7 @@ Result: Complete. Refactored migration SQL import credential updates to use `Wor
 
 ## WP-4 MariaDB Password-Change Provider
 
-### [ ] WP-4.1 Add MariaDB credential provider command model
+### [x] WP-4.1 Add MariaDB credential provider command model
 
 Objective: Add provider interfaces/results for verify, change password, restore old password, user identity, and shared-user risk detection with fake executor tests.
 
@@ -290,7 +290,9 @@ Acceptance criteria: Provider model compiles and fake tests cover all non-live p
 
 Commit message: `database: add MariaDB credential provider`.
 
-### [ ] WP-4.2 Add safe secret transport for MariaDB commands
+Result: Complete. Added `MariaDBCredentialProvider`, target/admin/user identity models, provider results, fakeable `MariaDBProcessRunner`, and `CommandExecutor` runner adapter. The provider exposes verify, change password, restore password, and shared-user detection boundaries without API/CLI/UI logic. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*MariaDBCredentialProvider*"` (`6` test cases, `29` assertions), `build-wp0/tests/containercp_tests -tc="*database*"` (`21` test cases, `176` assertions), `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`49` test cases, `286` assertions), and full CTest (`1/1`).
+
+### [x] WP-4.2 Add safe secret transport for MariaDB commands
 
 Objective: Use protected temp defaults files or reviewed stdin mechanism for credentials without password argv exposure.
 
@@ -305,6 +307,8 @@ Focused tests: special-character passwords, argv redaction, cleanup success/fail
 Acceptance criteria: Tests prove command vectors do not contain password values.
 
 Commit message: `database: protect MariaDB credential transport`.
+
+Result: Complete. Implemented protected host-side stdin bundles (`0600`) and a fixed in-container shell script that splits stdin into protected temporary option and SQL files, executes `mariadb`, and cleans up. Passwords and SQL are never placed in command argv or result messages; command failures return redacted diagnostics and cleanup is verified in tests.
 
 ### [ ] WP-4.3 Document minimum grant model
 
