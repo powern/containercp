@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | WordPress — Add credential source detector
+
+**Summary:** Added the read-only WordPress credential source detector for WP-1.2. The detector scans `define(...)` calls outside PHP comments and strings, extracts supported direct string-literal database constants, redacts `DB_PASSWORD`, and classifies unsupported or ambiguous sources such as `getenv()`, `$_ENV`, `$_SERVER`, variable references, includes, concatenation expressions, helper calls, duplicates, conditionals, missing content, and missing credentials.
+
+**Files changed:** `libs/wordpress/WordPressConfigDetector.h`, `libs/wordpress/WordPressConfigDetector.cpp`, `libs/wordpress/WordPressConfigTypes.h`, `tests/test_wordpress_config_detector.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. The detector is not yet wired into migration, REST API, CLI, Web UI, runtime, storage, or production site operations.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused WordPress tests passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`11` cases, `88` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** Filesystem path safety is intentionally deferred to WP-1.3. Read-only site/domain inspection, migration refactor, safe config mutation, MariaDB credential changes, rotation saga, API/CLI, and Web UI support remain pending.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Add credential inspection types
 
 **Summary:** Added the initial WordPress credential inspection type model for WP-1.1. The new `WordPressConfigTypes` subsystem defines credential source, mutability, status, value-state, and issue severity enums with string conversion helpers, plus public-safe credential value/set/inspection structures that redact sensitive values by construction.

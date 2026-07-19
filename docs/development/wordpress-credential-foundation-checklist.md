@@ -104,7 +104,7 @@ Commit message: `wordpress: add credential inspection types`.
 
 Result: Complete. Added `WordPressConfigTypes` with source, mutability, status, value-state, issue severity, public-safe credential values, redacted credential sets, and inspection views. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`5` test cases, `51` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`).
 
-### [ ] WP-1.2 Implement read-only detector parser
+### [x] WP-1.2 Implement read-only detector parser
 
 Objective: Detect supported direct constants and unsupported/dynamic forms without mutating files or interpreting PHP.
 
@@ -119,6 +119,8 @@ Focused tests: single quotes, double quotes, whitespace, comments, optional semi
 Acceptance criteria: Detector returns source type, mutability, presence, ambiguity, and unsupported state correctly.
 
 Commit message: `wordpress: add credential source detector`.
+
+Result: Complete. Added `WordPressConfigDetector::inspect_content()` as a read-only parser for `define(...)` calls outside comments/strings. The detector supports direct literal constants, preserves public DB name/user/host values, redacts password presence, classifies environment/server variables, variable references, includes, concatenation expressions, helper calls, duplicates, conditionals, and missing content without interpreting PHP or mutating files. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`11` test cases, `88` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`).
 
 ### [ ] WP-1.3 Add detector filesystem safety helpers
 

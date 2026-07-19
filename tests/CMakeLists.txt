@@ -26,6 +26,7 @@ add_executable(containercp_tests
     test_migration_api.cpp
     test_migrate_sqlite.cpp
     test_version.cpp
+    test_wordpress_config_detector.cpp
     test_wordpress_config_types.cpp
     test_rollback_integration.cpp
     ${CMAKE_SOURCE_DIR}/libs/migration/VestaSiteImporter.cpp
@@ -101,6 +102,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/filesystem/SiteLayout.cpp
     ${CMAKE_SOURCE_DIR}/libs/template/TemplateEngine.cpp
     ${CMAKE_SOURCE_DIR}/libs/operations/SiteCreateOperation.cpp
+    ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressConfigDetector.cpp
     ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressConfigTypes.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailAliasManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/DkimManager.cpp

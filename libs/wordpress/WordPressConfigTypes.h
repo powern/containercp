@@ -72,6 +72,8 @@ std::string config_issue_severity_to_string(WordPressConfigIssueSeverity severit
 std::optional<WordPressConfigIssueSeverity> config_issue_severity_from_string(const std::string& value);
 
 struct WordPressCredentialValue {
+    WordPressCredentialSource source = WordPressCredentialSource::Unknown;
+    WordPressCredentialMutability mutability = WordPressCredentialMutability::Unknown;
     WordPressCredentialValueState state = WordPressCredentialValueState::Unknown;
     std::string value;
     bool sensitive = false;
