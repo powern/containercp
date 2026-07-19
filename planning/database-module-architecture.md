@@ -4,6 +4,14 @@
 
 This module is intentionally postponed.
 
+> **v0.7.1 design update:** This historical postponed document is superseded
+> for post-v0.7.0 planning by:
+> `planning/database-module-v0.7.1-architecture.md`,
+> `planning/database-module-v0.7.1-implementation-plan.md`,
+> `planning/database-module-v0.7.1-open-source-review.md`, and
+> `planning/database-module-v0.7.1-threat-model.md`.
+> No implementation is approved until those documents are reviewed.
+
 The current implementation provides a minimal Database resource (CRUD
 records in `libs/database/`) sufficient for site creation (auto-creates
 a database record and writes credentials to `.env`).  The Databases

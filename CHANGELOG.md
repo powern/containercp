@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Architecture — Design Databases module v0.7.1
+
+**Summary:** Added the post-v0.7.0 Databases module architecture package covering current implementation baseline, target v0.7.1 backend ownership, phased implementation, open-source tooling review, and focused threat model. The design keeps v0.7.1 MariaDB-first, recommends Adminer only as a gated future admin surface, and requires API-first lifecycle, import/export, backup, credential, and validation controls before implementation.
+
+**Files changed:** `planning/database-module-v0.7.1-architecture.md`, `planning/database-module-v0.7.1-implementation-plan.md`, `planning/database-module-v0.7.1-open-source-review.md`, `planning/database-module-v0.7.1-threat-model.md`, `planning/database-module-architecture.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. This is documentation/planning only and does not create API endpoints, change the Web UI, modify Docker Compose generation, change database schema, deploy Adminer, or alter production data.
+
+**Validation:** Documentation-only review against current source files for database metadata, site creation/removal, Compose topology, runtime status/actions, API serialization, Web UI behavior, SQLite storage, backups, and relevant tests. No build or runtime validation was required because no production code changed.
+
+**Known risks:** The architecture is not yet implemented. Current database delete behavior remains metadata-only, current backups remain tar-based without logical SQL dumps, and current credentials remain stored in SQLite and site `.env` until a future approved implementation changes them.
+
+---
+
 ## 2026-07-19 | `778a43b` | Test Fix — Build version binaries for release CI
 
 **Summary:** Fixed release CI coverage for version output checks by making the `containercp_tests` target depend on the `containercp` and `containercpd` binaries. GitHub Actions builds only `containercp_tests`, so the version-output test now has the binaries it executes.
