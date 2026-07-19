@@ -12,6 +12,7 @@ Planning document only. Do not implement this plan until the architecture is rev
 - Do not deploy Adminer before the authenticated launch and threat model controls exist.
 - Do not add GUI behavior before REST API behavior exists.
 - Do not place database business logic in CLI handlers, Web UI code, or API lambdas.
+- Do not start Databases GUI/DB-1 as the immediate next task until the WordPress credential-management foundation is stable, unless DB-1 is explicitly limited to read-only inventory and does not duplicate WordPress config parsing.
 
 ## Phase 0: Approval Gate
 
@@ -33,6 +34,10 @@ Exit criteria:
 
 Purpose: enrich inventory without changing physical database state.
 
+Current scheduling note: Phase 1 is postponed behind the WordPress credential-management foundation. The foundation is documented in `planning/wordpress-config-management-v0.8-architecture.md`, `planning/wordpress-db-password-rotation-v0.8-plan.md`, `planning/wordpress-db-password-rotation-v0.8-threat-model.md`, and `planning/wp-cli-integration-v0.8-review.md`.
+
+DB-1 may resume only if it remains strictly read-only and uses the approved WordPress config inspection boundary instead of introducing duplicate parsing or mutation logic.
+
 Backend tasks:
 
 - [ ] Add `DatabaseView` model under `libs/database/` or `libs/api/` according to existing view-service conventions.
@@ -45,7 +50,7 @@ Backend tasks:
 - [ ] Surface restart capability through existing `restart-db` runtime behavior.
 - [ ] Surface database logs capability through existing runtime/log behavior where available.
 - [ ] Discover and represent migrated myVestaCP/imported database connections without assuming ContainerCP created the physical database or user.
-- [ ] Resolve imported connection metadata from migrated site configuration through the approved secret-handling boundary.
+- [ ] Resolve imported connection metadata from migrated site configuration through `WordPressConfigService` or the approved secret-handling boundary.
 - [ ] Return independent state fields for runtime status, connection verification, credential availability, and management ownership.
 - [ ] Perform only non-destructive connection verification for imported databases when credentials are safely available.
 - [ ] Report `credentials_unavailable` clearly when credentials cannot be recovered safely.
@@ -358,4 +363,4 @@ Exit criteria:
 
 ## Recommended First Task
 
-Start with Phase 1 only: add `DatabaseViewService`, update `GET /api/databases`, add no physical lifecycle behavior, and prove no secrets are returned. This gives immediate UI/API improvement with low data-loss risk and establishes the service pattern for later phases.
+Start with the WordPress credential foundation: WP-1 current-state discovery and credential source detection, WP-2 `WordPressConfigService` read-only inspection, and WP-3 safe atomic configuration update. Resume DB-1 after those are stable, or keep DB-1 strictly read-only and dependent on the approved inspection boundary.

@@ -403,13 +403,24 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | MON-003: Log viewer enhancements | ⬜ | |
 | MON-004: Health check configuration | ⬜ | |
 
-## Version 0.8 — Multi-node (planned, after v0.7)
+## Version 0.8 — WordPress Credentials and Databases Foundation (planned, after v0.7)
 
 | Task | Status | Notes |
 |------|--------|-------|
-| NODE-001: Remote node registration | ⬜ | |
-| NODE-002: Distributed storage | ⬜ | |
-| NODE-003: Cross-node site migration | ⬜ | |
+| WP-1: Credential source detector | ⬜ | Current-state discovery and WordPress DB credential source classification |
+| WP-2: WordPressConfigService read-only inspection | ⬜ | Reusable inspection boundary for migrated and future WordPress sites |
+| WP-3: Safe WordPress config update | ⬜ | Atomic direct-constant update with syntax validation and rollback |
+| WP-4: MariaDB password-change provider | ⬜ | Provider boundary required before rotation |
+| WP-5: DatabaseCredentialRotationService | ⬜ | Saga and compensation for MariaDB, metadata, `.env`, and `wp-config.php` |
+| DB-1: Databases read-only inventory | ⬜ | Postponed until WordPress credential foundation is stable unless strictly read-only |
+
+## Future — Multi-node
+
+| Task | Status | Notes |
+|------|--------|-------|
+| NODE-001: Remote node registration | ⬜ | Deferred from old v0.8 scope |
+| NODE-002: Distributed storage | ⬜ | Deferred from old v0.8 scope |
+| NODE-003: Cross-node site migration | ⬜ | Deferred from old v0.8 scope |
 
 ---
 
@@ -427,7 +438,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | Web UI | Active | |
 | Sites | Stable | |
 | Domains | Stable | |
-| Databases | Deferred | Postponed — see `planning/database-module-architecture.md` |
+| Databases | Planned | Postponed behind WordPress credential foundation — see `planning/database-module-v0.8-architecture.md` |
 | Users | Stable | |
 | PHP Versions | Stable | |
 | Docker/Runtime | Stable | |
@@ -453,7 +464,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | RC1 pass | 128/137 (9 stability deferred) |
 | RC2 validation | All items verified on real Debian 13 |
 | Bugs discovered during RC1 | 13 (all fixed) |
-| Current Epic | Mail Module Stage 4d — Recovery Integration |
+| Current Epic | v0.8 WordPress credential foundation planning |
 
 ---
 

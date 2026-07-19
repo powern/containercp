@@ -121,7 +121,16 @@ Before planning any new Epic, read these documents IN ORDER:
 - [ ] MON-003: Log viewer enhancements
 - [ ] MON-004: Health check configuration
 
-## Version 0.8 — Multi-node
+## Version 0.8 — WordPress Credentials and Databases Foundation
+
+- [ ] WP-1: Current-state discovery and credential source detector
+- [ ] WP-2: `WordPressConfigService` read-only inspection
+- [ ] WP-3: Safe atomic WordPress config update with tests
+- [ ] WP-4: MariaDB password-change provider
+- [ ] WP-5: `DatabaseCredentialRotationService` saga and compensation
+- [ ] DB-1: Databases read-only inventory after WordPress credential foundation is stable
+
+## Future — Multi-node
 
 - [ ] NODE-001: Remote node registration
 - [ ] NODE-002: Distributed storage
@@ -134,7 +143,7 @@ Before planning any new Epic, read these documents IN ORDER:
 - [ ] User management CLI commands
 - [ ] Resource usage monitoring
 - [ ] Stack logs command
-- [ ] Database module (postponed — see `planning/database-module-architecture.md`)
+- [ ] Database module (postponed behind WordPress credential foundation — see `planning/database-module-v0.8-architecture.md`)
 - [ ] Multi-node support
 - [ ] Mail server support
 - [ ] DNS server integration

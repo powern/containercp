@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Architecture — Design WordPress credential rotation foundation
+
+**Summary:** Added the v0.8 WordPress database credential-management architecture package. The design introduces `WordPressConfigService` as the reusable owner for WordPress config discovery, credential source classification, read-only inspection, safe atomic direct-constant updates, syntax validation, and rollback. It also defines the `DatabaseCredentialRotationService` saga for coordinating MariaDB password changes with ContainerCP metadata, site `.env`, and `wp-config.php`, documents the rotation threat model, and reviews WP-CLI integration options. DB-1 and the Databases GUI are now explicitly postponed behind this credential foundation unless DB-1 remains strictly read-only and uses the approved inspection boundary.
+
+**Files changed:** `planning/wordpress-config-management-v0.8-architecture.md`, `planning/wordpress-db-password-rotation-v0.8-plan.md`, `planning/wordpress-db-password-rotation-v0.8-threat-model.md`, `planning/wp-cli-integration-v0.8-review.md`, `planning/database-module-v0.8-architecture.md`, `planning/database-module-v0.8-implementation-plan.md`, `planning/product-roadmap.md`, `planning/backlog.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No product behavior change. This is documentation/planning only and does not create API endpoints, change the Web UI, modify SQLite schema, modify Docker Compose generation, deploy WP-CLI, rotate passwords, edit real `wp-config.php` files, or alter production/server state.
+
+**Validation:** Documentation-only review against current source files for site/database models, generated `.env`, Docker Compose services, site layout, site creation/removal, runtime command execution, myVestaCP import parsing and `wp-config.php` update behavior, migration tests, and official WP-CLI documentation. No build or runtime validation was required because no production code changed.
+
+**Known risks:** The architecture is not yet implemented. Current migration still owns narrow `wp-config.php` parsing/replacement logic, credentials remain duplicated across SQLite and site `.env`, WP-CLI is not deployed, and Databases DB-1 remains postponed until the WordPress credential foundation is approved and implemented.
+
+---
+
 ## 2026-07-19 | `this commit` | Architecture — Finalize Databases module v0.8 decisions
 
 **Summary:** Finalized the post-v0.7.0 Databases module architecture package after architecture review. The approved design keeps Databases as a v0.8 major subsystem, supports one site with many databases, introduces Database Profiles and provider boundaries, makes `MYSQL_ROOT_PASSWORD` bootstrap-only, prefers rotate-not-reveal credential workflows, recommends on-demand Adminer, explicitly includes migrated myVestaCP/imported databases, strengthens credential/security ownership, and keeps DB-1 as read-only inventory.

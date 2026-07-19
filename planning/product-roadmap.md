@@ -22,7 +22,7 @@ REST API           Active         95%
 Web UI             Active         90%
 Sites              Stable         95%
 Domains            Stable         95%
-Databases          Stable         95%
+Databases          Planned        40%
 Users              Stable         95%
 PHP Versions       Stable         90%
 Docker/Runtime     Stable         90%
@@ -198,7 +198,22 @@ Tests              Active         75%
 
 **Estimated effort:** 2 epics, ~12 tasks
 
-## Version 0.8 — Multi-node and Cluster
+## Version 0.8 — WordPress Credentials and Databases Foundation
+
+**Planned features:**
+- WordPress credential source detection for migrated and future WordPress sites
+- `WordPressConfigService` read-only inspection and safe direct-constant updates
+- Database password rotation saga design and implementation path
+- MariaDB provider password-change foundation
+- Imported myVestaCP database state handling without assuming lifecycle ownership
+- Databases DB-1 read-only inventory after the WordPress credential foundation is stable
+- Databases GUI only after API and credential boundaries are ready
+
+**Deferred from old v0.8 scope:** Multi-node and cluster work moves to a later release so the immediate post-v0.7 work can address migrated WordPress/database safety.
+
+**Estimated effort:** 2 epics, ~12 tasks
+
+## Future — Multi-node and Cluster
 
 **Planned features:**
 - Remote node registration
@@ -207,8 +222,6 @@ Tests              Active         75%
 - Cross-node site migration
 - Load balancing
 - High availability
-
-**Estimated effort:** 3 epics, ~20 tasks
 
 ## Version 1.0 — Production Ready
 

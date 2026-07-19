@@ -8,6 +8,8 @@ Design proposal for post-v0.7.0 work. This document records the target architect
 
 ContainerCP v0.8 should turn the current metadata-only Databases page into a safe database management subsystem by introducing database lifecycle services behind the REST API. The first implementation supports MariaDB only, because the current generated site stack already provisions a per-site `mariadb:lts` service and all stored database records default to `engine = "mariadb"`. The architecture must still preserve provider boundaries so future engines extend the database provider layer instead of forcing an API, storage, or service rewrite.
 
+DB-1 is no longer the immediate next implementation task. WordPress configuration inspection and credential rotation planning are now the prerequisite foundation because migrated myVestaCP sites and future ContainerCP-created WordPress sites need a reusable, safe owner for `wp-config.php`, `.env`, metadata, and MariaDB credential coordination before Databases GUI or password operations can be implemented responsibly. See `planning/wordpress-config-management-v0.8-architecture.md`, `planning/wordpress-db-password-rotation-v0.8-plan.md`, `planning/wordpress-db-password-rotation-v0.8-threat-model.md`, and `planning/wp-cli-integration-v0.8-review.md`.
+
 The default web administration tool should be Adminer, but Adminer deployment must be deferred until the database lifecycle API, credential handling, backup/export behavior, and access-gating design are implemented and tested.
 
 ## Current Baseline
@@ -64,6 +66,7 @@ The current system already has a Database resource, but it does not manage physi
 | Adminer lifecycle | Prefer on-demand temporary Adminer to minimize attack surface |
 | First implementation phase | DB-1 is read-only inventory only; no physical lifecycle changes |
 | Legacy imports | myVestaCP/imported databases must be represented without assuming ContainerCP created or owns the physical database, user, or password |
+| Immediate dependency | WordPress config inspection and credential rotation foundation comes before Databases GUI/DB-1 unless DB-1 proceeds strictly read-only without distracting from WP work |
 
 ## Site And Database Model
 
@@ -146,7 +149,7 @@ Hidden duplication is not allowed. Any future copy of database credentials, engi
 
 Migrated myVestaCP sites can already contain a working application database connection even when ContainerCP did not create the physical database, did not create the database user, and does not have a stored password in SQLite.
 
-DB-1 must resolve imported connection metadata through an approved secret-handling boundary, not by exposing or permanently copying secrets into API responses. The boundary may inspect migrated site configuration such as application config files or generated environment files, but it must return only structured availability and verification results to the API layer.
+DB-1 must resolve imported connection metadata through `WordPressConfigService` or another approved secret-handling boundary, not by exposing or permanently copying secrets into API responses. The boundary may inspect migrated site configuration such as application config files or generated environment files, but it must return only structured availability and verification results to the API layer.
 
 Rules for imported databases:
 
@@ -182,6 +185,12 @@ Management states:
 These states are independent. For example, runtime can be `Running` while credential availability is `credentials_unavailable`, or management ownership can be `imported` while connection verification is `verified`.
 
 ## Proposed Components
+
+### `WordPressConfigService` Dependency
+
+Database inventory, adoption, and rotation must not duplicate WordPress config parsing. `WordPressConfigService` is the planned owner for detecting `wp-config.php`, classifying credential sources, reading supported non-secret metadata, updating supported direct constants atomically, and validating/rolling back config changes.
+
+Databases DB-1 may consume only read-only inspection results from this service. Later lifecycle phases must call it for WordPress application credential changes instead of writing `wp-config.php` directly.
 
 ### `DatabaseViewService`
 
@@ -496,6 +505,10 @@ v0.8 implementation is not complete until these checks pass:
 - `planning/database-module-v0.8-implementation-plan.md`
 - `planning/database-module-v0.8-open-source-review.md`
 - `planning/database-module-v0.8-threat-model.md`
+- `planning/wordpress-config-management-v0.8-architecture.md`
+- `planning/wordpress-db-password-rotation-v0.8-plan.md`
+- `planning/wordpress-db-password-rotation-v0.8-threat-model.md`
+- `planning/wp-cli-integration-v0.8-review.md`
 - `planning/database-module-architecture.md`
 - `docs/development/api-rules.md`
 - `docs/development/single-source-of-truth.md`
