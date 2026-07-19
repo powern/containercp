@@ -254,7 +254,7 @@ Commit message: `wordpress: validate config updates before completion`.
 
 Result: Complete. Added `WordPressConfigValidator`, `WordPressConfigValidationResult`, and `WordPressConfigUpdater::update_file_atomic_validated()` as an injectable validation boundary around the atomic writer. Updates succeed only after the validator accepts the written file. Validation failures automatically rollback through the same atomic rollback path and return redacted diagnostics; rollback failure reports a manual-recovery state. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`48` test cases, `279` assertions), `build-wp0/tests/containercp_tests -tc="VestaSiteImporter*"` (`31` test cases, `79` assertions), `build-wp0/tests/containercp_tests -tc="*Migration*"` (`39` test cases, `254` assertions), and full CTest (`1/1`).
 
-### [ ] WP-3.4 Refactor migration config update to shared updater
+### [x] WP-3.4 Refactor migration config update to shared updater
 
 Objective: Move importer `wp-config.php` replacement to shared updater while preserving import behavior.
 
@@ -269,6 +269,8 @@ Focused tests: migrated fixture update, importer regression coverage, duplicate/
 Acceptance criteria: Migration tests pass and duplicate parser/update logic is reduced.
 
 Commit message: `migration: use shared WordPress config updater`.
+
+Result: Complete. Refactored migration SQL import credential updates to use `WordPressConfigUpdater` sequence updates and the validation boundary with the existing vector-argv container `php -l` check. The legacy direct regex write path was removed, credential values are rendered through the shared PHP literal encoder, updates happen through the atomic writer, and validation failure rolls back through the updater before migration DB rollback continues. Focused validation passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`49` test cases, `286` assertions), `build-wp0/tests/containercp_tests -tc="VestaSiteImporter*"` (`31` test cases, `79` assertions), `build-wp0/tests/containercp_tests -tc="*Migration*"` (`39` test cases, `254` assertions), and full CTest (`1/1`).
 
 ## WP-4 MariaDB Password-Change Provider
 

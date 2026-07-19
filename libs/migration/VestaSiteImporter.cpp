@@ -1,6 +1,7 @@
 #include "VestaSiteImporter.h"
 
 #include "wordpress/WordPressConfigDetector.h"
+#include "wordpress/WordPressConfigUpdater.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -1361,55 +1362,45 @@ std::string VestaSiteImporter::find_wp_config_file(const std::string& public_dir
 
 bool VestaSiteImporter::update_wp_config_db_credentials(
     const std::string& config_path,
+    const std::string& site_root,
     const std::string& old_db_name,
     const std::string& old_db_user,
     const std::string& new_db_name,
     const std::string& new_db_user,
     const std::string& new_db_password,
-    const std::string& new_db_host) const {
+    const std::string& new_db_host,
+    const std::string& php_container,
+    const std::string& container_config_path) const {
+    (void)old_db_name;
+    (void)old_db_user;
 
-    std::ifstream in(config_path);
-    if (!in.is_open()) return false;
-    std::stringstream buf;
-    buf << in.rdbuf();
-    std::string content = buf.str();
+    wordpress::WordPressConfigUpdater updater;
+    const auto update = updater.update_file_atomic_validated(
+        site_root,
+        config_path,
+        std::vector<wordpress::WordPressConfigFieldUpdate>{
+            {wordpress::WordPressConfigUpdateField::DbName, new_db_name},
+            {wordpress::WordPressConfigUpdateField::DbUser, new_db_user},
+            {wordpress::WordPressConfigUpdateField::DbPassword, new_db_password},
+            {wordpress::WordPressConfigUpdateField::DbHost, new_db_host},
+        },
+        [&](const std::filesystem::path&) {
+            auto exist_check = executor_.run({"docker", "exec", php_container, "test", "-f", container_config_path});
+            if (exist_check.exit_code != 0) {
+                return wordpress::WordPressConfigValidationResult{false, "config_missing_in_container", "WordPress config was not visible inside PHP container"};
+            }
+            auto php_check = executor_.run({"docker", "exec", php_container, "php", "-l", container_config_path});
+            if (php_check.exit_code != 0) {
+                return wordpress::WordPressConfigValidationResult{false, "php_lint_failed", "WordPress config syntax validation failed"};
+            }
+            return wordpress::WordPressConfigValidationResult{true, "ok", "WordPress config syntax validation passed"};
+        });
 
-    auto replace_def = [&](const std::string& define_name, const std::string& old_val, const std::string& new_val) -> bool {
-        if (old_val.empty() || new_val.empty()) return false;
-        std::string p_single = "define('" + define_name + "', '" + old_val + "')";
-        std::string p_double = "define(\"" + define_name + "\", \"" + old_val + "\")";
-        std::string r_single = "define('" + define_name + "', '" + new_val + "')";
-        std::string r_double = "define(\"" + define_name + "\", \"" + new_val + "\")";
-        bool found = false;
-        auto pos = content.find(p_single);
-        if (pos != std::string::npos) { content.replace(pos, p_single.size(), r_single); found = true; }
-        pos = content.find(p_double);
-        if (pos != std::string::npos) { content.replace(pos, p_double.size(), r_double); found = true; }
-        return found;
-    };
-
-    // Update DB_NAME
-    if (!replace_def("DB_NAME", old_db_name, new_db_name)) {
-        std::regex re(R"(define\s*\(\s*['\"]DB_NAME['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
-        content = std::regex_replace(content, re, "define('DB_NAME', '" + new_db_name + "')");
+    if (!update.success) {
+        logger_.error("MIGRATION", "wp-config.php shared updater failed: " + update.code);
     }
-    // Update DB_USER
-    replace_def("DB_USER", old_db_user, new_db_user);
-    // Update DB_PASSWORD (generic regex, no old value needed)
-    {
-        std::regex pre(R"(define\s*\(\s*['\"]DB_PASSWORD['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
-        content = std::regex_replace(content, pre, "define('DB_PASSWORD', '" + new_db_password + "')");
-    }
-    // Update DB_HOST to Docker service name (never localhost)
-    {
-        std::regex hre(R"(define\s*\(\s*['\"]DB_HOST['\"].*?['\"]([^'\"]+?)['\"]\s*\))");
-        content = std::regex_replace(content, hre, "define('DB_HOST', '" + new_db_host + "')");
-    }
+    return update.success;
 
-    std::ofstream out(config_path);
-    if (!out.is_open()) return false;
-    out << content;
-    return true;
 }
 
 VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Options& opts) {
@@ -1950,10 +1941,10 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
         wp_config_bak = wp_config_path + ".containercp-before-sql";
         executor_.run({"cp", wp_config_path, wp_config_bak});
 
-        // Atomic update: write to temp, then rename
-        std::string tmp_config = wp_config_path + ".tmp";
-        bool wp_updated = update_wp_config_db_credentials(wp_config_path, m.wp_db_name, m.wp_db_user,
-                                                           db_name, db_user, db_password, db_host);
+        std::string php_check_path = container_wp_config.empty() ? "/var/www/html/wp-config.php" : container_wp_config;
+        bool wp_updated = update_wp_config_db_credentials(wp_config_path, site_dir, m.wp_db_name, m.wp_db_user,
+                                                           db_name, db_user, db_password, db_host,
+                                                           php_cont, php_check_path);
         if (!wp_updated) {
             logger_.error("MIGRATION", "wp-config.php update failed — rolling back DB");
             result.errors.push_back("wp-config.php update failed");
@@ -1962,27 +1953,7 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
             cleanup_stg(); return result;
         }
 
-        // PHP syntax check (use container mount path)
-        logger_.info("MIGRATION", "Running php -l on updated wp-config.php");
-        std::string php_check_path = container_wp_config.empty() ? "/var/www/html/wp-config.php" : container_wp_config;
-        logger_.info("MIGRATION", "PHP check path: " + php_check_path);
-
-        // Verify file exists in container
-        auto exist_check = executor_.run({"docker", "exec", php_cont, "test", "-f", php_check_path});
-        logger_.info("MIGRATION", "wp-config exists in PHP container: " + std::string(exist_check.exit_code == 0 ? "true" : "false"));
-
-        auto php_check = executor_.run({
-            "docker", "exec", php_cont,
-            "php", "-l", php_check_path
-        });
-        if (php_check.exit_code != 0) {
-            logger_.error("MIGRATION", "php -l failed: " + php_check.err);
-            result.errors.push_back("wp-config.php syntax check failed");
-            do_rollback();
-            executor_.run({"cp", wp_config_bak, wp_config_path});
-            cleanup_stg(); return result;
-        }
-        logger_.info("MIGRATION", "php -l OK");
+        logger_.info("MIGRATION", "wp-config.php credential update and syntax validation OK");
 
     // Add trusted proxy block for HTTPS detection behind central nginx proxy
     {

@@ -159,12 +159,15 @@ private:
                                const std::string& domain = "");
     std::string find_wp_config_file(const std::string& public_dir) const;
     bool update_wp_config_db_credentials(const std::string& config_path,
+                                          const std::string& site_root,
                                           const std::string& old_db_name,
                                           const std::string& old_db_user,
                                           const std::string& new_db_name,
                                           const std::string& new_db_user,
                                           const std::string& new_db_password,
-                                          const std::string& new_db_host = "mariadb") const;
+                                          const std::string& new_db_host,
+                                          const std::string& php_container,
+                                          const std::string& container_config_path) const;
 
     runtime::CommandExecutor& executor_;
     filesystem::Filesystem& fs_;

@@ -465,6 +465,40 @@ TEST_CASE("WordPress updater invalid rollback handle fails closed") {
     CHECK(result.code == "rollback_invalid");
 }
 
+TEST_CASE("WordPress updater sequence updates all credentials in one atomic file write") {
+    WordPressConfigUpdater updater;
+    const auto root = updater_test_root("sequence");
+    const auto config = root / "public" / "wp-config.php";
+    write_test_file(config, R"PHP(<?php
+define('DB_NAME', 'old_db');
+define('DB_USER', 'old_user');
+define("DB_PASSWORD", "old_pass");
+define('DB_HOST', 'localhost');
+define('AUTH_KEY', 'keep-me');
+)PHP");
+
+    const auto result = updater.update_file_atomic(
+        root,
+        config,
+        std::vector<WordPressConfigFieldUpdate>{
+            {WordPressConfigUpdateField::DbName, "new_db"},
+            {WordPressConfigUpdateField::DbUser, "new_user"},
+            {WordPressConfigUpdateField::DbPassword, "new$pass"},
+            {WordPressConfigUpdateField::DbHost, "mariadb"},
+        });
+
+    REQUIRE(result.success);
+    const auto updated = read_test_file(config);
+    CHECK(updated.find("define('DB_NAME', 'new_db');") != std::string::npos);
+    CHECK(updated.find("define('DB_USER', 'new_user');") != std::string::npos);
+    CHECK(updated.find("define(\"DB_PASSWORD\", \"new\\$pass\");") != std::string::npos);
+    CHECK(updated.find("define('DB_HOST', 'mariadb');") != std::string::npos);
+    CHECK(updated.find("define('AUTH_KEY', 'keep-me');") != std::string::npos);
+    CHECK_FALSE(has_temp_update_files(config.parent_path()));
+
+    fs::remove_all(root);
+}
+
 TEST_CASE("WordPress updater validated update succeeds when validator accepts file") {
     WordPressConfigUpdater updater;
     const auto root = updater_test_root("validation_success");

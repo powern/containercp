@@ -680,6 +680,17 @@ WordPressConfigFileUpdateResult WordPressConfigUpdater::update_file_atomic(const
                                                                           const std::filesystem::path& config_path,
                                                                           WordPressConfigUpdateField field,
                                                                           const std::string& new_value) const {
+    return update_file_atomic(site_root, config_path, std::vector<WordPressConfigFieldUpdate>{{field, new_value}});
+}
+
+WordPressConfigFileUpdateResult WordPressConfigUpdater::update_file_atomic(
+    const std::filesystem::path& site_root,
+    const std::filesystem::path& config_path,
+    const std::vector<WordPressConfigFieldUpdate>& updates) const {
+    if (updates.empty()) {
+        return file_failure("updates_missing", "At least one WordPress credential update is required");
+    }
+
     WordPressConfigDetector detector;
     const auto safety = detector.inspect_config_path(site_root, config_path);
     if (!safety.safe) {
@@ -696,14 +707,18 @@ WordPressConfigFileUpdateResult WordPressConfigUpdater::update_file_atomic(const
         return file_failure("config_read_failed", "WordPress config file could not be read");
     }
 
-    const auto rendered = render_update(*current_content, field, new_value);
-    if (!rendered.success) {
-        return file_failure(rendered.code, rendered.message);
+    std::string rendered_content = *current_content;
+    for (const auto& update : updates) {
+        const auto rendered = render_update(rendered_content, update.field, update.value);
+        if (!rendered.success) {
+            return file_failure(rendered.code, rendered.message);
+        }
+        rendered_content = rendered.content;
     }
 
     std::string error_code;
     if (!write_atomic_preserving_metadata(safety.config_path,
-                                          rendered.content,
+                                          rendered_content,
                                           metadata.st_mode & 07777,
                                           metadata.st_uid,
                                           metadata.st_gid,
@@ -731,11 +746,22 @@ WordPressConfigFileUpdateResult WordPressConfigUpdater::update_file_atomic_valid
     WordPressConfigUpdateField field,
     const std::string& new_value,
     const WordPressConfigValidator& validator) const {
+    return update_file_atomic_validated(site_root,
+                                        config_path,
+                                        std::vector<WordPressConfigFieldUpdate>{{field, new_value}},
+                                        validator);
+}
+
+WordPressConfigFileUpdateResult WordPressConfigUpdater::update_file_atomic_validated(
+    const std::filesystem::path& site_root,
+    const std::filesystem::path& config_path,
+    const std::vector<WordPressConfigFieldUpdate>& updates,
+    const WordPressConfigValidator& validator) const {
     if (!validator) {
         return file_failure("validator_missing", "WordPress config validation boundary is required");
     }
 
-    auto update = update_file_atomic(site_root, config_path, field, new_value);
+    auto update = update_file_atomic(site_root, config_path, updates);
     if (!update.success) {
         return update;
     }

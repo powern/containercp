@@ -4,6 +4,7 @@
 #include <string>
 #include <filesystem>
 #include <functional>
+#include <vector>
 
 namespace containercp::wordpress {
 
@@ -44,6 +45,11 @@ struct WordPressConfigValidationResult {
     std::string message;
 };
 
+struct WordPressConfigFieldUpdate {
+    WordPressConfigUpdateField field = WordPressConfigUpdateField::DbPassword;
+    std::string value;
+};
+
 using WordPressConfigValidator = std::function<WordPressConfigValidationResult(const std::filesystem::path&)>;
 
 class WordPressConfigUpdater {
@@ -55,10 +61,17 @@ public:
                                                        const std::filesystem::path& config_path,
                                                        WordPressConfigUpdateField field,
                                                        const std::string& new_value) const;
+    WordPressConfigFileUpdateResult update_file_atomic(const std::filesystem::path& site_root,
+                                                       const std::filesystem::path& config_path,
+                                                       const std::vector<WordPressConfigFieldUpdate>& updates) const;
     WordPressConfigFileUpdateResult update_file_atomic_validated(const std::filesystem::path& site_root,
                                                                  const std::filesystem::path& config_path,
                                                                  WordPressConfigUpdateField field,
                                                                  const std::string& new_value,
+                                                                 const WordPressConfigValidator& validator) const;
+    WordPressConfigFileUpdateResult update_file_atomic_validated(const std::filesystem::path& site_root,
+                                                                 const std::filesystem::path& config_path,
+                                                                 const std::vector<WordPressConfigFieldUpdate>& updates,
                                                                  const WordPressConfigValidator& validator) const;
     WordPressConfigFileUpdateResult rollback_file(const WordPressConfigRollbackHandle& rollback) const;
 };

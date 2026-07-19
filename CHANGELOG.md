@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-19 | `this commit` | Migration — Use shared WordPress config updater
+
+**Summary:** Refactored migration SQL import `wp-config.php` credential updates for WP-3.4 to use the shared `WordPressConfigUpdater`. The migration path now updates `DB_NAME`, `DB_USER`, `DB_PASSWORD`, and `DB_HOST` through one atomic sequence update, uses the shared PHP literal encoder, validates with the existing vector-argv container `php -l` check through the updater validation boundary, and relies on updater rollback before migration database rollback continues on failure.
+
+**Files changed:** `libs/migration/VestaSiteImporter.h`, `libs/migration/VestaSiteImporter.cpp`, `libs/wordpress/WordPressConfigUpdater.h`, `libs/wordpress/WordPressConfigUpdater.cpp`, `tests/test_wordpress_config_update.cpp`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Migration SQL import remains a no-secret workflow and still reports generic `wp-config.php update failed` or syntax failure behavior through existing migration error handling. Unsupported, ambiguous, symlinked, or path-escaping `wp-config.php` updates now fail closed through the shared updater instead of legacy regex replacement.
+
+**Validation:** Incremental build passed with `cmake --build build-wp0 --target containercp_tests containercp containercpd -- -j1`. Focused WordPress tests passed with `build-wp0/tests/containercp_tests -tc="*WordPress*"` (`49` cases, `286` assertions). Migration regression passed with `build-wp0/tests/containercp_tests -tc="VestaSiteImporter*"` (`31` cases, `79` assertions) and `build-wp0/tests/containercp_tests -tc="*Migration*"` (`39` cases, `254` assertions). Full CTest passed with `ctest --test-dir build-wp0 --output-on-failure` (`1/1`). `git diff --check` passed.
+
+**Known risks:** Trusted proxy block insertion still uses its existing migration-specific write path and is scheduled for final cleanup in WP-8 where appropriate. No rotation behavior exists yet.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Validate config updates before completion
 
 **Summary:** Added the WP-3.3 validation boundary for WordPress config credential updates. `WordPressConfigUpdater::update_file_atomic_validated()` now wraps the atomic writer with an injectable validator, reports success only after validation accepts the written file, automatically rolls back on validation failure, and returns a manual-recovery error state if rollback cannot complete. Validation diagnostics are intentionally generic and do not expose candidate password values.
