@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-20 | `this commit` | WordPress — Normalize path-prefix validation
+
+**Summary:** Fixed WordPress path ownership validation so configured roots with trailing separators are treated the same as roots without trailing separators. A shared `utils::PathUtils` helper now performs component-wise normalized path-prefix comparisons for WordPress config inspection, config path safety, and runtime verification while still rejecting real traversal attempts.
+
+**Files changed:** `libs/utils/PathUtils.h`, `libs/utils/PathUtils.cpp`, `libs/wordpress/WordPressConfigService.cpp`, `libs/wordpress/WordPressConfigDetector.cpp`, `libs/wordpress/WordPressRuntimeVerifier.cpp`, `tests/test_path_utils.cpp`, `tests/test_wordpress_config_service.cpp`, `tests/test_wordpress_config_detector.cpp`, `tests/test_wordpress_runtime_verifier.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `CHANGELOG.md`
+
+**User-visible behavior:** WordPress credential inspection no longer reports `unsafe_path` / `site_root_escape` for valid sites under `/srv/containercp/sites/` solely because `Config::sites_dir()` includes a trailing slash. Actual directory traversal such as `/srv/containercp/sites/../../etc` remains rejected.
+
+**Validation:** Clean configure passed with `cmake -S . -B build-path-prefix -G Ninja -DCMAKE_BUILD_TYPE=Release`. Build passed with `cmake --build build-path-prefix --target containercp_tests containercp containercpd -- -j1` and no compiler warnings after rerunning when the first build invocation hit the tool timeout while still compiling. Full doctest passed (`796` cases, `5375` assertions). Full CTest passed (`1/1`). `git diff --check` passed.
+
+**Known risks:** This is repository/test validation only. No production deployment, daemon restart, ContainerCP storage mutation, Docker Compose mutation, WordPress mutation, or credential rotation was performed.
+
+---
+
 ## 2026-07-20 | `this commit` | Database — Preserve post-mutation rotation context
 
 **Summary:** Completed WP-R3 post-mutation context preservation for WordPress database credential rotation. The service now uses explicit old/new credential probes after a failed MariaDB password-change command instead of cleanup-capable verification calls. The concrete adapter probes do not erase rotation context, so a failed old-password probe cannot prevent the new-password probe from confirming that `ALTER USER` actually succeeded.

@@ -1,6 +1,7 @@
 #include "WordPressConfigService.h"
 
 #include "config/Config.h"
+#include "utils/PathUtils.h"
 
 #include <algorithm>
 #include <fstream>
@@ -13,17 +14,6 @@ namespace containercp::wordpress {
 namespace {
 
 namespace fs = std::filesystem;
-
-bool path_has_prefix(const fs::path& path, const fs::path& root) {
-    auto path_it = path.begin();
-    auto root_it = root.begin();
-    for (; root_it != root.end(); ++root_it, ++path_it) {
-        if (path_it == path.end() || *path_it != *root_it) {
-            return false;
-        }
-    }
-    return true;
-}
 
 std::string read_text_file(const fs::path& path, bool& ok) {
     std::ifstream in(path);
@@ -127,7 +117,7 @@ WordPressConfigServiceResult WordPressConfigService::inspect(const site::Site& s
     }
 
     const fs::path site_root = fs::absolute(sites_root_abs / site_record.domain, ec).lexically_normal();
-    if (ec || !path_has_prefix(site_root, sites_root_abs)) {
+    if (ec || !utils::path_has_prefix(site_root, sites_root_abs)) {
         return failure(site_record.id, site_record.domain, WordPressCredentialStatus::UnsafePath, "site_root_escape",
                        "Resolved site root escapes the configured sites directory");
     }

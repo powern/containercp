@@ -20,6 +20,7 @@ add_executable(containercp_tests
     test_template.cpp
     test_runtime.cpp
     test_runtime_sync.cpp
+    test_path_utils.cpp
     test_health.cpp
     test_backup.cpp
     test_migration.cpp
@@ -40,6 +41,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/utils/Validator.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/StringUtils.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/PasswordGenerator.cpp
+    ${CMAKE_SOURCE_DIR}/libs/utils/PathUtils.cpp
     ${CMAKE_SOURCE_DIR}/libs/user/User.cpp
     ${CMAKE_SOURCE_DIR}/libs/user/UserManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/site/Site.cpp

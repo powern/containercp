@@ -195,6 +195,47 @@ TEST_CASE("WordPressConfigService rejects resolved site root escapes") {
     fs::remove_all(root.parent_path());
 }
 
+TEST_CASE("WordPressConfigService treats trailing sites root separator as equivalent") {
+    site::SiteManager sites;
+    const uint64_t site_id = sites.create("unity.softico.ua", "admin", 1);
+    const auto base = service_root("trailing_sites_root") / "sites";
+    write_service_file(base / "unity.softico.ua" / "public" / "wp-config.php",
+                       service_wp_config("unity_softico_ua_db", "unity_softico_ua_user"));
+
+    WordPressConfigService no_trailing(sites, base);
+    WordPressConfigService trailing(sites, fs::path(base.string() + "/"));
+
+    const auto no_trailing_result = no_trailing.inspect_site(site_id);
+    const auto trailing_result = trailing.inspect_site(site_id);
+
+    CHECK(no_trailing_result.ok);
+    CHECK(trailing_result.ok);
+    CHECK(no_trailing_result.site_root == trailing_result.site_root);
+    CHECK(trailing_result.config_path.filename() == "wp-config.php");
+
+    fs::remove_all(base.parent_path());
+}
+
+TEST_CASE("WordPressConfigService rejects traversal with trailing sites root separator") {
+    site::SiteManager sites;
+    std::vector<site::Site> records;
+    site::Site bad;
+    bad.id = 11;
+    bad.name = "../../etc";
+    bad.domain = "../../etc";
+    bad.owner = "admin";
+    bad.node_id = 1;
+    records.push_back(bad);
+    sites.set_sites(records);
+
+    WordPressConfigService service(sites, "/srv/containercp/sites/");
+    const auto result = service.inspect_site(11);
+
+    CHECK_FALSE(result.ok);
+    CHECK(result.status == WordPressCredentialStatus::UnsafePath);
+    CHECK(result.code == "site_root_escape");
+}
+
 TEST_CASE("WordPressConfigService public view redacts password and paths") {
     site::SiteManager sites;
     const uint64_t site_id = sites.create("public-view.test", "admin", 1);

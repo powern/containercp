@@ -1,5 +1,7 @@
 #include "WordPressConfigDetector.h"
 
+#include "utils/PathUtils.h"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -440,17 +442,6 @@ WordPressConfigPathSafety safe_path(const fs::path& site_root, const fs::path& c
     return result;
 }
 
-bool path_has_prefix(const fs::path& path, const fs::path& root) {
-    auto path_it = path.begin();
-    auto root_it = root.begin();
-    for (; root_it != root.end(); ++root_it, ++path_it) {
-        if (path_it == path.end() || *path_it != *root_it) {
-            return false;
-        }
-    }
-    return true;
-}
-
 } // namespace
 
 bool WordPressConfigDetector::is_active_config_filename(const std::filesystem::path& path) {
@@ -485,7 +476,7 @@ WordPressConfigPathSafety WordPressConfigDetector::inspect_config_path(const std
         return unsafe_path("not_active_config", "Only active wp-config.php files are accepted", root_abs, candidate_abs);
     }
 
-    if (!path_has_prefix(candidate_abs, root_abs)) {
+    if (!utils::path_has_prefix(candidate_abs, root_abs)) {
         return unsafe_path("path_outside_root", "WordPress config path escapes the site root", root_abs, candidate_abs);
     }
 

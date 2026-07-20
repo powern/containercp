@@ -93,6 +93,20 @@ TEST_CASE("WordPressRuntimeVerifier rejects document root outside compose projec
     CHECK(runner.args.empty());
 }
 
+TEST_CASE("WordPressRuntimeVerifier treats trailing host separators as equivalent") {
+    FakeWordPressRuntimeRunner runner;
+    runner.result.exit_code = 0;
+    WordPressRuntimeVerifier verifier(runner);
+
+    const auto result = verifier.verify_database_access({"/srv/containercp/sites/example.com/",
+                                                         "/srv/containercp/sites/example.com/public/",
+                                                         "/srv/containercp/sites/example.com/public/wp-config.php"});
+
+    CHECK(result.success);
+    REQUIRE(runner.args.size() == 12);
+    CHECK(runner.args[11].find("/var/www/html/wp-config.php") != std::string::npos);
+}
+
 TEST_CASE("WordPressRuntimeVerifier rejects unsafe service and container roots") {
     FakeWordPressRuntimeRunner runner;
     runner.result.exit_code = 0;

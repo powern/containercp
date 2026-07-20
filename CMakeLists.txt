@@ -110,6 +110,7 @@ set(CONTAINERCP_SOURCES
     libs/user/User.cpp
     libs/user/UserManager.cpp
     libs/utils/PasswordGenerator.cpp
+    libs/utils/PathUtils.cpp
     libs/utils/StringUtils.cpp
     libs/utils/Validator.cpp
     libs/wordpress/WordPressConfigDetector.cpp

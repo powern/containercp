@@ -197,6 +197,22 @@ TEST_CASE("WordPress detector rejects traversal outside site root") {
     fs::remove_all(root.parent_path());
 }
 
+TEST_CASE("WordPress detector treats trailing site root separator as equivalent") {
+    WordPressConfigDetector detector;
+    const auto root = test_root("trailing_root") / "site";
+    const auto config = root / "public" / "wp-config.php";
+    write_file(config, "<?php define('DB_NAME', 'wp');");
+
+    const auto no_trailing = detector.inspect_config_path(root, config);
+    const auto trailing = detector.inspect_config_path(fs::path(root.string() + "/"), config);
+
+    CHECK(no_trailing.safe);
+    CHECK(trailing.safe);
+    CHECK(no_trailing.config_path == trailing.config_path);
+
+    fs::remove_all(root.parent_path());
+}
+
 TEST_CASE("WordPress detector rejects symlinked config paths") {
     WordPressConfigDetector detector;
     const auto root = test_root("symlink");

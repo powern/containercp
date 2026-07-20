@@ -1,5 +1,7 @@
 #include "WordPressRuntimeVerifier.h"
 
+#include "utils/PathUtils.h"
+
 #include <cctype>
 #include <system_error>
 #include <utility>
@@ -8,17 +10,6 @@ namespace containercp::wordpress {
 namespace {
 
 namespace fs = std::filesystem;
-
-bool path_has_prefix(const fs::path& path, const fs::path& root) {
-    auto path_it = path.begin();
-    auto root_it = root.begin();
-    for (; root_it != root.end(); ++root_it, ++path_it) {
-        if (path_it == path.end() || *path_it != *root_it) {
-            return false;
-        }
-    }
-    return true;
-}
 
 bool has_parent_reference(const fs::path& path) {
     for (const auto& part : path) {
@@ -72,7 +63,7 @@ std::string to_container_config_path(const WordPressRuntimeVerificationRequest& 
         return {};
     }
     const fs::path config_path = fs::absolute(request.config_path, ec).lexically_normal();
-    if (ec || !path_has_prefix(config_path, document_root) || config_path.filename() != "wp-config.php") {
+    if (ec || !utils::path_has_prefix(config_path, document_root) || config_path.filename() != "wp-config.php") {
         return {};
     }
 
@@ -127,7 +118,7 @@ WordPressRuntimeVerificationResult WordPressRuntimeVerifier::verify_database_acc
         return result(false, "unsafe_runtime_path", "WordPress runtime verification compose path is unsafe");
     }
     const fs::path document_root = fs::absolute(request.document_root, ec).lexically_normal();
-    if (ec || !path_has_prefix(document_root, compose_dir)) {
+    if (ec || !utils::path_has_prefix(document_root, compose_dir)) {
         return result(false, "unsafe_runtime_path", "WordPress runtime verification document root is outside the compose project");
     }
 
