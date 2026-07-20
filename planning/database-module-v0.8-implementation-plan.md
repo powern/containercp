@@ -2,7 +2,7 @@
 
 ## Status
 
-Planning document only. Do not implement this plan until the architecture is reviewed and approved.
+Active staged implementation plan. Later lifecycle phases remain gated by their architecture, API, test, and validation requirements before implementation.
 
 ## Constraints
 
@@ -90,6 +90,40 @@ Exit criteria:
 
 - Databases API is richer but still read-only for physical state.
 - Web UI only consumes DB-1 read-only API/runtime behavior and does not add lifecycle actions.
+
+## Phase 1a: DB-2 Database Management GUI
+
+Purpose: provide a health-focused administrator dashboard on top of DB-1 and the
+existing WordPress database credential rotation workflow. This phase does not add
+new backend lifecycle APIs.
+
+Web UI tasks:
+
+- [x] Replace the legacy Databases metadata table with a health dashboard.
+- [x] Compute summary cards client-side from `GET /api/databases`.
+- [x] Compute composite health from runtime, connection, and credential states.
+- [x] Add live search, filters, default attention-first sorting, and reset.
+- [x] Add a responsive inventory table/card layout.
+- [x] Add a database detail drawer loaded from `GET /api/databases/<id>`.
+- [x] Show overview, health explanations, relationships, metadata, and actions.
+- [x] Reuse the existing WordPress credential rotation endpoint and job detail flow.
+- [x] Hide unimplemented Adminer/import/export/backup/delete actions.
+- [x] Keep all password and secret values out of the browser UI.
+
+Out of scope:
+
+- Adminer launch.
+- Import/export.
+- Database-aware backup.
+- Database deletion or physical lifecycle changes.
+- Any new password rotation backend or WordPress configuration parser.
+
+Exit criteria:
+
+- DB-2 is frontend-only unless a real DB-1 blocking bug is found.
+- JavaScript syntax validation passes.
+- Repository tests covering the current frontend test architecture pass.
+- `git diff --check` passes.
 
 ## Phase 2: Safe Physical Lifecycle Service
 

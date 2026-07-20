@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-20 | `this commit` | Database — Add DB-2 health dashboard UI
+
+**Summary:** Added the DB-2 Databases management GUI as a health-focused administrator dashboard. The page now shows database health summary cards, composite health states, live search, filters, attention-first sorting, responsive inventory rows/cards, and a database detail drawer with overview, health, relationships, metadata, and actions.
+
+**Files changed:** `web/app.js`, `web/style.css`, `tests/test_api.cpp`, `docs/WEB-UI.md`, `docs/api/API_REFERENCE.md`, `planning/project-status.md`, `planning/database-module-v0.8-implementation-plan.md`, `CHANGELOG.md`
+
+**User-visible behavior:** The Databases page prioritizes unhealthy databases and exposes runtime, connection, credential, and ownership state without showing technical IDs in the main list. Database details load from `GET /api/databases/<id>`. Rotate Password reuses the existing WordPress database credential rotation endpoint and job timeline flow. Adminer, import, export, backup, delete, database creation/drop, SQL mutations, Docker mutations, and new backend lifecycle services remain unimplemented.
+
+**Validation:** JavaScript syntax validation passed with `node --check web/app.js`. Clean configure passed with `cmake -S . -B build-db2 -G Ninja -DCMAKE_BUILD_TYPE=Release`. Clean build passed with `cmake --build build-db2 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused API and database dashboard UI tests passed with `./build-db2/tests/containercp_tests -tc="*API*,*Database dashboard UI*"` (`19` cases, `129` assertions, `808` skipped). Full doctest passed (`827` cases, `5754` assertions). Full CTest passed (`1/1`). `git diff --check` passed.
+
+**Known risks:** DB-2 uses the current vanilla JavaScript frontend test architecture, so behavior is validated through syntax checks and static UI assertions rather than browser automation. Runtime and rotation availability remain backend-authoritative; the UI only gates obvious unsupported states and displays public-safe backend diagnostics.
+
+---
+
 ## 2026-07-20 | `this commit` | Database — Add DB-1 read-only inventory foundation
 
 **Summary:** Added the Databases Module DB-1 backend foundation. The API now builds enriched read-only database views with Site metadata, MariaDB runtime status, credential availability, read-only connection status, ownership state, imported state, and GUI-ready timestamp fields without changing physical database state.

@@ -234,6 +234,78 @@ TEST_CASE("WordPress credential UI uses public endpoints without raw password fi
     CHECK(wordpress_block.find("siteDatabases[0]") == std::string::npos);
 }
 
+TEST_CASE("Database dashboard UI implements DB-2 health workflow without secret surfaces") {
+    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/web/app.js");
+    REQUIRE(in.is_open());
+    std::string js((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    const auto start = js.find("/* ===== DATABASES ===== */");
+    const auto end = js.find("/* ===== SSL ===== */");
+    REQUIRE(start != std::string::npos);
+    REQUIRE(end != std::string::npos);
+    const std::string db_block = js.substr(start, end - start);
+
+    CHECK(db_block.find("/api/databases") != std::string::npos);
+    CHECK(db_block.find("/api/databases/" ) != std::string::npos);
+    CHECK(db_block.find("Total Databases") != std::string::npos);
+    CHECK(db_block.find("Healthy") != std::string::npos);
+    CHECK(db_block.find("Warning") != std::string::npos);
+    CHECK(db_block.find("Critical") != std::string::npos);
+    CHECK(db_block.find("Imported") != std::string::npos);
+
+    CHECK(db_block.find("computeDatabaseHealthState") != std::string::npos);
+    CHECK(db_block.find("runtime === 'stopped'") != std::string::npos);
+    CHECK(db_block.find("connection === 'failed'") != std::string::npos);
+    CHECK(db_block.find("credentials === 'invalid'") != std::string::npos);
+    CHECK(db_block.find("site_missing") != std::string::npos);
+    CHECK(db_block.find("critical:0, warning:1, unknown:2, healthy:3") != std::string::npos);
+
+    CHECK(db_block.find("dbDashboardState.search") != std::string::npos);
+    CHECK(db_block.find("db-filter-health") != std::string::npos);
+    CHECK(db_block.find("db-filter-runtime") != std::string::npos);
+    CHECK(db_block.find("db-filter-connection") != std::string::npos);
+    CHECK(db_block.find("db-filter-credentials") != std::string::npos);
+    CHECK(db_block.find("db-filter-ownership") != std::string::npos);
+    CHECK(db_block.find("resetDatabaseFilters") != std::string::npos);
+    CHECK(db_block.find("Sort by") != std::string::npos);
+
+    CHECK(db_block.find("openDatabaseDetail") != std::string::npos);
+    CHECK(db_block.find("db-detail-drawer") != std::string::npos);
+    CHECK(db_block.find("Overview") != std::string::npos);
+    CHECK(db_block.find("Relationships") != std::string::npos);
+    CHECK(db_block.find("Metadata") != std::string::npos);
+    CHECK(db_block.find("The selected database no longer exists.") != std::string::npos);
+    CHECK(db_block.find("No managed databases were found.") != std::string::npos);
+    CHECK(db_block.find("No databases match the current search and filters.") != std::string::npos);
+    CHECK(db_block.find("Database inventory could not be loaded.") != std::string::npos);
+
+    CHECK(db_block.find("/api/wordpress/database-credentials/status") != std::string::npos);
+    CHECK(db_block.find("/api/wordpress/database-credentials/rotate") != std::string::npos);
+    CHECK(db_block.find("databaseRotationCapability") != std::string::npos);
+    CHECK(db_block.find("Supported") != std::string::npos);
+    CHECK(db_block.find("Unavailable") != std::string::npos);
+    CHECK(db_block.find("Rotate Database Password") != std::string::npos);
+    CHECK(db_block.find("The MariaDB application password will be changed") != std::string::npos);
+    CHECK(db_block.find("WordPressConfigService") != std::string::npos);
+    CHECK(db_block.find("Compensation or rollback may run") != std::string::npos);
+    CHECK(db_block.find("No password will be displayed") != std::string::npos);
+    CHECK(db_block.find("renderDatabaseRotationJob") != std::string::npos);
+    CHECK(db_block.find("renderDatabaseRotationSuccess") != std::string::npos);
+    CHECK(db_block.find("renderDatabaseRotationFailure") != std::string::npos);
+
+    CHECK(js.find("pollRotationJob") != std::string::npos);
+    CHECK(js.find("renderRotationJobTimeline") != std::string::npos);
+    CHECK(js.find("compensation_result") != std::string::npos);
+    CHECK(js.find("manual_recovery_required") != std::string::npos);
+
+    CHECK(db_block.find("DB_PASSWORD") == std::string::npos);
+    CHECK(db_block.find("MYSQL_ROOT_PASSWORD") == std::string::npos);
+    CHECK(db_block.find("db_password") == std::string::npos);
+    CHECK(db_block.find("localStorage") == std::string::npos);
+    CHECK(db_block.find("sessionStorage") == std::string::npos);
+    CHECK(db_block.find("console.log") == std::string::npos);
+}
+
 TEST_CASE("SSL providers response format") {
     std::string json = "{\"success\":true,\"data\":["
         "{\"id\":\"letsencrypt\",\"name\":\"Let's Encrypt\",\"supports_auto_renew\":true,\"supports_dns\":false}"

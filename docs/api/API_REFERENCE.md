@@ -327,6 +327,15 @@ SQL password literals, command output with secrets, or one-time Adminer tokens.
 **GET /api/databases/<id>** — returns one `DatabaseView` object. Returns `404`
 when the database record does not exist and `400` for a non-numeric id.
 
+**Web UI behavior:** The DB-2 Databases page consumes these DB-1 endpoints as a
+health-focused administrator dashboard. It computes summary cards, composite
+health, search, filters, and sorting client-side from the returned fields. The
+UI must not expose passwords and must not add lifecycle behavior beyond existing
+backend endpoints. Password rotation in the Databases detail panel reuses
+`GET /api/wordpress/database-credentials/status?site_id=N`,
+`POST /api/wordpress/database-credentials/rotate`, and `GET /api/jobs?id=N`.
+Adminer, import, export, backup, and delete remain future phases.
+
 ### 2.11a WordPress Database Credentials
 
 | Method | Path | Purpose | Owner |

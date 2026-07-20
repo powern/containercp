@@ -413,6 +413,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | WP-4: MariaDB password-change provider | ⬜ | Provider boundary required before rotation |
 | WP-5: DatabaseCredentialRotationService | ✅ | Saga and compensation for MariaDB, metadata, `.env`, and `wp-config.php` |
 | DB-1: Databases read-only inventory | ✅ | Enriched `DatabaseViewService` backend implemented and repository-validated; read-only only |
+| DB-2: Database Management GUI | ✅ | Health-focused Web UI dashboard implemented and repository-validated; reuses DB-1 inventory and existing password rotation jobs |
 
 ## Future — Multi-node
 

@@ -61,7 +61,7 @@ The dashboard shows:
 | Dashboard | Overview with cards, health, activity |
 | Sites | Table with create, filter, actions |
 | Domains | Table with SSL status badges |
-| Databases | Table with engine info |
+| Databases | Health-focused database dashboard with runtime, connection, credential, ownership, detail drawer, and password rotation job integration |
 | SSL | Table with certificate status badges |
 | Proxy | Table with proxy configs |
 | Access | Table with access users |
@@ -90,6 +90,10 @@ The dashboard shows:
 | GET /api/sites | Dashboard, Sites |
 | GET /api/domains | Dashboard, Domains |
 | GET /api/databases | Dashboard, Databases |
+| GET /api/databases/&lt;id&gt; | Databases detail drawer |
+| GET /api/wordpress/database-credentials/status?site_id=N | Databases rotate-password capability, Site detail WordPress credentials |
+| POST /api/wordpress/database-credentials/rotate | Databases and Site detail password rotation |
+| GET /api/jobs?id=N | Rotation and background job progress |
 | GET /api/ssl | Dashboard, SSL |
 | GET /api/proxy | Dashboard, Proxy |
 | GET /api/access-users | Dashboard, Access |
