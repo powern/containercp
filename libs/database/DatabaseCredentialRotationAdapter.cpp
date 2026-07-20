@@ -2,8 +2,10 @@
 
 #include "wordpress/WordPressConfigTypes.h"
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <thread>
 #include <utility>
 
 namespace containercp::database {
@@ -57,6 +59,36 @@ DatabaseCredentialRotationAdapter::DatabaseCredentialRotationAdapter(site::SiteM
                                                                      MetadataPasswordReader metadata_password_reader,
                                                                      RuntimeApply runtime_apply,
                                                                      SiteHealthVerifier site_health_verifier)
+    : DatabaseCredentialRotationAdapter(sites,
+                                        databases,
+                                        wordpress_config,
+                                        wordpress_database_credentials,
+                                        wordpress_updater,
+                                        mariadb_provider,
+                                        wordpress_verifier,
+                                        logger,
+                                        std::move(password_generator),
+                                        std::move(metadata_persist),
+                                        std::move(metadata_password_reader),
+                                        std::move(runtime_apply),
+                                        std::move(site_health_verifier),
+                                        RuntimeHealthPolling{}) {
+}
+
+DatabaseCredentialRotationAdapter::DatabaseCredentialRotationAdapter(site::SiteManager& sites,
+                                                                     DatabaseManager& databases,
+                                                                     wordpress::WordPressConfigService& wordpress_config,
+                                                                     const wordpress::WordPressDatabaseCredentialResolver& wordpress_database_credentials,
+                                                                     const wordpress::WordPressConfigUpdater& wordpress_updater,
+                                                                     const MariaDBCredentialProvider& mariadb_provider,
+                                                                     const wordpress::WordPressRuntimeVerifier& wordpress_verifier,
+                                                                     logger::Logger& logger,
+                                                                     PasswordGenerator password_generator,
+                                                                     MetadataPersist metadata_persist,
+                                                                     MetadataPasswordReader metadata_password_reader,
+                                                                     RuntimeApply runtime_apply,
+                                                                     SiteHealthVerifier site_health_verifier,
+                                                                     RuntimeHealthPolling runtime_health_polling)
     : sites_(sites)
     , databases_(databases)
     , wordpress_config_(wordpress_config)
@@ -69,7 +101,8 @@ DatabaseCredentialRotationAdapter::DatabaseCredentialRotationAdapter(site::SiteM
     , metadata_persist_(std::move(metadata_persist))
     , metadata_password_reader_(std::move(metadata_password_reader))
     , runtime_apply_(std::move(runtime_apply))
-    , site_health_verifier_(std::move(site_health_verifier)) {
+    , site_health_verifier_(std::move(site_health_verifier))
+    , runtime_health_polling_(std::move(runtime_health_polling)) {
 }
 
 std::string DatabaseCredentialRotationAdapter::key(const DatabaseCredentialRotationRequest& request) const {
@@ -115,6 +148,38 @@ bool DatabaseCredentialRotationAdapter::load_admin_credential(Context& context) 
     }
     context.mariadb_admin = {"root", root_password, "localhost"};
     return true;
+}
+
+bool DatabaseCredentialRotationAdapter::wait_for_site_health(const site::Site& site_record) const {
+    if (!site_health_verifier_) {
+        return true;
+    }
+
+    const auto now = runtime_health_polling_.now
+        ? runtime_health_polling_.now
+        : RuntimeHealthClock{[]() { return std::chrono::steady_clock::now(); }};
+    const auto sleep = runtime_health_polling_.sleep
+        ? runtime_health_polling_.sleep
+        : RuntimeHealthSleeper{[](std::chrono::milliseconds duration) { std::this_thread::sleep_for(duration); }};
+    const auto timeout = runtime_health_polling_.timeout < std::chrono::milliseconds::zero()
+        ? std::chrono::milliseconds::zero()
+        : runtime_health_polling_.timeout;
+    const auto interval = runtime_health_polling_.interval <= std::chrono::milliseconds::zero()
+        ? timeout
+        : runtime_health_polling_.interval;
+    const auto deadline = now() + timeout;
+
+    while (true) {
+        if (site_health_verifier_(site_record)) {
+            return true;
+        }
+        const auto current = now();
+        if (current >= deadline) {
+            return false;
+        }
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - current);
+        sleep(std::min(interval, remaining));
+    }
 }
 
 DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::load_metadata(const DatabaseCredentialRotationRequest& request) {
@@ -353,7 +418,7 @@ DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::verify_w
 DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::verify_site_health(const DatabaseCredentialRotationRequest& request) {
     auto* site = sites_.find_by_id(request.site_id);
     if (site == nullptr) return fail("site_not_found", "Site was not found");
-    if (site_health_verifier_ && !site_health_verifier_(*site)) {
+    if (!wait_for_site_health(*site)) {
         return fail("runtime_availability_verification_failed", "Runtime container availability verification failed");
     }
     return ok("runtime_availability_verified", "Runtime container availability verified");

@@ -11,6 +11,7 @@
 #include "wordpress/WordPressDatabaseCredentialResolver.h"
 #include "wordpress/WordPressRuntimeVerifier.h"
 
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -27,6 +28,15 @@ public:
     using MetadataPasswordReader = std::function<std::optional<std::string>(uint64_t)>;
     using RuntimeApply = std::function<bool(const site::Site&)>;
     using SiteHealthVerifier = std::function<bool(const site::Site&)>;
+    using RuntimeHealthClock = std::function<std::chrono::steady_clock::time_point()>;
+    using RuntimeHealthSleeper = std::function<void(std::chrono::milliseconds)>;
+
+    struct RuntimeHealthPolling {
+        std::chrono::milliseconds timeout = std::chrono::seconds(30);
+        std::chrono::milliseconds interval = std::chrono::seconds(1);
+        RuntimeHealthClock now;
+        RuntimeHealthSleeper sleep;
+    };
 
     DatabaseCredentialRotationAdapter(site::SiteManager& sites,
                                       DatabaseManager& databases,
@@ -41,6 +51,21 @@ public:
                                       MetadataPasswordReader metadata_password_reader,
                                       RuntimeApply runtime_apply,
                                       SiteHealthVerifier site_health_verifier);
+
+    DatabaseCredentialRotationAdapter(site::SiteManager& sites,
+                                      DatabaseManager& databases,
+                                      wordpress::WordPressConfigService& wordpress_config,
+                                      const wordpress::WordPressDatabaseCredentialResolver& wordpress_database_credentials,
+                                      const wordpress::WordPressConfigUpdater& wordpress_updater,
+                                      const MariaDBCredentialProvider& mariadb_provider,
+                                      const wordpress::WordPressRuntimeVerifier& wordpress_verifier,
+                                      logger::Logger& logger,
+                                      PasswordGenerator password_generator,
+                                      MetadataPersist metadata_persist,
+                                      MetadataPasswordReader metadata_password_reader,
+                                      RuntimeApply runtime_apply,
+                                      SiteHealthVerifier site_health_verifier,
+                                      RuntimeHealthPolling runtime_health_polling);
 
     DatabaseCredentialRotationStepResult load_metadata(const DatabaseCredentialRotationRequest& request) override;
     DatabaseCredentialRotationStepResult inspect_wordpress(const DatabaseCredentialRotationRequest& request) override;
@@ -95,6 +120,7 @@ private:
     const Context* context_for(const DatabaseCredentialRotationRequest& request) const;
     void erase_context(const DatabaseCredentialRotationRequest& request);
     bool load_admin_credential(Context& context) const;
+    bool wait_for_site_health(const site::Site& site_record) const;
 
     site::SiteManager& sites_;
     DatabaseManager& databases_;
@@ -109,6 +135,7 @@ private:
     MetadataPasswordReader metadata_password_reader_;
     RuntimeApply runtime_apply_;
     SiteHealthVerifier site_health_verifier_;
+    RuntimeHealthPolling runtime_health_polling_;
     mutable std::mutex mutex_;
     std::map<std::string, Context> contexts_;
 };

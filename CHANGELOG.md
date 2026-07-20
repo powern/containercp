@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-20 | `this commit` | WordPress — Poll runtime availability after credential rotation
+
+**Summary:** Fixed the live WordPress credential rotation timing race observed after successful MariaDB and `wp-config.php` mutation. Runtime availability verification now checks immediately, then polls the site health verifier every 1 second for up to 30 seconds, continuing as soon as the runtime is healthy and returning `runtime_availability_verification_failed` only after the timeout. Compensation runtime verification uses the same polling helper.
+
+**Files changed:** `libs/database/DatabaseCredentialRotationAdapter.h`, `libs/database/DatabaseCredentialRotationAdapter.cpp`, `tests/test_database_credential_rotation.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** WordPress database credential rotation no longer fails solely because PHP is still transitioning to healthy immediately after the runtime restart. Operators still receive the same failure code if runtime availability remains unhealthy after the 30-second timeout. The change does not alter password mutation, rollback, or metadata persistence logic.
+
+**Validation:** Clean configure passed with `cmake -S . -B build-wp-r9 -G Ninja -DCMAKE_BUILD_TYPE=Release`. Clean build passed with `cmake --build build-wp-r9 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Full doctest passed (`816` cases, `5588` assertions). Full CTest passed (`1/1`). Focused tests passed for `*DatabaseCredentialRotation*` (`46` cases, `489` assertions), `*MariaDBCredentialProvider*` (`19` cases, `152` assertions), and `*API*` (`18` cases, `73` assertions). `node --check web/app.js` and `git diff --check` passed.
+
+**Known risks:** Repository validation confirms polling behavior with an injected fake clock and sleeper, but live deployment and exactly one production rotation on `unity.softico.ua` are still required to confirm the timing race is resolved in the validation environment. The runtime verifier will now wait up to 30 seconds before surfacing persistent runtime health failures.
+
+---
+
 ## 2026-07-20 | `this commit` | Runtime — Capture stdin command stdout
 
 **Summary:** Fixed the execution-layer issue found after WP-R7 live validation. `CommandExecutor::run_with_stdin_file()` now uses the same stdout/stderr capture implementation as `CommandExecutor::run()`, while still feeding command stdin from a file. This lets stdout-dependent callers, including MariaDB shared credential assessment, parse command output instead of receiving an empty `CommandResult::out`.

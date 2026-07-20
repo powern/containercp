@@ -10,6 +10,7 @@
 
 #include "doctest/doctest.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
@@ -326,6 +327,10 @@ struct AdapterFixture {
     std::string stored_metadata_password = "oldpass";
     bool runtime_applied = false;
     bool health_checked = false;
+    int health_checks = 0;
+    std::vector<bool> health_results;
+    std::chrono::steady_clock::time_point fake_now = std::chrono::steady_clock::time_point{};
+    std::vector<std::chrono::milliseconds> health_sleep_durations;
 
     explicit AdapterFixture(const std::string& name)
         : root(rotation_temp_root(name))
@@ -340,7 +345,20 @@ struct AdapterFixture {
         write_test_file(root / "example.test" / ".env", "MYSQL_ROOT_PASSWORD=rootpass\n");
     }
 
-    DatabaseCredentialRotationAdapter make_adapter() {
+    DatabaseCredentialRotationAdapter::RuntimeHealthPolling fast_runtime_polling(std::chrono::milliseconds timeout = std::chrono::seconds(3),
+                                                                                 std::chrono::milliseconds interval = std::chrono::seconds(1)) {
+        DatabaseCredentialRotationAdapter::RuntimeHealthPolling polling;
+        polling.timeout = timeout;
+        polling.interval = interval;
+        polling.now = [this]() { return fake_now; };
+        polling.sleep = [this](std::chrono::milliseconds duration) {
+            health_sleep_durations.push_back(duration);
+            fake_now += duration;
+        };
+        return polling;
+    }
+
+    DatabaseCredentialRotationAdapter make_adapter(DatabaseCredentialRotationAdapter::RuntimeHealthPolling polling = {}) {
         return DatabaseCredentialRotationAdapter(
             sites,
             databases,
@@ -378,8 +396,14 @@ struct AdapterFixture {
             },
             [this](const site::Site&) {
                 health_checked = true;
-                return true;
-            });
+                ++health_checks;
+                if (health_results.empty()) {
+                    return true;
+                }
+                const auto index = static_cast<std::size_t>(health_checks - 1);
+                return static_cast<bool>(index < health_results.size() ? health_results[index] : health_results.back());
+            },
+            std::move(polling));
     }
 };
 
@@ -874,6 +898,77 @@ TEST_CASE("DatabaseCredentialRotationAdapter runs production-shaped happy path w
         CHECK(event.message.find("newpass") == std::string::npos);
         CHECK(event.message.find("rootpass") == std::string::npos);
     }
+}
+
+TEST_CASE("DatabaseCredentialRotationAdapter runtime polling succeeds immediately") {
+    AdapterFixture fixture("runtime-immediate");
+    fixture.health_results = {true};
+    auto adapter = fixture.make_adapter(fixture.fast_runtime_polling());
+    DatabaseCredentialRotationService service(adapter);
+
+    const auto result = service.rotate({1, 1, "example.test"});
+
+    CHECK(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::Completed);
+    CHECK(fixture.health_checks == 1);
+    CHECK(fixture.health_sleep_durations.empty());
+}
+
+TEST_CASE("DatabaseCredentialRotationAdapter runtime polling waits until healthy") {
+    AdapterFixture fixture("runtime-delayed");
+    fixture.health_results = {false, false, true};
+    auto adapter = fixture.make_adapter(fixture.fast_runtime_polling());
+    DatabaseCredentialRotationService service(adapter);
+
+    const auto result = service.rotate({1, 1, "example.test"});
+
+    CHECK(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::Completed);
+    CHECK(fixture.health_checks == 3);
+    CHECK(fixture.health_sleep_durations == std::vector<std::chrono::milliseconds>{std::chrono::seconds(1), std::chrono::seconds(1)});
+}
+
+TEST_CASE("DatabaseCredentialRotationAdapter runtime polling fails after timeout") {
+    AdapterFixture fixture("runtime-timeout");
+    fixture.health_results = {false};
+    auto adapter = fixture.make_adapter(fixture.fast_runtime_polling(std::chrono::seconds(2), std::chrono::seconds(1)));
+    DatabaseCredentialRotationService service(adapter);
+
+    const auto result = service.rotate({1, 1, "example.test"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::ManualRecoveryRequired);
+    CHECK(result.failure.step == "runtime_verification");
+    CHECK(result.failure.error_code == "runtime_availability_verification_failed");
+    CHECK(result.failure.compensation_started);
+    CHECK(result.failure.compensation_result == "failed");
+    CHECK(result.failure.manual_recovery_required);
+    CHECK(fixture.health_checks == 6);
+    CHECK(fixture.health_sleep_durations == std::vector<std::chrono::milliseconds>{
+        std::chrono::seconds(1),
+        std::chrono::seconds(1),
+        std::chrono::seconds(1),
+        std::chrono::seconds(1),
+    });
+}
+
+TEST_CASE("DatabaseCredentialRotationAdapter compensation runtime verification uses polling helper") {
+    AdapterFixture fixture("runtime-compensation-polling");
+    fixture.metadata_persist_result = false;
+    fixture.health_results = {true, false, false, true};
+    auto adapter = fixture.make_adapter(fixture.fast_runtime_polling());
+    DatabaseCredentialRotationService service(adapter);
+
+    const auto result = service.rotate({1, 1, "example.test"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::Compensated);
+    CHECK(result.failure.step == "persist_metadata");
+    CHECK(result.failure.compensation_started);
+    CHECK(result.failure.compensation_result == "completed");
+    CHECK_FALSE(result.failure.manual_recovery_required);
+    CHECK(fixture.health_checks == 4);
+    CHECK(fixture.health_sleep_durations == std::vector<std::chrono::milliseconds>{std::chrono::seconds(1), std::chrono::seconds(1)});
 }
 
 TEST_CASE("DatabaseCredentialRotationAdapter fails closed when admin credential source is missing") {
