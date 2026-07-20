@@ -13,6 +13,8 @@ class JobManager {
 public:
     uint64_t create(const std::string& type, const std::vector<std::string>& steps);
     void update(uint64_t id, const std::string& status, int progress, const std::string& message = "");
+    void update_step_details(uint64_t id, const std::vector<JobStep>& steps);
+    void update_failure(uint64_t id, const JobFailureDiagnostics& failure);
     Job* find(uint64_t id);
     const std::vector<Job>& list() const;
 

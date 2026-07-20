@@ -94,11 +94,21 @@ DatabaseCredentialRotationJobResult DatabaseCredentialRotationJobService::enqueu
     }
 
     const std::vector<std::string> steps = {
-        "Inspecting WordPress credentials",
-        "Changing database password",
-        "Updating WordPress config",
-        "Verifying runtime container availability",
-        "Persisting metadata",
+        "Acquire operation lock",
+        "Load metadata",
+        "Inspect WordPress",
+        "Resolve database target",
+        "Verify shared credentials",
+        "Load MariaDB admin credentials",
+        "Verify current password",
+        "Generate new password",
+        "Update MariaDB password",
+        "Update wp-config.php",
+        "Persist metadata",
+        "Runtime verification",
+        "Commit",
+        "Compensation",
+        "ManualRecoveryRequired",
     };
     const uint64_t job_id = jobs_.create("wordpress-db-credential-rotation", steps);
     jobs_.update(job_id, "pending", 0, "Credential rotation queued");
@@ -114,7 +124,9 @@ DatabaseCredentialRotationJobResult DatabaseCredentialRotationJobService::enqueu
 
         try {
             jobs.update(queued_job_id, "running", 10, "Credential rotation running");
-            const auto rotation_result = rotation->rotate({request.site_id, request.database_id, request.confirmation});
+            const auto rotation_result = rotation->rotate({request.site_id, request.database_id, request.confirmation, queued_job_id});
+            jobs.update_step_details(queued_job_id, rotation_result.steps);
+            jobs.update_failure(queued_job_id, rotation_result.failure);
             if (rotation_result.success) {
                 jobs.update(queued_job_id, "completed", 100, job_message_for_result(rotation_result));
             } else {

@@ -510,7 +510,9 @@ function pollJobProgress(jobId, onComplete) {
         const pstep = $('progress-step');
         const pstatus = $('progress-status');
         if (pbar) pbar.style.width = job.progress + '%';
-        if (pstep) pstep.textContent = job.message || (job.steps && job.steps[job.current_step]) || 'Running...';
+        const currentStep = job.steps && job.steps[job.current_step];
+        const currentStepText = typeof currentStep === 'string' ? currentStep : (currentStep && currentStep.name);
+        if (pstep) pstep.textContent = job.message || currentStepText || 'Running...';
         if (pstatus) pstatus.textContent = job.status;
 
         if (job.status === 'completed' || job.status === 'failed') {
@@ -689,11 +691,46 @@ async function pollWordPressRotationJob(jobId, siteId, domain, attempts) {
     const msg = $('wp-rotate-msg');
     if (msg) msg.textContent = 'Job #' + jobId + ': ' + (job.message || job.status || 'pending');
     if (job.status === 'completed' || job.status === 'failed') {
-      loadWordPressCredentialCard(siteId, domain);
+      if (job.status === 'failed') {
+        if (msg) msg.innerHTML = renderWordPressRotationDiagnostics(jobId, job);
+      } else {
+        loadWordPressCredentialCard(siteId, domain);
+      }
       return;
     }
   } catch(e) {}
   setTimeout(() => pollWordPressRotationJob(jobId, siteId, domain, attempts + 1), 2000);
+}
+
+function renderWordPressRotationDiagnostics(jobId, job) {
+  const failure = job.failure || {};
+  const failedStep = (job.steps || []).find(s => s.failed) || {};
+  const stage = failure.step_name || failedStep.name || 'Unknown';
+  const reason = failure.reason || failedStep.message || job.message || 'Credential rotation failed';
+  const code = failure.error_code || failedStep.error_code || '';
+  const compensation = failure.compensation_started
+    ? (failure.compensation_result || 'started')
+    : 'not started';
+  const manual = failure.manual_recovery_required ? 'Yes' : 'No';
+  const timeline = (job.steps || []).map(step => {
+    const state = step.failed ? 'failed' : (step.completed ? 'completed' : (step.started ? 'started' : 'skipped'));
+    const color = step.failed ? '#ef4444' : (step.completed ? '#22c55e' : (step.started ? '#f59e0b' : 'var(--text3)'));
+    const detail = step.error_code || step.result || step.message || '';
+    return '<div style="display:grid;grid-template-columns:170px 80px 1fr;gap:6px;align-items:start;">'
+      + '<span>' + esc(step.name || step.id || 'step') + '</span>'
+      + '<span style="color:' + color + ';">' + esc(state) + '</span>'
+      + '<span style="color:var(--text3);">' + esc(detail) + (step.duration_ms ? ' (' + step.duration_ms + ' ms)' : '') + '</span>'
+      + '</div>';
+  }).join('');
+  return '<div style="display:grid;gap:8px;color:var(--text2);">'
+    + '<div style="color:#ef4444;font-weight:600;">Rotation failed</div>'
+    + '<div><strong>Stage:</strong> ' + esc(stage) + '</div>'
+    + '<div><strong>Reason:</strong> ' + esc(reason) + (code ? ' <span style="color:var(--text3);">(' + esc(code) + ')</span>' : '') + '</div>'
+    + '<div><strong>Compensation:</strong> ' + esc(compensation) + '</div>'
+    + '<div><strong>Manual recovery required:</strong> ' + esc(manual) + '</div>'
+    + '<details style="margin-top:4px;"><summary style="cursor:pointer;">Execution timeline for job #' + esc(String(jobId)) + '</summary>'
+    + '<div style="display:grid;gap:4px;margin-top:8px;font-size:11px;">' + timeline + '</div></details>'
+    + '</div>';
 }
 
 /* ===== PHP MAIL CARD ===== */

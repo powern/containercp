@@ -42,7 +42,10 @@ public:
                                       RuntimeApply runtime_apply,
                                       SiteHealthVerifier site_health_verifier);
 
+    DatabaseCredentialRotationStepResult load_metadata(const DatabaseCredentialRotationRequest& request) override;
     DatabaseCredentialRotationStepResult inspect_wordpress(const DatabaseCredentialRotationRequest& request) override;
+    DatabaseCredentialRotationStepResult resolve_database_target(const DatabaseCredentialRotationRequest& request) override;
+    DatabaseCredentialRotationStepResult load_mariadb_admin_credentials(const DatabaseCredentialRotationRequest& request) override;
     DatabaseCredentialRotationStepResult verify_old_credential(const DatabaseCredentialRotationRequest& request) override;
     DatabaseCredentialRotationStepResult assess_shared_user(const DatabaseCredentialRotationRequest& request) override;
     DatabaseCredentialRotationStepResult generate_password(const DatabaseCredentialRotationRequest& request) override;

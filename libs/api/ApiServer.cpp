@@ -959,7 +959,33 @@ bool ApiServer::start() {
                  << ",\"current_step\":" << job->current_step
                  << ",\"message\":\"" << JsonFormatter::escape(job->message)
                  << "\",\"created_at\":\"" << JsonFormatter::escape(job->created_at)
-                 << "\"}}";
+                 << "\",\"steps\":[";
+            for (std::size_t i = 0; i < job->step_details.size(); ++i) {
+                const auto& step = job->step_details[i];
+                if (i > 0) json << ",";
+                json << "{\"id\":\"" << JsonFormatter::escape(step.id)
+                     << "\",\"name\":\"" << JsonFormatter::escape(step.name)
+                     << "\",\"started\":" << (step.started ? "true" : "false")
+                     << ",\"completed\":" << (step.completed ? "true" : "false")
+                     << ",\"failed\":" << (step.failed ? "true" : "false")
+                     << ",\"skipped\":" << (step.skipped ? "true" : "false")
+                     << ",\"duration_ms\":" << step.duration_ms
+                     << ",\"result\":\"" << JsonFormatter::escape(step.result)
+                     << "\",\"message\":\"" << JsonFormatter::escape(step.message)
+                     << "\",\"error_code\":\"" << JsonFormatter::escape(step.error_code)
+                     << "\",\"started_at\":\"" << JsonFormatter::escape(step.started_at)
+                     << "\",\"completed_at\":\"" << JsonFormatter::escape(step.completed_at)
+                     << "\"}";
+            }
+            json << "],\"failure\":{"
+                 << "\"step\":\"" << JsonFormatter::escape(job->failure.step)
+                 << "\",\"step_name\":\"" << JsonFormatter::escape(job->failure.step_name)
+                 << "\",\"reason\":\"" << JsonFormatter::escape(job->failure.reason)
+                 << "\",\"error_code\":\"" << JsonFormatter::escape(job->failure.error_code)
+                 << "\",\"compensation_started\":" << (job->failure.compensation_started ? "true" : "false")
+                 << ",\"compensation_result\":\"" << JsonFormatter::escape(job->failure.compensation_result)
+                 << "\",\"manual_recovery_required\":" << (job->failure.manual_recovery_required ? "true" : "false")
+                 << "}}}";
             r.body = json.str();
             return r;
         }

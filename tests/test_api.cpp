@@ -228,6 +228,9 @@ TEST_CASE("WordPress credential UI uses public endpoints without raw password fi
     CHECK(wordpress_block.find("database_target_status") != std::string::npos);
     CHECK(wordpress_block.find("targetBadgeClass") != std::string::npos);
     CHECK(wordpress_block.find("disabledReason") != std::string::npos);
+    CHECK(wordpress_block.find("renderWordPressRotationDiagnostics") != std::string::npos);
+    CHECK(wordpress_block.find("compensation_result") != std::string::npos);
+    CHECK(wordpress_block.find("manual_recovery_required") != std::string::npos);
     CHECK(wordpress_block.find("siteDatabases[0]") == std::string::npos);
 }
 

@@ -126,11 +126,45 @@ Flow: ApiServer → `SiteRuntimeManager::services_for_action()` →
 
 **GET /api/jobs** — returns array of jobs.
 
-**GET /api/jobs?id=123** — returns single job with `current_step` field.
+**GET /api/jobs?id=123** — returns single job with `current_step`, `steps`, and `failure` fields.
 
 Jobs have: `id`, `type` (e.g. `ssl-issue`, `runtime-restart-web`),
 `status` (`pending`|`running`|`completed`|`failed`), `progress` (0-100),
 `message`, `created_at`.
+
+Job details additionally expose a public-safe execution timeline:
+
+```json
+{
+  "steps": [
+    {
+      "id": "verify_current_password",
+      "name": "Verify current password",
+      "started": true,
+      "completed": false,
+      "failed": true,
+      "skipped": false,
+      "duration_ms": 57,
+      "result": "failed",
+      "message": "Existing database credential verification failed",
+      "error_code": "old_credential_verification_failed",
+      "started_at": "2026-07-20T00:00:00Z",
+      "completed_at": "2026-07-20T00:00:01Z"
+    }
+  ],
+  "failure": {
+    "step": "verify_current_password",
+    "step_name": "Verify current password",
+    "reason": "Existing database credential verification failed",
+    "error_code": "old_credential_verification_failed",
+    "compensation_started": false,
+    "compensation_result": "not_started",
+    "manual_recovery_required": false
+  }
+}
+```
+
+Job diagnostics must not expose passwords, generated credentials, database client option files, raw command output, config paths, site roots, or stack traces.
 
 ### 2.5 SSL / Certificates
 
@@ -307,6 +341,7 @@ Operational notes:
 - Current v0.8 foundation builds queue jobs but fail closed until live rotation dependencies are explicitly wired and validated.
 - A successful future rotation must verify MariaDB access with the new password, WordPress/PHP database access, runtime container availability, and metadata persistence before reporting completion. HTTP/application health validation remains a separate live-validation requirement.
 - Post-mutation failures must compensate or report `manual_recovery_required`; partial rotation must never be reported as success.
+- Rotation job details expose a complete public-safe timeline through `GET /api/jobs?id=N`. At minimum the rotation timeline includes lock acquisition, metadata load, WordPress inspection, database target resolution, shared credential verification, MariaDB admin credential load, current password verification, new password generation, MariaDB password update, `wp-config.php` update, metadata persistence, runtime verification, commit, compensation, and manual recovery entry.
 
 See `docs/development/wordpress-credential-management.md` for supported config forms, threat model, operator workflow, and residual risks.
 

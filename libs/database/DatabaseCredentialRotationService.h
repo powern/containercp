@@ -2,6 +2,7 @@
 #define CONTAINERCP_DATABASE_DATABASE_CREDENTIAL_ROTATION_SERVICE_H
 
 #include "MariaDBCredentialProvider.h"
+#include "jobs/Job.h"
 
 #include <cstdint>
 #include <mutex>
@@ -36,6 +37,7 @@ struct DatabaseCredentialRotationRequest {
     uint64_t site_id = 0;
     uint64_t database_id = 0;
     std::string confirmation;
+    uint64_t job_id = 0;
 };
 
 struct DatabaseCredentialRotationEvent {
@@ -50,6 +52,8 @@ struct DatabaseCredentialRotationResult {
     std::string code;
     std::string message;
     std::vector<DatabaseCredentialRotationEvent> events;
+    std::vector<jobs::JobStep> steps;
+    jobs::JobFailureDiagnostics failure;
 };
 
 struct DatabaseCredentialRotationStepResult {
@@ -64,7 +68,10 @@ class DatabaseCredentialRotationDependencies {
 public:
     virtual ~DatabaseCredentialRotationDependencies() = default;
 
+    virtual DatabaseCredentialRotationStepResult load_metadata(const DatabaseCredentialRotationRequest& request) = 0;
     virtual DatabaseCredentialRotationStepResult inspect_wordpress(const DatabaseCredentialRotationRequest& request) = 0;
+    virtual DatabaseCredentialRotationStepResult resolve_database_target(const DatabaseCredentialRotationRequest& request) = 0;
+    virtual DatabaseCredentialRotationStepResult load_mariadb_admin_credentials(const DatabaseCredentialRotationRequest& request) = 0;
     virtual DatabaseCredentialRotationStepResult verify_old_credential(const DatabaseCredentialRotationRequest& request) = 0;
     virtual DatabaseCredentialRotationStepResult assess_shared_user(const DatabaseCredentialRotationRequest& request) = 0;
     virtual DatabaseCredentialRotationStepResult generate_password(const DatabaseCredentialRotationRequest& request) = 0;

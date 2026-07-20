@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-20 | `this commit` | WordPress — Expose rotation diagnostics
+
+**Summary:** Completed WP-R6 by extending the job execution model and WordPress database credential rotation workflow with public-safe step diagnostics. Rotation jobs now record per-step identifiers, names, start/completion/failure/skipped state, durations, results, diagnostic messages, and error codes. Failed jobs expose the failed stage, reason, compensation state, rollback outcome, and manual recovery flag through job details.
+
+**Files changed:** `libs/jobs/Job.h`, `libs/jobs/JobManager.h`, `libs/jobs/JobManager.cpp`, `libs/database/DatabaseCredentialRotationService.h`, `libs/database/DatabaseCredentialRotationService.cpp`, `libs/database/DatabaseCredentialRotationAdapter.h`, `libs/database/DatabaseCredentialRotationAdapter.cpp`, `libs/database/DatabaseCredentialRotationJobService.cpp`, `libs/api/ApiServer.cpp`, `web/app.js`, `tests/test_database_credential_rotation.cpp`, `tests/test_api.cpp`, `docs/api/API_REFERENCE.md`, `CHANGELOG.md`
+
+**User-visible behavior:** `GET /api/jobs?id=N` now returns a complete structured execution timeline and `failure` diagnostics for rotation jobs without exposing passwords. The WordPress credentials card now displays the failed stage, reason, compensation result, manual recovery requirement, and expandable timeline instead of only `Credential rotation failed`. Rotation stage logs emit structured `START`, `SUCCESS`, `FAILURE`, and `COMPENSATION` messages with job id and site id.
+
+**Validation:** Incremental build passed with `cmake --build build-wp-r5 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Focused WP-R6 suites passed: `*DatabaseCredentialRotation*` (`42` cases, `464` assertions) and `*API*` (`18` cases, `73` assertions). `node --check web/app.js` and `git diff --check` passed. A later full doctest/CTest run failed in unrelated importer/migration/rollback/SQLite tests after parallel full validation reused shared `/tmp` fixture paths and an existing Docker container name (`site-1-redis`); the focused WP-R6 diagnostics, API, and GUI validation remained green.
+
+**Known risks:** Full-suite validation is currently blocked by unrelated shared test-environment contamination and existing flaky Docker/SQLite tests. The live rotation bug is intentionally not fixed in this change; after deployment, the live rotation test must be repeated only to collect the new failed step, reason, compensation status, and root cause.
+
+---
+
 ## 2026-07-20 | `this commit` | WordPress — Use structural define parser for credentials
 
 **Summary:** Completed WP-R5 by replacing the WordPress credential detector's raw-text conditional heuristic with a shared structural PHP `define()` scanner used by both inspection and config updates. The scanner ignores comments and string literals, tracks control-flow/function/try-catch scopes, and keeps conditional or duplicate credential definitions fail-closed while allowing ordinary top-level WordPress database constants preceded by standard comments.

@@ -18,6 +18,12 @@ uint64_t JobManager::create(const std::string& type, const std::vector<std::stri
     j.status = "pending";
     j.progress = 0;
     j.steps = steps;
+    for (const auto& step_name : steps) {
+        JobStep step;
+        step.id = step_name;
+        step.name = step_name;
+        j.step_details.push_back(std::move(step));
+    }
     j.current_step = 0;
     j.created_at = ts.str();
     jobs_.push_back(std::move(j));
@@ -40,6 +46,24 @@ void JobManager::update(uint64_t id, const std::string& status, int progress, co
                 ts << std::put_time(std::gmtime(&tt), "%Y-%m-%dT%H:%M:%SZ");
                 j.completed_at = ts.str();
             }
+            return;
+        }
+    }
+}
+
+void JobManager::update_step_details(uint64_t id, const std::vector<JobStep>& steps) {
+    for (auto& j : jobs_) {
+        if (j.id == id) {
+            j.step_details = steps;
+            return;
+        }
+    }
+}
+
+void JobManager::update_failure(uint64_t id, const JobFailureDiagnostics& failure) {
+    for (auto& j : jobs_) {
+        if (j.id == id) {
+            j.failure = failure;
             return;
         }
     }

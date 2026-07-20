@@ -117,7 +117,7 @@ bool DatabaseCredentialRotationAdapter::load_admin_credential(Context& context) 
     return true;
 }
 
-DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::inspect_wordpress(const DatabaseCredentialRotationRequest& request) {
+DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::load_metadata(const DatabaseCredentialRotationRequest& request) {
     auto* site = sites_.find_by_id(request.site_id);
     if (site == nullptr) {
         return fail("site_not_found", "Site was not found");
@@ -126,39 +126,72 @@ DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::inspect_
     if (database == nullptr || database->site_id != request.site_id) {
         return fail("database_not_found", "Database was not found for this site");
     }
-    const auto inspected = wordpress_config_.inspect_site(request.site_id);
-    if (!wordpress_direct_complete(inspected)) {
-        return fail(inspected.code.empty() ? "wordpress_unsupported" : inspected.code,
-                    "WordPress credential source is not supported");
-    }
-    const auto target = wordpress_database_credentials_.resolve_target(inspected);
-    if (!target.available) {
-        return fail(target.status.empty() ? "database_target_unavailable" : target.status,
-                    target.message.empty() ? "WordPress database target could not be resolved" : target.message);
-    }
-    if (target.database_id != request.database_id || database->id != target.database_id) {
-        return fail("metadata_conflict", "WordPress credential metadata does not match the database record");
-    }
 
     Context context;
     context.site_id = request.site_id;
     context.database_id = request.database_id;
     context.domain = site->domain;
     context.old_password = database->db_password;
-    context.site_root = inspected.site_root;
-    context.config_path = inspected.config_path;
-    context.wordpress_result = inspected;
-    context.mariadb_target = {(inspected.site_root / "docker-compose.yml").string(), "mariadb"};
-    context.mariadb_identity = {database->db_user, "%"};
-    if (context.old_password.empty() || !load_admin_credential(context)) {
+    if (context.old_password.empty()) {
         return fail("credential_source_unavailable", "Database credential source is unavailable");
     }
 
     std::lock_guard<std::mutex> guard(mutex_);
     contexts_[key(request)] = std::move(context);
+    return ok("metadata_loaded", "Credential metadata loaded");
+}
+
+DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::inspect_wordpress(const DatabaseCredentialRotationRequest& request) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    auto* context = context_for(request);
+    if (context == nullptr) return fail("rotation_context_missing", "Credential rotation context is missing");
+    const auto inspected = wordpress_config_.inspect_site(request.site_id);
+    if (!wordpress_direct_complete(inspected)) {
+        contexts_.erase(key(request));
+        return fail(inspected.code.empty() ? "wordpress_unsupported" : inspected.code,
+                    "WordPress credential source is not supported");
+    }
+    context->site_root = inspected.site_root;
+    context->config_path = inspected.config_path;
+    context->wordpress_result = inspected;
+    context->mariadb_target = {(inspected.site_root / "docker-compose.yml").string(), "mariadb"};
     logger_.info("AUDIT", "WordPress credential rotation inspected site=" + std::to_string(request.site_id) +
                             " database=" + std::to_string(request.database_id));
     return ok("wordpress_inspected", "WordPress credential source inspected");
+}
+
+DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::resolve_database_target(const DatabaseCredentialRotationRequest& request) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    auto* context = context_for(request);
+    if (context == nullptr) return fail("rotation_context_missing", "Credential rotation context is missing");
+    auto* database = databases_.find(request.database_id);
+    if (database == nullptr || database->site_id != request.site_id) {
+        contexts_.erase(key(request));
+        return fail("database_not_found", "Database was not found for this site");
+    }
+    const auto target = wordpress_database_credentials_.resolve_target(context->wordpress_result);
+    if (!target.available) {
+        contexts_.erase(key(request));
+        return fail(target.status.empty() ? "database_target_unavailable" : target.status,
+                    target.message.empty() ? "WordPress database target could not be resolved" : target.message);
+    }
+    if (target.database_id != request.database_id || database->id != target.database_id) {
+        contexts_.erase(key(request));
+        return fail("metadata_conflict", "WordPress credential metadata does not match the database record");
+    }
+    context->mariadb_identity = {database->db_user, "%"};
+    return ok("database_target_resolved", "WordPress database credential target resolved");
+}
+
+DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::load_mariadb_admin_credentials(const DatabaseCredentialRotationRequest& request) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    auto* context = context_for(request);
+    if (context == nullptr) return fail("rotation_context_missing", "Credential rotation context is missing");
+    if (!load_admin_credential(*context)) {
+        contexts_.erase(key(request));
+        return fail("credential_source_unavailable", "Database credential source is unavailable");
+    }
+    return ok("mariadb_admin_credentials_loaded", "MariaDB admin credentials loaded");
 }
 
 DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::verify_old_credential(const DatabaseCredentialRotationRequest& request) {
