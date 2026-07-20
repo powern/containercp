@@ -38,6 +38,7 @@ set(CONTAINERCP_SOURCES
     libs/database/DatabaseCredentialRotationAudit.cpp
     libs/database/DatabaseCredentialRotationJobService.cpp
     libs/database/DatabaseCredentialRotationService.cpp
+    libs/database/DatabaseViewService.cpp
     libs/database/MariaDBCredentialProvider.cpp
     libs/database/DatabaseManager.cpp
     libs/domain/Domain.cpp

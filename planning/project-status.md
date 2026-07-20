@@ -411,8 +411,8 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | WP-2: WordPressConfigService read-only inspection | ⬜ | Reusable inspection boundary for migrated and future WordPress sites |
 | WP-3: Safe WordPress config update | ⬜ | Atomic direct-constant update with syntax validation and rollback |
 | WP-4: MariaDB password-change provider | ⬜ | Provider boundary required before rotation |
-| WP-5: DatabaseCredentialRotationService | ⬜ | Saga and compensation for MariaDB, metadata, `.env`, and `wp-config.php` |
-| DB-1: Databases read-only inventory | ⬜ | Postponed until WordPress credential foundation is stable unless strictly read-only |
+| WP-5: DatabaseCredentialRotationService | ✅ | Saga and compensation for MariaDB, metadata, `.env`, and `wp-config.php` |
+| DB-1: Databases read-only inventory | ✅ | Enriched `DatabaseViewService` backend implemented and repository-validated; read-only only |
 
 ## Future — Multi-node
 

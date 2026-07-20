@@ -21,6 +21,7 @@
 #include "database/DatabaseCredentialRotationJobService.h"
 #include "database/DatabaseCredentialRotationService.h"
 #include "database/DatabaseManager.h"
+#include "database/DatabaseViewService.h"
 #include "dns/DnsCheckService.h"
 #include "network/NetworkService.h"
 #include "domain/DomainManager.h"
@@ -78,6 +79,7 @@ public:
     php::PhpVersionManager& php_versions();
     profile::ProfileManager& profiles();
     database::DatabaseManager& databases();
+    database::DatabaseViewService& database_view();
     database::DatabaseCredentialRotationJobService& database_credential_rotation_jobs();
     backup::BackupManager& backups();
     backup::BackupProvider& backup_provider();
@@ -189,6 +191,7 @@ private:
     runtime::PortManager port_manager_;
     runtime::RuntimeActionExecutor runtime_action_executor_;
     runtime::SiteRuntimeManager site_runtime_;
+    database::DatabaseViewService database_view_;
     runtime::RuntimeSynchronizer runtime_sync_;
     runtime::HealthRegistry health_;
     mail::SiteMailOrchestrator mail_orchestrator_;

@@ -138,7 +138,7 @@ ParsedField parse_field(const std::vector<PhpDefineCall>& calls, const std::stri
     return result;
 }
 
-WordPressCredentialValue to_credential_value(const ParsedField& field, bool sensitive) {
+WordPressCredentialValue to_credential_value(const ParsedField& field, bool sensitive, bool include_sensitive) {
     WordPressCredentialValue value;
     value.source = field.source;
     value.mutability = field.mutability;
@@ -146,12 +146,16 @@ WordPressCredentialValue to_credential_value(const ParsedField& field, bool sens
     value.sensitive = sensitive;
     if (field.state == WordPressCredentialValueState::Present) {
         if (sensitive) {
-            value.state = WordPressCredentialValueState::Redacted;
+            if (include_sensitive) {
+                value.value = field.value;
+            } else {
+                value.state = WordPressCredentialValueState::Redacted;
+            }
         } else {
             value.value = field.value;
         }
     }
-    return value.public_safe();
+    return include_sensitive ? value : value.public_safe();
 }
 
 void add_issue(std::vector<WordPressConfigIssue>& issues,
@@ -264,7 +268,7 @@ WordPressConfigPathSafety WordPressConfigDetector::inspect_config_path(const std
     return safe_path(root_abs, candidate_abs);
 }
 
-WordPressConfigInspection WordPressConfigDetector::inspect_content(const std::string& content) const {
+WordPressConfigInspection inspect_content_impl(const std::string& content, bool include_sensitive) {
     WordPressConfigInspection inspection;
     if (trim(content).empty()) {
         inspection.source = WordPressCredentialSource::Missing;
@@ -284,10 +288,10 @@ WordPressConfigInspection WordPressConfigDetector::inspect_content(const std::st
     auto db_password = parse_field(calls, "DB_PASSWORD");
     auto db_host = parse_field(calls, "DB_HOST");
 
-    inspection.credentials.db_name = to_credential_value(db_name, false);
-    inspection.credentials.db_user = to_credential_value(db_user, false);
-    inspection.credentials.db_password = to_credential_value(db_password, true);
-    inspection.credentials.db_host = to_credential_value(db_host, false);
+    inspection.credentials.db_name = to_credential_value(db_name, false, include_sensitive);
+    inspection.credentials.db_user = to_credential_value(db_user, false, include_sensitive);
+    inspection.credentials.db_password = to_credential_value(db_password, true, include_sensitive);
+    inspection.credentials.db_host = to_credential_value(db_host, false, include_sensitive);
 
     const std::array<std::pair<std::string_view, ParsedField>, 4> fields = {
         std::pair<std::string_view, ParsedField>{"DB_NAME", db_name},
@@ -353,7 +357,15 @@ WordPressConfigInspection WordPressConfigDetector::inspect_content(const std::st
         inspection.status = WordPressCredentialStatus::Complete;
     }
 
-    return inspection.public_safe();
+    return include_sensitive ? inspection : inspection.public_safe();
+}
+
+WordPressConfigInspection WordPressConfigDetector::inspect_content(const std::string& content) const {
+    return inspect_content_impl(content, false);
+}
+
+WordPressConfigInspection WordPressConfigDetector::inspect_content_with_secrets(const std::string& content) const {
+    return inspect_content_impl(content, true);
 }
 
 } // namespace containercp::wordpress

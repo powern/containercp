@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-20 | `this commit` | Database — Add DB-1 read-only inventory foundation
+
+**Summary:** Added the Databases Module DB-1 backend foundation. The API now builds enriched read-only database views with Site metadata, MariaDB runtime status, credential availability, read-only connection status, ownership state, imported state, and GUI-ready timestamp fields without changing physical database state.
+
+**Files changed:** `libs/database/DatabaseViewService.h`, `libs/database/DatabaseViewService.cpp`, `libs/wordpress/WordPressConfigDetector.h`, `libs/wordpress/WordPressConfigDetector.cpp`, `libs/wordpress/WordPressConfigService.h`, `libs/wordpress/WordPressConfigService.cpp`, `libs/core/ServiceRegistry.h`, `libs/core/ServiceRegistry.cpp`, `libs/api/ApiServer.cpp`, `docs/api/API_REFERENCE.md`, `docs/development/api-rules.md`, `planning/project-status.md`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/test_database_view_service.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** `GET /api/databases` now returns enriched `DatabaseView` objects, and `GET /api/databases/<id>` returns one enriched database detail object. Responses include database id, site id, domain, database name/user, engine/version, runtime status, connection status, credential state, ownership state, imported state, and timestamp fields. Passwords and other secrets are never serialized. This sprint does not implement create/drop, password rotation, Adminer, SQL import/export, backup integration, Docker changes, SQL writes, or SQLite schema redesign.
+
+**Validation:** Clean configure passed with `cmake -S . -B build-db1 -G Ninja -DCMAKE_BUILD_TYPE=Release`. Clean build passed with `cmake --build build-db1 --target containercp_tests containercp containercpd -- -j1` after rerunning when the first build invocation hit the tool timeout while still compiling. Full doctest passed (`826` cases, `5698` assertions). Full CTest passed (`1/1`). Post-review rebuild, full doctest, full CTest, and `git diff --check` passed after architectural review fixes.
+
+**Known risks:** `created_at` and `updated_at` are present but empty because database metadata timestamps are not stored yet and SQLite schema redesign is out of DB-1 scope. Runtime and connection checks depend on the existing Docker/MariaDB availability of the selected Site stack; unavailable runtime reports a read-only status instead of mutating anything.
+
+---
+
 ## 2026-07-20 | `this commit` | WordPress — Add structured credential rotation audit logs
 
 **Summary:** Added public-safe structured audit logging for the complete WordPress database credential rotation lifecycle. Rotation request, queue, start, per-stage start/success/failure, compensation, manual recovery, failed-before-mutation, compensated failure, and successful completion records now use one shared formatter and include `job_id`, `site_id`, `domain`, `database_id`, `stage`, and `result`, with error, compensation, manual recovery, and duration fields where applicable.

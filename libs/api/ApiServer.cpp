@@ -35,6 +35,7 @@
 #include <iostream>
 #include <netinet/in.h>
 #include <sstream>
+#include <stdexcept>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -872,7 +873,45 @@ bool ApiServer::start() {
 
     router_.add("GET", "/api/databases", [&s](const Request&) {
         Response r;
-        r.body = JsonFormatter::success(JsonFormatter::databases(s.databases().list()));
+        r.body = JsonFormatter::success(s.database_view().build_enriched_json());
+        return r;
+    });
+
+    router_.add_prefix("GET", "/api/databases/", [&s](const Request& req) {
+        Response r;
+        const std::string id_text = req.path.substr(std::string("/api/databases/").size());
+        if (id_text.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Database id is required\"}";
+            return r;
+        }
+        for (unsigned char c : id_text) {
+            if (!std::isdigit(c)) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Database id must be numeric\"}";
+                return r;
+            }
+        }
+        uint64_t database_id = 0;
+        try {
+            size_t parsed = 0;
+            database_id = std::stoull(id_text, &parsed);
+            if (parsed != id_text.size()) {
+                throw std::invalid_argument("trailing data");
+            }
+        } catch (...) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Database id must be numeric\"}";
+            return r;
+        }
+
+        const auto json = s.database_view().build_enriched_json(database_id);
+        if (json == "null") {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Database not found\"}";
+            return r;
+        }
+        r.body = JsonFormatter::success(json);
         return r;
     });
 

@@ -40,6 +40,18 @@ struct WordPressConfigPublicView {
     std::vector<WordPressConfigIssue> issues;
 };
 
+struct WordPressDatabaseCredentialSecret {
+    bool available = false;
+    std::string code;
+    std::string message;
+    uint64_t site_id = 0;
+    std::string domain;
+    std::string db_name;
+    std::string db_user;
+    std::string db_host;
+    std::string db_password;
+};
+
 class WordPressConfigService {
 public:
     explicit WordPressConfigService(site::SiteManager& sites);
@@ -48,11 +60,15 @@ public:
     WordPressConfigServiceResult inspect_site(uint64_t site_id) const;
     WordPressConfigServiceResult inspect_domain(const std::string& domain) const;
 
+    // Internal-only credentials for read-only verification. Do not serialize,
+    // log, or pass these values outside provider/runtime verification boundaries.
+    WordPressDatabaseCredentialSecret database_credentials_for_verification(uint64_t site_id) const;
+
     WordPressConfigPublicView public_view(const WordPressConfigServiceResult& result) const;
     WordPressRuntimeVerificationRequest runtime_verification_request(const WordPressConfigServiceResult& result) const;
 
 private:
-    WordPressConfigServiceResult inspect(const site::Site& site_record) const;
+    WordPressConfigServiceResult inspect(const site::Site& site_record, bool include_sensitive = false) const;
     WordPressConfigServiceResult failure(uint64_t site_id,
                                          std::string domain,
                                          WordPressCredentialStatus status,

@@ -81,6 +81,7 @@ ServiceRegistry::ServiceRegistry()
     , runtime_(logger_, config_.sites_dir())
     , runtime_action_executor_(logger_)
     , site_runtime_(logger_, config_.sites_dir(), runtime_action_executor_)
+    , database_view_(logger_, databases_, sites_, site_runtime_, wordpress_config_, mariadb_credential_provider_, config_.sites_dir())
     , mail_orchestrator_(mail_credentials_, runtime_, filesystem_, config_)
     , proxy_view_(logger_, reverse_proxies_, sites_, cert_store_, proxy_provider_, site_runtime_)
     , hosting_provider_(filesystem_, config_, php_versions_, runtime_, profiles_)
@@ -628,6 +629,10 @@ profile::ProfileManager& ServiceRegistry::profiles() {
 
 database::DatabaseManager& ServiceRegistry::databases() {
     return databases_;
+}
+
+database::DatabaseViewService& ServiceRegistry::database_view() {
+    return database_view_;
 }
 
 database::DatabaseCredentialRotationJobService& ServiceRegistry::database_credential_rotation_jobs() {

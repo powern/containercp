@@ -108,7 +108,41 @@ WordPressConfigServiceResult WordPressConfigService::inspect_domain(const std::s
     return inspect(*site_record);
 }
 
-WordPressConfigServiceResult WordPressConfigService::inspect(const site::Site& site_record) const {
+WordPressDatabaseCredentialSecret WordPressConfigService::database_credentials_for_verification(uint64_t site_id) const {
+    WordPressDatabaseCredentialSecret secret;
+    const auto result = [this, site_id]() {
+        const auto* site_record = sites_.find_by_id(site_id);
+        if (site_record == nullptr) {
+            return failure(site_id, {}, WordPressCredentialStatus::Error, "site_not_found", "Site was not found");
+        }
+        return inspect(*site_record, true);
+    }();
+
+    secret.site_id = result.site_id;
+    secret.domain = result.domain;
+    secret.code = result.code;
+    secret.message = result.message;
+    if (!result.ok) {
+        return secret;
+    }
+
+    const auto& credentials = result.inspection.credentials;
+    secret.db_name = credentials.db_name.value;
+    secret.db_user = credentials.db_user.value;
+    secret.db_host = credentials.db_host.value;
+    secret.db_password = credentials.db_password.value;
+    if (credentials.db_name.state == WordPressCredentialValueState::Present &&
+        credentials.db_user.state == WordPressCredentialValueState::Present &&
+        credentials.db_password.state == WordPressCredentialValueState::Present &&
+        !secret.db_name.empty() && !secret.db_user.empty()) {
+        secret.available = true;
+        secret.code = "available";
+        secret.message = "WordPress database credentials are available for internal verification";
+    }
+    return secret;
+}
+
+WordPressConfigServiceResult WordPressConfigService::inspect(const site::Site& site_record, bool include_sensitive) const {
     std::error_code ec;
     const fs::path sites_root_abs = fs::absolute(sites_root_, ec).lexically_normal();
     if (ec || sites_root_.empty()) {
@@ -188,7 +222,9 @@ WordPressConfigServiceResult WordPressConfigService::inspect(const site::Site& s
         result.document_root = document_root;
         result.config_path = safety.config_path;
         result.container_document_root = container_document_root_for_site(site_record);
-        result.inspection = detector_.inspect_content(content);
+        result.inspection = include_sensitive
+            ? detector_.inspect_content_with_secrets(content)
+            : detector_.inspect_content(content);
         if (has_unsafe_permissions(safety.config_path)) {
             add_permission_warning(result.inspection);
         }

@@ -202,7 +202,8 @@ The API must call the owning subsystem — never duplicate its logic.
   `RuntimeActionExecutor`.  Do not run `docker` commands from the API
   handler.
 - **Backups** — call `BackupManager` and `BackupProvider`.
-- **Databases** — call `DatabaseManager` (when implemented).
+- **Databases** — call `DatabaseViewService` for read-only inventory/detail
+  views and `DatabaseManager` only for database metadata lifecycle operations.
 - **Proxy** — call `ReverseProxyManager` and `ProxyProvider`.
 
 API handlers should be **thin dispatchers** — validate, delegate,
@@ -227,7 +228,7 @@ format.  No business logic, no direct I/O, no Docker commands.
 | Proxy | `GET /api/proxy` | proxy listing | `ReverseProxyManager` |
 | Auth | `POST /api/auth/login\|logout\|check` | session auth | `AuthService` |
 | Health | `GET /api/health` | daemon health | — |
-| Databases | `GET /api/databases` | database listing | `DatabaseManager` |
+| Databases | `GET /api/databases`, `GET /api/databases/<id>` | read-only enriched database inventory | `DatabaseViewService` |
 | WordPress | `GET /api/wordpress/database-credentials/status`, `POST /api/wordpress/database-credentials/rotate` | credential status, queue DB credential rotation | `WordPressConfigService`, `DatabaseCredentialRotationJobService` |
 | Access | `GET /api/access-users` | SFTP access users | `AccessUserManager` |
 

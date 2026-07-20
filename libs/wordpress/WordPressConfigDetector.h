@@ -20,6 +20,10 @@ struct WordPressConfigPathSafety {
 class WordPressConfigDetector {
 public:
     WordPressConfigInspection inspect_content(const std::string& content) const;
+
+    // Internal-only inspection for verification flows. Callers must not serialize
+    // the returned credential values or expose them through API, CLI, UI, or logs.
+    WordPressConfigInspection inspect_content_with_secrets(const std::string& content) const;
     WordPressConfigPathSafety inspect_config_path(const std::filesystem::path& site_root,
                                                   const std::filesystem::path& candidate_path) const;
 

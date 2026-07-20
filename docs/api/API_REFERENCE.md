@@ -272,8 +272,60 @@ subsystems.
 
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|
-| GET | `/api/databases` | List databases | `DatabaseManager` |
+| GET | `/api/databases` | List enriched read-only database inventory | `DatabaseViewService` |
+| GET | `/api/databases/<id>` | Read one enriched database view | `DatabaseViewService` |
 | POST | `/api/databases/remove` | Remove a database record | `DatabaseManager` |
+
+**GET /api/databases** — returns DB-1 read-only `DatabaseView` objects. This
+endpoint does not create, drop, import, export, rotate passwords, deploy
+Adminer, restart containers, rewrite application configuration, or change
+Docker Compose output.
+
+Each item includes:
+
+```json
+{
+  "database_id": 1,
+  "id": 1,
+  "site_id": 1,
+  "domain": "example.com",
+  "database_name": "example_db",
+  "database_user": "example_user",
+  "engine": "mariadb",
+  "engine_version": "lts",
+  "runtime_status": "Running",
+  "connection_status": "verified",
+  "credential_state": "available",
+  "ownership_state": "managed",
+  "imported_state": "none",
+  "created_at": "",
+  "updated_at": "",
+  "enabled": true
+}
+```
+
+Field semantics:
+
+- `runtime_status`: `Running`, `Stopped`, or `Unknown`, derived through the
+  runtime subsystem for the selected Site's `mariadb` service.
+- `connection_status`: `verified`, `connection_failed`, or `not_checked`.
+  Verification is read-only and uses the existing MariaDB credential provider
+  with `SELECT 1` and secure temporary credential transport.
+- `credential_state`: `available`, `missing`, `unknown`, or `invalid`. The
+  view service reuses `WordPressConfigService` for imported WordPress credential
+  inspection and never serializes credential values.
+- `ownership_state`: `managed` or `imported`.
+- `imported_state`: `none`, `detected`, `credential_unavailable`,
+  `metadata_conflict`, or `site_missing`.
+- `created_at` and `updated_at` are present for the GUI contract. They are empty
+  until database metadata timestamps are added in a later storage task.
+
+The response never includes `db_password`, `DB_PASSWORD`, `MYSQL_ROOT_PASSWORD`,
+temporary option-file contents, generated credentials, root/admin credentials,
+SQL password literals, command output with secrets, or one-time Adminer tokens.
+
+**GET /api/databases/<id>** — returns one `DatabaseView` object. Returns `404`
+when the database record does not exist and `400` for a non-numeric id.
 
 ### 2.11a WordPress Database Credentials
 

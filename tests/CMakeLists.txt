@@ -26,6 +26,7 @@ add_executable(containercp_tests
     test_migration.cpp
     test_migration_api.cpp
     test_database_credential_rotation.cpp
+    test_database_view_service.cpp
     test_mariadb_credential_provider.cpp
     test_migrate_sqlite.cpp
     test_version.cpp
@@ -60,6 +61,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/database/DatabaseCredentialRotationAudit.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/DatabaseCredentialRotationJobService.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/DatabaseCredentialRotationService.cpp
+    ${CMAKE_SOURCE_DIR}/libs/database/DatabaseViewService.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/MariaDBCredentialProvider.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/AccessUser.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/AccessUserManager.cpp
