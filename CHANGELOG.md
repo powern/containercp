@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-20 | `this commit` | WordPress — Document conditional parser false-positive investigation
+
+**Summary:** Added the WP-R4 read-only investigation report for `unity.softico.ua`, documenting that the current `ambiguous` WordPress credential state is a parser false positive caused by comment text (`for WordPress`) being treated as conditional control flow by the detector heuristic.
+
+**Files changed:** `docs/development/wp-r4-conditional-wordpress-credential-investigation.txt`, `CHANGELOG.md`
+
+**User-visible behavior:** No runtime behavior change. The report preserves the live investigation findings in a copyable text file and keeps the production database password redacted.
+
+**Validation:** Documentation-only change. Verified `git diff --check` before commit.
+
+**Known risks:** No code fix is included in this commit. Production was inspected read-only only; no production file, credential, database, container, service, deployment, or rotation was modified.
+
+---
+
 ## 2026-07-20 | `this commit` | WordPress — Normalize path-prefix validation
 
 **Summary:** Fixed WordPress path ownership validation so configured roots with trailing separators are treated the same as roots without trailing separators. A shared `utils::PathUtils` helper now performs component-wise normalized path-prefix comparisons for WordPress config inspection, config path safety, and runtime verification while still rejecting real traversal attempts.
