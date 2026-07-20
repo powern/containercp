@@ -114,6 +114,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/template/TemplateEngine.cpp
     ${CMAKE_SOURCE_DIR}/libs/operations/SiteCreateOperation.cpp
     ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressConfigDetector.cpp
+    ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressPhpDefineScanner.cpp
     ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressConfigService.cpp
     ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressConfigTypes.cpp
     ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressConfigUpdater.cpp

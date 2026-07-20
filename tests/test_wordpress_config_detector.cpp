@@ -23,6 +23,38 @@ void write_file(const fs::path& path, const std::string& content) {
     out << content;
 }
 
+std::string complete_wp_config_prefix(const std::string& prefix) {
+    return R"PHP(<?php
+)PHP" + prefix + R"PHP(
+define('DB_NAME', 'wp_prod');
+define('DB_USER', 'wp_user');
+define('DB_PASSWORD', 'secret');
+define('DB_HOST', 'mariadb');
+)PHP";
+}
+
+void check_complete_direct_constants(const std::string& content) {
+    WordPressConfigDetector detector;
+    const auto inspection = detector.inspect_content(content);
+
+    CHECK(inspection.status == WordPressCredentialStatus::Complete);
+    CHECK(inspection.source == WordPressCredentialSource::DirectConstant);
+    CHECK(inspection.mutability == WordPressCredentialMutability::MutableDirectConstant);
+    CHECK(inspection.credentials.db_name.value == "wp_prod");
+    CHECK(inspection.credentials.db_user.value == "wp_user");
+    CHECK(inspection.credentials.db_host.value == "mariadb");
+    CHECK(inspection.credentials.db_password.value.empty());
+    CHECK(inspection.issues.empty());
+}
+
+void check_ambiguous_credentials(const std::string& content) {
+    WordPressConfigDetector detector;
+    const auto inspection = detector.inspect_content(content);
+
+    CHECK(inspection.status == WordPressCredentialStatus::Ambiguous);
+    CHECK(inspection.mutability == WordPressCredentialMutability::Ambiguous);
+}
+
 } // namespace
 
 TEST_CASE("WordPress detector reads direct constants without exposing password") {
@@ -96,6 +128,163 @@ define('DB_PASSWORD', 'secret');
     CHECK(inspection.status == WordPressCredentialStatus::Ambiguous);
     CHECK(inspection.mutability == WordPressCredentialMutability::Ambiguous);
     CHECK(inspection.issues[0].code == "conditional_constant");
+}
+
+TEST_CASE("WordPress detector ignores standard wp-config comments before top-level credentials") {
+    check_complete_direct_constants(R"PHP(<?php
+// BEGIN CONTAINERCP TRUSTED PROXY
+if (isset($_SERVER["HTTP_X_FORWARDED_PROTO"]) && strtolower($_SERVER["HTTP_X_FORWARDED_PROTO"]) === "https") {
+    $_SERVER["HTTPS"] = "on";
+    $_SERVER["SERVER_PORT"] = 443;
+}
+// END CONTAINERCP TRUSTED PROXY
+
+/**
+ * The base configuration for WordPress
+ * The wp-config.php creation script uses this file during the installation.
+ * You don't have to use the website, you can copy this file to "wp-config.php"
+ * and fill in the values.
+ * @link https://developer.wordpress.org/advanced-administration/wordpress/wp-config/
+ */
+
+// ** Database settings - You can get this info from your web host ** //
+/** The name of the database for WordPress */
+define('DB_NAME', 'wp_prod');
+/** Database username */
+define('DB_USER', 'wp_user');
+/** Database password */
+define('DB_PASSWORD', 'secret');
+/** Database hostname */
+define('DB_HOST', 'mariadb');
+)PHP");
+}
+
+TEST_CASE("WordPress detector ignores control words in comments before top-level credentials") {
+    check_complete_direct_constants(complete_wp_config_prefix(R"PHP(
+// if else elseif switch for foreach while should not affect credential parsing
+/* if else switch for foreach while inside a block comment must be ignored */
+/** The name of the database for WordPress */
+)PHP"));
+}
+
+TEST_CASE("WordPress detector ignores control words in strings before top-level credentials") {
+    check_complete_direct_constants(complete_wp_config_prefix(R"PHP(
+$message = "if else elseif switch for foreach while inside a string";
+$other = 'if else switch for while inside a single-quoted string';
+)PHP"));
+}
+
+TEST_CASE("WordPress detector ignores closed control blocks before top-level credentials") {
+    check_complete_direct_constants(complete_wp_config_prefix(R"PHP(
+if (isset($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
+    $_SERVER['HTTPS'] = 'on';
+}
+)PHP"));
+}
+
+TEST_CASE("WordPress detector keeps active conditional credential definitions ambiguous") {
+    check_ambiguous_credentials(R"PHP(<?php
+define('DB_NAME', 'wp_prod');
+define('DB_USER', 'wp_user');
+if ($env === 'prod') {
+    define('DB_PASSWORD', 'secret');
+}
+define('DB_HOST', 'mariadb');
+)PHP");
+}
+
+TEST_CASE("WordPress detector keeps if else credential selection ambiguous") {
+    check_ambiguous_credentials(R"PHP(<?php
+define('DB_NAME', 'wp_prod');
+define('DB_USER', 'wp_user');
+if ($env === 'prod') {
+    define('DB_PASSWORD', 'prod-secret');
+} else {
+    define('DB_PASSWORD', 'dev-secret');
+}
+define('DB_HOST', 'mariadb');
+)PHP");
+}
+
+TEST_CASE("WordPress detector keeps elseif credential selection ambiguous") {
+    check_ambiguous_credentials(R"PHP(<?php
+define('DB_NAME', 'wp_prod');
+define('DB_USER', 'wp_user');
+if ($env === 'prod') {
+    define('DB_PASSWORD', 'prod-secret');
+} elseif ($env === 'stage') {
+    define('DB_PASSWORD', 'stage-secret');
+}
+define('DB_HOST', 'mariadb');
+)PHP");
+}
+
+TEST_CASE("WordPress detector keeps switch credential selection ambiguous") {
+    check_ambiguous_credentials(R"PHP(<?php
+define('DB_NAME', 'wp_prod');
+define('DB_USER', 'wp_user');
+switch ($env) {
+case 'prod':
+    define('DB_PASSWORD', 'prod-secret');
+    break;
+default:
+    define('DB_PASSWORD', 'dev-secret');
+}
+define('DB_HOST', 'mariadb');
+)PHP");
+}
+
+TEST_CASE("WordPress detector keeps foreach credential selection ambiguous") {
+    check_ambiguous_credentials(R"PHP(<?php
+define('DB_NAME', 'wp_prod');
+define('DB_USER', 'wp_user');
+foreach ($configs as $config) {
+    define('DB_PASSWORD', 'secret');
+}
+define('DB_HOST', 'mariadb');
+)PHP");
+}
+
+TEST_CASE("WordPress detector keeps for and while credential definitions ambiguous") {
+    check_ambiguous_credentials(R"PHP(<?php
+define('DB_NAME', 'wp_prod');
+define('DB_USER', 'wp_user');
+for ($i = 0; $i < 1; ++$i) {
+    define('DB_PASSWORD', 'secret');
+}
+define('DB_HOST', 'mariadb');
+)PHP");
+
+    check_ambiguous_credentials(R"PHP(<?php
+define('DB_NAME', 'wp_prod');
+define('DB_USER', 'wp_user');
+while ($enabled) {
+    define('DB_PASSWORD', 'secret');
+}
+define('DB_HOST', 'mariadb');
+)PHP");
+}
+
+TEST_CASE("WordPress detector keeps function and try catch credential definitions ambiguous") {
+    check_ambiguous_credentials(R"PHP(<?php
+define('DB_NAME', 'wp_prod');
+define('DB_USER', 'wp_user');
+function configure_db_password() {
+    define('DB_PASSWORD', 'secret');
+}
+define('DB_HOST', 'mariadb');
+)PHP");
+
+    check_ambiguous_credentials(R"PHP(<?php
+define('DB_NAME', 'wp_prod');
+define('DB_USER', 'wp_user');
+try {
+    define('DB_PASSWORD', 'secret');
+} catch (Exception $e) {
+    define('DB_PASSWORD', 'fallback');
+}
+define('DB_HOST', 'mariadb');
+)PHP");
 }
 
 TEST_CASE("WordPress detector classifies dynamic credential sources") {

@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-20 | `this commit` | WordPress — Use structural define parser for credentials
+
+**Summary:** Completed WP-R5 by replacing the WordPress credential detector's raw-text conditional heuristic with a shared structural PHP `define()` scanner used by both inspection and config updates. The scanner ignores comments and string literals, tracks control-flow/function/try-catch scopes, and keeps conditional or duplicate credential definitions fail-closed while allowing ordinary top-level WordPress database constants preceded by standard comments.
+
+**Files changed:** `libs/wordpress/WordPressPhpDefineScanner.h`, `libs/wordpress/WordPressPhpDefineScanner.cpp`, `libs/wordpress/WordPressConfigDetector.cpp`, `libs/wordpress/WordPressConfigUpdater.cpp`, `tests/test_wordpress_config_detector.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `CHANGELOG.md`
+
+**User-visible behavior:** WordPress credential inspection no longer reports `config: ambiguous` solely because a comment near `DB_NAME`, `DB_USER`, or `DB_PASSWORD` contains words such as `for`, `if`, or `while`. Real conditional, duplicate, dynamic, included-file, and function-scope credential definitions remain unsupported or ambiguous.
+
+**Validation:** Clean configure passed with `cmake -S . -B build-wp-r5 -G Ninja -DCMAKE_BUILD_TYPE=Release`. Build passed with `cmake --build build-wp-r5 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings after fixing scanner integration issues. Full doctest passed (`807` cases, `5425` assertions). Focused suites passed for `*WordPress*` (`79` cases, `442` assertions), `*WordPress updater*` (`24` cases, `124` assertions), `*DatabaseCredentialRotation*` (`42` cases, `375` assertions), and `*API*` (`18` cases, `73` assertions). Full CTest passed serially (`1/1`). `node --check web/app.js` and `git diff --check` passed. An earlier concurrent CTest invocation hit the existing flaky SQLite backup/shutdown race while the standalone doctest and serial CTest pass succeeded.
+
+**Known risks:** This is repository/test validation only so far. No production deployment, production `wp-config.php` mutation, database mutation, or credential rotation has been performed. Live validation must remain read-only until an operator explicitly approves rotation.
+
+---
+
 ## 2026-07-20 | `this commit` | WordPress — Document conditional parser false-positive investigation
 
 **Summary:** Added the WP-R4 read-only investigation report for `unity.softico.ua`, documenting that the current `ambiguous` WordPress credential state is a parser false positive caused by comment text (`for WordPress`) being treated as conditional control flow by the detector heuristic.

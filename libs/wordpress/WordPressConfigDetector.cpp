@@ -1,6 +1,7 @@
 #include "WordPressConfigDetector.h"
 
 #include "utils/PathUtils.h"
+#include "wordpress/WordPressPhpDefineScanner.h"
 
 #include <algorithm>
 #include <array>
@@ -16,12 +17,6 @@ namespace containercp::wordpress {
 namespace {
 
 namespace fs = std::filesystem;
-
-struct DefineCall {
-    std::size_t offset = 0;
-    std::string body;
-    bool conditional = false;
-};
 
 struct ParsedField {
     bool found = false;
@@ -63,256 +58,6 @@ bool has_identifier_at(const std::string& content, std::size_t pos, std::string_
     }
     const std::size_t end = pos + identifier.size();
     return end >= content.size() || !is_identifier_char(content[end]);
-}
-
-std::size_t skip_spaces(const std::string& content, std::size_t pos) {
-    while (pos < content.size() && std::isspace(static_cast<unsigned char>(content[pos]))) {
-        ++pos;
-    }
-    return pos;
-}
-
-bool looks_conditional(const std::string& content, std::size_t define_offset) {
-    const std::size_t start = define_offset > 180 ? define_offset - 180 : 0;
-    std::string prefix = content.substr(start, define_offset - start);
-    const std::array<std::string_view, 7> controls = {"if", "elseif", "else", "switch", "foreach", "for", "while"};
-    for (std::size_t i = 0; i < prefix.size(); ++i) {
-        for (auto control : controls) {
-            if (has_identifier_at(prefix, i, control)) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-std::vector<DefineCall> find_define_calls(const std::string& content) {
-    std::vector<DefineCall> calls;
-    bool in_single = false;
-    bool in_double = false;
-    bool in_line_comment = false;
-    bool in_block_comment = false;
-
-    for (std::size_t i = 0; i < content.size(); ++i) {
-        char c = content[i];
-        char next = i + 1 < content.size() ? content[i + 1] : '\0';
-
-        if (in_line_comment) {
-            if (c == '\n' || c == '\r') {
-                in_line_comment = false;
-            }
-            continue;
-        }
-        if (in_block_comment) {
-            if (c == '*' && next == '/') {
-                in_block_comment = false;
-                ++i;
-            }
-            continue;
-        }
-        if (in_single) {
-            if (c == '\\') {
-                ++i;
-            } else if (c == '\'') {
-                in_single = false;
-            }
-            continue;
-        }
-        if (in_double) {
-            if (c == '\\') {
-                ++i;
-            } else if (c == '"') {
-                in_double = false;
-            }
-            continue;
-        }
-
-        if (c == '/' && next == '/') {
-            in_line_comment = true;
-            ++i;
-            continue;
-        }
-        if (c == '#') {
-            in_line_comment = true;
-            continue;
-        }
-        if (c == '/' && next == '*') {
-            in_block_comment = true;
-            ++i;
-            continue;
-        }
-        if (c == '\'') {
-            in_single = true;
-            continue;
-        }
-        if (c == '"') {
-            in_double = true;
-            continue;
-        }
-
-        if (!has_identifier_at(content, i, "define")) {
-            continue;
-        }
-
-        std::size_t open = skip_spaces(content, i + 6);
-        if (open >= content.size() || content[open] != '(') {
-            continue;
-        }
-
-        bool arg_single = false;
-        bool arg_double = false;
-        bool arg_line_comment = false;
-        bool arg_block_comment = false;
-        int depth = 1;
-        std::size_t pos = open + 1;
-        for (; pos < content.size(); ++pos) {
-            char ac = content[pos];
-            char an = pos + 1 < content.size() ? content[pos + 1] : '\0';
-            if (arg_line_comment) {
-                if (ac == '\n' || ac == '\r') {
-                    arg_line_comment = false;
-                }
-                continue;
-            }
-            if (arg_block_comment) {
-                if (ac == '*' && an == '/') {
-                    arg_block_comment = false;
-                    ++pos;
-                }
-                continue;
-            }
-            if (arg_single) {
-                if (ac == '\\') {
-                    ++pos;
-                } else if (ac == '\'') {
-                    arg_single = false;
-                }
-                continue;
-            }
-            if (arg_double) {
-                if (ac == '\\') {
-                    ++pos;
-                } else if (ac == '"') {
-                    arg_double = false;
-                }
-                continue;
-            }
-            if (ac == '/' && an == '/') {
-                arg_line_comment = true;
-                ++pos;
-                continue;
-            }
-            if (ac == '#') {
-                arg_line_comment = true;
-                continue;
-            }
-            if (ac == '/' && an == '*') {
-                arg_block_comment = true;
-                ++pos;
-                continue;
-            }
-            if (ac == '\'') {
-                arg_single = true;
-                continue;
-            }
-            if (ac == '"') {
-                arg_double = true;
-                continue;
-            }
-            if (ac == '(') {
-                ++depth;
-            } else if (ac == ')') {
-                --depth;
-                if (depth == 0) {
-                    calls.push_back({i, content.substr(open + 1, pos - open - 1), looks_conditional(content, i)});
-                    i = pos;
-                    break;
-                }
-            }
-        }
-    }
-    return calls;
-}
-
-std::vector<std::string> split_top_level_args(const std::string& body) {
-    std::vector<std::string> args;
-    bool in_single = false;
-    bool in_double = false;
-    int paren_depth = 0;
-    int bracket_depth = 0;
-    int brace_depth = 0;
-    std::size_t start = 0;
-
-    for (std::size_t i = 0; i < body.size(); ++i) {
-        char c = body[i];
-        if (in_single) {
-            if (c == '\\') {
-                ++i;
-            } else if (c == '\'') {
-                in_single = false;
-            }
-            continue;
-        }
-        if (in_double) {
-            if (c == '\\') {
-                ++i;
-            } else if (c == '"') {
-                in_double = false;
-            }
-            continue;
-        }
-        if (c == '\'') {
-            in_single = true;
-        } else if (c == '"') {
-            in_double = true;
-        } else if (c == '(') {
-            ++paren_depth;
-        } else if (c == ')') {
-            --paren_depth;
-        } else if (c == '[') {
-            ++bracket_depth;
-        } else if (c == ']') {
-            --bracket_depth;
-        } else if (c == '{') {
-            ++brace_depth;
-        } else if (c == '}') {
-            --brace_depth;
-        } else if (c == ',' && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0) {
-            args.push_back(trim(body.substr(start, i - start)));
-            start = i + 1;
-        }
-    }
-    args.push_back(trim(body.substr(start)));
-    return args;
-}
-
-std::optional<std::string> parse_php_string_literal(const std::string& expr) {
-    const std::string value = trim(expr);
-    if (value.size() < 2 || (value.front() != '\'' && value.front() != '"')) {
-        return std::nullopt;
-    }
-    const char quote = value.front();
-    std::string parsed;
-    for (std::size_t i = 1; i < value.size(); ++i) {
-        char c = value[i];
-        if (c == '\\') {
-            if (i + 1 >= value.size()) {
-                return std::nullopt;
-            }
-            parsed.push_back(value[i + 1]);
-            ++i;
-            continue;
-        }
-        if (c == quote) {
-            const std::string rest = trim(value.substr(i + 1));
-            if (rest.empty() || rest == ";") {
-                return parsed;
-            }
-            return std::nullopt;
-        }
-        parsed.push_back(c);
-    }
-    return std::nullopt;
 }
 
 bool contains_identifier(const std::string& expr, std::string_view identifier) {
@@ -359,10 +104,10 @@ WordPressCredentialSource classify_expression(const std::string& expr) {
     return WordPressCredentialSource::Unsupported;
 }
 
-ParsedField parse_field(const std::vector<DefineCall>& calls, const std::string& field_name) {
+ParsedField parse_field(const std::vector<PhpDefineCall>& calls, const std::string& field_name) {
     ParsedField result;
     for (const auto& call : calls) {
-        auto args = split_top_level_args(call.body);
+        auto args = split_php_top_level_arguments(call.body, call.body_start);
         if (args.size() < 2) {
             continue;
         }
@@ -384,7 +129,7 @@ ParsedField parse_field(const std::vector<DefineCall>& calls, const std::string&
             result.state = WordPressCredentialValueState::Present;
             result.value = *literal;
         } else {
-            result.source = classify_expression(args[1]);
+            result.source = classify_expression(args[1].text);
             result.mutability = WordPressCredentialMutability::Unsupported;
             result.state = WordPressCredentialValueState::Unsupported;
             result.value.clear();
@@ -533,7 +278,7 @@ WordPressConfigInspection WordPressConfigDetector::inspect_content(const std::st
         return inspection;
     }
 
-    const auto calls = find_define_calls(content);
+    const auto calls = find_php_define_calls(content);
     auto db_name = parse_field(calls, "DB_NAME");
     auto db_user = parse_field(calls, "DB_USER");
     auto db_password = parse_field(calls, "DB_PASSWORD");
