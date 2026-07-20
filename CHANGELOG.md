@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-20 | `this commit` | WordPress — Add structured credential rotation audit logs
+
+**Summary:** Added public-safe structured audit logging for the complete WordPress database credential rotation lifecycle. Rotation request, queue, start, per-stage start/success/failure, compensation, manual recovery, failed-before-mutation, compensated failure, and successful completion records now use one shared formatter and include `job_id`, `site_id`, `domain`, `database_id`, `stage`, and `result`, with error, compensation, manual recovery, and duration fields where applicable.
+
+**Files changed:** `libs/database/DatabaseCredentialRotationAudit.h`, `libs/database/DatabaseCredentialRotationAudit.cpp`, `libs/database/DatabaseCredentialRotationService.h`, `libs/database/DatabaseCredentialRotationService.cpp`, `libs/database/DatabaseCredentialRotationJobService.cpp`, `libs/database/DatabaseCredentialRotationAdapter.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/test_database_credential_rotation.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Operators can now trace a WordPress database credential rotation in `containercpd` logs by job id, site id, domain, database id, stage, and result without exposing old passwords, generated passwords, current `DB_PASSWORD`, MariaDB admin credentials, option-file contents, SQL password literals, command arguments with credentials, or temporary secret file contents. Rotation behavior, password generation, MariaDB mutation, compensation, and API response shape are unchanged.
+
+**Validation:** Clean configure passed with `cmake -S . -B build-wp-r10 -G Ninja -DCMAKE_BUILD_TYPE=Release`. Clean build passed with `cmake --build build-wp-r10 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Full doctest passed (`820` cases, `5648` assertions). Full CTest passed (`1/1`). Focused tests passed for `*DatabaseCredentialRotation*` (`50` cases, `549` assertions), `*audit*` (`4` cases, `46` assertions), and `*API*` (`18` cases, `73` assertions). `git diff --check` passed.
+
+**Known risks:** Audit records are intentionally key=value text records for grep and future structured parsing. Live deployment and one accepted production rotation on `unity.softico.ua` are still required after repository validation to confirm journal output contains the expected public-safe success record and no credential value.
+
+---
+
 ## 2026-07-20 | `this commit` | WordPress — Poll runtime availability after credential rotation
 
 **Summary:** Fixed the live WordPress credential rotation timing race observed after successful MariaDB and `wp-config.php` mutation. Runtime availability verification now checks immediately, then polls the site health verifier every 1 second for up to 30 seconds, continuing as soon as the runtime is healthy and returning `runtime_availability_verification_failed` only after the timeout. Compensation runtime verification uses the same polling helper.

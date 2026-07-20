@@ -220,8 +220,6 @@ DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::inspect_
     context->config_path = inspected.config_path;
     context->wordpress_result = inspected;
     context->mariadb_target = {(inspected.site_root / "docker-compose.yml").string(), "mariadb"};
-    logger_.info("AUDIT", "WordPress credential rotation inspected site=" + std::to_string(request.site_id) +
-                            " database=" + std::to_string(request.database_id));
     return ok("wordpress_inspected", "WordPress credential source inspected");
 }
 
@@ -335,8 +333,6 @@ DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::change_m
     auto* context = context_for(request);
     if (context == nullptr) return fail("rotation_context_missing", "Credential rotation context is missing");
     const auto result = mariadb_provider_.change_password(context->mariadb_target, context->mariadb_admin, context->mariadb_identity, new_password);
-    logger_.info("AUDIT", "WordPress credential rotation MariaDB mutation attempted site=" + std::to_string(request.site_id) +
-                            " database=" + std::to_string(request.database_id));
     return result.success ? ok("mariadb_password_changed", "MariaDB password changed")
                           : fail(result.code.empty() ? "mariadb_password_change_failed" : result.code,
                                  "MariaDB password change failed");
@@ -464,8 +460,6 @@ DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::persist_
         database->db_password = old_password;
         return fail("metadata_persist_unverified", "Credential metadata persistence could not be verified");
     }
-    logger_.info("AUDIT", "WordPress credential rotation metadata persisted site=" + std::to_string(request.site_id) +
-                            " database=" + std::to_string(request.database_id));
     erase_context(request);
     return ok("metadata_persisted", "Credential metadata persisted");
 }

@@ -35,6 +35,7 @@ set(CONTAINERCP_SOURCES
     libs/daemon/DaemonApp.cpp
     libs/database/Database.cpp
     libs/database/DatabaseCredentialRotationAdapter.cpp
+    libs/database/DatabaseCredentialRotationAudit.cpp
     libs/database/DatabaseCredentialRotationJobService.cpp
     libs/database/DatabaseCredentialRotationService.cpp
     libs/database/MariaDBCredentialProvider.cpp

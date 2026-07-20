@@ -8,6 +8,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace containercp::database {
@@ -34,10 +35,24 @@ enum class DatabaseCredentialRotationState {
 };
 
 struct DatabaseCredentialRotationRequest {
+    DatabaseCredentialRotationRequest() = default;
+    DatabaseCredentialRotationRequest(uint64_t site_id_value,
+                                      uint64_t database_id_value,
+                                      std::string confirmation_value,
+                                      uint64_t job_id_value = 0,
+                                      std::string domain_value = {})
+        : site_id(site_id_value)
+        , database_id(database_id_value)
+        , confirmation(std::move(confirmation_value))
+        , job_id(job_id_value)
+        , domain(std::move(domain_value)) {
+    }
+
     uint64_t site_id = 0;
     uint64_t database_id = 0;
     std::string confirmation;
     uint64_t job_id = 0;
+    std::string domain;
 };
 
 struct DatabaseCredentialRotationEvent {
@@ -62,6 +77,7 @@ struct DatabaseCredentialRotationStepResult {
     std::string message;
     std::string generated_password;
     MariaDBSharedCredentialAssessment shared_assessment;
+    uint64_t duration_ms = 0;
 };
 
 class DatabaseCredentialRotationDependencies {

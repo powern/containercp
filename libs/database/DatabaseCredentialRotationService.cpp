@@ -1,6 +1,6 @@
 #include "DatabaseCredentialRotationService.h"
 
-#include "logger/Logger.h"
+#include "database/DatabaseCredentialRotationAudit.h"
 
 #include <chrono>
 #include <iomanip>
@@ -73,52 +73,60 @@ const jobs::JobStep* find_failed_step(const std::vector<jobs::JobStep>& steps) {
     return nullptr;
 }
 
-void log_rotation_stage(const DatabaseCredentialRotationRequest& request,
-                        std::string_view event,
-                        std::string_view step_id,
-                        const std::string& code = {}) {
-    std::string message = "credential_rotation event=" + std::string(event) +
-                          " job_id=" + std::to_string(request.job_id) +
-                          " site_id=" + std::to_string(request.site_id) +
-                          " database_id=" + std::to_string(request.database_id) +
-                          " step=" + std::string(step_id);
-    if (!code.empty()) {
-        message += " code=" + code;
-    }
-    if (event == "FAILURE") {
-        logger::Logger::instance().error("AUDIT", message);
-    } else if (event == "COMPENSATION") {
-        logger::Logger::instance().warning("AUDIT", message);
-    } else {
-        logger::Logger::instance().info("AUDIT", message);
-    }
+std::string audit_domain(const DatabaseCredentialRotationRequest& request) {
+    return request.domain.empty() ? request.confirmation : request.domain;
+}
+
+void log_rotation_event(const DatabaseCredentialRotationRequest& request,
+                        std::string stage,
+                        std::string result,
+                        DatabaseCredentialRotationAuditEvent::Level level = DatabaseCredentialRotationAuditEvent::Level::Info,
+                        const std::string& error_code = {},
+                        std::optional<bool> compensation_started = std::nullopt,
+                        const std::string& compensation_result = {},
+                        std::optional<bool> manual_recovery_required = std::nullopt,
+                        std::optional<uint64_t> duration_ms = std::nullopt) {
+    DatabaseCredentialRotationAuditLogger::log({request.job_id,
+                                                request.site_id,
+                                                audit_domain(request),
+                                                request.database_id,
+                                                std::move(stage),
+                                                std::move(result),
+                                                error_code,
+                                                compensation_started,
+                                                compensation_result,
+                                                manual_recovery_required,
+                                                duration_ms,
+                                                level});
 }
 
 DatabaseCredentialRotationEvent event(DatabaseCredentialRotationState state, std::string code, std::string message) {
     return {state, std::move(code), std::move(message)};
 }
 
-void complete_step(std::vector<jobs::JobStep>& steps,
-                   std::string_view id,
-                   const std::chrono::steady_clock::time_point& started,
-                   bool success,
-                   const std::string& result,
-                   const std::string& message,
-                   const std::string& error_code = {}) {
+uint64_t complete_step(std::vector<jobs::JobStep>& steps,
+                       std::string_view id,
+                       const std::chrono::steady_clock::time_point& started,
+                       bool success,
+                       const std::string& result,
+                       const std::string& message,
+                       const std::string& error_code = {}) {
     auto* step = find_step(steps, id);
     if (step == nullptr) {
-        return;
+        return 0;
     }
+    const auto duration_ms = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started).count());
     step->started = true;
     step->completed = success;
     step->failed = !success;
     step->skipped = false;
-    step->duration_ms = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                std::chrono::steady_clock::now() - started).count());
+    step->duration_ms = duration_ms;
     step->result = result;
     step->message = message;
     step->error_code = error_code;
     step->completed_at = utc_now();
+    return duration_ms;
 }
 
 void start_step(std::vector<jobs::JobStep>& steps, std::string_view id) {
@@ -248,24 +256,47 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::compensate_a
                                                                                               bool runtime_apply_attempted) {
     const auto compensation_started = std::chrono::steady_clock::now();
     start_step(result.steps, "compensation");
-    log_rotation_stage(request, "COMPENSATION", "compensation", "started");
+    log_rotation_event(request,
+                       "compensation",
+                       "started",
+                       DatabaseCredentialRotationAuditEvent::Level::Warning,
+                       {},
+                       true,
+                       "started",
+                       false);
     result.events.push_back(event(DatabaseCredentialRotationState::Compensating,
-                                   "compensating",
-                                   "Compensating failed credential rotation"));
+                                    "compensating",
+                                    "Compensating failed credential rotation"));
 
     auto manual_recovery = [&](const std::string& code, const std::string& message) {
-        complete_step(result.steps, "compensation", compensation_started, false, "failed",
-                      "Compensation failed", code);
+        const auto compensation_duration = complete_step(result.steps, "compensation", compensation_started, false, "failed",
+                                                         "Compensation failed", code);
         const auto manual_started = std::chrono::steady_clock::now();
         start_step(result.steps, "manual_recovery_required");
-        complete_step(result.steps, "manual_recovery_required", manual_started, true, "entered",
-                      "Manual recovery is required", "manual_recovery_required");
+        const auto manual_duration = complete_step(result.steps, "manual_recovery_required", manual_started, true, "entered",
+                                                   "Manual recovery is required", "manual_recovery_required");
         auto failed = fail_with(std::move(result), DatabaseCredentialRotationState::ManualRecoveryRequired, code, message);
         failed.failure.compensation_started = true;
         failed.failure.compensation_result = "failed";
         failed.failure.manual_recovery_required = true;
-        log_rotation_stage(request, "FAILURE", "compensation", code);
-        log_rotation_stage(request, "FAILURE", "manual_recovery_required", "manual_recovery_required");
+        log_rotation_event(request,
+                           "compensation",
+                           "failed",
+                           DatabaseCredentialRotationAuditEvent::Level::Error,
+                           code,
+                           true,
+                           "failed",
+                           true,
+                           compensation_duration);
+        log_rotation_event(request,
+                           "manual_recovery_required",
+                           "entered",
+                           DatabaseCredentialRotationAuditEvent::Level::Error,
+                           "manual_recovery_required",
+                           true,
+                           "failed",
+                           true,
+                           manual_duration);
         return failed;
     };
 
@@ -333,54 +364,126 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::compensate_a
     result.final_state = DatabaseCredentialRotationState::Compensated;
     result.code = "rotation_compensated";
     result.message = "Credential rotation failed and was safely rolled back";
-    complete_step(result.steps, "compensation", compensation_started, true, "completed",
-                  "Compensation completed successfully");
+    const auto compensation_duration = complete_step(result.steps, "compensation", compensation_started, true, "completed",
+                                                     "Compensation completed successfully");
     result.events.push_back(event(result.final_state, result.code, result.message));
     update_failure_diagnostics(result);
     result.failure.compensation_started = true;
     result.failure.compensation_result = "completed";
     result.failure.manual_recovery_required = false;
-    log_rotation_stage(request, "SUCCESS", "compensation", "rotation_compensated");
+    log_rotation_event(request,
+                       "compensation",
+                       "completed",
+                       DatabaseCredentialRotationAuditEvent::Level::Warning,
+                       {},
+                       true,
+                       "completed",
+                       false,
+                       compensation_duration);
+    log_rotation_event(request,
+                       "failed_compensated",
+                       "compensated",
+                       DatabaseCredentialRotationAuditEvent::Level::Warning,
+                       result.failure.error_code,
+                       true,
+                       "completed",
+                       false);
     return result;
 }
 
 DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const DatabaseCredentialRotationRequest& request) {
+    const auto rotation_started = std::chrono::steady_clock::now();
     DatabaseCredentialRotationResult result;
     result.steps = initial_rotation_steps();
+    log_rotation_event(request, "started", "running");
     if (request.database_id == 0) {
         const auto started = std::chrono::steady_clock::now();
         start_step(result.steps, "load_metadata");
-        complete_step(result.steps, "load_metadata", started, false, "failed",
-                      "Database id is required", "database_required");
-        log_rotation_stage(request, "FAILURE", "load_metadata", "database_required");
-        return fail_with(std::move(result), DatabaseCredentialRotationState::Failed, "database_required",
-                          "Database id is required");
+        const auto duration = complete_step(result.steps, "load_metadata", started, false, "failed",
+                                            "Database id is required", "database_required");
+        log_rotation_event(request,
+                           "load_metadata",
+                           "failure",
+                           DatabaseCredentialRotationAuditEvent::Level::Error,
+                           "database_required",
+                           false,
+                           {},
+                           false,
+                           duration);
+        auto failed = fail_with(std::move(result), DatabaseCredentialRotationState::Failed, "database_required",
+                                "Database id is required");
+        log_rotation_event(request,
+                           "failed_before_mutation",
+                           "failure",
+                           DatabaseCredentialRotationAuditEvent::Level::Error,
+                           failed.failure.error_code,
+                           false,
+                           failed.failure.compensation_result,
+                           failed.failure.manual_recovery_required,
+                           static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - rotation_started).count()));
+        return failed;
     }
 
     auto lock_started = std::chrono::steady_clock::now();
     start_step(result.steps, "acquire_lock");
-    log_rotation_stage(request, "START", "acquire_lock");
+    log_rotation_event(request, "acquire_lock", "start");
     OperationLock lock(*this, request.site_id, request.database_id);
     if (!lock.acquired()) {
-        complete_step(result.steps, "acquire_lock", lock_started, false, "failed",
-                      "A credential rotation is already running for this site database", "rotation_already_running");
-        log_rotation_stage(request, "FAILURE", "acquire_lock", "rotation_already_running");
-        return fail_with(std::move(result), DatabaseCredentialRotationState::Failed, "rotation_already_running",
-                          "A credential rotation is already running for this site database");
+        const auto duration = complete_step(result.steps, "acquire_lock", lock_started, false, "failed",
+                                            "A credential rotation is already running for this site database", "rotation_already_running");
+        log_rotation_event(request,
+                           "acquire_lock",
+                           "failure",
+                           DatabaseCredentialRotationAuditEvent::Level::Error,
+                           "rotation_already_running",
+                           false,
+                           {},
+                           false,
+                           duration);
+        auto failed = fail_with(std::move(result), DatabaseCredentialRotationState::Failed, "rotation_already_running",
+                                "A credential rotation is already running for this site database");
+        log_rotation_event(request,
+                           "failed_before_mutation",
+                           "failure",
+                           DatabaseCredentialRotationAuditEvent::Level::Error,
+                           failed.failure.error_code,
+                           false,
+                           failed.failure.compensation_result,
+                           failed.failure.manual_recovery_required,
+                           static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - rotation_started).count()));
+        return failed;
     }
 
-    complete_step(result.steps, "acquire_lock", lock_started, true, "success", "Rotation lock acquired");
-    log_rotation_stage(request, "SUCCESS", "acquire_lock");
+    auto duration = complete_step(result.steps, "acquire_lock", lock_started, true, "success", "Rotation lock acquired");
+    log_rotation_event(request, "acquire_lock", "success", DatabaseCredentialRotationAuditEvent::Level::Info, {}, std::nullopt, {}, std::nullopt, duration);
     result.events.push_back(event(DatabaseCredentialRotationState::LockAcquired, "lock_acquired", "Rotation lock acquired"));
     if (dependencies_ == nullptr) {
         const auto started = std::chrono::steady_clock::now();
         start_step(result.steps, "load_metadata");
-        complete_step(result.steps, "load_metadata", started, false, "failed",
-                      "Credential rotation dependencies are not wired yet", "rotation_dependencies_missing");
-        log_rotation_stage(request, "FAILURE", "load_metadata", "rotation_dependencies_missing");
+        duration = complete_step(result.steps, "load_metadata", started, false, "failed",
+                                 "Credential rotation dependencies are not wired yet", "rotation_dependencies_missing");
+        log_rotation_event(request,
+                           "load_metadata",
+                           "failure",
+                           DatabaseCredentialRotationAuditEvent::Level::Error,
+                           "rotation_dependencies_missing",
+                           false,
+                           {},
+                           false,
+                           duration);
         result.events.push_back(event(DatabaseCredentialRotationState::InspectingWordPress, "pending", "WordPress inspection dependency is not wired yet"));
-        return fail_with(std::move(result), DatabaseCredentialRotationState::Failed, "rotation_dependencies_missing",
-                          "Credential rotation dependencies are not wired yet");
+        auto failed = fail_with(std::move(result), DatabaseCredentialRotationState::Failed, "rotation_dependencies_missing",
+                                "Credential rotation dependencies are not wired yet");
+        log_rotation_event(request,
+                           "failed_before_mutation",
+                           "failure",
+                           DatabaseCredentialRotationAuditEvent::Level::Error,
+                           failed.failure.error_code,
+                           false,
+                           failed.failure.compensation_result,
+                           failed.failure.manual_recovery_required,
+                           static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - rotation_started).count()));
+        return failed;
     }
 
     auto run_step = [&](std::string_view step_id,
@@ -390,13 +493,23 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const
                         auto&& fn) -> DatabaseCredentialRotationStepResult {
         const auto started = std::chrono::steady_clock::now();
         start_step(result.steps, step_id);
-        log_rotation_stage(request, "START", step_id);
+        log_rotation_event(request, std::string(step_id), "start");
         result.events.push_back(event(state, start_code, start_message));
         auto step = fn();
+        step.duration_ms = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started).count());
         if (step.success) {
             complete_step(result.steps, step_id, started, true, step.code.empty() ? "success" : step.code,
                           step.message.empty() ? start_message : step.message);
-            log_rotation_stage(request, "SUCCESS", step_id, step.code);
+            log_rotation_event(request,
+                               std::string(step_id),
+                               "success",
+                               DatabaseCredentialRotationAuditEvent::Level::Info,
+                               {},
+                               std::nullopt,
+                               {},
+                               std::nullopt,
+                               step.duration_ms);
         }
         return step;
     };
@@ -413,11 +526,33 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const
             detail->result = "failed";
             detail->message = safe_message;
             detail->error_code = step.code.empty() ? fallback_code : step.code;
+            detail->duration_ms = step.duration_ms;
             if (detail->completed_at.empty()) {
                 detail->completed_at = utc_now();
             }
         }
-        log_rotation_stage(request, "FAILURE", step_id, step.code.empty() ? fallback_code : step.code);
+        log_rotation_event(request,
+                           std::string(step_id),
+                           "failure",
+                           DatabaseCredentialRotationAuditEvent::Level::Error,
+                           step.code.empty() ? fallback_code : step.code,
+                           false,
+                           {},
+                           false,
+                           step.duration_ms);
+    };
+
+    auto log_failed_before_mutation = [&](const DatabaseCredentialRotationResult& failed) {
+        log_rotation_event(request,
+                           "failed_before_mutation",
+                           "failure",
+                           DatabaseCredentialRotationAuditEvent::Level::Error,
+                           failed.failure.error_code,
+                           failed.failure.compensation_started,
+                           failed.failure.compensation_result,
+                           failed.failure.manual_recovery_required,
+                           static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now() - rotation_started).count()));
     };
 
     auto fail_step = [&](std::string_view step_id,
@@ -426,7 +561,9 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const
                          const std::string& fallback_code,
                          const std::string& safe_message) {
         mark_failed_step(step_id, step, fallback_code, safe_message);
-        return fail_with(std::move(result), state, step.code.empty() ? fallback_code : step.code, safe_message);
+        auto failed = fail_with(std::move(result), state, step.code.empty() ? fallback_code : step.code, safe_message);
+        log_failed_before_mutation(failed);
+        return failed;
     };
 
     auto step = run_step("load_metadata",
@@ -529,9 +666,18 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const
             detail->result = "failed";
             detail->message = "MariaDB password change failed";
             detail->error_code = change_failure_code;
+            detail->duration_ms = step.duration_ms;
             detail->completed_at = utc_now();
         }
-        log_rotation_stage(request, "FAILURE", "update_mariadb_password", change_failure_code);
+        log_rotation_event(request,
+                           "update_mariadb_password",
+                           "failure",
+                           DatabaseCredentialRotationAuditEvent::Level::Error,
+                           change_failure_code,
+                           false,
+                           {},
+                           false,
+                           step.duration_ms);
         result.events.push_back(event(DatabaseCredentialRotationState::VerifyingMariaDBPassword,
                                        "determining_mariadb_password_state",
                                       "Determining MariaDB password state after failed change command"));
@@ -565,9 +711,17 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const
                                           "MariaDB password state could not be proven after change command failure"));
             const auto manual_started = std::chrono::steady_clock::now();
             start_step(result.steps, "manual_recovery_required");
-            complete_step(result.steps, "manual_recovery_required", manual_started, true, "entered",
-                          "Manual recovery is required", "manual_recovery_required");
-            log_rotation_stage(request, "FAILURE", "manual_recovery_required", "manual_recovery_required");
+            const auto manual_duration = complete_step(result.steps, "manual_recovery_required", manual_started, true, "entered",
+                                                       "Manual recovery is required", "manual_recovery_required");
+            log_rotation_event(request,
+                               "manual_recovery_required",
+                               "entered",
+                               DatabaseCredentialRotationAuditEvent::Level::Error,
+                               "manual_recovery_required",
+                               false,
+                               "not_started",
+                               true,
+                               manual_duration);
             auto failed = manual_recovery(std::move(result));
             failed.failure.manual_recovery_required = true;
             return failed;
@@ -644,14 +798,32 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const
 
     const auto commit_started = std::chrono::steady_clock::now();
     start_step(result.steps, "commit");
-    log_rotation_stage(request, "START", "commit");
+    log_rotation_event(request, "commit", "start");
     result.success = true;
     result.final_state = DatabaseCredentialRotationState::Completed;
     result.code = "completed";
     result.message = "Database credential rotation completed";
-    complete_step(result.steps, "commit", commit_started, true, "success", "Database credential rotation committed");
-    log_rotation_stage(request, "SUCCESS", "commit", "completed");
+    const auto commit_duration = complete_step(result.steps, "commit", commit_started, true, "success", "Database credential rotation committed");
+    log_rotation_event(request,
+                       "commit",
+                       "success",
+                       DatabaseCredentialRotationAuditEvent::Level::Info,
+                       {},
+                       std::nullopt,
+                       {},
+                       std::nullopt,
+                       commit_duration);
     result.events.push_back(event(result.final_state, result.code, result.message));
+    log_rotation_event(request,
+                       "completed",
+                       "success",
+                       DatabaseCredentialRotationAuditEvent::Level::Info,
+                       {},
+                       false,
+                       "not_started",
+                       false,
+                       static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - rotation_started).count()));
     return result;
 }
 

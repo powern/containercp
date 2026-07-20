@@ -1,5 +1,7 @@
 #include "DatabaseCredentialRotationJobService.h"
 
+#include "database/DatabaseCredentialRotationAudit.h"
+
 #include <cctype>
 #include <utility>
 #include <vector>
@@ -34,6 +36,27 @@ bool safe_confirmation(const std::string& value) {
         }
     }
     return true;
+}
+
+void log_job_event(uint64_t job_id,
+                   const DatabaseCredentialRotationJobRequest& request,
+                   const std::string& domain,
+                   const std::string& stage,
+                   const std::string& result,
+                   DatabaseCredentialRotationAuditEvent::Level level = DatabaseCredentialRotationAuditEvent::Level::Info,
+                   const std::string& error_code = {}) {
+    DatabaseCredentialRotationAuditLogger::log({job_id,
+                                                request.site_id,
+                                                domain,
+                                                request.database_id,
+                                                stage,
+                                                result,
+                                                error_code,
+                                                std::nullopt,
+                                                {},
+                                                std::nullopt,
+                                                std::nullopt,
+                                                level});
 }
 
 } // namespace
@@ -90,6 +113,13 @@ DatabaseCredentialRotationJobResult DatabaseCredentialRotationJobService::enqueu
     auto queue_locks = queue_locks_;
     if (rotation_.is_locked(request.site_id, request.database_id) ||
         !acquire_queue_lock(queue_locks, request.site_id, request.database_id)) {
+        log_job_event(0,
+                      request,
+                      site->domain,
+                      "queued",
+                      "failure",
+                      DatabaseCredentialRotationAuditEvent::Level::Error,
+                      "rotation_already_running");
         return result(false, "rotation_already_running", "A credential rotation is already running for this site database");
     }
 
@@ -112,9 +142,12 @@ DatabaseCredentialRotationJobResult DatabaseCredentialRotationJobService::enqueu
     };
     const uint64_t job_id = jobs_.create("wordpress-db-credential-rotation", steps);
     jobs_.update(job_id, "pending", 0, "Credential rotation queued");
+    log_job_event(job_id, request, site->domain, "requested", "received");
+    log_job_event(job_id, request, site->domain, "queued", "success");
 
     auto* rotation = &rotation_;
-    const bool submitted = executor_.submit(job_id, [queue_locks, rotation, request](jobs::JobManager& jobs, uint64_t queued_job_id) {
+    const std::string domain = site->domain;
+    const bool submitted = executor_.submit(job_id, [queue_locks, rotation, request, domain](jobs::JobManager& jobs, uint64_t queued_job_id) {
         struct QueueLockRelease {
             std::shared_ptr<QueueLockState> queue_locks;
             uint64_t site_id;
@@ -124,7 +157,7 @@ DatabaseCredentialRotationJobResult DatabaseCredentialRotationJobService::enqueu
 
         try {
             jobs.update(queued_job_id, "running", 10, "Credential rotation running");
-            const auto rotation_result = rotation->rotate({request.site_id, request.database_id, request.confirmation, queued_job_id});
+            const auto rotation_result = rotation->rotate({request.site_id, request.database_id, request.confirmation, queued_job_id, domain});
             jobs.update_step_details(queued_job_id, rotation_result.steps);
             jobs.update_failure(queued_job_id, rotation_result.failure);
             if (rotation_result.success) {
@@ -133,6 +166,13 @@ DatabaseCredentialRotationJobResult DatabaseCredentialRotationJobService::enqueu
                 jobs.update(queued_job_id, "failed", 100, job_message_for_result(rotation_result));
             }
         } catch (...) {
+            log_job_event(queued_job_id,
+                          request,
+                          domain,
+                          "failed_before_mutation",
+                          "failure",
+                          DatabaseCredentialRotationAuditEvent::Level::Error,
+                          "rotation_exception");
             jobs.update(queued_job_id, "failed", 100, "Credential rotation failed");
         }
     });
@@ -140,6 +180,13 @@ DatabaseCredentialRotationJobResult DatabaseCredentialRotationJobService::enqueu
     if (!submitted) {
         release_queue_lock(queue_locks, request.site_id, request.database_id);
         jobs_.update(job_id, "failed", 0, "Task queue unavailable");
+        log_job_event(job_id,
+                      request,
+                      site->domain,
+                      "queued",
+                      "failure",
+                      DatabaseCredentialRotationAuditEvent::Level::Error,
+                      "queue_unavailable");
         return result(false, "queue_unavailable", "Task queue unavailable");
     }
 

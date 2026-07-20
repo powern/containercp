@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <iostream>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -231,6 +232,32 @@ std::string read_test_file(const fs::path& path) {
     buffer << in.rdbuf();
     return buffer.str();
 }
+
+class CapturedLogs {
+public:
+    CapturedLogs()
+        : old_out_(std::cout.rdbuf(out_.rdbuf()))
+        , old_err_(std::cerr.rdbuf(err_.rdbuf())) {
+    }
+
+    ~CapturedLogs() {
+        std::cout.rdbuf(old_out_);
+        std::cerr.rdbuf(old_err_);
+    }
+
+    CapturedLogs(const CapturedLogs&) = delete;
+    CapturedLogs& operator=(const CapturedLogs&) = delete;
+
+    std::string str() const {
+        return out_.str() + err_.str();
+    }
+
+private:
+    std::ostringstream out_;
+    std::ostringstream err_;
+    std::streambuf* old_out_;
+    std::streambuf* old_err_;
+};
 
 void write_test_file(const fs::path& path, const std::string& content) {
     fs::create_directories(path.parent_path());
@@ -596,6 +623,97 @@ TEST_CASE("DatabaseCredentialRotationService passes generated password only to d
     CHECK(result.message.find("super-secret-generated") == std::string::npos);
 }
 
+TEST_CASE("DatabaseCredentialRotationService audit success logs contain public correlation context") {
+    FakeRotationDependencies deps;
+    deps.generated = "generated-audit-secret";
+    DatabaseCredentialRotationService service(deps);
+
+    CapturedLogs captured;
+    const auto result = service.rotate({11, 22, "unity.softico.ua", 77, "unity.softico.ua"});
+    const auto logs = captured.str();
+
+    CHECK(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::Completed);
+    CHECK(logs.find("wordpress_db_credential_rotation") != std::string::npos);
+    CHECK(logs.find("job_id=77") != std::string::npos);
+    CHECK(logs.find("site_id=11") != std::string::npos);
+    CHECK(logs.find("domain=unity.softico.ua") != std::string::npos);
+    CHECK(logs.find("database_id=22") != std::string::npos);
+    CHECK(logs.find("stage=completed") != std::string::npos);
+    CHECK(logs.find("result=success") != std::string::npos);
+    CHECK(logs.find("generated-audit-secret") == std::string::npos);
+    CHECK(logs.find("new-secret") == std::string::npos);
+}
+
+TEST_CASE("DatabaseCredentialRotationService audit failure logs contain failed stage and error code") {
+    FakeRotationDependencies deps;
+    deps.fail_call = "assess_shared_user";
+    DatabaseCredentialRotationService service(deps);
+
+    CapturedLogs captured;
+    const auto result = service.rotate({11, 22, "unity.softico.ua", 78, "unity.softico.ua"});
+    const auto logs = captured.str();
+
+    CHECK_FALSE(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::Failed);
+    CHECK(result.failure.step == "verify_shared_credentials");
+    CHECK(result.failure.error_code == "assess_shared_user_failed");
+    CHECK(logs.find("job_id=78") != std::string::npos);
+    CHECK(logs.find("site_id=11") != std::string::npos);
+    CHECK(logs.find("domain=unity.softico.ua") != std::string::npos);
+    CHECK(logs.find("database_id=22") != std::string::npos);
+    CHECK(logs.find("stage=verify_shared_credentials result=failure error_code=assess_shared_user_failed") != std::string::npos);
+    CHECK(logs.find("stage=failed_before_mutation result=failure") != std::string::npos);
+    CHECK(logs.find("failure with secret") == std::string::npos);
+    CHECK(logs.find("new-secret") == std::string::npos);
+}
+
+TEST_CASE("DatabaseCredentialRotationService audit compensation logs contain compensation result") {
+    FakeRotationDependencies deps;
+    deps.fail_call = "persist_metadata";
+    DatabaseCredentialRotationService service(deps);
+
+    CapturedLogs captured;
+    const auto result = service.rotate({11, 22, "unity.softico.ua", 79, "unity.softico.ua"});
+    const auto logs = captured.str();
+
+    CHECK_FALSE(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::Compensated);
+    CHECK(result.failure.compensation_started);
+    CHECK(result.failure.compensation_result == "completed");
+    CHECK_FALSE(result.failure.manual_recovery_required);
+    CHECK(logs.find("job_id=79") != std::string::npos);
+    CHECK(logs.find("stage=compensation result=completed") != std::string::npos);
+    CHECK(logs.find("compensation_started=true") != std::string::npos);
+    CHECK(logs.find("compensation_result=completed") != std::string::npos);
+    CHECK(logs.find("manual_recovery_required=false") != std::string::npos);
+    CHECK(logs.find("stage=failed_compensated result=compensated") != std::string::npos);
+    CHECK(logs.find("new-secret") == std::string::npos);
+}
+
+TEST_CASE("DatabaseCredentialRotationService audit manual recovery logs contain manual recovery flag") {
+    FakeRotationDependencies deps;
+    deps.fail_call = "persist_metadata";
+    deps.compensation_fail_call = "restore_runtime";
+    DatabaseCredentialRotationService service(deps);
+
+    CapturedLogs captured;
+    const auto result = service.rotate({11, 22, "unity.softico.ua", 80, "unity.softico.ua"});
+    const auto logs = captured.str();
+
+    CHECK_FALSE(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::ManualRecoveryRequired);
+    CHECK(result.failure.compensation_started);
+    CHECK(result.failure.compensation_result == "failed");
+    CHECK(result.failure.manual_recovery_required);
+    CHECK(logs.find("job_id=80") != std::string::npos);
+    CHECK(logs.find("stage=compensation result=failed") != std::string::npos);
+    CHECK(logs.find("compensation_result=failed") != std::string::npos);
+    CHECK(logs.find("stage=manual_recovery_required result=entered") != std::string::npos);
+    CHECK(logs.find("manual_recovery_required=true") != std::string::npos);
+    CHECK(logs.find("new-secret") == std::string::npos);
+}
+
 TEST_CASE("DatabaseCredentialRotationService continues when failed MariaDB change actually applied new password") {
     FakeRotationDependencies deps;
     deps.force_mariadb_change_failure = true;
@@ -877,7 +995,9 @@ TEST_CASE("DatabaseCredentialRotationAdapter runs production-shaped happy path w
     auto adapter = fixture.make_adapter();
     DatabaseCredentialRotationService service(adapter);
 
-    const auto result = service.rotate({1, 1, "example.test"});
+    CapturedLogs captured;
+    const auto result = service.rotate({1, 1, "example.test", 81, "example.test"});
+    const auto logs = captured.str();
 
     CHECK(result.success);
     CHECK(result.final_state == DatabaseCredentialRotationState::Completed);
@@ -898,6 +1018,13 @@ TEST_CASE("DatabaseCredentialRotationAdapter runs production-shaped happy path w
         CHECK(event.message.find("newpass") == std::string::npos);
         CHECK(event.message.find("rootpass") == std::string::npos);
     }
+    CHECK(logs.find("job_id=81") != std::string::npos);
+    CHECK(logs.find("site_id=1") != std::string::npos);
+    CHECK(logs.find("domain=example.test") != std::string::npos);
+    CHECK(logs.find("database_id=1") != std::string::npos);
+    CHECK(logs.find("oldpass") == std::string::npos);
+    CHECK(logs.find("newpass") == std::string::npos);
+    CHECK(logs.find("rootpass") == std::string::npos);
 }
 
 TEST_CASE("DatabaseCredentialRotationAdapter runtime polling succeeds immediately") {
@@ -1197,11 +1324,20 @@ TEST_CASE("DatabaseCredentialRotationJobService queues pending job without expos
     const uint64_t site_id = sites.create("example.com", "admin", 1);
     const uint64_t database_id = databases.create("wp_example", "wp_user", "stored-secret", 1, site_id);
 
+    CapturedLogs captured;
     const auto result = queue.enqueue({site_id, database_id, "example.com"});
+    const auto logs = captured.str();
 
     CHECK(result.success);
     CHECK(result.job_id == 1);
     CHECK(result.message.find("stored-secret") == std::string::npos);
+    CHECK(logs.find("stage=requested result=received") != std::string::npos);
+    CHECK(logs.find("stage=queued result=success") != std::string::npos);
+    CHECK(logs.find("job_id=1") != std::string::npos);
+    CHECK(logs.find("site_id=") != std::string::npos);
+    CHECK(logs.find("domain=example.com") != std::string::npos);
+    CHECK(logs.find("database_id=") != std::string::npos);
+    CHECK(logs.find("stored-secret") == std::string::npos);
     auto* job = jobs.find(result.job_id);
     REQUIRE(job != nullptr);
     CHECK(job->type == "wordpress-db-credential-rotation");

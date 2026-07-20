@@ -57,6 +57,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/database/DatabaseManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/Database.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/DatabaseCredentialRotationAdapter.cpp
+    ${CMAKE_SOURCE_DIR}/libs/database/DatabaseCredentialRotationAudit.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/DatabaseCredentialRotationJobService.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/DatabaseCredentialRotationService.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/MariaDBCredentialProvider.cpp
