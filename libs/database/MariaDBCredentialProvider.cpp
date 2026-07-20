@@ -15,18 +15,23 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr const char* kContainerScript =
-    "tmpd=$(mktemp -d); "
-    "trap 'rm -rf \"$tmpd\"' EXIT HUP INT TERM; "
-    "conf=\"$tmpd/client.cnf\"; sql=\"$tmpd/query.sql\"; "
-    "IFS= read -r magic; [ \"$magic\" = CONTAINERCP-MARIADB-FRAME-V1 ]; "
-    "IFS= read -r conf_len; IFS= read -r sql_len; "
-    "case \"$conf_len\" in (''|*[!0-9]*) exit 64;; esac; "
-    "case \"$sql_len\" in (''|*[!0-9]*) exit 64;; esac; "
-    "dd bs=1 count=\"$conf_len\" of=\"$conf\" status=none; "
-    "dd bs=1 count=\"$sql_len\" of=\"$sql\" status=none; "
-    "chmod 600 \"$conf\" \"$sql\"; "
-    "mariadb --batch --raw --skip-column-names --defaults-extra-file=\"$conf\" < \"$sql\"";
+std::string build_mariadb_client_invocation(const std::string& defaults_file, const std::string& sql_file) {
+    return "mariadb --defaults-extra-file=\"" + defaults_file + "\" --batch --raw --skip-column-names < \"" + sql_file + "\"";
+}
+
+std::string build_container_script() {
+    return "tmpd=$(mktemp -d); "
+           "trap 'rm -rf \"$tmpd\"' EXIT HUP INT TERM; "
+           "conf=\"$tmpd/client.cnf\"; sql=\"$tmpd/query.sql\"; "
+           "IFS= read -r magic; [ \"$magic\" = CONTAINERCP-MARIADB-FRAME-V1 ]; "
+           "IFS= read -r conf_len; IFS= read -r sql_len; "
+           "case \"$conf_len\" in (''|*[!0-9]*) exit 64;; esac; "
+           "case \"$sql_len\" in (''|*[!0-9]*) exit 64;; esac; "
+           "dd bs=1 count=\"$conf_len\" of=\"$conf\" status=none; "
+           "dd bs=1 count=\"$sql_len\" of=\"$sql\" status=none; "
+           "chmod 600 \"$conf\" \"$sql\"; " +
+           build_mariadb_client_invocation("$conf", "$sql");
+}
 
 constexpr std::size_t kMaxTransportValueLength = 256;
 
@@ -401,7 +406,7 @@ MariaDBCredentialResult MariaDBCredentialProvider::execute_sql(const MariaDBConn
     const std::vector<std::string> args = {
         "docker", "compose", "-f", target.compose_file,
         "exec", "-T", target.service,
-        "sh", "-eu", "-c", kContainerScript,
+        "sh", "-eu", "-c", build_container_script(),
     };
 
     const auto command = runner_.run_with_stdin_file(args, bundle_path.string());

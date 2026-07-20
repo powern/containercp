@@ -49,6 +49,26 @@ bool args_contain(const std::vector<std::string>& args, const std::string& needl
     return false;
 }
 
+std::string shell_script_arg(const std::vector<std::string>& args) {
+    for (std::size_t i = 0; i + 1 < args.size(); ++i) {
+        if (args[i] == "-c") {
+            return args[i + 1];
+        }
+    }
+    return {};
+}
+
+void check_defaults_file_option_is_first_mariadb_option(const std::vector<std::string>& args) {
+    const auto script = shell_script_arg(args);
+    const auto mariadb = script.find("mariadb ");
+    REQUIRE(mariadb != std::string::npos);
+    const auto defaults = script.find("--defaults-extra-file=", mariadb);
+    REQUIRE(defaults != std::string::npos);
+    CHECK(script.substr(mariadb, defaults - mariadb) == "mariadb ");
+    CHECK(script.find("mariadb --batch") == std::string::npos);
+    CHECK(script.find("--batch --raw --skip-column-names --defaults-extra-file") == std::string::npos);
+}
+
 std::string shared_output(int exact, int username_identities, int other_hosts, int schema_grants) {
     return "exact_identity\t" + std::to_string(exact) + "\n" +
            "username_identities\t" + std::to_string(username_identities) + "\n" +
@@ -100,7 +120,39 @@ TEST_CASE("MariaDBCredentialProvider changes password without secret argv exposu
     CHECK(runner.last_stdin_content.find("password=admin$secret") != std::string::npos);
     CHECK(runner.last_stdin_content.find("--CONTAINERCP-SQL--") == std::string::npos);
     CHECK(runner.last_stdin_content.find("ALTER USER 'wp_user'@'%' IDENTIFIED BY 'new.Pass-123$word'") != std::string::npos);
+    check_defaults_file_option_is_first_mariadb_option(runner.last_args);
     CHECK_FALSE(std::filesystem::exists(runner.last_stdin_file));
+}
+
+TEST_CASE("MariaDBCredentialProvider uses canonical defaults-file ordering for all SQL operations") {
+    FakeMariaDBRunner runner;
+    runner.result.exit_code = 0;
+    MariaDBCredentialProvider provider(runner);
+
+    SUBCASE("verify password") {
+        const auto result = provider.verify_password({"compose.yml", "mariadb"}, {"wp_user", "localhost"}, "current-secret");
+        CHECK(result.success);
+        check_defaults_file_option_is_first_mariadb_option(runner.last_args);
+    }
+
+    SUBCASE("change password") {
+        const auto result = provider.change_password({"compose.yml", "mariadb"}, {"admin", "admin-secret", "localhost"}, {"wp_user", "%"}, "new-secret");
+        CHECK(result.success);
+        check_defaults_file_option_is_first_mariadb_option(runner.last_args);
+    }
+
+    SUBCASE("restore password") {
+        const auto result = provider.restore_password({"compose.yml", "mariadb"}, {"admin", "admin-secret", "localhost"}, {"wp_user", "%"}, "old-secret");
+        CHECK(result.success);
+        check_defaults_file_option_is_first_mariadb_option(runner.last_args);
+    }
+
+    SUBCASE("detect shared user") {
+        runner.result.out = shared_output(1, 1, 0, 1);
+        const auto result = provider.detect_shared_user({"compose.yml", "mariadb"}, {"admin", "admin-secret", "localhost"}, {"wp_user", "%"});
+        CHECK(result.success);
+        check_defaults_file_option_is_first_mariadb_option(runner.last_args);
+    }
 }
 
 TEST_CASE("MariaDBCredentialProvider verifies target user password through stdin transport") {

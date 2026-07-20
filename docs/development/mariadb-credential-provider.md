@@ -19,7 +19,7 @@ The provider writes a protected host-side stdin bundle with mode `0600`, passes 
 - reads a length-framed `CONTAINERCP-MARIADB-FRAME-V1` payload;
 - splits the framed payload into separate MariaDB defaults and SQL files without delimiter parsing;
 - sets both files to `0600`;
-- runs `mariadb --batch --raw --skip-column-names --defaults-extra-file=<temp-client-file> < <temp-sql-file>`;
+- runs `mariadb --defaults-extra-file=<temp-client-file> --batch --raw --skip-column-names < <temp-sql-file>`;
 - removes the temporary directory through `trap` cleanup.
 
 Host-side bundle paths are created with `mkstemp` using an OS-selected unique filename and are unlinked by RAII cleanup after command execution, including exceptional exits from the provider call. The path generator does not use a process-local counter and is safe for concurrent provider operations.

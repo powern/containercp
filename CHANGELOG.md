@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-20 | `this commit` | WordPress — Fix MariaDB credential command option order
+
+**Summary:** Fixed the live WordPress credential rotation failure found by WP-R6 diagnostics. The MariaDB credential provider now passes `--defaults-extra-file` as the first MariaDB client option inside the container, matching MariaDB client parsing requirements and allowing the shared-credential assessment to authenticate with the transported option file.
+
+**Files changed:** `libs/database/MariaDBCredentialProvider.cpp`, `tests/test_mariadb_credential_provider.cpp`, `docs/development/mariadb-credential-provider.md`, `CHANGELOG.md`
+
+**User-visible behavior:** WordPress database credential rotation no longer fails at `verify_shared_credentials` with `mariadb_command_failed` solely because the MariaDB client rejects a late `--defaults-extra-file` option. Passwords remain transported through the protected stdin bundle and are not exposed in command argv or failure messages.
+
+**Validation:** Clean configure passed with `cmake -S . -B build-wp-r7 -G Ninja -DCMAKE_BUILD_TYPE=Release`. Clean build passed with `cmake --build build-wp-r7 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Full doctest passed (`808` cases, `5546` assertions). Full CTest passed (`1/1`). Focused tests passed for `*MariaDBCredentialProvider*` (`18` cases, `144` assertions), `*DatabaseCredentialRotation*` (`42` cases, `464` assertions), and `*API*` (`18` cases, `73` assertions). `node --check web/app.js` and `git diff --check` passed. Repository audit found no remaining late `--defaults-extra-file` MariaDB invocation. A read-only production reproduction confirmed MariaDB 12.3 rejects the old option order with `unknown variable 'defaults-extra-file=...'` and accepts the same option file when `--defaults-extra-file` is first.
+
+**Known risks:** Repository validation is focused on the provider and adjacent rotation workflow. The fix still needs deployment to `web2.softico.ua` and a new operator-approved live rotation attempt to confirm end-to-end production behavior.
+
+---
+
 ## 2026-07-20 | `this commit` | WordPress — Expose rotation diagnostics
 
 **Summary:** Completed WP-R6 by extending the job execution model and WordPress database credential rotation workflow with public-safe step diagnostics. Rotation jobs now record per-step identifiers, names, start/completion/failure/skipped state, durations, results, diagnostic messages, and error codes. Failed jobs expose the failed stage, reason, compensation state, rollback outcome, and manual recovery flag through job details.
