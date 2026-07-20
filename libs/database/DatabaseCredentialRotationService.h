@@ -70,6 +70,9 @@ public:
     virtual DatabaseCredentialRotationStepResult generate_password(const DatabaseCredentialRotationRequest& request) = 0;
     virtual DatabaseCredentialRotationStepResult change_mariadb_password(const DatabaseCredentialRotationRequest& request,
                                                                          const std::string& new_password) = 0;
+    virtual DatabaseCredentialRotationStepResult probe_old_credential(const DatabaseCredentialRotationRequest& request) = 0;
+    virtual DatabaseCredentialRotationStepResult probe_new_credential(const DatabaseCredentialRotationRequest& request,
+                                                                      const std::string& new_password) = 0;
     virtual DatabaseCredentialRotationStepResult update_wordpress_config(const DatabaseCredentialRotationRequest& request,
                                                                          const std::string& new_password) = 0;
     virtual DatabaseCredentialRotationStepResult apply_runtime(const DatabaseCredentialRotationRequest& request) = 0;

@@ -271,8 +271,8 @@ DatabaseCredentialRotationResult DatabaseCredentialRotationService::rotate(const
         result.events.push_back(event(DatabaseCredentialRotationState::VerifyingMariaDBPassword,
                                       "determining_mariadb_password_state",
                                       "Determining MariaDB password state after failed change command"));
-        const auto old_check = dependencies_->verify_old_credential(request);
-        const auto new_check = dependencies_->verify_new_credential(request, new_password);
+        const auto old_check = dependencies_->probe_old_credential(request);
+        const auto new_check = dependencies_->probe_new_credential(request, new_password);
         if (new_check.success && !old_check.success) {
             result.events.push_back(event(DatabaseCredentialRotationState::ChangingMariaDBPassword,
                                           "mariadb_password_change_confirmed",

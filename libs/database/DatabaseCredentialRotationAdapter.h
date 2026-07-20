@@ -48,6 +48,9 @@ public:
     DatabaseCredentialRotationStepResult generate_password(const DatabaseCredentialRotationRequest& request) override;
     DatabaseCredentialRotationStepResult change_mariadb_password(const DatabaseCredentialRotationRequest& request,
                                                                  const std::string& new_password) override;
+    DatabaseCredentialRotationStepResult probe_old_credential(const DatabaseCredentialRotationRequest& request) override;
+    DatabaseCredentialRotationStepResult probe_new_credential(const DatabaseCredentialRotationRequest& request,
+                                                              const std::string& new_password) override;
     DatabaseCredentialRotationStepResult update_wordpress_config(const DatabaseCredentialRotationRequest& request,
                                                                  const std::string& new_password) override;
     DatabaseCredentialRotationStepResult apply_runtime(const DatabaseCredentialRotationRequest& request) override;

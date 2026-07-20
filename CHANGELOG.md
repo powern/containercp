@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-20 | `this commit` | Database — Preserve post-mutation rotation context
+
+**Summary:** Completed WP-R3 post-mutation context preservation for WordPress database credential rotation. The service now uses explicit old/new credential probes after a failed MariaDB password-change command instead of cleanup-capable verification calls. The concrete adapter probes do not erase rotation context, so a failed old-password probe cannot prevent the new-password probe from confirming that `ALTER USER` actually succeeded.
+
+**Files changed:** `libs/database/DatabaseCredentialRotationService.h`, `libs/database/DatabaseCredentialRotationService.cpp`, `libs/database/DatabaseCredentialRotationAdapter.h`, `libs/database/DatabaseCredentialRotationAdapter.cpp`, `tests/test_database_credential_rotation.cpp`, `docs/development/wordpress-credential-foundation-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** If MariaDB applies the new password but the command later reports failure, ContainerCP can now confirm the new credential, continue the saga, and compensate later failures instead of losing operation context during investigation.
+
+**Validation:** Clean configure/build passed with `cmake -S . -B build-wp-r3-clean -G Ninja -DCMAKE_BUILD_TYPE=Release` and `cmake --build build-wp-r3-clean --target containercp_tests containercp containercpd -- -j1` with no compiler warnings. Full doctest passed (`790` cases, `5356` assertions). Focused tests passed for `*DatabaseCredentialRotation*` (`42` cases, `375` assertions), `*database*` (`66` cases, `580` assertions), `*WordPress*` (`64` cases, `379` assertions), and `*MariaDBCredentialProvider*` (`17` cases, `115` assertions). Full CTest (`1/1`) and `git diff --check` passed.
+
+**Known risks:** No live credential rotation, production deployment, production database access, or production `wp-config.php` access was performed. This is repository/test validation only; the first live credential rotation test still requires explicit operator approval.
+
+---
+
 ## 2026-07-19 | `this commit` | WordPress — Validate credential hardening final state
 
 **Summary:** Completed WP-R2.7 final repository validation for WordPress credential rotation production hardening WP-R2.1 through WP-R2.6. Validation was repository/test-only and did not execute live credential rotation, production deployment, production database access, or production `wp-config.php` access.

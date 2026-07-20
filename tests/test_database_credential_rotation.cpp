@@ -113,6 +113,23 @@ struct FakeRotationDependencies : DatabaseCredentialRotationDependencies {
         }
         return ok("change_mariadb_password");
     }
+    DatabaseCredentialRotationStepResult probe_old_credential(const DatabaseCredentialRotationRequest&) override {
+        calls.push_back("probe_old_credential");
+        DatabaseCredentialRotationStepResult result;
+        result.success = old_password_valid_after_failed_change;
+        result.code = result.success ? "ok" : "old_credential_probe_invalid";
+        result.message = "ok";
+        return result;
+    }
+    DatabaseCredentialRotationStepResult probe_new_credential(const DatabaseCredentialRotationRequest&, const std::string& new_password) override {
+        seen_password = new_password;
+        calls.push_back("probe_new_credential");
+        DatabaseCredentialRotationStepResult result;
+        result.success = new_password_valid_after_failed_change;
+        result.code = result.success ? "ok" : "new_credential_probe_invalid";
+        result.message = "ok";
+        return result;
+    }
     DatabaseCredentialRotationStepResult update_wordpress_config(const DatabaseCredentialRotationRequest&, const std::string& new_password) override {
         seen_password = new_password;
         return ok("update_wordpress_config");
@@ -217,6 +234,11 @@ struct FakeMariaDBAdapterRunner : MariaDBProcessRunner {
     mutable std::vector<std::string> defaults_files;
     mutable std::string active_password = "oldpass";
     int schema_grants = 1;
+    bool fail_after_new_password_alter = false;
+
+    static bool defaults_password_is(const std::string& defaults, const std::string& password) {
+        return defaults.find("\npassword=" + password + "\n") != std::string::npos;
+    }
 
     runtime::CommandResult run_with_stdin_file(const std::vector<std::string>&,
                                                const std::string& stdin_file,
@@ -230,9 +252,17 @@ struct FakeMariaDBAdapterRunner : MariaDBProcessRunner {
             result.out = "exact_identity\t1\nusername_identities\t1\nother_host_identities\t0\nschema_grants\t" +
                          std::to_string(schema_grants) + "\n";
         }
+        if (parsed.sql.find("SELECT 1;") != std::string::npos && !defaults_password_is(parsed.defaults, active_password)) {
+            result.exit_code = 1;
+            result.err = "Access denied";
+        }
         if (parsed.sql.find("ALTER USER") != std::string::npos) {
             if (parsed.sql.find("newpass") != std::string::npos) {
                 active_password = "newpass";
+                if (fail_after_new_password_alter) {
+                    result.exit_code = 1;
+                    result.err = "simulated post-alter failure";
+                }
             } else if (parsed.sql.find("oldpass") != std::string::npos) {
                 active_password = "oldpass";
             }
@@ -537,8 +567,8 @@ TEST_CASE("DatabaseCredentialRotationService continues when failed MariaDB chang
         "assess_shared_user",
         "generate_password",
         "change_mariadb_password",
-        "verify_old_credential",
-        "verify_new_credential",
+        "probe_old_credential",
+        "probe_new_credential",
         "update_wordpress_config",
         "apply_runtime",
         "verify_new_credential",
@@ -583,8 +613,8 @@ TEST_CASE("DatabaseCredentialRotationService fails without compensation when fai
         "assess_shared_user",
         "generate_password",
         "change_mariadb_password",
-        "verify_old_credential",
-        "verify_new_credential",
+        "probe_old_credential",
+        "probe_new_credential",
     });
 }
 
@@ -855,6 +885,45 @@ TEST_CASE("DatabaseCredentialRotationAdapter restores metadata when metadata per
     CHECK(read_test_file(fixture.root / "example.test" / "public" / "wp-config.php").find("oldpass") != std::string::npos);
     CHECK(fixture.mariadb_runner.active_password == "oldpass");
     CHECK(fixture.stored_metadata_password == "oldpass");
+}
+
+TEST_CASE("DatabaseCredentialRotationAdapter preserves context while probing failed post-mutation command") {
+    AdapterFixture fixture("post_mutation_probe_context");
+    fixture.mariadb_runner.fail_after_new_password_alter = true;
+    fixture.metadata_persist_result = false;
+    auto adapter = fixture.make_adapter();
+    DatabaseCredentialRotationService service(adapter);
+
+    const auto result = service.rotate({1, 1, "example.test"});
+
+    CHECK_FALSE(result.success);
+    CHECK(result.final_state == DatabaseCredentialRotationState::Compensated);
+    CHECK(result.code == "rotation_compensated");
+    bool confirmed_mutation = false;
+    bool compensation_started = false;
+    for (const auto& event : result.events) {
+        if (event.code == "mariadb_password_change_confirmed") {
+            confirmed_mutation = true;
+        }
+        if (event.code == "restoring_mariadb_password") {
+            compensation_started = true;
+        }
+    }
+    CHECK(confirmed_mutation);
+    CHECK(compensation_started);
+    REQUIRE(fixture.databases.find(1) != nullptr);
+    CHECK(fixture.databases.find(1)->db_password == "oldpass");
+    CHECK(fixture.stored_metadata_password == "oldpass");
+    CHECK(fixture.mariadb_runner.active_password == "oldpass");
+    CHECK(read_test_file(fixture.root / "example.test" / "public" / "wp-config.php").find("oldpass") != std::string::npos);
+    CHECK(fixture.runtime_applied);
+    CHECK(fixture.health_checked);
+    REQUIRE(fixture.mariadb_runner.sql_statements.size() >= 7);
+    CHECK(fixture.mariadb_runner.sql_statements[2].find("ALTER USER") != std::string::npos);
+    CHECK(fixture.mariadb_runner.sql_statements[3].find("SELECT 1;") != std::string::npos);
+    CHECK(fixture.mariadb_runner.sql_statements[4].find("SELECT 1;") != std::string::npos);
+    CHECK(fixture.mariadb_runner.sql_statements[5].find("SELECT 1;") != std::string::npos);
+    CHECK(fixture.mariadb_runner.sql_statements[6].find("ALTER USER") != std::string::npos);
 }
 
 TEST_CASE("DatabaseCredentialRotationAdapter compensates when metadata success cannot be verified in storage") {

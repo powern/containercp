@@ -244,6 +244,27 @@ DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::change_m
                                  "MariaDB password change failed");
 }
 
+DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::probe_old_credential(const DatabaseCredentialRotationRequest& request) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    auto* context = context_for(request);
+    if (context == nullptr) return fail("rotation_context_missing", "Credential rotation context is missing");
+    const auto result = mariadb_provider_.verify_password(context->mariadb_target, context->mariadb_identity, context->old_password);
+    return result.success ? ok("old_credential_probe_valid", "Existing database credential probe succeeded")
+                          : fail(result.code.empty() ? "old_credential_probe_invalid" : result.code,
+                                 "Existing database credential probe failed");
+}
+
+DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::probe_new_credential(const DatabaseCredentialRotationRequest& request,
+                                                                                             const std::string& new_password) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    auto* context = context_for(request);
+    if (context == nullptr) return fail("rotation_context_missing", "Credential rotation context is missing");
+    const auto result = mariadb_provider_.verify_password(context->mariadb_target, context->mariadb_identity, new_password);
+    return result.success ? ok("new_credential_probe_valid", "New database credential probe succeeded")
+                          : fail(result.code.empty() ? "new_credential_probe_invalid" : result.code,
+                                 "New database credential probe failed");
+}
+
 DatabaseCredentialRotationStepResult DatabaseCredentialRotationAdapter::update_wordpress_config(const DatabaseCredentialRotationRequest& request,
                                                                                                 const std::string& new_password) {
     std::lock_guard<std::mutex> guard(mutex_);
