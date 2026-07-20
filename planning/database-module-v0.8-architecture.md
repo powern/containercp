@@ -6,9 +6,9 @@ Design proposal for post-v0.7.0 work. This document records the target architect
 
 ## Decision Summary
 
-ContainerCP v0.8 should turn the current metadata-only Databases page into a safe database management subsystem by introducing database lifecycle services behind the REST API. The first implementation supports MariaDB only, because the current generated site stack already provisions a per-site `mariadb:lts` service and all stored database records default to `engine = "mariadb"`. The architecture must still preserve provider boundaries so future engines extend the database provider layer instead of forcing an API, storage, or service rewrite.
+ContainerCP v0.8 should turn the current metadata-only Databases page into a safe database management subsystem by introducing database lifecycle services behind the REST API. The first implementation supports MariaDB only, because the current generated site stack already provisions one per-site `mariadb:lts` service and all stored database records default to `engine = "mariadb"`. ContainerCP v0.8 manages exactly one application database for each Site. The architecture must still preserve provider boundaries so future engines extend the database provider layer instead of forcing an API, storage, or service rewrite.
 
-DB-1 is no longer the immediate next implementation task. WordPress configuration inspection and credential rotation planning are now the prerequisite foundation because migrated myVestaCP sites and future ContainerCP-created WordPress sites need a reusable, safe owner for `wp-config.php`, `.env`, metadata, and MariaDB credential coordination before Databases GUI or password operations can be implemented responsibly. See `planning/wordpress-config-management-v0.8-architecture.md`, `planning/wordpress-db-password-rotation-v0.8-plan.md`, `planning/wordpress-db-password-rotation-v0.8-threat-model.md`, and `planning/wp-cli-integration-v0.8-review.md`.
+The WordPress credential-management foundation is now complete and must be reused by the Databases module. `WordPressConfigService`, the structural `wp-config.php` parser, safe config writer, password rotation, runtime verification, compensation, secure temporary credential transport, and structured audit logging are the approved foundation for WordPress database credential coordination. The Databases module must not introduce another WordPress configuration parser or duplicate WordPress configuration mutation logic.
 
 The default web administration tool should be Adminer, but Adminer deployment must be deferred until the database lifecycle API, credential handling, backup/export behavior, and access-gating design are implemented and tested.
 
@@ -35,9 +35,9 @@ The current system already has a Database resource, but it does not manage physi
 
 ### v0.8 Goals
 
-- Provide safe database inventory with site relationship, runtime state, engine, version, size placeholder, and last backup/export status.
-- Support one site with many individually addressable databases.
-- Create and remove databases through the REST API with physical database/user/grant lifecycle managed by backend services.
+- Provide safe database inventory with the selected Site's managed database relationship, runtime state, engine, version, size placeholder, and last backup/export status.
+- Support one Site with exactly one managed application database in v0.8.
+- Create and remove the managed application database through the REST API with physical database/user/grant lifecycle managed by backend services.
 - Preserve API-first behavior: CLI and Web UI remain clients, not owners of business logic.
 - Add logical SQL export/import using MariaDB tools and the Job subsystem.
 - Include database dumps in site backup workflow before claiming database backup support.
@@ -52,36 +52,35 @@ The current system already has a Database resource, but it does not manage physi
 - Query performance monitoring, slow query analysis, and schema migration management.
 - Public internet exposure of Adminer or any database admin surface.
 - Automatic modification of existing production installations during design approval.
+- Multiple managed databases per site. The MariaDB server may technically host multiple databases, but ContainerCP v0.8 manages exactly one application database per Site.
 
 ## Approved Architecture Decisions
 
 | Decision | Final position |
 |----------|----------------|
 | Version | Databases is a v0.8 major subsystem, not a v0.7.x patch |
-| Cardinality | One site can own many databases; never assume exactly one database per site |
+| Cardinality | One Site owns exactly one managed application database in v0.8 |
 | Engine model | Use a Database Profile abstraction; v0.8 implements MariaDB only |
 | Root password | `MYSQL_ROOT_PASSWORD` is bootstrap-only, not normal runtime auth |
 | Runtime DB auth | Use a dedicated minimum-privilege service account for ContainerCP operations |
 | Password workflow | Prefer generate, rotate, replace; normal admin flow must not depend on reveal |
 | Adminer lifecycle | Prefer on-demand temporary Adminer to minimize attack surface |
 | First implementation phase | DB-1 is read-only inventory only; no physical lifecycle changes |
-| Legacy imports | myVestaCP/imported databases must be represented without assuming ContainerCP created or owns the physical database, user, or password |
-| Immediate dependency | WordPress config inspection and credential rotation foundation comes before Databases GUI/DB-1 unless DB-1 proceeds strictly read-only without distracting from WP work |
+| Legacy imports | myVestaCP/imported site databases must be represented without assuming ContainerCP created or owns the physical database, user, or password |
+| Immediate dependency | WordPress credential-management foundation is complete and must be reused; DB-1 may proceed read-only without duplicating WordPress config parsing or mutation logic |
 
 ## Site And Database Model
 
-The database model is one-to-many from site to database:
+The v0.8 managed database model is one-to-one from Site to managed application database:
 
 ```text
 Site
-  -> Database A
-  -> Database B
-  -> Database C
+  -> Managed Application Database
 ```
 
-Database records remain individually addressable by database ID. `site_id` is a relationship, not a uniqueness constraint. API, services, storage migrations, Web UI flows, backups, audit records, and Adminer launch sessions must all treat database ID as the mutation target and must not infer that a site has only one database.
+The selected Site identifies the Docker Compose stack, the `mariadb` service, and the one managed application database. Database records may remain individually addressable by database ID for API compatibility and detail views, but lifecycle decisions target `Site -> Managed Database`. Services must verify that any database ID belongs to the selected Site before acting.
 
-The first UI may create only one database per site for product simplicity, but backend architecture must support many databases per site from the start.
+The MariaDB server may technically contain additional databases, especially on imported or manually modified installations. ContainerCP v0.8 must not expose those as multiple managed databases. Discovery may report imported/verification state for the selected Site's application database only. Multiple managed databases per Site are intentionally postponed to a future major version.
 
 ## Database Profiles
 
@@ -141,7 +140,7 @@ The v0.8 MariaDB profile maps to the existing `mariadb` Compose service. Future 
 | Database user | `DatabaseManager` record | Site `.env` as `DB_USER`; physical database user | Lifecycle service owns user changes and reconciles metadata, physical grants, and `.env` |
 | Database password | Secret owner behind database service; current storage field is transitional | SQLite `databases.db_password`; site `.env` as `DB_PASSWORD`; temporary provider option files | Normal workflow is rotate/replace, not reveal. Temporary files are created per operation and deleted. Future secret store can replace plaintext persistence without changing API semantics |
 | Engine/profile | Database record plus Database Profile registry | Compose service/image template | Profile registry defines capabilities; provider generates or validates runtime mapping |
-| Site relationship | `DatabaseManager` record through `site_id` | API view joins to `SiteManager`; backup/admin sessions reference both IDs | Database ID is mutation target; site relation is verified before runtime, backup, Adminer, or deletion actions |
+| Site relationship | `DatabaseManager` record through `site_id` | API view joins to `SiteManager`; backup/admin sessions reference both IDs | Site is the primary lifecycle target; database ID is verified as that Site's managed database before runtime, backup, Adminer, or deletion actions |
 
 Hidden duplication is not allowed. Any future copy of database credentials, engine state, or site relationship must be documented as either a cache, runtime projection, or secret transport with explicit synchronization and cleanup rules.
 
@@ -149,7 +148,7 @@ Hidden duplication is not allowed. Any future copy of database credentials, engi
 
 Migrated myVestaCP sites can already contain a working application database connection even when ContainerCP did not create the physical database, did not create the database user, and does not have a stored password in SQLite.
 
-DB-1 must resolve imported connection metadata through `WordPressConfigService` or another approved secret-handling boundary, not by exposing or permanently copying secrets into API responses. The boundary may inspect migrated site configuration such as application config files or generated environment files, but it must return only structured availability and verification results to the API layer.
+DB-1 must resolve imported connection metadata through `WordPressConfigService` or another approved secret-handling boundary, not by exposing or permanently copying secrets into API responses. The boundary may inspect migrated site configuration such as application config files or generated environment files, but it must return only structured availability and verification results to the API layer. For WordPress sites, `WordPressConfigService` remains the single owner of `wp-config.php` parsing and mutation.
 
 Rules for imported databases:
 
@@ -188,7 +187,7 @@ These states are independent. For example, runtime can be `Running` while creden
 
 ### `WordPressConfigService` Dependency
 
-Database inventory, adoption, and rotation must not duplicate WordPress config parsing. `WordPressConfigService` is the planned owner for detecting `wp-config.php`, classifying credential sources, reading supported non-secret metadata, updating supported direct constants atomically, and validating/rolling back config changes.
+Database inventory, adoption, and rotation must not duplicate WordPress config parsing. `WordPressConfigService` is the completed owner for detecting `wp-config.php`, classifying credential sources, reading supported non-secret metadata, updating supported direct constants atomically, and validating/rolling back config changes.
 
 Databases DB-1 may consume only read-only inspection results from this service. Later lifecycle phases must call it for WordPress application credential changes instead of writing `wp-config.php` directly.
 
@@ -226,15 +225,15 @@ For imported myVestaCP databases, the view service should show the database as i
 
 ### `DatabaseLifecycleService`
 
-Owns create, drop, password rotation, and grants. It should not call Docker directly except through a provider abstraction that executes commands inside the existing per-site stack.
+Owns create, drop, password rotation, and grants for the selected Site's managed application database. It should not call Docker directly except through a provider abstraction that executes commands inside the existing per-site stack.
 
 Required operations:
 
-- `create_database(site_id, requested_name, requested_user)`
-- `drop_database(database_id, DropMode mode)`
-- `rotate_password(database_id)`
-- `verify_database(database_id)`
-- `repair_metadata(database_id)` as an explicit admin-only recovery operation
+- `create_managed_database(site_id, requested_name, requested_user)`
+- `drop_managed_database(site_id, DropMode mode)`
+- `rotate_password(site_id)`
+- `verify_managed_database(site_id)`
+- `repair_metadata(site_id)` as an explicit admin-only recovery operation
 
 `DropMode` should make destructive behavior explicit:
 
@@ -242,7 +241,7 @@ Required operations:
 - `physical_and_metadata` for normal delete after confirmation.
 - `physical_only` for repair of orphaned MariaDB objects only.
 
-The service must support multiple databases per site and must resolve all destructive operations by database ID plus verified site relation. It must never locate a database only by site ID.
+The service must not search among multiple managed databases for a Site. It must resolve the selected Site's single managed database, verify the stored database record relation when a database ID is supplied, and fail closed if the Site has zero or more than one managed record until an explicit repair/adoption workflow resolves the inconsistency.
 
 ### `DatabaseProvider`
 
@@ -319,14 +318,11 @@ DB-1 delivers:
 - Runtime status through existing runtime services.
 - Engine profile/version display.
 - Database size field, even if initially `unknown` or provider-derived later.
-- Restart action routed through existing `restart-db` behavior.
-- Logs view routed through existing runtime/log retrieval behavior where available.
-- Safe delete confirmation UI around the current metadata-only delete semantics.
 - Imported myVestaCP database inventory.
 - Non-destructive connection verification for imported databases when credentials are safely available.
 - Independent runtime, connection verification, credential availability, and management ownership states.
 
-DB-1 must clearly label delete behavior as metadata-only until the physical lifecycle service is implemented. It must not silently change the existing `POST /api/databases/remove` semantics.
+DB-1 must not change delete, restart, lifecycle, import/export, password rotation, Adminer, Docker Compose, or physical MariaDB state. Existing metadata-only delete behavior may remain as-is, but DB-1 must not expand or rebrand it as physical lifecycle management.
 
 For imported databases, DB-1 verification is limited to a non-destructive connection check such as opening a connection and running a safe read-only probe. DB-1 must not rotate passwords, change grants, create users, revoke users, recreate the database, or write application configuration.
 
@@ -364,7 +360,7 @@ Import should use the `mariadb` client with strict staging:
 - Accept only uploaded `.sql` or compressed `.sql.gz` after content-type and size checks.
 - Store uploaded files outside web roots.
 - Run import as an async job.
-- Require target database selection and explicit destructive confirmation if import may overwrite objects.
+- Target the selected Site's managed application database and require explicit destructive confirmation if import may overwrite objects.
 - Preserve the source file until job completion diagnostics are available.
 
 ### `DatabaseAdminService`
@@ -374,12 +370,13 @@ Owns Adminer integration. It must not be implemented as a public static route or
 Recommended v0.8 posture:
 
 - Adminer is disabled by default.
-- Adminer is launched for a specific database ID and site ID.
+- Adminer is launched for the selected Site's managed application database.
 - The preferred model is an on-demand temporary Adminer container.
 - Adminer runs in the same private site network as the target database service, not on a host port.
 - The public reverse proxy only exposes Adminer through authenticated ContainerCP routes.
 - Launch uses a short-lived server-side token, not credentials in URLs or JavaScript-visible state.
 - Adminer container and token state are removed when the session expires or the operator revokes it.
+- Adminer opens the selected Site's managed database directly; v0.8 does not require a database selection UI.
 
 ## API Design
 
@@ -389,12 +386,12 @@ API details should be finalized in `docs/api/API_REFERENCE.md` during implementa
 |--------|------|---------|
 | GET | `/api/databases` | Enriched list, no secrets |
 | GET | `/api/databases/<id>` | Database details, no secrets |
-| POST | `/api/databases` | Create database/user/grants for a site |
+| POST | `/api/databases` | Create the managed database/user/grants for a site |
 | POST | `/api/databases/<id>/drop` | Drop physical DB/user/grants and metadata with explicit confirmation |
 | POST | `/api/databases/<id>/verify` | Compare metadata to physical state |
 | POST | `/api/databases/<id>/rotate-password` | Rotate user password and update dependent files |
-| POST | `/api/databases/<id>/export` | Queue SQL export job |
-| POST | `/api/databases/<id>/import` | Queue SQL import job |
+| POST | `/api/databases/<id>/export` | Queue SQL export job for the selected site's managed database |
+| POST | `/api/databases/<id>/import` | Queue SQL import job for the selected site's managed database |
 | POST | `/api/databases/<id>/admin-session` | Create short-lived Adminer launch token |
 | POST | `/api/databases/<id>/admin-session/revoke` | Revoke Adminer launch token |
 
@@ -406,7 +403,7 @@ The Web UI follows API completion. The Databases page should remain thin and cal
 
 Required UI states:
 
-- List all databases with site domain, engine, runtime, and enabled state.
+- List managed databases with site domain, engine, runtime, and enabled state.
 - Show clear difference between `metadata only`, `verified`, `missing physical database`, and `orphan physical database` states.
 - Require typed confirmation for physical drop.
 - Show async job progress for create/drop/import/export/backup restore.
@@ -414,7 +411,7 @@ Required UI states:
 - If a reveal/reset flow is added, require explicit confirmation and audit logging.
 - Adminer launch button appears only when the backend returns `has_admin_tool` and an active launch token can be created.
 
-DB-1 UI scope is intentionally smaller. It may add safe delete confirmation UI around the current metadata-only delete behavior, but it must not change delete semantics or perform physical database deletion.
+DB-1 UI scope is intentionally smaller. It must remain a read-only view over inventory, detail, runtime state, credential availability, connection verification, and ownership state. Delete, restart, Adminer, import/export, password rotation, and other lifecycle actions remain out of DB-1.
 
 ## Credential Architecture
 
@@ -446,7 +443,7 @@ The current tar backup captures the site directory. A database module cannot cla
 
 v0.8 backup behavior:
 
-- Site backup should queue a pre-backup database dump job for every enabled database attached to the site.
+- Site backup should queue a pre-backup dump job for the selected Site's managed database.
 - Dumps should be written under a controlled backup staging path, then included in the final archive.
 - Restore should restore files first, then import database dumps through `DatabaseDumpService`.
 - Restore must never import into a running production database without explicit operator confirmation.
@@ -469,7 +466,7 @@ Recommended model: on-demand temporary Adminer. It minimizes idle attack surface
 
 Adminer session lifecycle:
 
-1. Administrator requests an Adminer session for a database ID.
+1. Administrator requests an Adminer session for the selected Site's managed database.
 2. `DatabaseAdminService` verifies auth, site relation, runtime status, and database profile support.
 3. A short-lived server-side token is created and bound to user, database ID, site ID, node ID, expiry, and nonce.
 4. On-demand Adminer container is started on the target site network without host ports.
@@ -498,7 +495,7 @@ v0.8 implementation is not complete until these checks pass:
 - What exact MariaDB grants should the runtime service account receive for each operation?
 - Should DB-1 expose logs from Docker Compose only, MariaDB logs only, or both?
 - What maximum import size should be supported in v0.8?
-- Should database dumps be included inside the existing site tar archive or stored as sibling artifacts referenced by the backup record?
+- Should the managed database dump be included inside the existing site tar archive or stored as a sibling artifact referenced by the backup record?
 
 ## Related Documents
 

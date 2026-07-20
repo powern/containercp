@@ -6,9 +6,9 @@ Research note for architecture planning. No component is approved for deployment
 
 ## Recommendation
 
-Use Adminer as the default v0.8 database administration tool candidate, but do not deploy it until ContainerCP has safe database lifecycle APIs, credential hygiene, authenticated launch tokens, and audit logging.
+Use Adminer as the default v0.8 database administration tool candidate, but do not deploy it until ContainerCP has safe database lifecycle APIs, credential hygiene, authenticated launch tokens, and audit logging. In v0.8, Adminer opens the selected Site's one managed application database directly; ContainerCP does not need a database selection UI.
 
-Use MariaDB command-line tools for import/export and backup integration. Prefer logical backups with `mariadb-dump` in v0.8. Defer physical online backup tooling with `mariadb-backup` to a later release.
+Use MariaDB command-line tools for import/export and backup integration. Prefer logical backups with `mariadb-dump` for the selected Site's managed database in v0.8. Defer physical online backup tooling with `mariadb-backup` to a later release.
 
 ## Reviewed Components
 
@@ -52,8 +52,9 @@ Required controls before adoption:
 - Audit log for launch and revoke.
 - Clear update strategy for Adminer image/file version.
 - Per-site network isolation.
+- Direct launch into the selected Site's managed database; no multi-database selector in v0.8.
 
-Decision: preferred v0.8 admin UI candidate, but only after lifecycle, backup, and threat-model controls are implemented.
+Decision: preferred v0.8 admin UI candidate, but only after lifecycle, backup, and threat-model controls are implemented for the selected Site's managed database.
 
 ## phpMyAdmin
 
@@ -99,7 +100,7 @@ Decision: not a v0.8 default. Revisit for a future advanced database-workbench f
 
 ## MariaDB Command-Line Tools
 
-v0.8 implements MariaDB only, but tool choices should live behind a Database Profile and provider boundary. Future MySQL or PostgreSQL support should select different provider commands without changing the public inventory API.
+v0.8 implements MariaDB only and manages exactly one application database per Site, but tool choices should live behind a Database Profile and provider boundary. Future MySQL or PostgreSQL support should select different provider commands without changing the public inventory API.
 
 ### `mariadb-dump`
 
@@ -109,7 +110,7 @@ Strengths:
 
 - Official MariaDB utility.
 - Logical dumps are portable and easy to include in site backups.
-- Works well for per-site database export.
+- Works well for exporting the selected Site's managed database.
 - Easier restore model than physical backup tools.
 
 Risks:
@@ -166,7 +167,8 @@ Minimum recommended approach:
 - Use temporary client option files for MariaDB tools.
 - Enforce restrictive permissions on credential files.
 - Redact secrets from logs and job messages.
-- Add password rotation before or alongside Adminer launch.
+- Reuse the completed WordPress credential-management foundation for WordPress database password updates.
+- Add or reuse password rotation before or alongside Adminer launch.
 
 Future options:
 
@@ -189,8 +191,9 @@ For v0.8, build the Databases module around these defaults:
 
 - MariaDB only.
 - Adminer as optional, authenticated, on-demand admin UI.
-- `mariadb-dump` for logical exports and backup integration.
-- `mariadb` client for imports and lifecycle SQL.
+- `mariadb-dump` for logical exports and backup integration of the selected Site's managed database.
+- `mariadb` client for imports and lifecycle SQL against the selected Site's managed database.
+- No database selection UI in Adminer for v0.8; launch is bound to the selected Site's managed database.
 - `mariadb-backup`, phpMyAdmin, and CloudBeaver deferred.
 
 This keeps the feature useful while staying aligned with ContainerCP's current Compose topology and security posture.

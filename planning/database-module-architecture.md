@@ -10,6 +10,11 @@ This module is intentionally postponed.
 > `planning/database-module-v0.8-implementation-plan.md`,
 > `planning/database-module-v0.8-open-source-review.md`, and
 > `planning/database-module-v0.8-threat-model.md`.
+> The final v0.8 cardinality decision is: one Site owns exactly one
+> managed application database. A site Docker Compose stack contains one
+> MariaDB container, and ContainerCP v0.8 manages one application
+> database in that container. Multi-database management is intentionally
+> postponed to a future major version.
 > No implementation is approved until those documents are reviewed.
 
 The current implementation provides a minimal Database resource (CRUD
@@ -50,9 +55,11 @@ approved.**
 
 ### Core functionality
 
-- List all databases with engine, version, status, and site relation
-- Create and delete databases
-- Show database ↔ site relationship
+- List each site's single managed application database with engine,
+  version, status, and site relation
+- Create and delete the managed database as part of explicit lifecycle
+  phases only
+- Show the one-to-one Site ↔ Managed Database relationship
 - Secure credential storage and display
 - Engine type and version tracking
 - Container runtime status for database service
@@ -82,9 +89,9 @@ approved.**
 
 ### User and privilege management
 
-- Create database users
-- Grant/revoke privileges per database
-- Track which users have access to which databases
+- Create the managed application database user for the selected site
+- Grant/revoke privileges for that site's managed application database
+- Track the single managed user/database relationship per site
 - Secure password generation and rotation
 
 ### Audit logging
@@ -122,8 +129,10 @@ Databases module (libs/database/)
 
 ### Runtime integration
 
-Database container runtime (status, restart, health) will follow the
-same pattern as Sites:
+Database container runtime (status, restart, health) always starts from
+the selected Site. The selected Site identifies the one Docker Compose
+stack, and that stack contains the one managed MariaDB service for the
+site:
 
 ```
 DatabaseRuntimeBridge (thin)
@@ -139,11 +148,13 @@ and `CommandExecutor`.
 
 The embedded database admin tool (Adminer) must:
 
-1. Run as a separate container in the site's Docker network
+1. Run as a separate container in the selected site's Docker network
 2. Authenticate through ContainerCP (session token or auto-login)
 3. Be accessible only to authenticated admin users
 4. Not require separate login credentials
 5. Support at minimum MariaDB/MySQL
+6. Open the selected site's managed application database directly; no
+   database selection UI is required in v0.8
 
 Integration pattern:
 ```
@@ -160,7 +171,7 @@ Following the established pattern:
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/api/databases` | List all databases (enriched) |
-| POST | `/api/databases/create` | Create a database |
+| POST | `/api/databases/create` | Create the managed database for a site |
 | POST | `/api/databases/remove` | Remove a database record |
 | POST | `/api/databases/<id>/import` | Import SQL dump |
 | GET | `/api/databases/<id>/export` | Export SQL dump |
@@ -183,21 +194,30 @@ Enriched responses should use a `DatabaseViewService` pattern (like
 
 ## Implementation order
 
-1. **DatabaseRuntimeBridge** — read-only container status for
-   MariaDB/PostgreSQL, reusing `RuntimeActionExecutor`
+0. **Reuse completed WordPress credential foundation** — consume
+   `WordPressConfigService`, the structural `wp-config.php` parser, the
+   safe config writer, password rotation, runtime verification,
+   compensation, audit logging, and secure temporary credential transport.
+   Do not introduce a second WordPress config parser.
 
-2. **Database admin tool** — Adminer container integration with
+1. **DatabaseViewService** — enriched read-only API response with site
+   domain, runtime status, engine/version, credential availability,
+   connection verification, ownership state, and imported database
+   support for the one managed database per site
+
+2. **DatabaseRuntimeBridge** — read-only container status for the
+   site's MariaDB service, reusing `RuntimeActionExecutor`
+
+3. **Database admin tool** — Adminer container integration with
    auto-login
 
-3. **DatabaseViewService** — enriched API response with site name,
-   runtime status, engine version
-
-4. **Import / Export** — SQL dump via admin tool or direct
+4. **Import / Export** — SQL dump for the site's managed database via
    `mysqldump`/`mysql` commands
 
-5. **User and privilege management** — SQL-based user CRUD
+5. **User and privilege management** — managed application user only
 
-6. **Backup integration** — database dump in site backup workflow
+6. **Backup integration** — Site Backup → Managed Database Dump →
+   Archive
 
 7. **Audit logging** — log all database operations
 
@@ -211,6 +231,9 @@ Enriched responses should use a `DatabaseViewService` pattern (like
   tier
 - **Schema migration management** — belongs to application deployment
   tooling
+- **Multiple managed databases per site** — intentionally postponed to
+  a future major version; v0.8 manages exactly one application database
+  per site
 - **Multi-engine management UI** — Adminer handles this, ContainerCP
   only configures the connection
 - **Direct SQL execution panel** — security risk; use Adminer instead

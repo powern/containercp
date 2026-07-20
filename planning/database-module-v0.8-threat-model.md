@@ -6,7 +6,7 @@ Focused threat model for the planned Databases module. This document must be rev
 
 ## Security Objective
 
-The Databases module must let an authenticated administrator manage per-site MariaDB databases without accidentally exposing credentials, destroying the wrong data, opening database administration tools to the public internet, or creating misleading backup/restore guarantees.
+The Databases module must let an authenticated administrator manage each Site's single managed MariaDB application database without accidentally exposing credentials, targeting the wrong Site, destroying data, opening database administration tools to the public internet, or creating misleading backup/restore guarantees.
 
 ## Assets
 
@@ -57,10 +57,10 @@ The Databases module must let an authenticated administrator manage per-site Mar
 | Password leaks through process list | Use MariaDB option files or stdin, never `--password=value` |
 | Password leaks through logs/jobs | Central redaction before logging backend errors or job messages |
 | SQL command injection through database name | Strict identifier validation and rejection; no shell strings |
-| Wrong database dropped | Resolve by database ID, verify site relation, require typed confirmation, log operation |
+| Wrong site/database targeted | Resolve through `Site -> Managed Database`, verify any supplied database ID belongs to the selected Site, require typed confirmation for destructive actions, log operation |
 | Metadata-only delete is mistaken for physical drop | Rename/deprecate current endpoint or label it recovery-only |
 | Adminer exposed publicly | No host port; route only through authenticated ContainerCP proxy |
-| Adminer token replay | Short TTL, server-side token storage, one-site scope, explicit revoke |
+| Adminer token replay | Short TTL, server-side token storage, selected-site managed-database scope, explicit revoke |
 | Adminer credential exposure in URL | Never put credentials in URL, query string, fragment, or generated HTML link |
 | Adminer credential exposure in browser runtime | Never put credentials in JavaScript variables, DOM attributes, local storage, or session storage |
 | Expired Adminer session remains usable | Expiry must revoke token, proxy route, and temporary container; cleanup failures must be logged and retried |
@@ -78,6 +78,7 @@ The Databases module must let an authenticated administrator manage per-site Mar
 | Read-only verification mutates legacy site | DB-1 verification must not rewrite config, rotate passwords, change grants, or recreate users |
 | Stale `.env` after password rotation | Update metadata and `.env` in one operation and restart dependent services if required |
 | Secrets included in downloadable backup metadata | Redact manifests and document `.env` inclusion explicitly |
+| Duplicate WordPress config parser causes drift | Reuse `WordPressConfigService`; do not add another `wp-config.php` parser or writer |
 
 ## API Threats
 
@@ -91,7 +92,7 @@ Required API controls:
 - Use job IDs for long-running actions.
 - Return sanitized errors with useful but non-sensitive messages.
 - Require explicit confirmation strings for destructive actions.
-- Use database IDs for mutation endpoints and include site relation checks.
+- Target mutations through `Site -> Managed Database`; when a database ID appears in the API, verify it belongs to the selected Site before acting.
 - Update `docs/api/API_REFERENCE.md` for every endpoint.
 - Do not expose credentials in JavaScript-visible response fields, even transiently.
 
@@ -101,6 +102,7 @@ Negative tests required:
 - Drop without confirmation fails.
 - Drop with mismatched confirmation fails.
 - Invalid ID fails without touching physical state.
+- Mismatched site/database relation fails without touching physical state.
 - Backend command failure returns sanitized error.
 
 ## Command Execution Threats
@@ -147,7 +149,9 @@ Future hardening:
 - Per-operation temporary credentials.
 - File permission validation for site `.env` and backup staging.
 
-Imported myVestaCP credentials add a separate boundary. The resolver may inspect migrated site configuration to perform verification, but normal API responses receive only availability and verification states. If credentials cannot be recovered safely, the API reports `credentials_unavailable`; it must not infer that the physical database is missing.
+Imported myVestaCP credentials add a separate boundary. The resolver may inspect migrated site configuration to perform verification for the selected Site's application database, but normal API responses receive only availability and verification states. If credentials cannot be recovered safely, the API reports `credentials_unavailable`; it must not infer that the physical database is missing.
+
+For WordPress sites, `WordPressConfigService` is the single owner of `wp-config.php` parsing and mutation. Database inventory, verification, adoption, and rotation must reuse that service and must not introduce duplicate config parsing or writing logic.
 
 DB-1 imported database verification must be non-destructive. It may open a connection and run a safe read-only probe when credentials are available. It must not rotate passwords, modify grants, create users, revoke users, rewrite site configuration, or normalize nonstandard `user@host` values.
 
@@ -160,7 +164,7 @@ Required controls before enabling:
 - Disabled by default.
 - Time-limited launch sessions.
 - Server-side token maps to database credentials; browser receives only token or proxied session.
-- Token scoped to user/session, node, nonce, database ID, and site ID.
+- Token scoped to user/session, node, nonce, database ID, site ID, and the selected Site's managed database.
 - Token expiry and revoke path.
 - Replay protection through nonce, TTL, and one active session policy per user/database where practical.
 - No host port exposure.
@@ -175,6 +179,7 @@ Not allowed:
 - Credentials in URL parameters.
 - Credentials in browser history, JavaScript variables, local storage, session storage, DOM attributes, logs, or job messages.
 - Shared long-lived Adminer login across sites.
+- Database selection UI for multiple managed databases in v0.8.
 - Adminer access for deleted or disabled databases.
 
 ## Import/Export Threats
@@ -204,7 +209,7 @@ Import risks:
 Import mitigations:
 
 - Size limits before upload acceptance and decompression.
-- Explicit target database.
+- Explicit selected Site and managed database target.
 - Destructive confirmation if overwrite/drop statements are detected or if policy requires it for all imports.
 - Async job with sanitized diagnostics.
 - Optional dry-run/inspect step in a future release.
@@ -217,6 +222,7 @@ Required controls:
 
 - Backup manifest records database dump status.
 - Backup job status reflects database dump failures.
+- Site Backup flows as `Site Backup -> Managed Database Dump -> Archive`.
 - Restore requires explicit confirmation before database import.
 - Restore verifies backup/site identity before import.
 - Restore failure leaves diagnostics and does not silently mark success.
@@ -228,7 +234,7 @@ Required controls:
 - [ ] Command argv contains no passwords.
 - [ ] Option files use restrictive permissions and are deleted.
 - [ ] Invalid names are rejected before SQL construction.
-- [ ] Drop requires typed confirmation and correct site relation.
+- [ ] Drop requires typed confirmation and correct selected Site/managed database relation.
 - [ ] Metadata-only removal is clearly separated from physical drop.
 - [ ] Import staging rejects path traversal and oversized files.
 - [ ] Export/download paths are contained under approved directories.
@@ -242,6 +248,7 @@ Required controls:
 - [ ] Imported database with missing credentials reports `credentials_unavailable`.
 - [ ] Imported database with invalid credentials reports `connection_failed`.
 - [ ] Imported database verification leaves site configuration unchanged.
+- [ ] WordPress database inspection and rotation reuse `WordPressConfigService` and do not add another config parser.
 
 ## Residual Risks
 
