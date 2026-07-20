@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-20 | `this commit` | Runtime — Capture stdin command stdout
+
+**Summary:** Fixed the execution-layer issue found after WP-R7 live validation. `CommandExecutor::run_with_stdin_file()` now uses the same stdout/stderr capture implementation as `CommandExecutor::run()`, while still feeding command stdin from a file. This lets stdout-dependent callers, including MariaDB shared credential assessment, parse command output instead of receiving an empty `CommandResult::out`.
+
+**Files changed:** `libs/runtime/CommandExecutor.cpp`, `tests/test_runtime.cpp`, `tests/test_mariadb_credential_provider.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** WordPress credential rotation can now consume the successful MariaDB shared-user query output after the fixed MariaDB client invocation. Callers that ignore stdout continue to work; stdout is now available consistently for stdin-file commands. Command stderr and exit codes remain preserved.
+
+**Validation:** Clean configure passed with `cmake -S . -B build-wp-r8 -G Ninja -DCMAKE_BUILD_TYPE=Release`. Clean build passed with `cmake --build build-wp-r8 --target containercp_tests containercp containercpd -- -j1` and no compiler warnings. Full doctest passed (`812` cases, `5563` assertions). Full CTest passed (`1/1`). Focused tests passed for `CommandExecutor*` (`9` cases, `19` assertions), `*MariaDBCredentialProvider*` (`19` cases, `152` assertions), `*DatabaseCredentialRotation*` (`42` cases, `464` assertions), and `*API*` (`18` cases, `73` assertions). `node --check web/app.js` and `git diff --check` passed.
+
+**Known risks:** `run_with_stdin_file()` now retains stdout in memory just like `run()`. Existing import/mail callers ignore the new stdout data and continue to rely on exit code and stderr. Live deployment and a new one-rotation validation on `unity.softico.ua` are required before this issue can be closed.
+
+---
+
 ## 2026-07-20 | `this commit` | WordPress — Fix MariaDB credential command option order
 
 **Summary:** Fixed the live WordPress credential rotation failure found by WP-R6 diagnostics. The MariaDB credential provider now passes `--defaults-extra-file` as the first MariaDB client option inside the container, matching MariaDB client parsing requirements and allowing the shared-credential assessment to authenticate with the transported option file.

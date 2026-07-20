@@ -301,6 +301,27 @@ TEST_CASE("MariaDBCredentialProvider assesses one exact non-shared user host") {
     CHECK(runner.last_stdin_content.find("COUNT(DISTINCT Db)") != std::string::npos);
 }
 
+TEST_CASE("MariaDBCredentialProvider parses captured shared-user SQL output") {
+    FakeMariaDBRunner runner;
+    runner.result.exit_code = 0;
+    runner.result.out = "exact_identity\t1\n"
+                        "username_identities\t1\n"
+                        "other_host_identities\t0\n"
+                        "schema_grants\t1\n";
+    MariaDBCredentialProvider provider(runner);
+
+    const auto result = provider.detect_shared_user({"compose.yml", "mariadb"}, {"admin", "admin-secret"}, {"wp_user", "%"});
+
+    CHECK(result.success);
+    CHECK(result.code == "shared_user_checked");
+    CHECK(result.shared_assessment.state == MariaDBSharedCredentialAssessmentState::NotShared);
+    CHECK(result.shared_assessment.exact_identity_count == 1);
+    CHECK(result.shared_assessment.username_identity_count == 1);
+    CHECK(result.shared_assessment.other_host_identity_count == 0);
+    CHECK(result.shared_assessment.schema_grant_count == 1);
+    CHECK_FALSE(result.shared_user);
+}
+
 TEST_CASE("MariaDBCredentialProvider marks exact identity shared when it has several schema grants") {
     FakeMariaDBRunner runner;
     runner.result.exit_code = 0;

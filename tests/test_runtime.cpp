@@ -9,10 +9,22 @@
 #include <fstream>
 #include <string>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "doctest/doctest.h"
 
 using namespace containercp::runtime;
+
+namespace {
+
+std::string write_command_executor_input(const std::string& name, const std::string& content) {
+    const std::string path = "/tmp/containercp-command-executor-" + std::to_string(::getpid()) + "-" + name;
+    std::ofstream out(path);
+    out << content;
+    return path;
+}
+
+} // namespace
 
 // ── CommandExecutor ───────────────────────────────────────────────
 
@@ -28,6 +40,42 @@ TEST_CASE("CommandExecutor::run captures stdout") {
     auto r = exec.run({"echo", "hello world"});
     CHECK(r.exit_code == 0);
     CHECK(r.out.find("hello world") != std::string::npos);
+}
+
+TEST_CASE("CommandExecutor::run_with_stdin_file captures stdout and feeds stdin") {
+    CommandExecutor exec;
+    const auto input = write_command_executor_input("stdin.txt", "payload");
+
+    auto r = exec.run_with_stdin_file({"sh", "-c", "cat; printf ':done'"}, input);
+
+    std::remove(input.c_str());
+    CHECK(r.exit_code == 0);
+    CHECK(r.out == "payload:done");
+    CHECK(r.err.empty());
+}
+
+TEST_CASE("CommandExecutor::run_with_stdin_file preserves stderr and exit code") {
+    CommandExecutor exec;
+    const auto input = write_command_executor_input("stderr.txt", "ignored");
+
+    auto r = exec.run_with_stdin_file({"sh", "-c", "cat >/dev/null; printf 'problem' >&2; exit 37"}, input);
+
+    std::remove(input.c_str());
+    CHECK(r.exit_code == 37);
+    CHECK(r.out.empty());
+    CHECK(r.err == "problem");
+}
+
+TEST_CASE("CommandExecutor::run_with_stdin_file captures large stdout") {
+    CommandExecutor exec;
+    const auto input = write_command_executor_input("large.txt", "ignored");
+
+    auto r = exec.run_with_stdin_file({"sh", "-c", "i=0; while [ $i -lt 6000 ]; do printf x; i=$((i + 1)); done"}, input);
+
+    std::remove(input.c_str());
+    CHECK(r.exit_code == 0);
+    CHECK(r.out.size() == 6000);
+    CHECK(r.out.find_first_not_of('x') == std::string::npos);
 }
 
 TEST_CASE("CommandExecutor::run captures stderr") {
