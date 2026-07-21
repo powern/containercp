@@ -10,6 +10,7 @@ struct Response {
     int status_code = 200;
     std::string body;
     std::string content_type = "application/json";
+    std::unordered_map<std::string, std::string> headers;
 
     std::string to_string() const;
 };

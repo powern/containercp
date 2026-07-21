@@ -1,12 +1,14 @@
 # Database Lifecycle Service
 
 DB-3 adds safe physical MariaDB lifecycle operations behind the REST API.
+DB-4 adds logical SQL export/import for managed MariaDB databases only.
 
 ## Ownership
 
 - Read-only database list/detail views are owned by `DatabaseViewService`.
 - Physical lifecycle orchestration is owned by `DatabaseLifecycleService`.
 - Async queueing and job responses are owned by `DatabaseLifecycleJobService`.
+- Logical export/import orchestration, staging, artifact metadata, expiry, and cleanup are owned by `DatabaseDumpService` and `DatabaseDumpJobService`.
 - Engine-specific SQL and Docker command construction are owned by `MariaDBProvider` behind the `DatabaseProvider` interface.
 - API handlers validate simple request shape only and delegate to the database services.
 
@@ -78,6 +80,18 @@ If create fails after the physical database or application user has been created
 Drop revalidates the database/Site relation inside the job, requires exact typed confirmation, refuses imported or ownership-uncertain records, and removes metadata only after physical cleanup succeeds or the physical database is already absent and safe reconciliation can remove stale metadata.
 
 Site removal volume cleanup is separate from DB-3 database-object drop. Site removal cleans the Site's owned data volume after explicit Site deletion confirmation. DB-3 `drop` removes physical MariaDB objects inside a running, verified stack and then metadata.
+
+## Logical Export And Import
+
+DB-4 supports only the selected Site's one managed MariaDB application database. Imported, ownership-uncertain, credential-unavailable, non-MariaDB, and multi-database targets are blocked by backend-derived capability fields.
+
+Exports run `mariadb-dump` through `MariaDBProvider` using the managed application user, an owner-only option file, argument-vector execution, and these defaults: `--single-transaction`, `--quick`, `--skip-lock-tables`, `--hex-blob`, `--default-character-set=utf8mb4`, `--skip-comments`, and `--skip-dump-date`. DB-4 intentionally does not enable routines/events/triggers in the initial implementation because the current narrow application privilege set does not guarantee those privileges.
+
+Artifacts are stored outside web roots under the ContainerCP data root in `database-artifacts/`. Clients see only opaque artifact IDs. SQL files and metadata files are owner-only, path construction is ID-based, symlinks and non-regular files are rejected, and artifacts expire after 24 hours unless revoked earlier.
+
+Imports accept only uncompressed `.sql` content. The Web UI uses a bounded raw `application/sql` upload because the current HTTP framework does not include a streaming multipart parser. Uploads are limited to 5 MiB and must match the DB-4 ContainerCP-generated export policy. Known account/grant/database-switching constructs such as `CREATE DATABASE`, `DROP DATABASE`, `USE`, `GRANT`, `CREATE USER`, `ALTER USER`, `DEFINER`, and `LOAD DATA LOCAL INFILE` are rejected before import.
+
+Import mode is non-restore execute/import into the existing managed database. The operator must type the exact database name or Site domain. The import job creates a pre-import recovery export before execution, then runs `mariadb --local-infile=0 --database <selected-db>` through `MariaDBProvider`. If MariaDB fails mid-file or post-import verification fails, the job reports `manual_recovery_required` and `failed_target_may_be_partial`; DB-4 does not falsely claim transactional rollback for DDL.
 
 ## Legacy Removal
 

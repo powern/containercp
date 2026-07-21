@@ -412,6 +412,55 @@ the ContainerCP metadata record, emits an audit warning, and never drops physica
 MariaDB database/user/grant objects. It is intended for stale metadata recovery,
 not normal delete.
 
+**POST /api/databases/<id>/export** — queues a logical SQL export job for the
+selected managed MariaDB application database. Only `ownership_state=managed`,
+`runtime_status=Running`, `connection_status=verified`, and credential-available
+databases are eligible. Returns HTTP `202 Accepted` with job ID and an opaque
+`artifact_id`; no filesystem path or credential is returned. The completed
+artifact is an uncompressed `.sql` dump stored outside web roots with owner-only
+permissions and a default 24-hour expiry.
+
+**POST /api/databases/<id>/import-upload?filename=dump.sql** — stages a bounded
+raw SQL upload. The body is `application/sql`; multipart and server filesystem
+paths are not accepted in DB-4. Uploads are limited to 5 MiB, must be regular
+`.sql` content after backend staging, and must match the DB-4 policy for
+ContainerCP-generated exports. Returns HTTP `201 Created` with only an opaque
+`artifact_id`.
+
+**POST /api/databases/<id>/import** — queues an import job. Body:
+
+```json
+{
+  "artifact_id": "0123456789abcdef0123456789abcdef",
+  "confirmation": "example_db"
+}
+```
+
+The confirmation must exactly match either the database name or owning site
+domain. DB-4 import mode is explicit execute/import into the existing managed
+database, not a guaranteed restore. The job creates a pre-import recovery export
+before executing SQL. If MariaDB fails mid-file, the job reports
+`manual_recovery_required` because DDL cannot be rolled back transactionally.
+Import revalidates database/Site ownership, runtime, service account, artifact
+ownership, expiry, SQL policy, and post-import database access.
+
+**GET /api/databases/<id>/exports/<artifact_id>** — returns safe artifact
+metadata: artifact ID, database ID, Site ID, job ID, sanitized filename, size,
+checksum, creation time, expiry time, status, download count, and cleanup state.
+It never returns SQL content, filesystem paths, command lines, or credentials.
+
+**GET /api/databases/<id>/exports/<artifact_id>/download** — downloads an
+available, unexpired, non-revoked SQL artifact after the Web UI/API proxy session
+has authenticated the request. The API revalidates artifact ownership, path
+containment by opaque ID construction, regular-file state, symlink rejection,
+owner-only permissions, and expiry. Response headers include
+`Content-Type: application/sql`, `Content-Disposition: attachment` with a
+sanitized filename, and `X-Content-Type-Options: nosniff`.
+
+**POST /api/databases/<id>/exports/<artifact_id>/revoke** — revokes an artifact,
+removes the SQL file when present, and makes future metadata/download attempts
+fail clearly as unavailable/expired/revoked.
+
 **POST /api/databases/remove** — deprecated legacy metadata-only removal by
 database name. It preserves the historical behavior for temporary backward
 compatibility, emits an audit/deprecation warning, returns `deprecated:true` and
@@ -424,8 +473,10 @@ UI must not expose passwords and must not add lifecycle behavior beyond existing
 backend endpoints. Password rotation in the Databases detail panel reuses
 `GET /api/wordpress/database-credentials/status?site_id=N`,
 `POST /api/wordpress/database-credentials/rotate`, and `GET /api/jobs?id=N`.
-Adminer, import, export, backup, adoption, and multi-database management remain
-future phases.
+Adminer, database-aware backup, adoption, and multi-database management remain
+future phases. DB-4 adds export/import only for managed MariaDB records surfaced
+by backend capability fields: `can_export`, `can_import`, `export_block_reason`,
+`import_block_reason`, `max_import_size`, and `supported_import_formats`.
 
 ### 2.11a WordPress Database Credentials
 

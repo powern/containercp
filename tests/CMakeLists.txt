@@ -26,6 +26,7 @@ add_executable(containercp_tests
     test_migration.cpp
     test_migration_api.cpp
     test_database_credential_rotation.cpp
+    test_database_dump_service.cpp
     test_database_lifecycle.cpp
     test_site_database_volume_guard.cpp
     test_database_view_service.cpp
@@ -64,6 +65,8 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/database/DatabaseCredentialRotationJobService.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/DatabaseCredentialRotationService.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/DatabaseIdentifierValidator.cpp
+    ${CMAKE_SOURCE_DIR}/libs/database/DatabaseDumpJobService.cpp
+    ${CMAKE_SOURCE_DIR}/libs/database/DatabaseDumpService.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/DatabaseLifecycleAudit.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/DatabaseLifecycleJobService.cpp
     ${CMAKE_SOURCE_DIR}/libs/database/DatabaseLifecycleService.cpp

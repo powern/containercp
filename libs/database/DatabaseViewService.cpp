@@ -1,6 +1,7 @@
 #include "DatabaseViewService.h"
 
 #include "api/JsonFormatter.h"
+#include "database/DatabaseDumpService.h"
 
 #include <sstream>
 #include <utility>
@@ -140,11 +141,15 @@ DatabaseView DatabaseViewService::build_view(const Database& database) const {
         view.can_verify = false;
         view.can_drop = false;
         view.drop_block_reason = "site_missing";
+        view.export_block_reason = "site_missing";
+        view.import_block_reason = "site_missing";
+        view.max_import_size = DatabaseDumpService::kMaxImportSizeBytes;
         return view;
     }
 
     view.domain = site_record->domain;
     view.can_verify = true;
+    view.max_import_size = DatabaseDumpService::kMaxImportSizeBytes;
     view.runtime_status = normalize_runtime_status(runtime_lookup_(*site_record).status);
 
     int site_database_count = 0;
@@ -161,25 +166,51 @@ DatabaseView DatabaseViewService::build_view(const Database& database) const {
     if (site_database_count != 1) {
         view.imported_state = "metadata_conflict";
         view.drop_block_reason = "database_cardinality_invalid";
+        view.export_block_reason = "database_cardinality_invalid";
+        view.import_block_reason = "database_cardinality_invalid";
     } else if (!credential.available && view.ownership_state == "imported") {
         view.imported_state = "credential_unavailable";
         view.drop_block_reason = "ownership_not_managed";
+        view.export_block_reason = "ownership_not_managed";
+        view.import_block_reason = "ownership_not_managed";
     } else if (view.ownership_state == "imported") {
         view.drop_block_reason = "ownership_not_managed";
+        view.export_block_reason = "ownership_not_managed";
+        view.import_block_reason = "ownership_not_managed";
     } else if (!database.enabled) {
         view.drop_block_reason = "database_disabled";
+        view.export_block_reason = "database_disabled";
+        view.import_block_reason = "database_disabled";
+    } else if (database.engine != "mariadb") {
+        view.drop_block_reason = "engine_not_supported";
+        view.export_block_reason = "engine_not_supported";
+        view.import_block_reason = "engine_not_supported";
     } else {
         view.can_drop = true;
     }
 
     if (view.runtime_status != "Running" || !credential.available) {
         view.connection_status = "not_checked";
+        if (view.can_drop) {
+            const std::string reason = view.runtime_status != "Running" ? "runtime_not_running" : "credentials_unavailable";
+            view.export_block_reason = reason;
+            view.import_block_reason = reason;
+        }
         return view;
     }
 
     const auto connection = connection_verifier_(database, *site_record, credential);
     view.connection_status = connection.status.empty() ? (connection.success ? "verified" : "connection_failed")
-                                                       : connection.status;
+                                                        : connection.status;
+    if (view.can_drop && view.runtime_status == "Running" && view.connection_status == "verified" && view.credential_state == "available") {
+        view.can_export = true;
+        view.can_import = true;
+    } else if (view.can_drop) {
+        const std::string reason = view.runtime_status != "Running" ? "runtime_not_running" :
+            (view.connection_status != "verified" ? "connection_not_verified" : "credentials_unavailable");
+        view.export_block_reason = reason;
+        view.import_block_reason = reason;
+    }
     return view;
 }
 
@@ -199,10 +230,16 @@ std::string DatabaseViewService::view_to_json(const DatabaseView& view) {
          << "\",\"ownership_state\":\"" << api::JsonFormatter::escape(view.ownership_state)
          << "\",\"imported_state\":\"" << api::JsonFormatter::escape(view.imported_state)
          << "\",\"can_create\":" << (view.can_create ? "true" : "false")
-         << ",\"can_verify\":" << (view.can_verify ? "true" : "false")
-         << ",\"can_drop\":" << (view.can_drop ? "true" : "false")
-         << ",\"drop_block_reason\":\"" << api::JsonFormatter::escape(view.drop_block_reason)
-         << "\",\"created_at\":\"" << api::JsonFormatter::escape(view.created_at)
+          << ",\"can_verify\":" << (view.can_verify ? "true" : "false")
+          << ",\"can_drop\":" << (view.can_drop ? "true" : "false")
+          << ",\"can_export\":" << (view.can_export ? "true" : "false")
+          << ",\"can_import\":" << (view.can_import ? "true" : "false")
+          << ",\"drop_block_reason\":\"" << api::JsonFormatter::escape(view.drop_block_reason)
+          << "\",\"export_block_reason\":\"" << api::JsonFormatter::escape(view.export_block_reason)
+          << "\",\"import_block_reason\":\"" << api::JsonFormatter::escape(view.import_block_reason)
+          << "\",\"max_import_size\":" << view.max_import_size
+          << ",\"supported_import_formats\":\"" << api::JsonFormatter::escape(view.supported_import_formats)
+          << "\",\"created_at\":\"" << api::JsonFormatter::escape(view.created_at)
          << "\",\"updated_at\":\"" << api::JsonFormatter::escape(view.updated_at)
          << "\",\"enabled\":" << (view.enabled ? "true" : "false")
          << "}";

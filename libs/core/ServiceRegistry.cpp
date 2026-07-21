@@ -92,6 +92,8 @@ ServiceRegistry::ServiceRegistry()
         storage_.save_databases(databases_.list());
         return true;
     })
+    , database_dump_(sites_, databases_, site_runtime_, mariadb_lifecycle_provider_, config_.sites_dir(), std::filesystem::path(config_.data_root()) / "database-artifacts")
+    , database_dump_jobs_(databases_, jobs_, job_executor_, database_dump_)
     , database_view_(logger_, databases_, sites_, site_runtime_, wordpress_config_, mariadb_credential_provider_, config_.sites_dir())
     , mail_orchestrator_(mail_credentials_, runtime_, filesystem_, config_)
     , proxy_view_(logger_, reverse_proxies_, sites_, cert_store_, proxy_provider_, site_runtime_)
@@ -280,6 +282,7 @@ ServiceRegistry::ServiceRegistry()
     if (!loaded_databases.empty()) {
         databases_.set_databases(loaded_databases);
     }
+    database_dump_.cleanup_expired();
 
     auto loaded_backups = storage_.load_backups();
     if (!loaded_backups.empty()) {
@@ -648,6 +651,14 @@ database::DatabaseViewService& ServiceRegistry::database_view() {
 
 database::DatabaseLifecycleJobService& ServiceRegistry::database_lifecycle_jobs() {
     return database_lifecycle_jobs_;
+}
+
+database::DatabaseDumpService& ServiceRegistry::database_dump() {
+    return database_dump_;
+}
+
+database::DatabaseDumpJobService& ServiceRegistry::database_dump_jobs() {
+    return database_dump_jobs_;
 }
 
 database::DatabaseCredentialRotationJobService& ServiceRegistry::database_credential_rotation_jobs() {

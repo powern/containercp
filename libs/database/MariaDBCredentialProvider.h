@@ -61,6 +61,9 @@ public:
     virtual runtime::CommandResult run_with_stdin_file(const std::vector<std::string>& args,
                                                        const std::string& stdin_file,
                                                        const std::string& workdir = "") const = 0;
+    virtual runtime::CommandResult run_stdout_to_file(const std::vector<std::string>& args,
+                                                       const std::string& output_file,
+                                                       const std::string& workdir = "") const;
 };
 
 class MariaDBCommandExecutorRunner : public MariaDBProcessRunner {
@@ -72,6 +75,10 @@ public:
 
     runtime::CommandResult run_with_stdin_file(const std::vector<std::string>& args,
                                                const std::string& stdin_file,
+                                               const std::string& workdir = "") const override;
+
+    runtime::CommandResult run_stdout_to_file(const std::vector<std::string>& args,
+                                               const std::string& output_file,
                                                const std::string& workdir = "") const override;
 
 private:

@@ -416,6 +416,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | DB-1: Databases read-only inventory | ✅ | Enriched `DatabaseViewService` backend implemented and repository-validated; read-only only |
 | DB-2: Database Management GUI | ✅ | Health-focused Web UI dashboard implemented and repository-validated; reuses DB-1 inventory and existing password rotation jobs |
 | DB-3: Safe Physical MariaDB Lifecycle | ✅ | Backend-owned create/verify/drop jobs, provider boundary, identifier validation, secure temporary credential files, narrow MariaDB 12-compatible service-account bootstrap for new stacks, service-account Compose injection, repeated drop/create support without `RELOAD`, stale MariaDB volume collision protection, exact owned volume cleanup on confirmed Site removal, explicit physical drop, explicit metadata-only recovery, and minimal DB-2 GUI actions |
+| DB-4: Logical SQL Export and Import | ✅ | Job-backed MariaDB `.sql` export/import for managed databases only, opaque expiring artifacts, authenticated download path through WebServer, raw bounded upload staging, pre-import recovery export, execute/import semantics, and capability-driven Databases drawer actions |
 
 ## Future — Multi-node
 
@@ -441,7 +442,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | Web UI | Active | Native frontend module layout implemented; `web/app.js` is now the ES module entry and page implementations live under `web/pages/` |
 | Sites | Stable | |
 | Domains | Stable | |
-| Databases | Active | DB-1 inventory, DB-2 GUI, and DB-3 safe MariaDB lifecycle implemented; DB-4 import/export/Adminer/backup adoption work remains deferred |
+| Databases | Active | DB-1 inventory, DB-2 GUI, DB-3 safe MariaDB lifecycle, and DB-4 logical SQL export/import implemented; Adminer, database-aware backups, imported adoption, and multi-database support remain deferred |
 | Users | Stable | |
 | PHP Versions | Stable | |
 | Docker/Runtime | Stable | |

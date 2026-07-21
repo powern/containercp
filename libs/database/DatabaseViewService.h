@@ -31,7 +31,13 @@ struct DatabaseView {
     bool can_create = false;
     bool can_verify = false;
     bool can_drop = false;
+    bool can_export = false;
+    bool can_import = false;
     std::string drop_block_reason;
+    std::string export_block_reason;
+    std::string import_block_reason;
+    uint64_t max_import_size = 0;
+    std::string supported_import_formats = ".sql";
     std::string created_at;
     std::string updated_at;
     bool enabled = false;

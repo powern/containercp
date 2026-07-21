@@ -144,24 +144,49 @@ CommandResult CommandExecutor::run_stdout_to_file(
     CommandResult result;
     if (args.empty()) { result.err = "No arguments"; return result; }
 
+    int stderr_pipe[2] = {-1, -1};
+    if (pipe(stderr_pipe) != 0) {
+        result.err = "pipe() failed: " + std::string(strerror(errno));
+        return result;
+    }
+
     pid_t pid = fork();
-    if (pid < 0) { result.err = "fork failed"; return result; }
+    if (pid < 0) {
+        result.err = "fork failed";
+        close_if_open(stderr_pipe[0]);
+        close_if_open(stderr_pipe[1]);
+        return result;
+    }
 
     if (pid == 0) {
+        close(stderr_pipe[0]);
         if (!workdir.empty()) chdir(workdir.c_str());
-        int fd = ::open(output_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        int fd = ::open(output_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, S_IRUSR | S_IWUSR);
         if (fd < 0) _exit(126);
         dup2(fd, STDOUT_FILENO);
         close(fd);
-        int devnull = ::open("/dev/null", O_WRONLY);
-        dup2(devnull, STDERR_FILENO);
-        close(devnull);
+        dup2(stderr_pipe[1], STDERR_FILENO);
+        close(stderr_pipe[1]);
         std::vector<char*> argv;
         for (const auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
         argv.push_back(nullptr);
         execvp(argv[0], argv.data());
         _exit(127);
     }
+
+    close(stderr_pipe[1]);
+    char buf[4096];
+    while (true) {
+        ssize_t n = read(stderr_pipe[0], buf, sizeof(buf));
+        if (n > 0) {
+            result.err.append(buf, static_cast<std::size_t>(n));
+        } else if (n < 0 && errno == EINTR) {
+            continue;
+        } else {
+            break;
+        }
+    }
+    close(stderr_pipe[0]);
 
     int status;
     waitpid(pid, &status, 0);

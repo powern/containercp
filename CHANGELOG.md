@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-21 | `this commit` | Database — Add logical SQL export and import
+
+**Summary:** Implemented DB-4 logical SQL export/import for managed MariaDB databases. Added `DatabaseDumpService`, `DatabaseDumpJobService`, provider-backed `mariadb-dump` export, provider-backed `mariadb` import, opaque expiring artifact metadata, authenticated download path through the Web UI proxy, revoke/delete support, bounded raw `.sql` upload staging, pre-import recovery exports, backend-derived transfer capabilities, and Databases drawer actions.
+
+**Files changed:** `libs/database/DatabaseDumpService.*`, `libs/database/DatabaseDumpJobService.*`, `libs/database/MariaDBProvider.*`, `libs/database/DatabaseProvider.h`, `libs/database/MariaDBCredentialProvider.*`, `libs/database/DatabaseViewService.*`, `libs/runtime/CommandExecutor.cpp`, `libs/api/ApiServer.cpp`, `libs/api/Response.*`, `libs/api/WebServer.cpp`, `libs/core/ServiceRegistry.*`, `web/pages/databases.js`, `scripts/test-database-transfer-actions.js`, `tests/test_database_dump_service.cpp`, `tests/test_database_lifecycle.cpp`, `tests/test_api.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `docs/development/database-import-export.md`, `docs/development/database-lifecycle.md`, `docs/api/API_REFERENCE.md`, `planning/database-module-v0.8-architecture.md`, `planning/database-module-v0.8-threat-model.md`, `planning/database-module-v0.8-implementation-plan.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Managed, verified MariaDB databases now expose Export SQL and Import SQL actions in the Databases detail drawer. Export queues a job and produces a downloadable `.sql` artifact by opaque ID. Import uploads/stages a supported ContainerCP-generated `.sql` file, requires exact typed confirmation, queues an import job, creates a pre-import recovery export, verifies database access afterward, and reports manual recovery if the target may be partially modified.
+
+**Validation:** Clean configure and build passed for `containercp_tests`, `containercp`, and `containercpd` with no compiler diagnostics. Focused DB-4 tests passed, including artifact ID/path/filename policy, upload SQL policy, metadata redaction, exact import confirmation, manual-recovery diagnostics, provider export/import argv safety, and a real disposable MariaDB export/drop-table/import/row-restore cycle. Full doctest passed (`864` cases, `6166` assertions). CTest passed (`1/1`) when run independently. Frontend syntax, `node scripts/check-frontend-baseline.js`, `node scripts/test-database-drop-modal.js`, `node scripts/test-database-transfer-actions.js`, and `git diff --check` passed. Deployment and production validation are recorded after completion.
+
+**Known risks:** DB-4 initial import mode executes SQL into the existing managed database; it is not branded as restore because MariaDB DDL cannot be rolled back transactionally. Uploads are limited to uncompressed ContainerCP-generated `.sql` files up to 5 MiB. Compression, multipart streaming, replace/restore mode, imported database import/export, database-aware backups, Adminer, and multi-database support remain future phases.
+
+---
+
 ## 2026-07-21 | `this commit` | Database — Fix MariaDB lifecycle grants
 
 **Summary:** Fixed the DB-3 Create Database failure after a successful physical drop/recreate cycle. `MariaDBProvider` no longer appends unnecessary `FLUSH PRIVILEGES` after application `GRANT`/`REVOKE`, preserving the narrow service-account model without requiring global `RELOAD`. Provider diagnostics now classify safe MariaDB privilege failures and redact SQL password literals. Create compensation now reports manual recovery if grant-stage rollback cannot remove resources created by the current job.

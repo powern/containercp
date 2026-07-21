@@ -39,6 +39,8 @@ set(CONTAINERCP_SOURCES
     libs/database/DatabaseCredentialRotationJobService.cpp
     libs/database/DatabaseCredentialRotationService.cpp
     libs/database/DatabaseIdentifierValidator.cpp
+    libs/database/DatabaseDumpJobService.cpp
+    libs/database/DatabaseDumpService.cpp
     libs/database/DatabaseLifecycleAudit.cpp
     libs/database/DatabaseLifecycleJobService.cpp
     libs/database/DatabaseLifecycleService.cpp

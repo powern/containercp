@@ -47,6 +47,17 @@ public:
         commands.push_back({args, stdin_file, content});
         return fail_stdin ? runtime::CommandResult{1, "", fail_err} : runtime::CommandResult{0, "1\n", ""};
     }
+
+    runtime::CommandResult run_stdout_to_file(const std::vector<std::string>& args,
+                                              const std::string& output_file,
+                                              const std::string& = "") const override {
+        commands.push_back({args, output_file, {}});
+        std::ofstream out(output_file);
+        out << "-- ContainerCP DB-4 logical export\nCREATE TABLE example(id int);\n";
+        out.close();
+        (void)::chmod(output_file.c_str(), S_IRUSR | S_IWUSR);
+        return {0, "", ""};
+    }
 };
 
 class FakeProvider : public database::DatabaseProvider {
@@ -83,6 +94,8 @@ public:
     database::DatabaseProviderResult drop_database(const database::MariaDBConnectionTarget&, const database::DatabaseProviderCredential&, const std::string&) const override { drop_database_called = true; return fail_drop_database ? no("drop_database_failed") : ok("database_dropped"); }
     database::DatabaseProviderResult drop_user(const database::MariaDBConnectionTarget&, const database::DatabaseProviderCredential&, const std::string&) const override { drop_user_called = true; return fail_drop_user ? no("drop_user_failed") : ok("user_dropped"); }
     database::DatabaseProviderResult verify_login(const database::MariaDBConnectionTarget&, const std::string&, const std::string&, const std::string&) const override { return fail_login ? no("login_failed") : ok("login_verified"); }
+    database::DatabaseProviderResult export_database(const database::MariaDBConnectionTarget&, const std::string&, const std::string&, const std::string&, const std::string&) const override { return ok("export_completed"); }
+    database::DatabaseProviderResult import_sql_file(const database::MariaDBConnectionTarget&, const std::string&, const std::string&, const std::string&, const std::string&) const override { return ok("import_completed"); }
 };
 
 std::filesystem::path make_site_root(const std::string& domain) {
@@ -273,6 +286,45 @@ TEST_CASE("MariaDB provider classifies GRANT privilege denial") {
     CHECK_FALSE(result.success);
     CHECK(result.code == "mariadb_grant_privilege_denied");
     CHECK(result.message.find("admin_secret") == std::string::npos);
+}
+
+TEST_CASE("MariaDB provider export/import command vectors avoid shell and password argv") {
+    CapturingRunner runner;
+    database::MariaDBProvider provider(runner);
+    const auto root = make_site_root("provider-export.test");
+    const auto output = root / "dump.sql";
+    const auto export_result = provider.export_database({"/srv/sites/example/docker-compose.yml", "mariadb"},
+                                                        "app_db",
+                                                        "app_user",
+                                                        "generated_secret",
+                                                        output.string());
+    CHECK(export_result.success);
+    REQUIRE(runner.commands.size() >= 3);
+    const auto& dump_args = runner.commands[1].args;
+    CHECK(argv_contains(dump_args, "mariadb-dump"));
+    CHECK(argv_contains(dump_args, "--single-transaction"));
+    CHECK(argv_contains(dump_args, "--quick"));
+    CHECK(argv_contains(dump_args, "--skip-lock-tables"));
+    CHECK(argv_contains(dump_args, "--hex-blob"));
+    CHECK(argv_contains(dump_args, "--default-character-set=utf8mb4"));
+    CHECK(argv_contains(dump_args, "app_db"));
+    for (const auto& arg : dump_args) CHECK(arg.find("generated_secret") == std::string::npos);
+
+    runner.commands.clear();
+    const auto import_result = provider.import_sql_file({"/srv/sites/example/docker-compose.yml", "mariadb"},
+                                                        "app_db",
+                                                        "app_user",
+                                                        "generated_secret",
+                                                        output.string());
+    CHECK(import_result.success);
+    REQUIRE(runner.commands.size() >= 3);
+    const auto& import_args = runner.commands[1].args;
+    CHECK(argv_contains(import_args, "mariadb"));
+    CHECK(argv_contains(import_args, "--database"));
+    CHECK(argv_contains(import_args, "app_db"));
+    CHECK(argv_contains(import_args, "--local-infile=0"));
+    for (const auto& arg : import_args) CHECK(arg.find("generated_secret") == std::string::npos);
+    std::filesystem::remove_all(root);
 }
 
 TEST_CASE("Database lifecycle create compensates database when user creation fails") {

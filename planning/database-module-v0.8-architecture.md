@@ -31,6 +31,18 @@ DB-3 implements the safe physical MariaDB lifecycle subset of this architecture:
 
 DB-3 does not implement Adminer, import/export, database-aware backups, imported database adoption, password reveal, multiple databases per Site, or non-MariaDB providers.
 
+## DB-4 Implementation Clarification
+
+DB-4 implements job-backed logical SQL export/import for `ownership_state=managed` MariaDB databases only:
+
+- `DatabaseDumpService` owns target validation, staging, artifact metadata, expiry cleanup, upload policy, import/export orchestration, and recovery diagnostics.
+- `DatabaseDumpJobService` owns async export/import jobs and public-safe job responses.
+- `MariaDBProvider` owns `mariadb-dump` and `mariadb` execution using argument vectors, owner-only option files, stdout-to-file execution, selected database targeting, and `--local-infile=0` for import.
+- Artifact metadata is file-backed under the ContainerCP data root in `database-artifacts/`, outside web roots. Metadata persists across daemon restart and startup cleanup removes expired/revoked artifacts.
+- DB-4 supports uncompressed `.sql` only, with a 5 MiB upload limit. The current HTTP framework uses bounded raw `application/sql` uploads; multipart streaming is deferred until implemented as a foundational HTTP improvement.
+- Import mode is execute/import into the existing database, not guaranteed restore. A pre-import recovery export is created before import, but failures after MariaDB starts are reported as manual recovery because DDL cannot be transactionally rolled back.
+- Uploaded imports are restricted to ContainerCP-generated DB-4 exports and rejected when known account, grant, database-switching, `DEFINER`, or local infile constructs are present.
+
 ## Current Baseline
 
 The current system already has a Database resource, but it does not manage physical MariaDB objects directly.
@@ -381,6 +393,8 @@ Import should use the `mariadb` client with strict staging:
 - Run import as an async job.
 - Target the selected Site's managed application database and require explicit destructive confirmation if import may overwrite objects.
 - Preserve the source file until job completion diagnostics are available.
+
+DB-4 initial implementation chooses non-destructive execute/import semantics with a pre-import recovery export rather than claiming full replacement restore. Replace-style restore remains future work unless it can provide safe recovery guarantees.
 
 ### `DatabaseAdminService`
 

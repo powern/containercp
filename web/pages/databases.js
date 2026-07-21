@@ -1,5 +1,5 @@
 import {
-  api, apiPost, card, copyText, esc, hideModal, pollRotationJob, renderRotationJobTimeline, renderWordPressRotationDiagnostics, setModalCleanup, showModal, toast
+  api, apiPost, card, copyText, esc, getSessionToken, hideModal, pollRotationJob, renderRotationJobTimeline, renderWordPressRotationDiagnostics, setModalCleanup, showModal, toast
 } from '../core/context.js';
 
 
@@ -15,6 +15,8 @@ const dbDashboardState = {
   rotationStatus: null,
   rotationLoading: false,
   dropSubmitting: false,
+  transferSubmitting: false,
+  lastExportArtifact: null,
   loadError: ''
 };
 window.dbDashboardState = dbDashboardState;
@@ -348,9 +350,10 @@ function renderDatabaseDetail(db) {
       ${databaseDetailSection('Metadata', [
         ['Created', esc(db.created_at || 'Unavailable')], ['Updated', esc(db.updated_at || 'Unavailable')], ['Engine version', esc(db.engine_version || db.version || 'Unavailable')], ['Connection verification state', esc(db.connection_status || 'not_checked')], ['Imported state', esc(db.imported_state || 'unknown')]
       ])}
-      <section class="db-detail-section"><h3>Actions</h3><div id="db-lifecycle-action">${renderDatabaseLifecycleActions(db)}</div><div id="db-rotation-action">${renderDatabaseRotationAction(db)}</div></section>
+      <section class="db-detail-section"><h3>Actions</h3><div id="db-lifecycle-action">${renderDatabaseLifecycleActions(db)}</div><div id="db-transfer-action">${renderDatabaseTransferActions(db)}</div><div id="db-rotation-action">${renderDatabaseRotationAction(db)}</div></section>
     </div>`;
   showDatabaseDrawer(content);
+  bindDatabaseTransferActions(db);
 }
 
 function databaseDetailSection(title, fields) {
@@ -534,6 +537,189 @@ function pollDatabaseLifecycleJob(jobId, databaseId, label) {
   });
 }
 
+function renderDatabaseTransferActions(db) {
+  const canExport = db.can_export === true;
+  const canImport = db.can_import === true;
+  const exportReason = db.export_block_reason || 'Export is unavailable for this database.';
+  const importReason = db.import_block_reason || 'Import is unavailable for this database.';
+  const artifact = dbDashboardState.lastExportArtifact && Number(dbDashboardState.lastExportArtifact.databaseId) === Number(db.database_id || db.id) ? dbDashboardState.lastExportArtifact : null;
+  return `<div class="db-action-box">
+    <div><strong>SQL Export / Import</strong><p>Creates and imports uncompressed ContainerCP <code>.sql</code> artifacts through backend jobs. Import executes into the existing database and may fail on object conflicts.</p></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button id="db-export-btn" class="btn btn-sm" type="button" ${canExport ? '' : 'disabled'}>Export SQL</button>
+      <button id="db-import-btn" class="btn btn-sm btn-warning" type="button" ${canImport ? '' : 'disabled'}>Import SQL</button>
+      ${artifact ? `<button id="db-download-btn" class="btn btn-sm btn-primary" type="button">Download Export</button><button id="db-revoke-btn" class="btn btn-sm" type="button">Revoke Export</button>` : ''}
+    </div>
+    <div id="db-transfer-msg" class="db-action-message">${esc(canExport && canImport ? 'Export/import available for this managed, verified MariaDB database.' : (exportReason || importReason))}</div>
+    <div style="font-size:11px;color:var(--text3);margin-top:6px;">Supported import format: ${esc(db.supported_import_formats || '.sql')} · Max size: ${Math.round(Number(db.max_import_size || 0) / 1024 / 1024)} MiB</div>
+  </div>`;
+}
+
+function bindDatabaseTransferActions(db) {
+  const exportBtn = $('db-export-btn');
+  const importBtn = $('db-import-btn');
+  const downloadBtn = $('db-download-btn');
+  const revokeBtn = $('db-revoke-btn');
+  if (exportBtn) exportBtn.addEventListener('click', () => exportDatabaseSql(Number(db.database_id || db.id || 0)));
+  if (importBtn) importBtn.addEventListener('click', () => showDatabaseImportModal(Number(db.database_id || db.id || 0)));
+  if (downloadBtn) downloadBtn.addEventListener('click', () => downloadDatabaseArtifact(db));
+  if (revokeBtn) revokeBtn.addEventListener('click', () => revokeDatabaseArtifact(db));
+}
+
+async function exportDatabaseSql(databaseId) {
+  if (dbDashboardState.transferSubmitting) return;
+  const msg = $('db-transfer-msg');
+  dbDashboardState.transferSubmitting = true;
+  if (msg) msg.textContent = 'Queueing SQL export...';
+  try {
+    const res = await apiPost('/api/databases/' + Number(databaseId) + '/export', {});
+    const jobId = Number(res.data && res.data.job_id);
+    const artifactId = res.data && res.data.artifact_id;
+    dbDashboardState.lastExportArtifact = {databaseId, artifactId, jobId};
+    toast('Database export queued' + (jobId ? ' (job #' + jobId + ')' : ''), 'success');
+    if (jobId) pollDatabaseTransferJob(jobId, databaseId, 'Export', artifactId);
+  } catch(e) {
+    const apiErr = e.body && e.body.error && e.body.error.message;
+    if (msg) msg.textContent = apiErr || e.api_message || e.message || 'Failed to queue database export';
+    dbDashboardState.transferSubmitting = false;
+  }
+}
+
+function pollDatabaseTransferJob(jobId, databaseId, label, artifactId) {
+  pollRotationJob(jobId, {
+    lifecycle: activeDatabasesLifecycle,
+    messageEl: 'db-transfer-msg',
+    renderRunning: (id, job) => `<div class="db-job-box"><div><strong>${esc(label)} job #${esc(String(id))}</strong>: ${esc(job.message || job.status || 'pending')}</div>${renderRotationJobTimeline(job)}</div>`,
+    renderFailed: (id, job) => `<div class="db-job-box"><div class="badge badge-err">${esc(label)} failed</div>${renderRotationJobTimeline(job)}</div>`,
+    renderCompleted: (id, job) => `<div class="db-job-box"><div class="badge badge-ok">${esc(label)} completed</div>${renderRotationJobTimeline(job)}${artifactId ? '<div style="margin-top:8px;">Artifact ready for download or import.</div>' : ''}</div>`,
+    onCompleted: () => { dbDashboardState.transferSubmitting = false; refreshDatabases(); openDatabaseDetail(databaseId); },
+    onFailed: () => { dbDashboardState.transferSubmitting = false; refreshDatabases(); }
+  });
+}
+
+async function downloadDatabaseArtifact(db) {
+  const artifact = dbDashboardState.lastExportArtifact;
+  if (!artifact || !artifact.artifactId) return;
+  const msg = $('db-transfer-msg');
+  try {
+    const headers = {};
+    const token = getSessionToken();
+    if (token) headers['X-Session-Token'] = token;
+    const res = await fetch('/ui-api/api/databases/' + Number(db.database_id || db.id) + '/exports/' + encodeURIComponent(artifact.artifactId) + '/download', {headers});
+    if (!res.ok) throw new Error('Download failed with HTTP ' + res.status);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (db.database_name || 'database') + '-export.sql';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    if (msg) msg.textContent = 'Export downloaded. Revoke the artifact when it is no longer needed.';
+  } catch(e) {
+    if (msg) msg.textContent = e.message || 'Artifact download failed';
+  }
+}
+
+async function revokeDatabaseArtifact(db) {
+  const artifact = dbDashboardState.lastExportArtifact;
+  if (!artifact || !artifact.artifactId) return;
+  const msg = $('db-transfer-msg');
+  try {
+    await apiPost('/api/databases/' + Number(db.database_id || db.id) + '/exports/' + artifact.artifactId + '/revoke', {});
+    dbDashboardState.lastExportArtifact = null;
+    toast('Export artifact revoked', 'success');
+    openDatabaseDetail(Number(db.database_id || db.id));
+  } catch(e) {
+    const apiErr = e.body && e.body.error && e.body.error.message;
+    if (msg) msg.textContent = apiErr || e.api_message || e.message || 'Artifact revoke failed';
+  }
+}
+
+function showDatabaseImportModal(databaseId) {
+  const db = dbDashboardState.selectedDetail;
+  if (!db || Number(db.database_id || db.id) !== Number(databaseId) || db.can_import !== true) return;
+  dbDashboardState.transferSubmitting = false;
+  showModal('Import SQL Dump', `<div class="db-confirm-body">
+    <p><strong>${esc(db.domain || '')}</strong> / <code>${esc(db.database_name || db.name || '')}</code></p>
+    <ul>
+      <li>Only ContainerCP-generated uncompressed <code>.sql</code> exports are accepted.</li>
+      <li>Import executes SQL into the existing managed database and may leave partial changes if MariaDB fails mid-file.</li>
+      <li>A pre-import recovery export is created before execution.</li>
+      <li>No password, filesystem path, or SQL content is shown in the browser.</li>
+    </ul>
+    <input id="db-import-file" type="file" accept=".sql" style="width:100%;margin-top:8px;">
+    <input id="db-import-confirm" autocomplete="off" placeholder="${esc(db.database_name || db.name || '')}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;margin-top:8px;">
+    <div id="db-import-confirm-msg" role="alert" style="font-size:12px;color:var(--text3);margin-top:6px;">Select a supported SQL file and type the exact database name or site domain.</div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;"><button id="db-import-cancel" class="btn btn-sm" type="button">Cancel</button><button id="db-import-submit" class="btn btn-sm btn-warning" type="button" disabled>Import SQL</button></div>
+  </div>`, 620);
+  bindDatabaseImportModal(databaseId, db);
+}
+
+function bindDatabaseImportModal(databaseId, db) {
+  const file = $('db-import-file');
+  const input = $('db-import-confirm');
+  const submit = $('db-import-submit');
+  const cancel = $('db-import-cancel');
+  const msg = $('db-import-confirm-msg');
+  if (!file || !input || !submit || !cancel) return;
+  const update = () => {
+    const selected = file.files && file.files[0];
+    const confirmationOk = databaseDropConfirmationMatches(db, input.value);
+    submit.disabled = dbDashboardState.transferSubmitting || !selected || !confirmationOk;
+    if (selected && Number(selected.size) > Number(db.max_import_size || 0)) {
+      submit.disabled = true;
+      if (msg) msg.textContent = 'Selected file exceeds the configured import size limit.';
+    } else if (!dbDashboardState.transferSubmitting) {
+      if (msg) msg.textContent = selected && confirmationOk ? 'Ready to upload and import once.' : 'Select a supported SQL file and type the exact database name or site domain.';
+    }
+  };
+  const onSubmit = () => confirmDatabaseImport(databaseId, db, {file, input, submit, msg, update});
+  const onCancel = () => hideModal();
+  file.addEventListener('change', update);
+  input.addEventListener('input', update);
+  submit.addEventListener('click', onSubmit);
+  cancel.addEventListener('click', onCancel);
+  const cleanup = () => {
+    file.removeEventListener('change', update);
+    input.removeEventListener('input', update);
+    submit.removeEventListener('click', onSubmit);
+    cancel.removeEventListener('click', onCancel);
+    dbDashboardState.transferSubmitting = false;
+  };
+  setModalCleanup(cleanup);
+  if (activeDatabasesLifecycle && activeDatabasesLifecycle.onCleanup) activeDatabasesLifecycle.onCleanup(cleanup);
+  update();
+}
+
+async function confirmDatabaseImport(databaseId, db, controls) {
+  if (dbDashboardState.transferSubmitting) return;
+  const selected = controls.file.files && controls.file.files[0];
+  if (!selected || !databaseDropConfirmationMatches(db, controls.input.value)) return;
+  dbDashboardState.transferSubmitting = true;
+  controls.submit.disabled = true;
+  if (controls.msg) controls.msg.textContent = 'Uploading SQL artifact...';
+  try {
+    const headers = {'Content-Type':'application/sql'};
+    const token = getSessionToken();
+    if (token) headers['X-Session-Token'] = token;
+    const upload = await fetch('/ui-api/api/databases/' + Number(databaseId) + '/import-upload?filename=' + encodeURIComponent(selected.name || 'upload.sql'), {method:'POST', headers, body:selected});
+    const uploaded = await upload.json().catch(() => ({}));
+    if (!upload.ok || !uploaded.success) throw new Error((uploaded.error && uploaded.error.message) || uploaded.error || 'Import upload failed');
+    if (controls.msg) controls.msg.textContent = 'Queueing SQL import...';
+    const res = await apiPost('/api/databases/' + Number(databaseId) + '/import', {artifact_id:uploaded.data.artifact_id, confirmation:controls.input.value.trim()});
+    const jobId = Number(res.data && res.data.job_id);
+    hideModal();
+    toast('Database import queued' + (jobId ? ' (job #' + jobId + ')' : ''), 'success');
+    if (jobId) pollDatabaseTransferJob(jobId, databaseId, 'Import', uploaded.data.artifact_id);
+  } catch(e) {
+    if (controls.msg) controls.msg.textContent = e.message || 'Import failed to queue';
+    dbDashboardState.transferSubmitting = false;
+    controls.update();
+  }
+}
+
 async function showCreateDatabaseModal() {
   try {
     const [sitesRes, dbRes] = await Promise.all([api('/api/sites'), api('/api/databases')]);
@@ -672,4 +858,4 @@ function renderDatabaseRotationFailure(jobId, job) {
 
 const databasesPage = { mount: loadDatabases, unmount() { hideModal(); destroyDatabaseDrawer(); activeDatabasesLifecycle = null; } };
 export { loadDatabases, databasesPage };
-Object.assign(window, { normalizeDbValue, dbConnectionState, dbCredentialState, dbRuntimeState, dbOwnershipState, computeDatabaseHealthState, dbHealthLabel, dbBadge, dbHealthBadge, dbRuntimeBadge, dbConnectionBadge, dbCredentialBadge, dbOwnershipBadge, dbJsArg, dbDateValue, dbSortRank, getFilteredDatabases, databaseSummaryCards, dbSelect, databaseControlsHtml, toggleDatabaseSortDirection, resetDatabaseFilters, loadDatabases, refreshDatabases, renderDatabaseInventory, renderDatabaseTable, renderDatabaseCards, openDatabaseDetail, showDatabaseDrawer, closeDatabaseDrawer, renderDatabaseDetail, databaseDetailSection, databaseHealthSection, copyableValue, renderDatabaseLifecycleActions, verifyDatabaseLifecycle, showDatabaseDropConfirm, databaseDropConfirmationMatches, bindDatabaseDropConfirm, confirmDatabaseDrop, pollDatabaseLifecycleJob, showCreateDatabaseModal, confirmCreateDatabase, loadDatabaseRotationStatus, updateDatabaseRotationAction, databaseRotationCapability, renderDatabaseRotationAction, showDatabaseRotationConfirm, confirmDatabasePasswordRotation, renderDatabaseRotationJob, renderDatabaseRotationSuccess, renderDatabaseRotationFailure });
+Object.assign(window, { normalizeDbValue, dbConnectionState, dbCredentialState, dbRuntimeState, dbOwnershipState, computeDatabaseHealthState, dbHealthLabel, dbBadge, dbHealthBadge, dbRuntimeBadge, dbConnectionBadge, dbCredentialBadge, dbOwnershipBadge, dbJsArg, dbDateValue, dbSortRank, getFilteredDatabases, databaseSummaryCards, dbSelect, databaseControlsHtml, toggleDatabaseSortDirection, resetDatabaseFilters, loadDatabases, refreshDatabases, renderDatabaseInventory, renderDatabaseTable, renderDatabaseCards, openDatabaseDetail, showDatabaseDrawer, closeDatabaseDrawer, renderDatabaseDetail, databaseDetailSection, databaseHealthSection, copyableValue, renderDatabaseLifecycleActions, verifyDatabaseLifecycle, showDatabaseDropConfirm, databaseDropConfirmationMatches, bindDatabaseDropConfirm, confirmDatabaseDrop, pollDatabaseLifecycleJob, renderDatabaseTransferActions, bindDatabaseTransferActions, exportDatabaseSql, pollDatabaseTransferJob, downloadDatabaseArtifact, revokeDatabaseArtifact, showDatabaseImportModal, bindDatabaseImportModal, confirmDatabaseImport, showCreateDatabaseModal, confirmCreateDatabase, loadDatabaseRotationStatus, updateDatabaseRotationAction, databaseRotationCapability, renderDatabaseRotationAction, showDatabaseRotationConfirm, confirmDatabasePasswordRotation, renderDatabaseRotationJob, renderDatabaseRotationSuccess, renderDatabaseRotationFailure });

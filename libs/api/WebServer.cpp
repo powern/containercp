@@ -12,6 +12,9 @@
 #include <unistd.h>
 
 namespace containercp::api {
+namespace {
+constexpr int kMaxWebRequestBodyBytes = 6 * 1024 * 1024;
+}
 
 WebServer::WebServer(core::ServiceRegistry& services, const std::string& bind_addr, int port, int api_port)
     : bind_addr_(bind_addr)
@@ -201,7 +204,27 @@ void WebServer::handle_client(int client_fd, WebServer* server) {
         return;
     }
     buf[n] = '\0';
-    std::string raw(buf);
+    std::string raw(buf, static_cast<std::size_t>(n));
+    auto header_end = raw.find("\r\n\r\n");
+    if (header_end != std::string::npos) {
+        auto header = raw.substr(0, header_end);
+        auto cl_pos = header.find("Content-Length:");
+        if (cl_pos != std::string::npos) {
+            cl_pos += 15;
+            while (cl_pos < header.size() && header[cl_pos] == ' ') ++cl_pos;
+            auto cl_end = header.find("\r\n", cl_pos);
+            int expected = 0;
+            try { expected = std::stoi(header.substr(cl_pos, cl_end - cl_pos)); } catch (...) { expected = 0; }
+            if (expected > 0 && expected <= kMaxWebRequestBodyBytes) {
+                const std::size_t body_start = header_end + 4;
+                while (raw.size() < body_start + static_cast<std::size_t>(expected)) {
+                    ssize_t more = ::read(client_fd, buf, sizeof(buf));
+                    if (more <= 0) break;
+                    raw.append(buf, static_cast<std::size_t>(more));
+                }
+            }
+        }
+    }
 
     Request req = server->parse_request(raw);
 

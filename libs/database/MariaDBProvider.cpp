@@ -5,7 +5,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace containercp::database {
 namespace {
@@ -152,8 +157,8 @@ std::string mariadb_sanitize_provider_error(const std::string& value) {
 }
 
 std::vector<std::string> MariaDBProvider::build_exec_args(const MariaDBConnectionTarget& target,
-                                                          const std::string& container_option_path,
-                                                          const std::string& database_name) const {
+                                                           const std::string& container_option_path,
+                                                           const std::string& database_name) const {
     std::vector<std::string> args = {
         "docker", "compose", "-f", target.compose_file,
         "exec", "-T", target.service,
@@ -165,6 +170,66 @@ std::vector<std::string> MariaDBProvider::build_exec_args(const MariaDBConnectio
         args.push_back(database_name);
     }
     return args;
+}
+
+std::vector<std::string> MariaDBProvider::build_dump_args(const MariaDBConnectionTarget& target,
+                                                          const std::string& container_option_path,
+                                                          const std::string& database_name) const {
+    return {
+        "docker", "compose", "-f", target.compose_file,
+        "exec", "-T", target.service,
+        "mariadb-dump", "--defaults-extra-file=" + container_option_path,
+        "--single-transaction", "--quick", "--skip-lock-tables",
+        "--hex-blob", "--default-character-set=utf8mb4",
+        "--skip-comments", "--skip-dump-date",
+        database_name,
+    };
+}
+
+bool regular_owner_only_file(const std::string& path) {
+    struct stat st {};
+    if (::lstat(path.c_str(), &st) != 0) return false;
+    if (!S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) return false;
+    if (st.st_uid != ::geteuid()) return false;
+    return (st.st_mode & (S_IRWXG | S_IRWXO)) == 0;
+}
+
+bool prepend_export_header(const std::string& output_path, const std::string& database_name) {
+    const std::filesystem::path original(output_path);
+    const auto tmp = original.parent_path() / (original.filename().string() + ".with-header");
+    std::ifstream in(original, std::ios::binary);
+    const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, S_IRUSR | S_IWUSR);
+    if (!in.is_open() || fd < 0) {
+        if (fd >= 0) (void)::close(fd);
+        return false;
+    }
+    const std::string header = "-- ContainerCP DB-4 logical export\n-- database: " + database_name + "\n";
+    if (::write(fd, header.data(), header.size()) != static_cast<ssize_t>(header.size())) {
+        (void)::close(fd);
+        (void)::unlink(tmp.c_str());
+        return false;
+    }
+    char buffer[16384];
+    while (in.good()) {
+        in.read(buffer, sizeof(buffer));
+        const auto got = in.gcount();
+        if (got > 0 && ::write(fd, buffer, static_cast<std::size_t>(got)) != got) {
+            (void)::close(fd);
+            (void)::unlink(tmp.c_str());
+            return false;
+        }
+    }
+    if (::fsync(fd) != 0 || ::close(fd) != 0) {
+        (void)::unlink(tmp.c_str());
+        return false;
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, original, ec);
+    if (ec) {
+        (void)::unlink(tmp.c_str());
+        return false;
+    }
+    return true;
 }
 
 DatabaseProviderResult MariaDBProvider::execute_sql(const MariaDBConnectionTarget& target,
@@ -344,15 +409,91 @@ DatabaseProviderResult MariaDBProvider::drop_user(const MariaDBConnectionTarget&
 }
 
 DatabaseProviderResult MariaDBProvider::verify_login(const MariaDBConnectionTarget& target,
-                                                     const std::string& database_name,
-                                                     const std::string& user_name,
-                                                     const std::string& password) const {
+                                                      const std::string& database_name,
+                                                      const std::string& user_name,
+                                                      const std::string& password) const {
     const auto db_validation = DatabaseIdentifierValidator::validate_database_name(database_name);
     const auto user_validation = DatabaseIdentifierValidator::validate_user_name(user_name);
     if (!db_validation.valid) return provider_failure(db_validation.code, db_validation.message);
     if (!user_validation.valid) return provider_failure(user_validation.code, user_validation.message);
     if (!password_supported(password)) return provider_failure("password_invalid", "Database password is unsupported");
     return execute_sql(target, {user_name, password, "localhost"}, "SELECT 1;\n", "login_verified", database_name);
+}
+
+DatabaseProviderResult MariaDBProvider::export_database(const MariaDBConnectionTarget& target,
+                                                        const std::string& database_name,
+                                                        const std::string& user_name,
+                                                        const std::string& password,
+                                                        const std::string& output_path) const {
+    const auto db_validation = DatabaseIdentifierValidator::validate_database_name(database_name);
+    const auto user_validation = DatabaseIdentifierValidator::validate_user_name(user_name);
+    if (!db_validation.valid) return provider_failure(db_validation.code, db_validation.message);
+    if (!user_validation.valid) return provider_failure(user_validation.code, user_validation.message);
+    if (target.compose_file.empty() || target.service.empty() || output_path.empty()) return provider_failure("target_invalid", "MariaDB export target is incomplete");
+    if (!password_supported(password)) return provider_failure("password_invalid", "Database password is unsupported");
+
+    MariaDBSecureTempFile option_file;
+    try {
+        option_file = MariaDBSecureTempFile::create("containercp-mariadb-dump-option", ".cnf", mariadb_service_account_option_file({user_name, password, "localhost"}));
+    } catch (...) {
+        return provider_failure("secret_transport_failed", "MariaDB secure credential transport could not be prepared");
+    }
+    const std::string container_option_path = "/tmp/containercp-" + option_file.path().filename().string();
+    auto copy_result = runner_.run({"docker", "compose", "-f", target.compose_file,
+                                   "cp", option_file.path().string(), target.service + ":" + container_option_path});
+    if (copy_result.exit_code != 0) return provider_failure("mariadb_option_copy_failed", "MariaDB secure credential transport failed");
+    auto cleanup = [&]() {
+        (void)runner_.run({"docker", "compose", "-f", target.compose_file,
+                           "exec", "-T", target.service, "rm", "-f", container_option_path});
+    };
+    const auto command = runner_.run_stdout_to_file(build_dump_args(target, container_option_path, database_name), output_path);
+    cleanup();
+    if (command.exit_code != 0) {
+        (void)std::filesystem::remove(output_path);
+        return provider_failure(classify_mariadb_error(command.err), "MariaDB dump failed: " + mariadb_sanitize_provider_error(command.err));
+    }
+    if (!regular_owner_only_file(output_path) || !prepend_export_header(output_path, database_name)) {
+        (void)std::filesystem::remove(output_path);
+        return provider_failure("artifact_finalize_failed", "MariaDB dump artifact could not be finalized safely");
+    }
+    return provider_success("export_completed", "MariaDB logical export completed");
+}
+
+DatabaseProviderResult MariaDBProvider::import_sql_file(const MariaDBConnectionTarget& target,
+                                                        const std::string& database_name,
+                                                        const std::string& user_name,
+                                                        const std::string& password,
+                                                        const std::string& input_path) const {
+    const auto db_validation = DatabaseIdentifierValidator::validate_database_name(database_name);
+    const auto user_validation = DatabaseIdentifierValidator::validate_user_name(user_name);
+    if (!db_validation.valid) return provider_failure(db_validation.code, db_validation.message);
+    if (!user_validation.valid) return provider_failure(user_validation.code, user_validation.message);
+    if (target.compose_file.empty() || target.service.empty() || input_path.empty()) return provider_failure("target_invalid", "MariaDB import target is incomplete");
+    if (!password_supported(password)) return provider_failure("password_invalid", "Database password is unsupported");
+    if (!regular_owner_only_file(input_path)) return provider_failure("import_artifact_invalid", "Import artifact is not a safe regular file");
+
+    MariaDBSecureTempFile option_file;
+    try {
+        option_file = MariaDBSecureTempFile::create("containercp-mariadb-import-option", ".cnf", mariadb_service_account_option_file({user_name, password, "localhost"}));
+    } catch (...) {
+        return provider_failure("secret_transport_failed", "MariaDB secure credential transport could not be prepared");
+    }
+    const std::string container_option_path = "/tmp/containercp-" + option_file.path().filename().string();
+    auto copy_result = runner_.run({"docker", "compose", "-f", target.compose_file,
+                                   "cp", option_file.path().string(), target.service + ":" + container_option_path});
+    if (copy_result.exit_code != 0) return provider_failure("mariadb_option_copy_failed", "MariaDB secure credential transport failed");
+    auto cleanup = [&]() {
+        (void)runner_.run({"docker", "compose", "-f", target.compose_file,
+                           "exec", "-T", target.service, "rm", "-f", container_option_path});
+    };
+    auto args = build_exec_args(target, container_option_path, database_name);
+    args.push_back("--local-infile=0");
+    const auto command = runner_.run_with_stdin_file(args, input_path);
+    cleanup();
+    if (command.exit_code != 0) {
+        return provider_failure(classify_mariadb_error(command.err), "MariaDB import failed: " + mariadb_sanitize_provider_error(command.err));
+    }
+    return provider_success("import_completed", "MariaDB import completed");
 }
 
 } // namespace containercp::database

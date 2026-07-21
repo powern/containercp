@@ -329,6 +329,31 @@ TEST_CASE("Database DB-3 API surface separates physical drop from metadata-only 
     CHECK(api.find("CONTAINERCP_DB_SERVICE_PASSWORD") == std::string::npos);
 }
 
+TEST_CASE("Database DB-4 API surface exposes job-backed transfer without paths or secrets") {
+    std::ifstream api_in(std::string(TEST_SOURCE_DIR) + "/libs/api/ApiServer.cpp");
+    REQUIRE(api_in.is_open());
+    std::string api((std::istreambuf_iterator<char>(api_in)), std::istreambuf_iterator<char>());
+    CHECK(api.find("action == \"export\"") != std::string::npos);
+    CHECK(api.find("action == \"import-upload\"") != std::string::npos);
+    CHECK(api.find("action == \"import\"") != std::string::npos);
+    CHECK(api.find("/exports/") != std::string::npos);
+    CHECK(api.find("/download") != std::string::npos);
+    CHECK(api.find("/revoke") != std::string::npos);
+    CHECK(api.find("database_dump_jobs()") != std::string::npos);
+    CHECK(api.find("Content-Disposition") != std::string::npos);
+    CHECK(api.find("artifact_id") != std::string::npos);
+    CHECK(api.find("DB_PASSWORD") == std::string::npos);
+    CHECK(api.find("MYSQL_ROOT_PASSWORD") == std::string::npos);
+
+    std::ifstream view_in(std::string(TEST_SOURCE_DIR) + "/libs/database/DatabaseViewService.cpp");
+    REQUIRE(view_in.is_open());
+    std::string view((std::istreambuf_iterator<char>(view_in)), std::istreambuf_iterator<char>());
+    CHECK(view.find("can_export") != std::string::npos);
+    CHECK(view.find("can_import") != std::string::npos);
+    CHECK(view.find("max_import_size") != std::string::npos);
+    CHECK(view.find("supported_import_formats") != std::string::npos);
+}
+
 TEST_CASE("MariaDB service-account init script rejects missing variables without echoing secrets") {
     std::ifstream in(std::string(TEST_SOURCE_DIR) + "/libs/provider/DockerComposeProvider.cpp");
     REQUIRE(in.is_open());

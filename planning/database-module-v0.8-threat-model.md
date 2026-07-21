@@ -124,6 +124,8 @@ Required controls:
 
 DB-3 service-account policy for MariaDB 12.x is deliberately narrower than `ALL PRIVILEGES ON *.*`. The account may create schemas, create users, inspect `mysql.user`/`mysql.db`, and grant only the approved application privilege set on the Site's single managed schema. It must not receive `RELOAD`; DB-3 provider SQL must avoid unnecessary `FLUSH PRIVILEGES` after `GRANT`, `REVOKE`, `CREATE USER`, `ALTER USER`, or `DROP USER` statements.
 
+DB-4 export/import uses the managed application user for data movement and keeps the service account for verification/metadata checks. `mariadb-dump` and `mariadb` receive credentials only through owner-only option files copied into the selected Site's MariaDB container. Import disables local infile with `--local-infile=0`.
+
 Negative tests required:
 
 - Database name with shell metacharacters is rejected.
@@ -216,6 +218,8 @@ Import mitigations:
 - Destructive confirmation if overwrite/drop statements are detected or if policy requires it for all imports.
 - Async job with sanitized diagnostics.
 - Optional dry-run/inspect step in a future release.
+
+DB-4 initial import policy accepts only uncompressed ContainerCP-generated `.sql` exports up to 5 MiB. Known database-switching, account-management, grant, definer, and local-infile constructs are rejected before execution. Import mode is execute/import into the existing database with a pre-import recovery export; partial MariaDB DDL failures are reported as manual recovery instead of claiming rollback.
 
 ## Backup/Restore Threats
 

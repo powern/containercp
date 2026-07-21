@@ -44,9 +44,19 @@ public:
                                      const DatabaseProviderCredential& credential,
                                      const std::string& user_name) const override;
     DatabaseProviderResult verify_login(const MariaDBConnectionTarget& target,
-                                        const std::string& database_name,
-                                        const std::string& user_name,
-                                        const std::string& password) const override;
+                                         const std::string& database_name,
+                                         const std::string& user_name,
+                                         const std::string& password) const override;
+    DatabaseProviderResult export_database(const MariaDBConnectionTarget& target,
+                                           const std::string& database_name,
+                                           const std::string& user_name,
+                                           const std::string& password,
+                                           const std::string& output_path) const override;
+    DatabaseProviderResult import_sql_file(const MariaDBConnectionTarget& target,
+                                           const std::string& database_name,
+                                           const std::string& user_name,
+                                           const std::string& password,
+                                           const std::string& input_path) const override;
 
 private:
     DatabaseProviderResult execute_sql(const MariaDBConnectionTarget& target,
@@ -55,6 +65,9 @@ private:
                                        const std::string& success_code,
                                        const std::string& database_name = {}) const;
     std::vector<std::string> build_exec_args(const MariaDBConnectionTarget& target,
+                                              const std::string& container_option_path,
+                                              const std::string& database_name) const;
+    std::vector<std::string> build_dump_args(const MariaDBConnectionTarget& target,
                                              const std::string& container_option_path,
                                              const std::string& database_name) const;
 

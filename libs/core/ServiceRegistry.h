@@ -20,6 +20,8 @@
 #include "database/DatabaseCredentialRotationAdapter.h"
 #include "database/DatabaseCredentialRotationJobService.h"
 #include "database/DatabaseCredentialRotationService.h"
+#include "database/DatabaseDumpJobService.h"
+#include "database/DatabaseDumpService.h"
 #include "database/DatabaseLifecycleJobService.h"
 #include "database/DatabaseLifecycleService.h"
 #include "database/DatabaseManager.h"
@@ -84,6 +86,8 @@ public:
     database::DatabaseManager& databases();
     database::DatabaseViewService& database_view();
     database::DatabaseLifecycleJobService& database_lifecycle_jobs();
+    database::DatabaseDumpService& database_dump();
+    database::DatabaseDumpJobService& database_dump_jobs();
     database::DatabaseCredentialRotationJobService& database_credential_rotation_jobs();
     backup::BackupManager& backups();
     backup::BackupProvider& backup_provider();
@@ -198,6 +202,8 @@ private:
     runtime::SiteRuntimeManager site_runtime_;
     database::DatabaseLifecycleService database_lifecycle_;
     database::DatabaseLifecycleJobService database_lifecycle_jobs_;
+    database::DatabaseDumpService database_dump_;
+    database::DatabaseDumpJobService database_dump_jobs_;
     database::DatabaseViewService database_view_;
     runtime::RuntimeSynchronizer runtime_sync_;
     runtime::HealthRegistry health_;

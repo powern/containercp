@@ -60,6 +60,16 @@ public:
                                                 const std::string& database_name,
                                                 const std::string& user_name,
                                                 const std::string& password) const = 0;
+    virtual DatabaseProviderResult export_database(const MariaDBConnectionTarget& target,
+                                                   const std::string& database_name,
+                                                   const std::string& user_name,
+                                                   const std::string& password,
+                                                   const std::string& output_path) const = 0;
+    virtual DatabaseProviderResult import_sql_file(const MariaDBConnectionTarget& target,
+                                                   const std::string& database_name,
+                                                   const std::string& user_name,
+                                                   const std::string& password,
+                                                   const std::string& input_path) const = 0;
 };
 
 } // namespace containercp::database

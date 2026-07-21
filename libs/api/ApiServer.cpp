@@ -45,6 +45,7 @@ namespace containercp::api {
 
 // Serialize conflicting proxy management operations (reload, sync, recover)
 static std::mutex proxy_op_mutex;
+static constexpr int kMaxApiRequestBodyBytes = 6 * 1024 * 1024;
 
 // Simple JSON value extraction
 static std::string json_extract(const std::string& json, const std::string& key) {
@@ -187,8 +188,29 @@ Request ApiServer::parse_request(int client_fd) const {
     ssize_t n = ::read(client_fd, buf, sizeof(buf) - 1);
     if (n <= 0) return req;
     buf[n] = '\0';
+    std::string raw(buf, static_cast<std::size_t>(n));
+    auto header_end = raw.find("\r\n\r\n");
+    if (header_end != std::string::npos) {
+        auto header = raw.substr(0, header_end);
+        auto cl_pos = header.find("Content-Length:");
+        if (cl_pos != std::string::npos) {
+            cl_pos += 15;
+            while (cl_pos < header.size() && header[cl_pos] == ' ') ++cl_pos;
+            auto cl_end = header.find("\r\n", cl_pos);
+            int expected = 0;
+            try { expected = std::stoi(header.substr(cl_pos, cl_end - cl_pos)); } catch (...) { expected = 0; }
+            if (expected > 0 && expected <= kMaxApiRequestBodyBytes) {
+                const std::size_t body_start = header_end + 4;
+                while (raw.size() < body_start + static_cast<std::size_t>(expected)) {
+                    ssize_t more = ::read(client_fd, buf, sizeof(buf));
+                    if (more <= 0) break;
+                    raw.append(buf, static_cast<std::size_t>(more));
+                }
+            }
+        }
+    }
 
-    std::istringstream stream(buf);
+    std::istringstream stream(raw);
     std::string line;
 
     if (!std::getline(stream, line)) return req;
@@ -243,7 +265,11 @@ Request ApiServer::parse_request(int client_fd) const {
         }
         req.body = body;
     } else if (content_length > 0) {
-        req.body = std::string(buf + n - content_length, content_length);
+        const auto body_start = raw.find("\r\n\r\n");
+        if (body_start != std::string::npos && content_length <= kMaxApiRequestBodyBytes) {
+            const auto start = body_start + 4;
+            if (raw.size() >= start) req.body = raw.substr(start, static_cast<std::size_t>(content_length));
+        }
     }
 
     return req;
@@ -899,6 +925,29 @@ bool ApiServer::start() {
         return r;
     };
 
+    auto dump_job_response = [](const database::DatabaseDumpJobResult& result) -> Response {
+        Response r;
+        if (!result.success) {
+            r.status_code = (result.code == "database_not_found" || result.code == "site_not_found" || result.code == "artifact_not_found") ? 404 : 400;
+            r.body = "{\"success\":false,\"error\":{\"code\":\"" + JsonFormatter::escape(result.code) +
+                     "\",\"message\":\"" + JsonFormatter::escape(result.message) + "\"}}";
+            return r;
+        }
+        r.status_code = 202;
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":{"
+             << "\"job_id\":" << result.job_id
+             << ",\"operation\":\"" << JsonFormatter::escape(result.operation)
+             << "\",\"database_id\":" << result.database_id
+             << ",\"site_id\":" << result.site_id
+             << ",\"artifact_id\":\"" << JsonFormatter::escape(result.artifact_id)
+             << "\",\"status\":\"pending\""
+             << ",\"status_url\":\"/api/jobs?id=" << result.job_id
+             << "\",\"message\":\"" << JsonFormatter::escape(result.message) << "\"}}";
+        r.body = json.str();
+        return r;
+    };
+
     router_.add("POST", "/api/databases", [&s, &lifecycle_job_response](const Request& req) {
         const auto site_id_text = json_extract(req.body, "site_id");
         uint64_t site_id = 0;
@@ -916,7 +965,7 @@ bool ApiServer::start() {
         return lifecycle_job_response(result);
     });
 
-    router_.add_prefix("POST", "/api/databases/", [&s, &lifecycle_job_response](const Request& req) {
+    router_.add_prefix("POST", "/api/databases/", [&s, &lifecycle_job_response, &dump_job_response](const Request& req) {
         Response r;
         const std::string rest = req.path.substr(std::string("/api/databases/").size());
         if (rest == "remove") {
@@ -948,8 +997,48 @@ bool ApiServer::start() {
             r.body = "{\"success\":false,\"error\":\"Database id must be numeric\"}";
             return r;
         }
+        if (action.rfind("exports/", 0) == 0 && action.size() > std::string("exports//revoke").size()) {
+            const std::string prefix = "exports/";
+            const std::string suffix = "/revoke";
+            if (action.substr(action.size() - suffix.size()) == suffix) {
+                const std::string artifact_id = action.substr(prefix.size(), action.size() - prefix.size() - suffix.size());
+                const auto revoked = s.database_dump().revokeArtifact(database_id, artifact_id);
+                if (!revoked.success) {
+                    r.status_code = 404;
+                    r.body = "{\"success\":false,\"error\":{\"code\":\"" + JsonFormatter::escape(revoked.code) +
+                             "\",\"message\":\"" + JsonFormatter::escape(revoked.message) + "\"}}";
+                    return r;
+                }
+                r.body = "{\"success\":true,\"data\":{\"artifact_id\":\"" + JsonFormatter::escape(revoked.artifact_id) + "\",\"message\":\"Artifact revoked\"}}";
+                return r;
+            }
+        }
         if (action == "verify") {
             return lifecycle_job_response(s.database_lifecycle_jobs().enqueue_verify(database_id));
+        }
+        if (action == "export") {
+            return dump_job_response(s.database_dump_jobs().enqueue_export(database_id));
+        }
+        if (action == "import-upload") {
+            const auto filename_it = req.query.find("filename");
+            const std::string filename = filename_it == req.query.end() ? "upload.sql" : filename_it->second;
+            const auto staged = s.database_dump().stageImportUpload(database_id, filename, req.body);
+            Response upload;
+            if (!staged.success) {
+                upload.status_code = staged.code == "database_not_found" ? 404 : 400;
+                upload.body = "{\"success\":false,\"error\":{\"code\":\"" + JsonFormatter::escape(staged.code) +
+                              "\",\"message\":\"" + JsonFormatter::escape(staged.message) + "\"}}";
+                return upload;
+            }
+            upload.status_code = 201;
+            upload.body = "{\"success\":true,\"data\":{\"artifact_id\":\"" + JsonFormatter::escape(staged.artifact_id) +
+                          "\",\"database_id\":" + std::to_string(staged.database_id) +
+                          ",\"site_id\":" + std::to_string(staged.site_id) +
+                          ",\"message\":\"Import upload staged\"}}";
+            return upload;
+        }
+        if (action == "import") {
+            return dump_job_response(s.database_dump_jobs().enqueue_import(database_id, json_extract(req.body, "artifact_id"), json_extract(req.body, "confirmation")));
         }
         if (action == "drop") {
             return lifecycle_job_response(s.database_lifecycle_jobs().enqueue_drop(database_id, json_extract(req.body, "confirmation")));
@@ -959,6 +1048,98 @@ bool ApiServer::start() {
         }
         r.status_code = 404;
         r.body = "{\"success\":false,\"error\":\"Database action not found\"}";
+        return r;
+    });
+
+    router_.add_prefix("GET", "/api/databases/", [&s](const Request& req) {
+        const std::string rest = req.path.substr(std::string("/api/databases/").size());
+        const auto marker = rest.find("/exports/");
+        if (marker == std::string::npos) {
+            Response r;
+            if (rest.empty()) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Database id is required\"}";
+                return r;
+            }
+            for (unsigned char c : rest) {
+                if (!std::isdigit(c)) {
+                    r.status_code = 400;
+                    r.body = "{\"success\":false,\"error\":\"Database id must be numeric\"}";
+                    return r;
+                }
+            }
+            uint64_t database_id = 0;
+            try {
+                size_t parsed = 0;
+                database_id = std::stoull(rest, &parsed);
+                if (parsed != rest.size()) throw std::invalid_argument("trailing data");
+            } catch (...) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Database id must be numeric\"}";
+                return r;
+            }
+            const auto json = s.database_view().build_enriched_json(database_id);
+            if (json == "null") {
+                r.status_code = 404;
+                r.body = "{\"success\":false,\"error\":\"Database not found\"}";
+                return r;
+            }
+            r.body = JsonFormatter::success(json);
+            return r;
+        }
+        uint64_t database_id = 0;
+        try { database_id = std::stoull(rest.substr(0, marker)); } catch (...) {
+            Response r;
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Database id must be numeric\"}";
+            return r;
+        }
+        std::string tail = rest.substr(marker + std::string("/exports/").size());
+        bool download = false;
+        const std::string suffix = "/download";
+        if (tail.size() > suffix.size() && tail.substr(tail.size() - suffix.size()) == suffix) {
+            download = true;
+            tail = tail.substr(0, tail.size() - suffix.size());
+        }
+        if (!database::database_artifact_id_valid(tail)) {
+            Response r;
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Artifact not found\"}";
+            return r;
+        }
+        const auto meta = s.database_dump().artifact(database_id, tail);
+        if (!meta) {
+            Response r;
+            r.status_code = 410;
+            r.body = "{\"success\":false,\"error\":{\"code\":\"artifact_unavailable\",\"message\":\"Artifact is unavailable, expired, or revoked\"}}";
+            return r;
+        }
+        if (!download) {
+            Response r;
+            r.body = JsonFormatter::success(database::database_artifact_metadata_json(*meta));
+            return r;
+        }
+        const auto path = s.database_dump().artifact_path(database_id, tail);
+        if (!path) {
+            Response r;
+            r.status_code = 410;
+            r.body = "{\"success\":false,\"error\":{\"code\":\"artifact_unavailable\",\"message\":\"Artifact is unavailable, expired, or revoked\"}}";
+            return r;
+        }
+        std::ifstream file(*path, std::ios::binary);
+        if (!file.is_open()) {
+            Response r;
+            r.status_code = 410;
+            r.body = "{\"success\":false,\"error\":{\"code\":\"artifact_unavailable\",\"message\":\"Artifact is unavailable\"}}";
+            return r;
+        }
+        std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        s.database_dump().record_download(database_id, tail);
+        Response r;
+        r.content_type = "application/sql";
+        r.body = std::move(content);
+        r.headers["Content-Disposition"] = "attachment; filename=\"" + meta->sanitized_filename + "\"";
+        r.headers["X-Content-Type-Options"] = "nosniff";
         return r;
     });
 

@@ -258,29 +258,32 @@ Purpose: provide portable SQL dump workflows and prepare backup integration.
 
 Backend tasks:
 
-- [ ] Add `DatabaseDumpService`.
-- [ ] Export the selected Site's managed database with `mariadb-dump` through `MariaDBProvider`.
-- [ ] Use `--single-transaction` and `--quick` by default.
-- [ ] Avoid command-line passwords by using option files.
-- [ ] Write dumps to staging paths outside web roots.
-- [ ] Add import staging with file extension, size, path, and ownership checks.
-- [ ] Import into the selected Site's managed database with `mariadb` client through `MariaDBProvider`.
-- [ ] Persist job diagnostics without including secrets.
+- [x] Add `DatabaseDumpService`.
+- [x] Export the selected Site's managed database with `mariadb-dump` through `MariaDBProvider`.
+- [x] Use `--single-transaction` and `--quick` by default.
+- [x] Avoid command-line passwords by using option files.
+- [x] Write dumps to staging paths outside web roots.
+- [x] Add import staging with file extension, size, path, and ownership checks.
+- [x] Import into the selected Site's managed database with `mariadb` client through `MariaDBProvider`.
+- [x] Persist job diagnostics without including secrets.
+- [x] Add artifact metadata, expiry cleanup, revoke/download flow, and startup reconciliation.
+- [x] Restrict DB-4 imports to uncompressed ContainerCP-generated `.sql` exports in execute/import mode with pre-import recovery export.
 
 REST API tasks:
 
-- [ ] Add `POST /api/databases/<id>/export`.
-- [ ] Add `POST /api/databases/<id>/import`.
-- [ ] Add download endpoint only after authentication and path containment checks are in place.
-- [ ] Update `docs/api/API_REFERENCE.md`.
+- [x] Add `POST /api/databases/<id>/export`.
+- [x] Add `POST /api/databases/<id>/import-upload`.
+- [x] Add `POST /api/databases/<id>/import`.
+- [x] Add metadata, authenticated download-through-WebServer, and revoke endpoints with path containment checks.
+- [x] Update `docs/api/API_REFERENCE.md`.
 
 Tests:
 
-- [ ] Integration test export creates a valid SQL dump.
-- [ ] Integration test import restores expected rows into a disposable database.
-- [ ] Negative test rejects path traversal import paths.
-- [ ] Negative test rejects oversized import files.
-- [ ] Negative test sanitizes MariaDB client errors.
+- [x] Integration test export creates a valid SQL dump.
+- [x] Integration test import restores expected rows into a disposable database.
+- [x] Negative test rejects path traversal import filenames/content policy.
+- [x] Negative test rejects oversized import files.
+- [x] Negative test sanitizes MariaDB client errors through provider diagnostics.
 
 Exit criteria:
 
@@ -385,7 +388,7 @@ Documentation tasks:
 - [x] Update runtime/development docs if ownership changes.
 - [x] Update `planning/project-status.md`.
 - [x] Update `CHANGELOG.md` with commit hash placeholder, validation, user-visible behavior, and known risks.
-- [ ] Add operator guide for database import/export, backups, and Adminer launch.
+- [x] Add operator guide for database import/export. Backup integration and Adminer launch remain future phases.
 
 Validation tasks:
 
