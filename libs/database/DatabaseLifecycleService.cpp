@@ -109,6 +109,12 @@ void audit_event(const std::string& operation,
     DatabaseLifecycleAuditLogger::log({operation, stage, result, code, job_id, site_id, database_id, domain, manual_recovery, level});
 }
 
+struct CreateCompensationResult {
+    bool success = true;
+    std::string code;
+    std::string message;
+};
+
 } // namespace
 
 DatabaseLifecycleService::DatabaseLifecycleService(site::SiteManager& sites,
@@ -251,46 +257,70 @@ DatabaseLifecycleResult DatabaseLifecycleService::createManagedDatabase(const Da
     bool granted = false;
     auto compensate = [&]() {
         mark_step(steps, "Compensating changes", true);
-        if (granted) (void)provider_.revoke_database_privileges(resolved.target, resolved.service_account, resolved.database->db_name, resolved.database->db_user);
-        if (created_user) (void)provider_.drop_user(resolved.target, resolved.service_account, resolved.database->db_user);
-        if (created_database) (void)provider_.drop_database(resolved.target, resolved.service_account, resolved.database->db_name);
+        CreateCompensationResult result;
+        if (granted) {
+            const auto revoke = provider_.revoke_database_privileges(resolved.target, resolved.service_account, resolved.database->db_name, resolved.database->db_user);
+            if (!revoke.success && result.success) {
+                result = {false, revoke.code, "Grant rollback failed: " + revoke.message};
+            }
+        }
+        if (created_user) {
+            const auto drop_user = provider_.drop_user(resolved.target, resolved.service_account, resolved.database->db_user);
+            if (!drop_user.success && result.success) {
+                result = {false, drop_user.code, "User rollback failed: " + drop_user.message};
+            }
+        }
+        if (created_database) {
+            const auto drop_database = provider_.drop_database(resolved.target, resolved.service_account, resolved.database->db_name);
+            if (!drop_database.success && result.success) {
+                result = {false, drop_database.code, "Database rollback failed: " + drop_database.message};
+            }
+        }
         databases_.remove(resolved.database->id);
-        (void)persist_();
+        if (!persist_() && result.success) {
+            result = {false, "metadata_persist_failed", "Metadata rollback failed"};
+        }
+        return result;
     };
 
     auto create_db = provider_.create_database(resolved.target, resolved.service_account, resolved.database->db_name);
     if (!create_db.success) {
-        compensate();
-        return lifecycle_failure(std::move(steps), "Creating database", create_db.code, "Physical database creation failed");
+        const auto rollback = compensate();
+        if (!rollback.success) return lifecycle_failure(std::move(steps), "Compensating changes", rollback.code, rollback.message, true);
+        return lifecycle_failure(std::move(steps), "Creating database", create_db.code, "Physical database creation failed: " + create_db.message);
     }
     created_database = true;
     mark_step(steps, "Creating database", true);
 
     auto create_user = provider_.create_or_update_user(resolved.target, resolved.service_account, resolved.database->db_user, resolved.database->db_password);
     if (!create_user.success) {
-        compensate();
-        return lifecycle_failure(std::move(steps), "Creating managed user", create_user.code, "Managed user creation failed");
+        const auto rollback = compensate();
+        if (!rollback.success) return lifecycle_failure(std::move(steps), "Compensating changes", rollback.code, rollback.message, true);
+        return lifecycle_failure(std::move(steps), "Creating managed user", create_user.code, "Managed user creation failed: " + create_user.message);
     }
     created_user = true;
     mark_step(steps, "Creating managed user", true);
 
     auto grant = provider_.grant_database_privileges(resolved.target, resolved.service_account, resolved.database->db_name, resolved.database->db_user);
     if (!grant.success) {
-        compensate();
-        return lifecycle_failure(std::move(steps), "Applying grants", grant.code, "Database privilege grant failed");
+        const auto rollback = compensate();
+        if (!rollback.success) return lifecycle_failure(std::move(steps), "Compensating changes", rollback.code, rollback.message, true);
+        return lifecycle_failure(std::move(steps), "Applying grants", grant.code, "Database privilege grant failed: " + grant.message);
     }
     granted = true;
     mark_step(steps, "Applying grants", true);
 
     auto login = provider_.verify_login(resolved.target, resolved.database->db_name, resolved.database->db_user, resolved.database->db_password);
     if (!login.success) {
-        compensate();
-        return lifecycle_failure(std::move(steps), "Verifying connection", login.code, "Managed database login verification failed");
+        const auto rollback = compensate();
+        if (!rollback.success) return lifecycle_failure(std::move(steps), "Compensating changes", rollback.code, rollback.message, true);
+        return lifecycle_failure(std::move(steps), "Verifying connection", login.code, "Managed database login verification failed: " + login.message);
     }
     mark_step(steps, "Verifying connection", true);
 
     if (!persist_()) {
-        compensate();
+        const auto rollback = compensate();
+        if (!rollback.success) return lifecycle_failure(std::move(steps), "Compensating changes", rollback.code, rollback.message, true);
         return lifecycle_failure(std::move(steps), "Persisting metadata", "metadata_persist_failed", "Database metadata persistence failed");
     }
     mark_step(steps, "Persisting metadata", true);

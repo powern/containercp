@@ -18,6 +18,62 @@ DatabaseProviderResult provider_success(std::string code, std::string message, s
     return {true, std::move(code), std::move(message), std::move(output)};
 }
 
+bool contains_case_insensitive(const std::string& value, const std::string& needle) {
+    auto lower = [](unsigned char c) { return static_cast<char>(std::tolower(c)); };
+    std::string haystack;
+    std::string target;
+    haystack.reserve(value.size());
+    target.reserve(needle.size());
+    std::transform(value.begin(), value.end(), std::back_inserter(haystack), lower);
+    std::transform(needle.begin(), needle.end(), std::back_inserter(target), lower);
+    return haystack.find(target) != std::string::npos;
+}
+
+std::string redact_identified_by(std::string value) {
+    std::string out;
+    out.reserve(value.size());
+    for (std::size_t i = 0; i < value.size();) {
+        const std::string keyword = "IDENTIFIED BY";
+        if (i + keyword.size() <= value.size() && contains_case_insensitive(value.substr(i, keyword.size()), keyword)) {
+            out += keyword;
+            i += keyword.size();
+            while (i < value.size() && std::isspace(static_cast<unsigned char>(value[i])) != 0) {
+                out.push_back(value[i++]);
+            }
+            out += "'<redacted>'";
+            if (i < value.size() && (value[i] == '\'' || value[i] == '"')) {
+                const char quote = value[i++];
+                while (i < value.size()) {
+                    const char c = value[i++];
+                    if (c == quote) break;
+                    if (c == '\\' && i < value.size()) ++i;
+                }
+            } else {
+                while (i < value.size() && std::isspace(static_cast<unsigned char>(value[i])) == 0 && value[i] != ';') ++i;
+            }
+            continue;
+        }
+        out.push_back(value[i++]);
+    }
+    return out;
+}
+
+std::string classify_mariadb_error(const std::string& value) {
+    if (contains_case_insensitive(value, "ERROR 1227") && contains_case_insensitive(value, "RELOAD")) {
+        return "mariadb_reload_privilege_required";
+    }
+    if (contains_case_insensitive(value, "Access denied") && contains_case_insensitive(value, "GRANT")) {
+        return "mariadb_grant_privilege_denied";
+    }
+    if (contains_case_insensitive(value, "Access denied")) {
+        return "mariadb_access_denied";
+    }
+    if (contains_case_insensitive(value, "Operation CREATE USER failed") || contains_case_insensitive(value, "ERROR 1396")) {
+        return "mariadb_user_state_conflict";
+    }
+    return "mariadb_command_failed";
+}
+
 bool password_supported(const std::string& value) {
     if (value.empty() || value.size() > 256) {
         return false;
@@ -76,9 +132,10 @@ std::string mariadb_service_account_option_file(const DatabaseProviderCredential
 }
 
 std::string mariadb_sanitize_provider_error(const std::string& value) {
+    const std::string redacted = redact_identified_by(value);
     std::string sanitized;
-    sanitized.reserve(std::min<std::size_t>(value.size(), 160));
-    for (unsigned char c : value) {
+    sanitized.reserve(std::min<std::size_t>(redacted.size(), 160));
+    for (unsigned char c : redacted) {
         if (sanitized.size() >= 160) {
             break;
         }
@@ -146,7 +203,7 @@ DatabaseProviderResult MariaDBProvider::execute_sql(const MariaDBConnectionTarge
     const auto command = runner_.run_with_stdin_file(build_exec_args(target, container_option_path, database_name), sql_file.path().string());
     cleanup();
     if (command.exit_code != 0) {
-        return provider_failure("mariadb_command_failed", "MariaDB operation failed: " + mariadb_sanitize_provider_error(command.err));
+        return provider_failure(classify_mariadb_error(command.err), "MariaDB operation failed: " + mariadb_sanitize_provider_error(command.err));
     }
     return provider_success(success_code, "MariaDB operation completed", command.out);
 }
@@ -245,7 +302,7 @@ DatabaseProviderResult MariaDBProvider::grant_database_privileges(const MariaDBC
     return execute_sql(target,
                        credential,
                        "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES ON " +
-                           DatabaseIdentifierValidator::quote_identifier(database_name) + ".* TO " + quote_user(user_name) + ";\nFLUSH PRIVILEGES;\n",
+                            DatabaseIdentifierValidator::quote_identifier(database_name) + ".* TO " + quote_user(user_name) + ";\n",
                        "privileges_granted");
 }
 
@@ -259,7 +316,7 @@ DatabaseProviderResult MariaDBProvider::revoke_database_privileges(const MariaDB
     if (!user_validation.valid) return provider_failure(user_validation.code, user_validation.message);
     return execute_sql(target,
                        credential,
-                       "REVOKE ALL PRIVILEGES ON " + DatabaseIdentifierValidator::quote_identifier(database_name) + ".* FROM " + quote_user(user_name) + ";\nFLUSH PRIVILEGES;\n",
+                       "REVOKE ALL PRIVILEGES ON " + DatabaseIdentifierValidator::quote_identifier(database_name) + ".* FROM " + quote_user(user_name) + ";\n",
                        "privileges_revoked");
 }
 

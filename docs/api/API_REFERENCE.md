@@ -377,6 +377,10 @@ database record, validates the MariaDB database/user identifiers, creates
 metadata with a generated password, then the job creates the physical database,
 managed user, grants, verifies login, and persists final metadata. Partial
 physical creation is compensated by dropping only resources created by the job.
+Provider failures return safe machine-readable job error codes where available,
+including `mariadb_reload_privilege_required`, `mariadb_grant_privilege_denied`,
+`mariadb_access_denied`, and `mariadb_user_state_conflict`. Job diagnostics must
+not include SQL password literals, option-file contents, or credentials.
 
 **POST /api/databases/<id>/verify** — queues a non-destructive verification job.
 Verify reports through job steps for ownership, runtime availability,

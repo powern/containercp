@@ -122,12 +122,15 @@ Required controls:
 
 `MYSQL_ROOT_PASSWORD` is bootstrap-only. Runtime commands must authenticate with the dedicated service account or scoped database user. Any root/elevated credential use after bootstrap is break-glass and must be explicit, logged, and approval-gated.
 
+DB-3 service-account policy for MariaDB 12.x is deliberately narrower than `ALL PRIVILEGES ON *.*`. The account may create schemas, create users, inspect `mysql.user`/`mysql.db`, and grant only the approved application privilege set on the Site's single managed schema. It must not receive `RELOAD`; DB-3 provider SQL must avoid unnecessary `FLUSH PRIVILEGES` after `GRANT`, `REVOKE`, `CREATE USER`, `ALTER USER`, or `DROP USER` statements.
+
 Negative tests required:
 
 - Database name with shell metacharacters is rejected.
 - Username with SQL metacharacters is rejected.
 - Command arguments do not include password values.
 - Option file is removed after failed command.
+- Provider errors classify safe privilege failures without exposing SQL password literals or option-file contents.
 
 ## Credential Storage Threats
 

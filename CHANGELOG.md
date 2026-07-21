@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-21 | `this commit` | Database — Fix MariaDB lifecycle grants
+
+**Summary:** Fixed the DB-3 Create Database failure after a successful physical drop/recreate cycle. `MariaDBProvider` no longer appends unnecessary `FLUSH PRIVILEGES` after application `GRANT`/`REVOKE`, preserving the narrow service-account model without requiring global `RELOAD`. Provider diagnostics now classify safe MariaDB privilege failures and redact SQL password literals. Create compensation now reports manual recovery if grant-stage rollback cannot remove resources created by the current job.
+
+**Files changed:** `libs/database/MariaDBProvider.cpp`, `libs/database/DatabaseLifecycleService.cpp`, `tests/test_database_lifecycle.cpp`, `tests/test_api.cpp`, `docs/development/database-lifecycle.md`, `docs/api/API_REFERENCE.md`, `planning/database-module-v0.8-architecture.md`, `planning/database-module-v0.8-threat-model.md`, `planning/database-module-v0.8-implementation-plan.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** DB-3 Create Database can recreate the same managed database and application user after a DB-3 physical drop on MariaDB 12.3. Grant-stage failures now surface a safer, more specific provider error where available. If rollback cleanup fails, the job reports manual recovery instead of silently treating compensation as successful.
+
+**Validation:** Clean configure passed. Clean build of `containercp_tests`, `containercp`, and `containercpd` passed with no compiler diagnostics. Focused DB-3 provider/lifecycle/API/Site-volume tests passed (`26` cases, `156` assertions), including a real disposable MariaDB drop/recreate/grant/login cycle with isolated non-`site-*` Compose project and cached `mariadb:lts`. Full doctest passed (`857` cases, `5940` assertions). CTest passed (`1/1`) when run independently. Frontend syntax, `node scripts/check-frontend-baseline.js`, `node scripts/test-database-drop-modal.js`, and `git diff --check` passed. Production validation results are recorded after deployment.
+
+**Known risks:** Existing stacks whose service account was bootstrapped before DB-3 may still lack the required database-scoped grant with `GRANT OPTION` and should report a safe service-account/privilege error rather than falling back to root. DB-3 still supports one managed application database per Site in v0.8.
+
+---
+
 ## 2026-07-21 | `this commit` | Frontend — Fix database drop submission
 
 **Summary:** Fixed the Databases detail drawer physical-drop regression where the Drop Managed Database modal could remain open without visible progress or error. The destructive drop confirmation now uses real event listeners bound after modal creation, captures the selected database at modal-open time, validates exact confirmation before enabling submit, blocks duplicate requests, displays API/backend errors in the modal, and starts lifecycle job polling only after a valid job ID is returned.

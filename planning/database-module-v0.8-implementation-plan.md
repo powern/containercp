@@ -148,6 +148,9 @@ Backend tasks:
 - [x] Label generated MariaDB data volumes with exact Site ownership.
 - [x] Refuse Site creation when the expected MariaDB data volume already exists.
 - [x] Remove exact owned MariaDB data volume during confirmed destructive Site removal.
+- [x] Remove unnecessary provider `FLUSH PRIVILEGES` calls so the service account does not require global `RELOAD`.
+- [x] Classify safe MariaDB privilege errors and redact SQL password literals in provider diagnostics.
+- [x] Report manual recovery when grant-stage compensation cannot clean up newly created resources.
 - [ ] Add later explicit Adopt Database workflow for the selected Site's imported database; do not include it in DB-1.
 
 REST API tasks:
@@ -170,14 +173,18 @@ Tests:
 - [x] Unit test volume cleanup refuses mismatched/shared/unknown volumes.
 - [x] Unit test Site creation stale-volume collision fails closed.
 - [x] Unit test cleanup failure is visible and redacted.
-- [ ] Integration test create creates database, user, and grants in disposable MariaDB. Blocked locally by active Docker site containers; requires approved validation VM/disposable environment.
-- [ ] Integration test drop removes physical objects and metadata. Blocked locally by active Docker site containers; requires approved validation VM/disposable environment.
+- [x] Unit test provider GRANT/REVOKE SQL omits `FLUSH PRIVILEGES` and global `ALL` grants.
+- [x] Unit test provider classifies `RELOAD`/GRANT privilege failures safely.
+- [x] Unit test grant-stage compensation cleanup failure sets manual recovery diagnostics.
+- [x] Integration test create creates database, user, and grants in disposable MariaDB.
+- [x] Integration test drop removes physical objects and metadata.
+- [x] Real disposable MariaDB integration test covers repeated drop/recreate/grant/login cycle on the cached MariaDB 12.3-compatible `mariadb:lts` image when Docker/image are available.
 - [x] Unit test partial create failure rolls back physical objects and metadata.
 - [x] API/static tests verify destructive drop requires confirmation and redacted response surfaces.
 
 Validation:
 
-- [ ] Disposable local Compose/MariaDB validation passes. Blocked locally by active `site-1-*` Docker containers and no approved cleanup.
+- [x] Disposable local Compose/MariaDB validation passes with an isolated non-`site-*` project and cached `mariadb:lts` image.
 - [x] Full doctest suite passes.
 - [x] CTest passes.
 - [x] No compiler warnings.
@@ -386,7 +393,7 @@ Validation tasks:
 - [x] Clean build with zero compiler warnings.
 - [x] Full doctest suite.
 - [x] CTest.
-- [ ] Disposable local MariaDB lifecycle validation. Blocked locally by active site containers and no approved cleanup/destructive lifecycle validation.
+- [x] Disposable local MariaDB lifecycle validation with isolated non-`site-*` project and cached `mariadb:lts` image.
 - [ ] Validation VM deployment.
 - [ ] Real product validation on a non-production site.
 - [x] Code review and security review.

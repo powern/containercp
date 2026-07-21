@@ -338,6 +338,9 @@ TEST_CASE("MariaDB service-account init script rejects missing variables without
     CHECK(source.find("CONTAINERCP_DB_SERVICE_PASSWORD:-") != std::string::npos);
     CHECK(source.find("ContainerCP MariaDB service account environment is missing") != std::string::npos);
     CHECK(source.find("GRANT CREATE ON *.*") != std::string::npos);
+    CHECK(source.find("GRANT ALL PRIVILEGES ON *.*") == std::string::npos);
+    CHECK(source.find("GRANT RELOAD ON *.*") == std::string::npos);
+    CHECK(source.find("GRANT OPTION ON \\\\`$MYSQL_DATABASE\\\\`.*") != std::string::npos);
     CHECK(source.find("set -x") == std::string::npos);
     CHECK(source.find("echo \\\"$CONTAINERCP_DB_SERVICE_PASSWORD") == std::string::npos);
 }

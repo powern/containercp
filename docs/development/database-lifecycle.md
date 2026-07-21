@@ -23,6 +23,17 @@ The generated Compose `mariadb` service must pass both service-account variables
 
 The service account is created only by MariaDB's first-run `/docker-entrypoint-initdb.d` flow. If an existing data directory is reused, MariaDB skips init scripts; DB-3 must then report `service_account_unavailable` or connection failure instead of falling back to root.
 
+The DB-3 service account uses a narrow MariaDB 12-compatible grant model:
+
+- Global `CREATE` for creating the selected managed database.
+- Global `CREATE USER` for creating/updating the selected managed application user.
+- Read-only `SELECT` on `mysql.user` and `mysql.db` for existence and sharing checks.
+- Database-scoped application privileges on the Site's managed database with `GRANT OPTION`, limited to `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, `INDEX`, `ALTER`, `CREATE TEMPORARY TABLES`, and `LOCK TABLES`.
+
+The service account is not granted `ALL PRIVILEGES ON *.*`, `RELOAD`, root access, or unrestricted global application privileges. `GRANT` and `REVOKE` statements take effect immediately in MariaDB 12.3, so DB-3 provider SQL must not call `FLUSH PRIVILEGES`; that operation requires global `RELOAD` and is unnecessary after grant-table statements.
+
+The database-scoped grant row remains usable when the managed database is dropped and recreated with the same validated name. This supports the DB-3 drop/create cycle without re-bootstrap and without root fallback.
+
 Older or imported stacks that do not have these keys return `service_account_unavailable`. ContainerCP does not automatically adopt or take ownership of imported databases.
 
 ## Site Database Volume Ownership
@@ -48,7 +59,9 @@ Site creation also checks the expected database volume name before starting the 
 - credentials are written to owner-only temporary files;
 - the temporary option file is copied into the MariaDB container and removed after the command;
 - SQL is fed through an owner-only temporary stdin file;
-- command argv never contains passwords.
+- command argv never contains passwords;
+- provider SQL uses validated identifiers and explicit `user@'%'` identities;
+- provider error codes classify common safe causes such as missing `RELOAD` privilege, GRANT privilege denial, access denial, and user-state conflicts while redacting SQL password literals.
 
 The public lifecycle service depends only on `DatabaseProvider`, not MariaDB command details.
 
@@ -59,6 +72,8 @@ The public lifecycle service depends only on `DatabaseProvider`, not MariaDB com
 ## Compensation
 
 Create tracks which physical resources were created by the current job. On partial failure it removes only those resources and removes the metadata record. Compensation never drops pre-existing physical objects detected before the create mutation.
+
+If create fails after the physical database or application user has been created, compensation drops only the application user and database created by the current operation, removes pending metadata, retains the service account and Site volume, and reports `manual_recovery_required` if cleanup itself fails.
 
 Drop revalidates the database/Site relation inside the job, requires exact typed confirmation, refuses imported or ownership-uncertain records, and removes metadata only after physical cleanup succeeds or the physical database is already absent and safe reconciliation can remove stale metadata.
 
