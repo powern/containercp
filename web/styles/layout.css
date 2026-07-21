@@ -22,8 +22,11 @@
 .theme-btn { background:none; border:1px solid var(--border); border-radius:var(--radius-md); padding:6px; cursor:pointer; color:var(--text2); display:flex; }
 .theme-btn:hover { color:var(--text); }
 .page { flex:1; overflow-y:auto; padding:var(--space-6); }
-.page-header, .ui-page-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:var(--space-6); flex-wrap:wrap; gap:var(--space-3); }
-.page-header h1, .ui-page-title { font-size:var(--font-xl); font-weight:650; letter-spacing:-0.02em; }
+.page-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; flex-wrap:wrap; gap:12px; }
+.ui-page-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:var(--space-6); flex-wrap:wrap; gap:var(--space-3); }
+.page-header h1 { font-size:22px; font-weight:600; }
+.ui-page-title { font-size:var(--font-xl); font-weight:650; letter-spacing:-0.02em; }
 .ui-page-eyebrow { font-size:var(--font-xs); color:var(--text3); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:2px; }
-.ui-page-subtitle, .page-header p { color:var(--text2); font-size:var(--font-md); margin-top:4px; max-width:760px; }
+.ui-page-subtitle { color:var(--text2); font-size:var(--font-md); margin-top:4px; max-width:760px; }
+.db-page-header p { color:var(--text2); font-size:13px; margin-top:4px; }
 .page-actions, .ui-toolbar { display:flex; gap:var(--space-2); flex-wrap:wrap; align-items:center; }

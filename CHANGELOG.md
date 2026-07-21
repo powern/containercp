@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-21 | `this commit` | Frontend — Restore Databases DB-2 layout
+
+**Summary:** Fixed the blocking Databases visual regression introduced by the UI 2.0 CSS modularization. Restored the approved DB-2 header structure and DB-specific CSS ownership for summary cards, filters, inventory, drawer typography, and responsive behavior.
+
+**Files changed:** `web/pages/databases.js`, `web/styles/cards.css`, `web/styles/layout.css`, `web/styles/tables.css`, `web/styles/drawer.css`, `scripts/check-frontend-baseline.js`, `planning/frontend-modularization-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** The Databases page again uses the approved horizontal responsive summary-card grid, original filter toolbar layout, original inventory spacing, unchanged table layout, and unchanged drawer behavior. Databases remains the visual reference for future ContainerCP UI work.
+
+**Validation:** Frontend-only validation passed with `node --check` across all Web UI JavaScript files and `scripts/check-frontend-baseline.js`, `node scripts/check-frontend-baseline.js`, module import smoke check with a minimal browser API stub, frontend API-prefix scan (`108` `/api...`, `5` `/auth...`, `0` invalid), and `git diff --check`. Baseline validation now asserts the approved DB-2 header and CSS rules. Real browser validation was attempted but no browser executable is available in this environment.
+
+**Known risks:** Production/validation browser smoke should confirm visual parity against the approved DB-2 deployment because this environment cannot run a real browser.
+
+---
+
 ## 2026-07-21 | `this commit` | Frontend — Add UI 2.0 design system
 
 **Summary:** Implemented the approved ContainerCP UI 2.0 design-system migration on top of the modular frontend foundation. Split the monolithic stylesheet into a static CSS design-system layer, completed reusable component helpers, and migrated all current Web UI pages toward the Databases health-dashboard visual model while preserving existing routes, API calls, actions, lifecycle cleanup, and zero-build deployment.

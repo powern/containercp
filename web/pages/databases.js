@@ -1,5 +1,5 @@
 import {
-  api, apiPost, card, copyText, esc, hideModal, pageHeader, pollRotationJob, renderRotationJobTimeline, renderWordPressRotationDiagnostics, showModal, toast
+  api, apiPost, card, copyText, esc, hideModal, pollRotationJob, renderRotationJobTimeline, renderWordPressRotationDiagnostics, showModal, toast
 } from '../core/context.js';
 
 
@@ -217,8 +217,7 @@ async function loadDatabases(p, params, lifecycle) {
     });
     lifecycle.onCleanup(destroyDatabaseDrawer);
   }
-  p.innerHTML = `${pageHeader('Databases', 'Monitor database health, runtime, connectivity, credentials, and ownership.', '<button class="btn btn-sm" onclick="refreshDatabases()" aria-label="Refresh database inventory">Refresh</button>', 'Data')}`
-    + `<div id="db-dashboard-body" aria-live="polite"><div class="empty-state">Loading database inventory...</div></div>`;
+  p.innerHTML = `<div class="page-header db-page-header"><div><h1>Databases</h1><p>Monitor database health, runtime, connectivity, credentials, and ownership.</p></div><div class="page-actions"><button class="btn btn-sm" onclick="refreshDatabases()" aria-label="Refresh database inventory">Refresh</button></div></div><div id="db-dashboard-body" aria-live="polite"><div class="empty-state">Loading database inventory...</div></div>`;
   await refreshDatabases();
 }
 

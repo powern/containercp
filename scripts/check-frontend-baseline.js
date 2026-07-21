@@ -54,6 +54,31 @@ for (const token of ['--surface-elevated', '--success', '--warning', '--danger',
   requireIncludes(tokenCss, token, `missing design token ${token}`);
 }
 
+const databaseJs = read('web/pages/databases.js');
+requireIncludes(databaseJs, 'page-header db-page-header', 'Databases page must preserve approved DB-2 header structure');
+if (databaseJs.includes("pageHeader('Databases'")) fail('Databases page uses generic header instead of approved DB-2 header');
+
+const dbCss = [
+  read('web/styles/layout.css'),
+  read('web/styles/cards.css'),
+  read('web/styles/forms.css'),
+  read('web/styles/tables.css'),
+  read('web/styles/drawer.css'),
+  read('web/styles/responsive.css'),
+].join('\n');
+for (const rule of [
+  '.db-summary-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:16px; }',
+  '.db-summary-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:14px 16px; position:relative; overflow:hidden; }',
+  '.db-summary-value { font-size:26px; font-weight:700; color:var(--text); margin-top:2px; }',
+  '.db-controls, .ui-control-grid { display:grid; grid-template-columns:minmax(220px,2fr) repeat(5,minmax(120px,1fr)) minmax(150px,1fr) auto auto; gap:10px; align-items:end; margin-bottom:16px; padding:14px; }',
+  '.db-inventory { padding:0; overflow:hidden; }',
+  '.db-inventory-title { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:14px 16px; border-bottom:1px solid var(--border); font-size:13px; }',
+  '.page-header h1 { font-size:22px; font-weight:600; }',
+  '.db-page-header p { color:var(--text2); font-size:13px; margin-top:4px; }',
+]) {
+  requireIncludes(dbCss, rule, `missing approved DB-2 CSS rule: ${rule}`);
+}
+
 const mainRoutes = [
   'dashboard', 'sites', 'domains', 'databases', 'ssl', 'mail', 'webmail',
   'proxy', 'access', 'backups', 'migration', 'profiles', 'templates',

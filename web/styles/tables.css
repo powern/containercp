@@ -12,6 +12,9 @@ tr:last-child td { border-bottom:none; }
 tr:hover td { background:var(--bg3); }
 .ui-inventory-title { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:14px 16px; border-bottom:1px solid var(--border); font-size:var(--font-md); }
 .ui-inventory-title span { color:var(--text3); font-size:var(--font-sm); }
+.db-inventory { padding:0; overflow:hidden; }
+.db-inventory-title { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:14px 16px; border-bottom:1px solid var(--border); font-size:13px; }
+.db-inventory-title span { color:var(--text3); font-size:12px; }
 .ui-mobile-list { display:none; }
 .ui-mobile-card { width:100%; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:var(--radius); padding:14px; text-align:left; margin-bottom:10px; cursor:pointer; }
 .ui-mobile-main { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }

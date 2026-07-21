@@ -1744,9 +1744,14 @@ UI 2.0 implementation results, 2026-07-21:
 - [x] Mail and Mail Health migrated to shared headers and summary cards while preserving current mail domain, mailbox, alias, DKIM, activate/deactivate, and health behavior.
 - [x] Domains migrated with summary cards for domain count, linked sites, usable HTTPS, and active mail while preserving DNS/Mail/Security/Health detail functionality.
 - [x] Migration migrated with shared header and staged workflow summary while preserving existing import actions and SQL job polling.
-- [x] Databases aligned to shared PageHeader while retaining DB-2-specific inventory, filters, drawer, and rotation reference behavior.
+- [x] Databases retains the approved DB-2 header, summary grid, filter toolbar, inventory, drawer, and rotation reference behavior instead of using generic PageHeader conversion.
 - [x] Generic responsive table behavior added so non-DB inventory tables stack on mobile; DB-2 keeps its approved responsive card inventory.
 - [x] Browser smoke and console review remain dependent on an available browser session in this environment; production browser validation should use the checklist below.
+- [x] Blocking Databases visual regression after UI 2.0 CSS extraction fixed by restoring missing DB-2 CSS owners for `.db-summary-grid`, `.db-summary-card`, `.db-summary-value`, `.db-inventory`, and `.db-inventory-title`.
+- [x] Databases generic header conversion reverted to the approved `page-header db-page-header` structure.
+- [x] Baseline validation now protects approved DB-2 header and layout CSS rules so future modular CSS changes cannot silently drop them.
+- [x] Root cause identified: CSS modularization grouped DB-specific selectors with generic UI selectors and omitted standalone DB-2 grid/inventory rules, causing summary cards and inventory/filter layout regressions.
+- [x] Real browser validation attempted but not runnable in this environment because no `chromium`, `chromium-browser`, `google-chrome`, `google-chrome-stable`, or `firefox` executable is available.
 
 ## Known Latent Frontend Bug Tracker
 
