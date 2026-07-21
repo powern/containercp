@@ -1565,6 +1565,11 @@ Checklist items:
 - [x] Changelog updated for this frontend-only implementation.
 - [x] Project status updated for the Web UI module layout.
 - [x] Frontend-only validation completed for the implementation pass.
+- [x] Production API proxy path regression fixed after `f23d738` by preserving `/api` when building `/ui-api/api/...` URLs in `web/core/api.js`.
+- [x] Frontend baseline validation now verifies `api('/api/sites')` resolves to `/ui-api/api/sites`.
+- [x] Frontend baseline validation now verifies `api('/api/databases')` resolves to `/ui-api/api/databases`.
+- [x] Frontend baseline validation now verifies `api('/auth/me')` resolves to `/ui-api/auth/me`.
+- [x] Frontend API-call prefix scan confirmed every frontend API helper call uses `/api...` except `/auth...` endpoints.
 - [ ] Browser/manual route smoke checks remain Not Testable until a browser session is available.
 - [ ] Browser console review remains Not Testable until a browser session is available.
 - [ ] Legacy inline event handlers remain as documented temporary compatibility until browser-validated delegated handler migration is performed.

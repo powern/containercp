@@ -12,7 +12,7 @@ export async function api(path, opts) {
   opts = opts || {};
   opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers||{});
   if (sessionToken) opts.headers['X-Session-Token'] = sessionToken;
-  const res = await fetch(API_BASE + path.replace(/^\/api/, ''), opts);
+  const res = await fetch(API_BASE + path, opts);
   let data = {};
   try { data = await res.json(); } catch(e) {}
   if (!res.ok) {

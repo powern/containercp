@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-21 | `this commit` | Frontend — Preserve API proxy paths
+
+**Summary:** Fixed the production Web UI API proxy regression introduced during frontend modularization by preserving the full frontend API path when constructing `/ui-api` requests.
+
+**Files changed:** `web/core/api.js`, `scripts/check-frontend-baseline.js`, `planning/frontend-modularization-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Web UI REST calls to backend API endpoints now resolve as `/ui-api/api/...` again, while authentication calls continue to resolve as `/ui-api/auth/...`.
+
+**Validation:** Frontend-only validation passed with `node --check` on changed JavaScript files, `node scripts/check-frontend-baseline.js`, and `git diff --check`. A frontend API-call prefix scan confirmed `108` `/api...` calls, `5` `/auth...` calls, and `0` invalid prefixes. No full CMake configure/build, `containercp` build, `containercpd` build, full CTest, GitHub Actions, backend, C++, CMake, or API route changes were used.
+
+**Known risks:** Browser/manual smoke checks and browser console review remain dependent on an available production or validation browser session.
+
+---
+
 ## 2026-07-21 | `this commit` | Frontend — Modularize Web UI entry and page ownership
 
 **Summary:** Implemented the approved frontend modularization plan with a native ES module entry point, explicit route registration, core API/auth/router/shell/helper modules, shared component helper modules, and page-owned modules for all current menu routes and detail routes. Added a Phase 0 baseline document and a frontend-only modular baseline validation script.

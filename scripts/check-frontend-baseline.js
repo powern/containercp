@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
 
 const root = path.resolve(__dirname, '..');
 
@@ -122,5 +123,34 @@ for (const forbidden of forbiddenSecretSurfaces) {
 }
 
 if (!process.exitCode) {
-  console.log('frontend baseline check passed');
+  checkApiProxyUrls().then(() => {
+    if (!process.exitCode) console.log('frontend baseline check passed');
+  }).catch((err) => {
+    fail(`API proxy URL check failed: ${err && err.message ? err.message : err}`);
+  });
+}
+
+async function checkApiProxyUrls() {
+  const urls = [];
+  global.localStorage = {
+    getItem() { return null; },
+    setItem() {},
+    removeItem() {},
+  };
+  global.fetch = async (url) => {
+    urls.push(url);
+    return { ok: true, json: async () => ({ success: true }) };
+  };
+
+  const apiModule = await import(pathToFileURL(path.join(root, 'web/core/api.js')).href);
+  await apiModule.api('/api/sites');
+  await apiModule.api('/api/databases');
+  await apiModule.api('/auth/me');
+
+  const expected = ['/ui-api/api/sites', '/ui-api/api/databases', '/ui-api/auth/me'];
+  for (let i = 0; i < expected.length; i += 1) {
+    if (urls[i] !== expected[i]) {
+      fail(`expected api URL ${expected[i]}, got ${urls[i] || '<none>'}`);
+    }
+  }
 }
