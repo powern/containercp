@@ -3826,7 +3826,7 @@ bool ApiServer::start() {
         opts.domain = domain;
         opts.owner = owner;
         opts.keep_staging = keep_staging;
-        opts.dry_run = true;
+        opts.dry_run = false;
 
         auto import_result = importer.import_files(opts);
 
