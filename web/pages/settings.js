@@ -1,5 +1,5 @@
 import {
-  api, apiPost, card, esc, toast
+  api, apiPost, card, esc, pageHeader, summaryCards, toast
 } from '../core/context.js';
 
 
@@ -11,7 +11,12 @@ async function loadSettings(p) {
   } catch(e) {}
   const host = esc(settings.server_hostname || '');
 
-  p.innerHTML = `<div class="page-header"><h1>Settings</h1></div>
+  p.innerHTML = `${pageHeader('Settings', 'Control panel settings, admin HTTPS, and password management.', '', 'Administration')}
+    ${summaryCards([
+      {label:'Version', value:'v' + (settings.version || 'unknown'), tone:'neutral', help:'ContainerCP version'},
+      {label:'Hostname', value:settings.server_hostname ? 'Set' : 'Missing', tone:settings.server_hostname ? 'healthy' : 'warning', help:'Admin panel hostname'},
+      {label:'Theme', value:'Dark', tone:'info', help:'Current UI preference'}
+    ])}
     <div class="details-panel"><div class="details-grid">
       <div class="details-field"><div class="details-label">Version</div><div class="details-value">v${esc(settings.version)}</div></div>
       <div class="details-field"><div class="details-label">Data Root</div><div class="details-value">/srv/containercp</div></div>

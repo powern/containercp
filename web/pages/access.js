@@ -1,5 +1,5 @@
 import {
-  api, apiPost, buildTable, esc, tb, toast
+  api, apiPost, buildTable, esc, pageHeader, summaryCards, tb, toast
 } from '../core/context.js';
 
 
@@ -11,7 +11,13 @@ async function loadAccess(p, params, lifecycle) {
   try {
     const data = await api('/api/access-users');
     if (lifecycle && !lifecycle.isActive()) return;
-    p.innerHTML = `<div class="page-header"><h1>Access Users</h1></div>`;
+    const rows = data.data || [];
+    p.innerHTML = pageHeader('Access Users', 'Developer access inventory and removal actions.', '', 'Access')
+      + summaryCards([
+        {label:'Users', value:rows.length, tone:'neutral', help:'Access user records'},
+        {label:'Enabled', value:rows.filter(r => r.enabled).length, tone:'healthy', help:'Can authenticate'},
+        {label:'Disabled', value:rows.filter(r => !r.enabled).length, tone:'warning', help:'Present but disabled'}
+      ]);
     p.innerHTML += tb('All Access Users');
     const render = () => {
       const tbl = $('access-table');
@@ -19,7 +25,7 @@ async function loadAccess(p, params, lifecycle) {
       tbl.innerHTML = buildTable([
         {label:'Username',html:r=>esc(r.username)},{label:'Enabled',html:r=>r.enabled?'<span class="badge badge-ok">Yes</span>':'<span class="badge badge-err">No</span>'},
         {label:'Actions',html:r=>`<button class="btn-icon" style="color:var(--red)" onclick="removeAccessUser('${esc(r.username)}')">&#10005;</button>`}
-      ], data.data||[]);
+      ], rows);
     };
     if (lifecycle && lifecycle.setRenderTable) lifecycle.setRenderTable(render);
     else window.renderTable = render;

@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-21 | `this commit` | Frontend — Add UI 2.0 design system
+
+**Summary:** Implemented the approved ContainerCP UI 2.0 design-system migration on top of the modular frontend foundation. Split the monolithic stylesheet into a static CSS design-system layer, completed reusable component helpers, and migrated all current Web UI pages toward the Databases health-dashboard visual model while preserving existing routes, API calls, actions, lifecycle cleanup, and zero-build deployment.
+
+**Files changed:** `web/style.css`, `web/styles/*`, `web/components/*`, `web/core/context.js`, `web/pages/*`, `scripts/check-frontend-baseline.js`, `docs/WEB-UI.md`, `planning/frontend-modularization-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** The Web UI now presents a more consistent administrator interface with shared page headers, summary cards, status semantics, tokenized colors/spacing/typography, responsive inventory behavior, and unified loading/empty/error patterns. Existing functionality remains available, including site operations, SSL actions, proxy actions, backup actions, mail actions, domain tabs, migration operations, Databases detail drawer, credential rotation entry points, search, filters, modals, drawers, notifications, and job progress.
+
+**Validation:** Frontend-only validation passed with `node --check` across all Web UI JavaScript files and `scripts/check-frontend-baseline.js`, `node scripts/check-frontend-baseline.js`, module import smoke check with a minimal browser API stub, frontend API-prefix scan (`108` `/api...`, `5` `/auth...`, `0` invalid), and `git diff --check`. No full CMake configure/build, `containercp` build, `containercpd` build, full CTest, GitHub Actions, npm, bundler, framework, backend, C++, CMake, or API route changes were used.
+
+**Known risks:** Browser/manual smoke and browser console review require an available browser session. Temporary compatibility exports remain where inline handlers still require globals; delegated-handler removal remains a later cleanup phase.
+
+---
+
 ## 2026-07-21 | `this commit` | Frontend — Add router-owned page lifecycle
 
 **Summary:** Completed the next frontend modularization phase by adding router-owned page lifecycle contexts, explicit page `mount` objects, route cleanup, lifecycle-owned timers/listeners/pollers, and reduced low-risk compatibility globals without changing the visual UI.

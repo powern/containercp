@@ -1,5 +1,5 @@
 import {
-  api, apiPost, buildTable, esc, hideModal, showModal, tb, toast
+  api, apiPost, buildTable, esc, hideModal, pageHeader, showModal, summaryCards, tb, toast
 } from '../core/context.js';
 
 
@@ -11,11 +11,18 @@ async function loadBackups(p, params, lifecycle) {
   try {
     const data = await api('/api/backups');
     if (lifecycle && !lifecycle.isActive()) return;
-    p.innerHTML = `<div class="page-header"><h1>Backups</h1><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="showBackupModal()">+ Create Backup</button></div></div>`;
+    const rows = data.data || [];
+    p.innerHTML = pageHeader('Backups', 'Backup inventory with current create, restore, and remove actions.', '<button class="btn btn-primary btn-sm" onclick="showBackupModal()">+ Create Backup</button>', 'Recovery')
+      + summaryCards([
+        {label:'Backups', value:rows.length, tone:'neutral', help:'Known backup records'},
+        {label:'Completed', value:rows.filter(r => r.status === 'completed').length, tone:'healthy', help:'Restorable backups'},
+        {label:'Failed', value:rows.filter(r => r.status === 'failed').length, tone:'critical', help:'Failed backup jobs'},
+        {label:'Latest', value:rows[0] ? (rows[0].status || 'unknown') : 'None', tone:rows[0] && rows[0].status === 'completed' ? 'healthy' : 'warning', help:'Most recent listed status'}
+      ]);
     p.innerHTML += tb('All Backups') + buildTable([
       {label:'Filename',html:r=>esc(r.filename)},{label:'Size',html:r=>esc(r.size)+' bytes'},{label:'Status',html:r=>{let m={completed:'badge-ok',failed:'badge-err'};return `<span class="badge ${m[r.status]||'badge-info'}">${esc(r.status)}</span>`;}},{label:'Date',html:r=>esc(r.created_at)},
       {label:'Actions',html:r=>r.status==='completed'?`<button class="btn-icon" title="Restore" onclick="restoreBackup(${r.id},'${esc(r.filename)}')">&#8635;</button><button class="btn-icon" style="color:var(--red)" onclick="removeBackup(${r.id})">&#10005;</button>`:''}
-    ], data.data||[]);
+    ], rows);
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load backups</div>'; }
 }
 

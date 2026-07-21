@@ -1,0 +1,10 @@
+input, select, textarea { color:var(--text); }
+.form-group { margin-bottom:12px; }
+.form-group label, .ui-field-label { font-size:var(--font-sm); color:var(--text2); display:block; margin-bottom:4px; }
+.ui-input, .ui-select, input:not([type="checkbox"]):not([type="radio"]), select, textarea { border:1px solid var(--border); border-radius:var(--radius-md); background:var(--bg3); color:var(--text); }
+.ui-input, .ui-select { width:100%; padding:8px 10px; font-size:var(--font-md); outline:none; min-height:var(--control-md); }
+.ui-input:focus, .ui-select:focus, input:focus, select:focus, textarea:focus { border-color:var(--primary); }
+.ui-help { font-size:var(--font-xs); color:var(--text3); margin-top:4px; }
+.db-search label, .db-filter span { display:block; font-size:var(--font-xs); color:var(--text3); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px; }
+.db-search input, .db-filter select { width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--bg3); color:var(--text); font-size:var(--font-sm); outline:none; }
+.db-controls, .ui-control-grid { display:grid; grid-template-columns:minmax(220px,2fr) repeat(5,minmax(120px,1fr)) minmax(150px,1fr) auto auto; gap:10px; align-items:end; margin-bottom:16px; padding:14px; }

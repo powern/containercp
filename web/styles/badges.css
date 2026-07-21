@@ -1,0 +1,7 @@
+.badge, .ui-badge { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:var(--radius-pill); font-size:var(--font-xs); font-weight:650; line-height:1.45; }
+.badge-ok, .ui-status-healthy, .ui-status-running, .ui-status-connected, .ui-status-available, .ui-status-managed, .ui-status-valid, .ui-status-enabled { background:#065f4620; color:var(--green); }
+.badge-warn, .ui-status-warning, .ui-status-expiring, .ui-status-imported, .ui-status-missing { background:#a1620720; color:var(--yellow); }
+.badge-err, .ui-status-critical, .ui-status-stopped, .ui-status-failed, .ui-status-invalid, .ui-status-expired, .ui-status-disabled { background:#991b1b20; color:var(--red); }
+.badge-info, .ui-status-unknown, .ui-status-info { background:#3b82f620; color:var(--blue); }
+.badge-admin { background:#7c3aed20; color:var(--purple); }
+.status-text { font-weight:650; }

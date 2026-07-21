@@ -1,0 +1,10 @@
+#modal-overlay { z-index:var(--z-modal); }
+.toast { background:var(--surface-elevated); color:var(--text); border:1px solid var(--border); box-shadow:var(--shadow-elevated); }
+.alert { border:1px solid var(--border); border-radius:var(--radius); padding:10px 12px; font-size:var(--font-md); }
+.alert-error { border-color:#991b1b80; background:#991b1b20; color:var(--red); }
+.alert-warning { border-color:#a1620780; background:#a1620720; color:var(--yellow); }
+.alert-info { border-color:#3b82f680; background:#3b82f620; color:var(--blue); }
+.db-confirm-body ul { margin:10px 0 10px 18px; color:var(--text2); font-size:var(--font-md); }
+.db-action-box { display:grid; gap:10px; }
+.db-action-box p, .db-confirm-body p { color:var(--text2); font-size:var(--font-sm); margin-top:4px; }
+.db-action-message { color:var(--text3); font-size:var(--font-sm); }

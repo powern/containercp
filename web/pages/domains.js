@@ -1,5 +1,5 @@
 import {
-  api, apiPost, buildTable, card, copyText, esc, escAttr, navigate, tb, toast
+  api, apiPost, buildTable, card, copyText, esc, escAttr, navigate, pageHeader, summaryCards, tb, toast
 } from '../core/context.js';
 
 const DnsCache = window.DnsCache;
@@ -52,7 +52,16 @@ async function loadDomains(p, params, lifecycle) {
     const data = await api('/api/domains');
     if (lifecycle && !lifecycle.isActive()) return;
     const domains = data.data || [];
-    p.innerHTML = `<div class="page-header"><h1>Domains</h1><div class="page-actions" style="font-size:12px;color:var(--text3);font-weight:normal;">${domains.length} domain${domains.length===1?'':'s'}</div></div>`;
+    const linked = domains.filter(d => d.site_id && d.site_id > 0).length;
+    const mailActive = domains.filter(d => d.mail_domain_id && d.mail_domain_id > 0).length;
+    const sslUsable = domains.filter(domainUsableHttps).length;
+    p.innerHTML = pageHeader('Domains', 'DNS, SSL, mail, runtime relationship, security, and health diagnostics.', `<span style="font-size:12px;color:var(--text3);font-weight:normal;">${domains.length} domain${domains.length===1?'':'s'}</span>`, 'DNS')
+      + summaryCards([
+        {label:'Domains', value:domains.length, tone:'neutral', help:'Known domain records'},
+        {label:'Linked Sites', value:linked, tone:'healthy', help:'Attached to managed sites'},
+        {label:'Usable HTTPS', value:sslUsable, tone:'healthy', help:'Active or expiring certificate'},
+        {label:'Mail Active', value:mailActive, tone:'info', help:'Linked mail domains'}
+      ]);
     p.innerHTML += tb('All Domains');
 
     const render = () => {

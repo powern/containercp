@@ -108,6 +108,7 @@ The dashboard shows:
 - Served by containercpd's built-in HTTP server
 - Files located in `/opt/containercp/web/`
 - Zero external dependencies
+- UI 2.0 design system uses static CSS modules imported by `/style.css`
 
 ## Frontend module layout
 
@@ -122,9 +123,31 @@ The Web UI is split into native browser modules while preserving the existing AP
 | Shell, login, status, version, theme | `web/core/shell.js` |
 | Shared escaping, modal, toast, clipboard, job helpers | `web/core/` |
 | Shared component helpers | `web/components/` |
+| UI 2.0 design-system styles | `web/styles/` |
 | Page modules | `web/pages/` |
 | Existing DNS/runtime/health cache helpers | `web/js/cache.js`, `web/js/utils.js` |
 
 The router owns page transitions. Each registered page exposes an explicit `mount` lifecycle entry point and may define `unmount` cleanup. Route lifecycle contexts clean route-owned listeners, timers, pollers, stale async updates, drawer teardown, and route-local table refresh hooks before the next page mounts.
 
 The page modules currently keep temporary global compatibility exports only where existing inline event handlers or legacy helper files still require them. Future cleanup can remove those shims after controls are migrated to delegated event handlers.
+
+## UI 2.0 design system
+
+The UI 2.0 layer keeps the zero-build static model. `/style.css` imports design-system files from `web/styles/`:
+
+| Style area | File |
+|------------|------|
+| Tokens and theme variables | `web/styles/tokens.css` |
+| Reset and base elements | `web/styles/base.css` |
+| Shell, sidebar, topbar, page headers | `web/styles/layout.css` |
+| Buttons, tabs, action groups, activity lists | `web/styles/components.css` |
+| Summary cards, health cards, info grids | `web/styles/cards.css` |
+| Inventory tables and responsive inventory behavior | `web/styles/tables.css` |
+| Inputs, selects, filter controls | `web/styles/forms.css` |
+| Status badges and semantic states | `web/styles/badges.css` |
+| Detail drawers and drawer sections | `web/styles/drawer.css` |
+| Dialogs, alerts, toast hierarchy | `web/styles/dialogs.css` |
+| Loading, empty, error, and job states | `web/styles/states.css` |
+| Desktop/tablet/mobile rules | `web/styles/responsive.css` |
+
+The Databases page remains the visual reference. Other pages now use the same header, summary card, status, inventory, and responsive foundations while preserving existing routes and actions.

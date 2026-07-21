@@ -1,0 +1,10 @@
+.empty-state, .ui-state { text-align:center; padding:48px 20px; color:var(--text3); font-size:var(--font-base); }
+.empty-state svg, .ui-state svg { margin-bottom:12px; opacity:0.4; }
+.ui-state-title { color:var(--text); font-weight:650; margin-bottom:4px; }
+.ui-state-loading { color:var(--text2); }
+.ui-state-error { color:var(--red); }
+.db-health-detail-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
+.db-health-detail-row p { color:var(--text3); font-size:var(--font-sm); margin-top:6px; }
+.db-job-box { display:grid; gap:8px; }
+.db-job-step { display:grid; grid-template-columns:150px 82px 1fr; gap:8px; align-items:start; padding:5px 0; border-bottom:1px solid var(--border); font-size:var(--font-xs); color:var(--text2); }
+.db-job-step:last-child { border-bottom:none; }

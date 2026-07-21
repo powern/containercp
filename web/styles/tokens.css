@@ -1,0 +1,72 @@
+/* ContainerCP UI 2.0 design tokens. Dark theme remains the production default. */
+:root {
+  --bg: #0f1117;
+  --bg2: #1a1d27;
+  --bg3: #232734;
+  --surface: #1e2130;
+  --surface-elevated: #262a3a;
+  --border: #2a2e3d;
+  --text: #e1e4ed;
+  --text2: #a5abc0;
+  --text3: #6f768a;
+  --primary: #6366f1;
+  --primary-hover: #818cf8;
+  --green: #22c55e;
+  --red: #ef4444;
+  --yellow: #eab308;
+  --blue: #3b82f6;
+  --purple: #a78bfa;
+  --success: var(--green);
+  --warning: var(--yellow);
+  --danger: var(--red);
+  --info: var(--blue);
+  --unknown: var(--text3);
+  --disabled: var(--text3);
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.3);
+  --shadow-elevated: 0 16px 40px rgba(0,0,0,0.35);
+  --shadow-drawer: -12px 0 32px rgba(0,0,0,0.35);
+  --transition-fast: 0.15s ease;
+  --transition: 0.2s ease;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-xs: 11px;
+  --font-sm: 12px;
+  --font-md: 13px;
+  --font-base: 14px;
+  --font-lg: 18px;
+  --font-xl: 22px;
+  --control-sm: 30px;
+  --control-md: 36px;
+  --control-lg: 42px;
+  --sidebar-width: 240px;
+  --topbar-height: 57px;
+  --drawer-width: 520px;
+  --z-sidebar: 100;
+  --z-modal: 1000;
+  --z-drawer: 9200;
+  --z-toast: 9999;
+}
+
+[data-theme="light"] {
+  --bg: #f5f7fa;
+  --bg2: #ffffff;
+  --bg3: #f0f1f5;
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --border: #e2e4ea;
+  --text: #1a1d27;
+  --text2: #5f6678;
+  --text3: #8a92a6;
+}

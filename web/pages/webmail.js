@@ -1,11 +1,12 @@
 import {
-  card
+  pageHeader, summaryCards
 } from '../core/context.js';
 
 
 /* ===== WEBMAIL ===== */
 async function loadWebmail(p) {
-  p.innerHTML = `<div class="page-header"><h1>Webmail</h1></div>
+  p.innerHTML = `${pageHeader('Webmail', 'Mailbox user access through the installed webmail client.', '', 'Mail')}
+    ${summaryCards([{label:'Client', value:'SnappyMail', tone:'healthy', help:'External mailbox login'}])}
     <div class="card">
       <div class="card-header"><h3>SnappyMail Webmail</h3></div>
       <div style="padding:16px;text-align:center;">

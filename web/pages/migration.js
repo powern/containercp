@@ -1,5 +1,5 @@
 import {
-  api, apiPost, card, esc
+  api, apiPost, card, esc, pageHeader, summaryCards
 } from '../core/context.js';
 
 
@@ -9,7 +9,12 @@ let activeMigrationLifecycle = null;
 async function loadMigration(p, params, lifecycle) {
   activeMigrationLifecycle = lifecycle || activeMigrationLifecycle;
   try {
-    let html = `<div class="page-header"><h1>Migration</h1><div class="page-actions"></div></div>`;
+    let html = pageHeader('Migration', 'Analyze and import existing myVestaCP backups through the current staged workflow.', '', 'Import');
+    html += summaryCards([
+      {label:'Source', value:'myVestaCP', tone:'info', help:'Supported import format'},
+      {label:'Stages', value:'3', tone:'neutral', help:'Create site, files, SQL'},
+      {label:'Mode', value:'Guided', tone:'healthy', help:'Existing staged operations'}
+    ]);
     html += `<div class="card"><div class="card-header"><h3>Import from myVestaCP</h3></div>
       <div style="padding:16px;">
       <p style="margin-bottom:16px;color:var(--text2);">Analyze a myVestaCP backup archive before importing into ContainerCP.</p>`;

@@ -1,5 +1,5 @@
 import {
-  api, apiPost, buildTable, esc, escAttr, navigate, tb, toast
+  api, apiPost, buildTable, esc, escAttr, navigate, pageHeader, summaryCards, tb, toast
 } from '../core/context.js';
 
 
@@ -105,7 +105,14 @@ async function loadSsl(p, params, lifecycle) {
   try {
     const data = await api('/api/ssl');
     if (lifecycle && !lifecycle.isActive()) return;
-    p.innerHTML = `<div class="page-header"><h1>SSL Certificates</h1></div>`;
+    const rows = data.data || [];
+    p.innerHTML = pageHeader('SSL Certificates', 'Certificate inventory with HTTPS, redirect, provider, expiry, and current operational actions.', '', 'Security')
+      + summaryCards([
+        {label:'Certificates', value:rows.length, tone:'neutral', help:'Known SSL records'},
+        {label:'Valid', value:rows.filter(r => r.status === 'active').length, tone:'healthy', help:'Active certificates'},
+        {label:'Needs Action', value:rows.filter(r => r.status === 'error' || r.status === 'disabled').length, tone:'critical', help:'Error or disabled states'},
+        {label:'HTTP Only', value:rows.filter(r => r.status === 'HTTP_ONLY').length, tone:'warning', help:'No active certificate'}
+      ]);
     p.innerHTML += tb('All Sites');
     const render = () => {
       const tbl = $('ssl-table');
@@ -118,7 +125,7 @@ async function loadSsl(p, params, lifecycle) {
         {label:'Expires', html:r=>fmtDate(r.expires_at)},
         {label:'Auto Renew', html:r=> r.status === 'HTTP_ONLY' ? '<span class="badge badge-info">N/A</span>' : (r.auto_renew?'<span class="badge badge-ok">Yes</span>':'<span class="badge badge-info">No</span>')},
         {label:'Actions', html:r=>sslActions(r)}
-      ], (data.data||[]));
+      ], rows);
     };
     if (lifecycle && lifecycle.setRenderTable) lifecycle.setRenderTable(render);
     else window.renderTable = render;

@@ -1,5 +1,5 @@
 import {
-  api, apiPost, buildTable, card, esc, hideModal, navigate, pollJobProgress, pollRotationJob, renderWordPressRotationDiagnostics, showModal, tb, toast
+  api, apiPost, buildTable, card, esc, hideModal, navigate, pageHeader, pollJobProgress, pollRotationJob, renderWordPressRotationDiagnostics, showModal, summaryCards, tb, toast
 } from '../core/context.js';
 
 
@@ -11,12 +11,23 @@ async function loadSites(p, params, lifecycle) {
   try {
     const data = await api('/api/sites');
     if (lifecycle && !lifecycle.isActive()) return;
-    p.innerHTML = `<div class="page-header"><h1>Sites</h1><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="showCreateSiteWizard()">+ Create Site</button></div></div>`;
+    const sites = data.data || [];
+    const statusOf = (s) => [s.web_status, s.php_status, s.https_status].filter(Boolean);
+    const critical = sites.filter(s => statusOf(s).some(v => ['Stopped','Unhealthy','Error','Expired'].includes(v))).length;
+    const warning = sites.filter(s => !critical && statusOf(s).some(v => ['Starting','Expiring','Issuing','Not verified'].includes(v))).length;
+    const healthy = sites.filter(s => statusOf(s).some(v => ['Running','Active','Available'].includes(v))).length;
+    p.innerHTML = pageHeader('Sites', 'Health-focused site inventory with runtime, HTTPS, ownership, and operational actions.', '<button class="btn btn-primary btn-sm" onclick="showCreateSiteWizard()">+ Create Site</button>', 'Hosting')
+      + summaryCards([
+        {label:'Total Sites', value:sites.length, tone:'neutral', help:'Managed site records'},
+        {label:'Healthy', value:healthy, tone:'healthy', help:'Runtime or HTTPS reports OK'},
+        {label:'Warning', value:warning, tone:'warning', help:'Needs verification or transition'},
+        {label:'Critical', value:critical, tone:'critical', help:'Stopped, unhealthy, expired, or error'}
+      ]);
     p.innerHTML += tb('All Sites');
     const render = () => {
       const tbl = $('sites-table');
       if (!tbl) return;
-      const filtered = (data.data||[]).filter(r => !window.searchTerm || r.domain.includes(window.searchTerm) || r.owner.includes(window.searchTerm));
+      const filtered = sites.filter(r => !window.searchTerm || r.domain.includes(window.searchTerm) || r.owner.includes(window.searchTerm));
       const rtM = {'Running':'badge-ok','Active':'badge-ok','Available':'badge-ok','Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn','Expiring':'badge-warn','Error':'badge-err','Expired':'badge-err','Disabled':'badge-info','Not verified':'badge-info','Issuing':'badge-warn','Unknown':'badge-info','N/A':'badge-info'};
       tbl.innerHTML = buildTable([
         {label:'Domain',html:r=>`<a href="#" onclick="navigate('site-detail',${r.id});return false" style="color:var(--primary);text-decoration:none;">${esc(r.domain)}</a>`},

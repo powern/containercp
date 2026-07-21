@@ -11,6 +11,12 @@ export * from './lifecycle.js';
 export * from './router.js';
 export * from '../components/cards.js';
 export * from '../components/table.js';
+export * from '../components/badges.js';
+export * from '../components/filters.js';
+export * from '../components/drawer.js';
+export * from '../components/empty-state.js';
+export * from '../components/copy-button.js';
+export * from '../components/status-summary.js';
 
 import { api, apiPost } from './api.js';
 import { $, qs, qsa } from './dom.js';

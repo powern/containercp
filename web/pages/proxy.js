@@ -1,5 +1,5 @@
 import {
-  api, apiPost, buildTable, card, esc, navigate, tb, toast
+  api, apiPost, buildTable, card, esc, navigate, pageHeader, summaryCards, tb, toast
 } from '../core/context.js';
 
 
@@ -70,7 +70,13 @@ async function loadProxy(p, params, lifecycle) {
     };
 
     p.innerHTML = `
-      <div class="page-header"><h1>Reverse Proxy</h1></div>
+      ${pageHeader('Reverse Proxy', 'Proxy runtime health, configuration validation, recovery status, and searchable upstream inventory.', '', 'Traffic')}
+      ${summaryCards([
+        {label:'Proxy Entries', value:(proxyData.data||[]).length, tone:'neutral', help:'Configured upstream entries'},
+        {label:'Container', value:container.state || 'unknown', tone:container.state === 'running' ? 'healthy' : 'critical', help:'Runtime state'},
+        {label:'Configuration', value:configTest.success ? 'Valid' : 'Check', tone:configTest.success ? 'healthy' : 'warning', help:'Last nginx config test'},
+        {label:'Recovery', value:recoveryInfo.recovery_in_progress ? 'Running' : 'Idle', tone:recoveryInfo.recovery_in_progress ? 'warning' : 'healthy', help:'Recovery manager state'}
+      ])}
       <div class="card" style="margin-bottom:12px;" id="proxy-health-card">
         <h3 style="margin-bottom:8px;">Global Health</h3>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px;">

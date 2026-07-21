@@ -24,6 +24,7 @@ function requireMatch(file, regex, label) {
 }
 
 const indexHtml = read('web/index.html');
+const styleCss = read('web/style.css');
 const appJs = read('web/app.js');
 const shellJs = read('web/core/shell.js');
 const contextJs = read('web/core/context.js');
@@ -36,6 +37,22 @@ requireIncludes(indexHtml, '<script type="module" src="/app.js"></script>', 'mis
 if (indexHtml.includes('<script src="/js/cache.js"></script>')) fail('legacy cache.js script tag still present');
 if (indexHtml.includes('<script src="/js/utils.js"></script>')) fail('legacy utils.js script tag still present');
 if (indexHtml.includes('<script src="/app.js"></script>')) fail('legacy classic app.js script tag still present');
+
+const styleModules = [
+  'tokens', 'base', 'layout', 'components', 'cards', 'tables', 'forms',
+  'badges', 'drawer', 'dialogs', 'states', 'responsive',
+];
+for (const mod of styleModules) {
+  requireIncludes(styleCss, `@import url('/styles/${mod}.css');`, `missing design-system stylesheet import ${mod}`);
+  const rel = `web/styles/${mod}.css`;
+  const css = read(rel);
+  if (!css.trim()) fail(`empty design-system stylesheet ${rel}`);
+}
+
+const tokenCss = read('web/styles/tokens.css');
+for (const token of ['--surface-elevated', '--success', '--warning', '--danger', '--info', '--space-4', '--radius-lg', '--shadow-elevated', '--font-sans', '--control-md', '--sidebar-width', '--drawer-width', '--z-drawer']) {
+  requireIncludes(tokenCss, token, `missing design token ${token}`);
+}
 
 const mainRoutes = [
   'dashboard', 'sites', 'domains', 'databases', 'ssl', 'mail', 'webmail',
@@ -117,6 +134,23 @@ const requiredPageModules = [
 for (const page of requiredPageModules) {
   const rel = `web/pages/${page}.js`;
   if (!fs.existsSync(path.join(root, rel))) fail(`missing page module ${rel}`);
+}
+
+const componentExports = {
+  'web/components/cards.js': ['pageHeader', 'summaryCard', 'summaryCards'],
+  'web/components/badges.js': ['statusBadge', 'healthBadge'],
+  'web/components/table.js': ['buildTable', 'responsiveInventoryCards'],
+  'web/components/filters.js': ['searchBox', 'selectFilter', 'filterBar'],
+  'web/components/drawer.js': ['drawerShell', 'drawerSection', 'statusRow'],
+  'web/components/empty-state.js': ['emptyState', 'loadingState', 'errorState'],
+  'web/components/copy-button.js': ['copyButton'],
+  'web/components/confirmation-dialog.js': ['confirmAction', 'destructiveConfirm', 'typedConfirmationBody'],
+  'web/components/job-timeline.js': ['jobTimeline'],
+  'web/components/status-summary.js': ['statusSummary'],
+};
+for (const [rel, exports] of Object.entries(componentExports)) {
+  const file = read(rel);
+  for (const name of exports) requireIncludes(file, ` ${name}`, `missing component export ${name} in ${rel}`);
 }
 
 const cacheGlobals = ['window.DnsCache', 'window.RuntimeCache', 'window.HealthCache'];

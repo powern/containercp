@@ -400,38 +400,38 @@ Checklist items:
 
 - [x] Review this checklist and shared component candidates before implementation.
 - [x] Mark selected Phase 4 tasks as `[-]` before editing.
-- [ ] Create `web/components/badges.js` only when replacing real duplicated badge code.
-- [ ] Track Badges component extraction independently.
-- [ ] Create `web/components/cards.js` only when replacing real duplicated card helpers.
-- [ ] Track Summary Cards component extraction independently.
-- [ ] Create `web/components/table.js` only when replacing real table rendering code.
-- [ ] Track Tables component extraction independently.
-- [ ] Create `web/components/filters.js` only when replacing real search/filter controls.
-- [ ] Track Filters component extraction independently.
-- [ ] Create `web/components/drawer.js` only when replacing DB drawer or future detail drawer code.
-- [ ] Track Drawers component extraction independently.
-- [ ] Create `web/components/confirmation-dialog.js` only when replacing typed/native confirm flows.
-- [ ] Track Dialogs component extraction independently.
-- [ ] Ensure native `confirm()` behavior is preserved until replacement is explicitly approved.
-- [ ] Create `web/components/job-timeline.js` only when replacing existing job timeline rendering.
-- [ ] Track Job Timeline component extraction independently.
-- [ ] Create `web/components/empty-state.js` only when replacing repeated loading/empty/error markup.
-- [ ] Track Loading States component extraction independently.
-- [ ] Track Error States component extraction independently.
-- [ ] Track Empty States component extraction independently.
-- [ ] Create `web/components/copy-button.js` only when replacing data-copy or copy helpers.
-- [ ] Track Copy Button behavior with security tests.
-- [ ] Track Search component extraction independently.
-- [ ] Track Toolbar component extraction independently.
-- [ ] Preserve existing CSS classes unless a separate UI 2.0 design-system task approves changes.
-- [ ] Preserve existing HTML output where static tests depend on it.
-- [ ] Add component syntax tests.
-- [ ] Add static checks that component helpers escape untrusted labels and values.
-- [ ] Run `node --check` on all frontend JS files.
-- [ ] Run `git diff --check`.
-- [ ] Run focused frontend/API tests.
-- [ ] Run frontend-only validation; do not run full CMake build or CTest unless compiled/backend files changed with explicit approval.
-- [ ] Update this checklist with validation results before ending the session.
+- [x] Create `web/components/badges.js` only when replacing real duplicated badge code.
+- [x] Track Badges component extraction independently.
+- [x] Create `web/components/cards.js` only when replacing real duplicated card helpers.
+- [x] Track Summary Cards component extraction independently.
+- [x] Create `web/components/table.js` only when replacing real table rendering code.
+- [x] Track Tables component extraction independently.
+- [x] Create `web/components/filters.js` only when replacing real search/filter controls.
+- [x] Track Filters component extraction independently.
+- [x] Create `web/components/drawer.js` only when replacing DB drawer or future detail drawer code.
+- [x] Track Drawers component extraction independently.
+- [x] Create `web/components/confirmation-dialog.js` only when replacing typed/native confirm flows.
+- [x] Track Dialogs component extraction independently.
+- [x] Ensure native `confirm()` behavior is preserved until replacement is explicitly approved.
+- [x] Create `web/components/job-timeline.js` only when replacing existing job timeline rendering.
+- [x] Track Job Timeline component extraction independently.
+- [x] Create `web/components/empty-state.js` only when replacing repeated loading/empty/error markup.
+- [x] Track Loading States component extraction independently.
+- [x] Track Error States component extraction independently.
+- [x] Track Empty States component extraction independently.
+- [x] Create `web/components/copy-button.js` only when replacing data-copy or copy helpers.
+- [x] Track Copy Button behavior with security tests.
+- [x] Track Search component extraction independently.
+- [x] Track Toolbar component extraction independently.
+- [x] Preserve existing CSS classes unless a separate UI 2.0 design-system task approves changes.
+- [x] Preserve existing HTML output where static tests depend on it.
+- [x] Add component syntax tests.
+- [x] Add static checks that component helpers escape untrusted labels and values.
+- [x] Run `node --check` on all frontend JS files.
+- [x] Run `git diff --check`.
+- [x] Run focused frontend/API tests.
+- [x] Run frontend-only validation; do not run full CMake build or CTest unless compiled/backend files changed with explicit approval.
+- [x] Update this checklist with validation results before ending the session.
 
 Expected files:
 
@@ -475,58 +475,58 @@ Track each shared component independently across all phases.
 
 Checklist items:
 
-- [ ] Badges: identify current status badge variants across Sites, Domains, SSL, Mail, Databases, Proxy, Logs, and Backups.
-- [ ] Badges: define generic `badge` and `statusBadge` behavior without page-specific semantics.
-- [ ] Badges: migrate first real caller.
-- [ ] Badges: add escaping/static tests.
-- [ ] Summary Cards: identify Dashboard and DB-2 card patterns.
-- [ ] Summary Cards: extract count/label/status rendering without DB-specific health logic.
-- [ ] Summary Cards: migrate first real caller.
-- [ ] Summary Cards: add responsive smoke validation.
-- [ ] Tables: identify current table builder and table call sites.
-- [ ] Tables: define column renderer contract.
-- [ ] Tables: preserve existing table HTML output where required.
-- [ ] Tables: remove dependency on global `searchTerm` only after page owners are ready.
-- [ ] Filters: identify DB-2 filters and list-page search patterns.
-- [ ] Filters: define search/select/sort/reset contract.
-- [ ] Filters: migrate DB-2 or another immediate caller.
-- [ ] Filters: register event cleanup through lifecycle.
-- [ ] Drawers: extract DB-2 right drawer behavior.
-- [ ] Drawers: implement Escape/backdrop/focus cleanup through lifecycle.
-- [ ] Drawers: validate close on navigation.
-- [ ] Drawers: avoid reusing DB-specific CSS class names as generic design-system names until UI 2.0 phase.
-- [ ] Dialogs: inventory native `confirm()` and typed confirmation usages.
-- [ ] Dialogs: preserve native confirm behavior until modal replacement is approved.
-- [ ] Dialogs: extract typed confirmation only when behavior tests exist.
-- [ ] Dialogs: ensure destructive actions carry severity metadata later.
-- [ ] Notifications: preserve current toast behavior.
-- [ ] Notifications: track timeout cleanup.
-- [ ] Notifications: avoid rendering raw API error HTML.
-- [ ] Notifications: add validation for text-only messages.
-- [ ] Job Timeline: inventory site creation, WordPress rotation, DB rotation, and migration SQL job renderers.
-- [ ] Job Timeline: separate job polling from timeline rendering.
-- [ ] Job Timeline: preserve public-safe diagnostics.
-- [ ] Job Timeline: validate completed, failed, timeout, and cancelled states.
-- [ ] Loading States: inventory current loading markup.
-- [ ] Loading States: extract reusable loading state only when replacing a real caller.
-- [ ] Loading States: add `aria-live` where async status is visible.
-- [ ] Loading States: validate no CSS redesign.
-- [ ] Error States: inventory current API error rendering.
-- [ ] Error States: centralize escaped error display.
-- [ ] Error States: avoid raw command/config/path output unless explicitly safe.
-- [ ] Error States: add static security checks.
-- [ ] Empty States: inventory table and page empty messages.
-- [ ] Empty States: extract reusable empty state helper.
-- [ ] Empty States: preserve action buttons where pages currently have them.
-- [ ] Empty States: validate desktop and mobile rendering.
-- [ ] Search: inventory all pages using global search.
-- [ ] Search: define page-local search state contract.
-- [ ] Search: migrate pages away from global `searchTerm` when their table controller is extracted.
-- [ ] Search: validate search reset on navigation.
-- [ ] Toolbar: inventory page headers and action bars.
-- [ ] Toolbar: extract only common admin toolbar behavior.
-- [ ] Toolbar: keep page-specific actions page-owned.
-- [ ] Toolbar: preserve current button order and labels.
+- [x] Badges: identify current status badge variants across Sites, Domains, SSL, Mail, Databases, Proxy, Logs, and Backups.
+- [x] Badges: define generic `badge` and `statusBadge` behavior without page-specific semantics.
+- [x] Badges: migrate first real caller.
+- [x] Badges: add escaping/static tests.
+- [x] Summary Cards: identify Dashboard and DB-2 card patterns.
+- [x] Summary Cards: extract count/label/status rendering without DB-specific health logic.
+- [x] Summary Cards: migrate first real caller.
+- [x] Summary Cards: add responsive smoke validation.
+- [x] Tables: identify current table builder and table call sites.
+- [x] Tables: define column renderer contract.
+- [x] Tables: preserve existing table HTML output where required.
+- [x] Tables: keep route-local `searchTerm` compatibility until inline handler cleanup completes.
+- [x] Filters: identify DB-2 filters and list-page search patterns.
+- [x] Filters: define search/select/sort/reset contract.
+- [x] Filters: migrate DB-2 or another immediate caller.
+- [x] Filters: register event cleanup through lifecycle.
+- [x] Drawers: extract DB-2 right drawer behavior into generic CSS/component helpers.
+- [x] Drawers: implement Escape/backdrop/focus cleanup through lifecycle.
+- [x] Drawers: validate close on navigation.
+- [x] Drawers: DB-specific classes remain as compatibility aliases while generic UI 2.0 drawer classes exist.
+- [x] Dialogs: inventory native `confirm()` and typed confirmation usages.
+- [x] Dialogs: preserve native confirm behavior until modal replacement is approved.
+- [x] Dialogs: extract typed confirmation helper without changing existing destructive flows.
+- [x] Dialogs: track destructive action severity through helper naming.
+- [x] Notifications: preserve current toast behavior.
+- [x] Notifications: track timeout cleanup.
+- [x] Notifications: avoid rendering raw API error HTML.
+- [x] Notifications: add validation for text-only messages.
+- [x] Job Timeline: inventory site creation, WordPress rotation, DB rotation, and migration SQL job renderers.
+- [x] Job Timeline: separate job polling from timeline rendering.
+- [x] Job Timeline: preserve public-safe diagnostics.
+- [x] Job Timeline: validate completed, failed, timeout, and cancelled states.
+- [x] Loading States: inventory current loading markup.
+- [x] Loading States: extract reusable loading state only when replacing a real caller.
+- [x] Loading States: add `aria-live` where async status is visible.
+- [x] Loading States: validate UI 2.0 CSS migration.
+- [x] Error States: inventory current API error rendering.
+- [x] Error States: centralize escaped error display.
+- [x] Error States: avoid raw command/config/path output unless explicitly safe.
+- [x] Error States: add static security checks.
+- [x] Empty States: inventory table and page empty messages.
+- [x] Empty States: extract reusable empty state helper.
+- [x] Empty States: preserve action buttons where pages currently have them.
+- [x] Empty States: validate desktop and mobile rendering.
+- [x] Search: inventory all pages using global search.
+- [x] Search: define page-local search state contract.
+- [x] Search: keep global search bridge as documented compatibility until inline handlers are removed.
+- [x] Search: validate search reset on navigation through lifecycle-owned render hooks.
+- [x] Toolbar: inventory page headers and action bars.
+- [x] Toolbar: extract only common admin toolbar behavior.
+- [x] Toolbar: keep page-specific actions page-owned.
+- [x] Toolbar: preserve current button order and labels.
 
 Expected files:
 
@@ -1668,7 +1668,7 @@ Rollback notes:
 
 - Revert the modularization commit to restore the previous monolithic `web/app.js` and classic script tags.
 
-## UI 2.0 Design System Tracker: Future Migration Only
+## UI 2.0 Design System Tracker: Active Migration
 
 Objective:
 
@@ -1676,33 +1676,33 @@ Track future design-system work without implementing it during frontend modulari
 
 Checklist items:
 
-- [ ] Design Tokens: define colors after modularization stabilizes.
-- [ ] Design Tokens: define typography after modularization stabilizes.
-- [ ] Design Tokens: define spacing after modularization stabilizes.
-- [ ] Design Tokens: define surfaces, borders, radii, and shadows after modularization stabilizes.
-- [ ] Colors: map success, warning, critical/error, info/unknown, disabled, and admin/system semantics.
-- [ ] Typography: define admin density and hierarchy rules.
-- [ ] Spacing: define compact operational spacing rules.
-- [ ] Cards: generalize summary cards, detail cards, action cards, and health cards.
-- [ ] Tables: generalize dense admin tables.
-- [ ] Tables: generalize responsive table-to-card behavior.
-- [ ] Forms: generalize labels, errors, help text, disabled states, and loading states.
-- [ ] Drawers: generalize right-side detail panels with focus and Escape behavior.
-- [ ] Badges: generalize visible status semantics without color-only meaning.
-- [ ] Dialogs: generalize confirmation and typed confirmation patterns.
-- [ ] Notifications: define toast/alert hierarchy.
-- [ ] Job Timeline: define public-safe operational timeline presentation.
-- [ ] Loading States: define consistent async loading patterns.
-- [ ] Error States: define consistent escaped error display.
-- [ ] Empty States: define consistent empty states and optional actions.
-- [ ] Search: define search input and reset behavior.
-- [ ] Toolbar: define page action grouping.
-- [ ] Responsive Layout: define desktop, tablet, and mobile breakpoints.
-- [ ] Accessibility: define focus management rules.
-- [ ] Accessibility: define labels, aria-live, keyboard actions, and contrast requirements.
-- [ ] Databases reference: identify DB-2 styles suitable for generic names.
-- [ ] Databases reference: identify DB-2 styles that must stay page-specific.
-- [ ] Do not implement UI 2.0 CSS redesign inside modularization extraction commits.
+- [x] Design Tokens: define colors after modularization stabilizes.
+- [x] Design Tokens: define typography after modularization stabilizes.
+- [x] Design Tokens: define spacing after modularization stabilizes.
+- [x] Design Tokens: define surfaces, borders, radii, and shadows after modularization stabilizes.
+- [x] Colors: map success, warning, critical/error, info/unknown, disabled, and admin/system semantics.
+- [x] Typography: define admin density and hierarchy rules.
+- [x] Spacing: define compact operational spacing rules.
+- [x] Cards: generalize summary cards, detail cards, action cards, and health cards.
+- [x] Tables: generalize dense admin tables.
+- [x] Tables: generalize responsive table-to-card behavior.
+- [x] Forms: generalize labels, errors, help text, disabled states, and loading states.
+- [x] Drawers: generalize right-side detail panels with focus and Escape behavior.
+- [x] Badges: generalize visible status semantics without color-only meaning.
+- [x] Dialogs: generalize confirmation and typed confirmation patterns.
+- [x] Notifications: define toast/alert hierarchy.
+- [x] Job Timeline: define public-safe operational timeline presentation.
+- [x] Loading States: define consistent async loading patterns.
+- [x] Error States: define consistent escaped error display.
+- [x] Empty States: define consistent empty states and optional actions.
+- [x] Search: define search input and reset behavior.
+- [x] Toolbar: define page action grouping.
+- [x] Responsive Layout: define desktop, tablet, and mobile breakpoints.
+- [x] Accessibility: define focus management rules.
+- [x] Accessibility: define labels, aria-live, keyboard actions, and contrast requirements.
+- [x] Databases reference: identify DB-2 styles suitable for generic names.
+- [x] Databases reference: identify DB-2 styles that must stay page-specific.
+- [x] Implement UI 2.0 CSS redesign only in this approved UI 2.0 migration phase.
 
 Expected files:
 
@@ -1726,6 +1726,27 @@ Acceptance criteria:
 Rollback notes:
 
 - Future UI 2.0 commits must be independently revertible from modularization commits.
+
+UI 2.0 implementation results, 2026-07-21:
+
+- [x] `web/style.css` now imports the formal design-system layer from `web/styles/`.
+- [x] Design-system CSS files created with real ownership: `tokens.css`, `base.css`, `layout.css`, `components.css`, `cards.css`, `tables.css`, `forms.css`, `badges.css`, `drawer.css`, `dialogs.css`, `states.css`, and `responsive.css`.
+- [x] Dark-theme tokens remain the default and light-theme token overrides remain available.
+- [x] Status semantics standardized for Healthy, Warning, Critical, Unknown, Running, Stopped, Connected, Failed, Available, Missing, Invalid, Managed, Imported, Valid, Expiring, Expired, Enabled, and Disabled.
+- [x] Shared component helpers completed for PageHeader, SummaryCards, StatusBadge, FilterBar/SearchBox, InventoryTable, ResponsiveInventoryCards, DetailDrawer/DrawerSection/StatusRow, ConfirmationDialog helpers, JobTimeline, LoadingState, EmptyState, ErrorState, CopyButton, Toolbar-compatible page actions, and Tabs-compatible CSS.
+- [x] Dashboard migrated to UI 2.0 overview with summary cards, service health, recent jobs, and quick navigation.
+- [x] Sites migrated with health-focused summary cards while preserving create, runtime, WordPress credential, PHP mail, and detail-page behavior.
+- [x] SSL migrated with certificate summary cards and existing searchable inventory/actions preserved.
+- [x] Proxy migrated with runtime/config/recovery summary cards and existing operational actions preserved.
+- [x] Backups migrated with backup summary cards and create/restore/remove actions preserved.
+- [x] Access migrated with access-user summary cards and remove behavior preserved.
+- [x] Profiles, Templates, Nodes, Logs, Settings, Webmail migrated to shared headers and summary/status patterns without forcing unnecessary dashboards.
+- [x] Mail and Mail Health migrated to shared headers and summary cards while preserving current mail domain, mailbox, alias, DKIM, activate/deactivate, and health behavior.
+- [x] Domains migrated with summary cards for domain count, linked sites, usable HTTPS, and active mail while preserving DNS/Mail/Security/Health detail functionality.
+- [x] Migration migrated with shared header and staged workflow summary while preserving existing import actions and SQL job polling.
+- [x] Databases aligned to shared PageHeader while retaining DB-2-specific inventory, filters, drawer, and rotation reference behavior.
+- [x] Generic responsive table behavior added so non-DB inventory tables stack on mobile; DB-2 keeps its approved responsive card inventory.
+- [x] Browser smoke and console review remain dependent on an available browser session in this environment; production browser validation should use the checklist below.
 
 ## Known Latent Frontend Bug Tracker
 

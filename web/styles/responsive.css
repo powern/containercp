@@ -1,0 +1,35 @@
+@media(max-width:768px) {
+  .sidebar { position:fixed; left:calc(-1 * var(--sidebar-width)); top:0; bottom:0; z-index:var(--z-sidebar); transition:left var(--transition); }
+  .sidebar.open { left:0; }
+  .sidebar-toggle { display:block; }
+  .topbar { padding:10px 16px; gap:10px; }
+  .topbar-search { max-width:160px; }
+  .page { padding:16px; }
+  .page-header, .ui-page-header { margin-bottom:18px; }
+  .cards, .ui-summary-grid { grid-template-columns:repeat(auto-fill, minmax(140px,1fr)); gap:12px; }
+  .health-grid, .ui-health-grid { grid-template-columns:1fr 1fr; }
+  .db-controls, .ui-control-grid { grid-template-columns:1fr 1fr; }
+  .db-search { grid-column:1 / -1; }
+  .db-table-wrap { display:none; }
+  .db-mobile-list { display:block; padding:12px; }
+  .ui-table-wrap, .table-wrap { overflow:visible; }
+  .ui-table-wrap table:not(.db-table), .table-wrap table:not(.db-table), .ui-table-wrap table:not(.db-table) thead, .table-wrap table:not(.db-table) thead, .ui-table-wrap table:not(.db-table) tbody, .table-wrap table:not(.db-table) tbody, .ui-table-wrap table:not(.db-table) tr, .table-wrap table:not(.db-table) tr, .ui-table-wrap table:not(.db-table) td, .table-wrap table:not(.db-table) td { display:block; width:100%; }
+  .ui-table-wrap table:not(.db-table) thead, .table-wrap table:not(.db-table) thead { display:none; }
+  .ui-table-wrap table:not(.db-table) tr, .table-wrap table:not(.db-table) tr { border-bottom:1px solid var(--border); padding:10px 12px; }
+  .ui-table-wrap table:not(.db-table) td, .table-wrap table:not(.db-table) td { border-bottom:none; padding:4px 0; }
+  .ui-mobile-list { display:block; padding:12px; }
+  .ui-drawer-backdrop, .db-drawer-backdrop { justify-content:center; }
+  .ui-detail-drawer, .db-detail-drawer { width:100vw; border-left:none; }
+  .db-job-step { grid-template-columns:1fr; gap:4px; }
+}
+
+@media(max-width:1100px) and (min-width:769px) {
+  .db-controls, .ui-control-grid { grid-template-columns:repeat(3,1fr); }
+  .db-search { grid-column:1 / -1; }
+}
+
+@media(max-width:520px) {
+  .db-summary-grid, .ui-summary-grid, .db-controls, .ui-control-grid { grid-template-columns:1fr; }
+  .health-grid, .ui-health-grid { grid-template-columns:1fr; }
+  .topbar-right { gap:6px; }
+}

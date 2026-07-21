@@ -99,11 +99,12 @@
 | **CCP-5001**: GET /api/profiles | ✅ | `libs/api/ApiServer.cpp` |
 | **CCP-5002**: GET /api/nodes | ✅ | `libs/api/ApiServer.cpp` |
 | **CCP-5003**: GET /api/logs | ✅ | `libs/api/ApiServer.cpp` |
-| **CCP-5005**: Site detail page | ✅ | `web/app.js` |
-| **CCP-5006**: Create Site modal | ✅ | `web/app.js` |
-| **CCP-5007**: Toast notification system | ✅ | `web/app.js` |
-| **CCP-5008**: Improved tables + search | ✅ | `web/app.js` |
-| **CCP-5009**: Global error handling | ✅ | `web/app.js` |
+| **CCP-5005**: Site detail page | ✅ | `web/pages/sites.js`, `web/core/router.js` |
+| **CCP-5006**: Create Site modal | ✅ | `web/pages/sites.js`, `web/core/modals.js` |
+| **CCP-5007**: Toast notification system | ✅ | `web/core/notifications.js`, `web/styles/dialogs.css` |
+| **CCP-5008**: Improved tables + search | ✅ | `web/components/table.js`, `web/components/filters.js`, `web/styles/tables.css` |
+| **CCP-5009**: Global error handling | ✅ | `web/core/api.js`, `web/components/empty-state.js` |
+| **CCP-5010**: UI 2.0 design system | ✅ | `web/styles/*`, `web/components/*`, `web/pages/*` |
 
 ### API Layer
 

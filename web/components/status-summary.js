@@ -1,1 +1,2 @@
-export function statusSummary(items) { return (items || []).map(item => '<div class="card"><div style="font-size:13px;color:var(--text2);">'+item.label+'</div><div class="count '+(item.className||'')+'">'+item.value+'</div></div>').join(''); }
+import { summaryCards } from './cards.js';
+export function statusSummary(items) { return summaryCards((items || []).map(item => ({ label:item.label, value:item.value, tone:item.tone || item.className || 'neutral', help:item.help || '' }))); }

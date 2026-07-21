@@ -1,5 +1,5 @@
 import {
-  api, apiPost, buildTable, card, copyText, esc, hideModal, navigate, showModal, toast
+  api, apiPost, buildTable, card, copyText, esc, hideModal, navigate, pageHeader, showModal, summaryCards, toast
 } from '../core/context.js';
 
 
@@ -17,14 +17,20 @@ async function loadMail(p, params, lifecycle) {
     const mbCount = status.data?.mailboxes ?? 0;
     const aCount = status.data?.aliases ?? 0;
 
-    let html = `<div class="page-header"><h1>Mail</h1><div class="page-actions">`;
+    let actions = '';
     if (state === 'inactive') {
-      html += `<button class="btn btn-primary btn-sm" onclick="activateMail()">Activate Mail Module</button>`;
+      actions += `<button class="btn btn-primary btn-sm" onclick="activateMail()">Activate Mail Module</button>`;
     } else {
-      html += `<button class="btn btn-sm" onclick="loadMailHealth($('page'))">Health</button> `;
-      html += `<button class="btn btn-sm" onclick="deactivateMail()">Deactivate</button>`;
+      actions += `<button class="btn btn-sm" onclick="loadMailHealth($('page'))">Health</button> `;
+      actions += `<button class="btn btn-sm" onclick="deactivateMail()">Deactivate</button>`;
     }
-    html += `</div></div>`;
+    let html = pageHeader('Mail', 'Mail module status, domains, DKIM, mailbox, alias, and health operations.', actions, 'Messaging');
+    html += summaryCards([
+      {label:'Module', value:state === 'active' ? 'Active' : 'Inactive', tone:state === 'active' ? 'healthy' : 'warning', help:'Mail service state'},
+      {label:'Domains', value:dCount, tone:'neutral', help:'Mail domains'},
+      {label:'Mailboxes', value:mbCount, tone:'neutral', help:'Mailbox records'},
+      {label:'Aliases', value:aCount, tone:'neutral', help:'Alias records'}
+    ]);
 
     // Module state card
     const stateLabel = state === 'active' ? '<span class="badge badge-ok">Active</span>' : '<span class="badge badge-info">Inactive</span>';
@@ -389,7 +395,7 @@ async function loadMailHealth(p) {
     const res = await api('/api/mail/health');
     const d = res.data || {};
     const services = d.services || [];
-    let html = `<div class="page-header"><h1>Mail Health</h1><div class="page-actions"><button class="btn btn-sm" onclick="navigate('mail')">Back to Mail</button></div></div>`;
+    let html = pageHeader('Mail Health', 'Service-level mail health details reported by the existing backend.', '<button class="btn btn-sm" onclick="navigate(\'mail\')">Back to Mail</button>', 'Messaging');
     html += `<div class="card"><div class="card-header"><h3>Status: <span class="badge ${d.status === 'ok' ? 'badge-ok' : d.status === 'degraded' ? 'badge-warn' : 'badge-err'}">${esc(d.status)}</span></h3></div><div style="padding:12px">`;
     for (const svc of services) {
       const dot = svc.status === 'ok' ? '🟢' : svc.status === 'degraded' ? '🟡' : '🔴';
