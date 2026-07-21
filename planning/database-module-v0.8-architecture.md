@@ -12,6 +12,21 @@ The WordPress credential-management foundation is now complete and must be reuse
 
 The default web administration tool should be Adminer, but Adminer deployment must be deferred until the database lifecycle API, credential handling, backup/export behavior, and access-gating design are implemented and tested.
 
+## DB-3 Implementation Clarification
+
+DB-3 implements the safe physical MariaDB lifecycle subset of this architecture:
+
+- `DatabaseLifecycleService` owns create, verify, and drop orchestration for the selected Site's single managed database.
+- `DatabaseProvider` is the public lifecycle boundary; v0.8 wires `MariaDBProvider` only.
+- `DatabaseLifecycleJobService` owns asynchronous job queueing and public-safe job responses.
+- `DatabaseIdentifierValidator` is the single validator for MariaDB database and user identifiers.
+- `MariaDBSecureTempFile` owns host temporary credential/query files with owner-only permissions and cleanup on success, failure, and exception unwinding.
+- New Site stacks receive a `containercp_service` MariaDB service account through `.env` and a first-boot MariaDB init script. `MYSQL_ROOT_PASSWORD` is used only by that bootstrap script during MariaDB entrypoint initialization; normal DB-3 operations do not fall back to root.
+- Older/imported stacks without `CONTAINERCP_DB_SERVICE_USER` and `CONTAINERCP_DB_SERVICE_PASSWORD` report `service_account_unavailable` rather than silently using root or adopting the database.
+- `POST /api/databases/remove` remains deprecated metadata-only compatibility behavior. Physical deletion is available only through `POST /api/databases/<id>/drop`; explicit recovery removal is `POST /api/databases/<id>/forget-metadata`.
+
+DB-3 does not implement Adminer, import/export, database-aware backups, imported database adoption, password reveal, multiple databases per Site, or non-MariaDB providers.
+
 ## Current Baseline
 
 The current system already has a Database resource, but it does not manage physical MariaDB objects directly.

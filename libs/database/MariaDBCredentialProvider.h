@@ -56,6 +56,8 @@ struct MariaDBCredentialResult {
 class MariaDBProcessRunner {
 public:
     virtual ~MariaDBProcessRunner() = default;
+    virtual runtime::CommandResult run(const std::vector<std::string>& args,
+                                       const std::string& workdir = "") const;
     virtual runtime::CommandResult run_with_stdin_file(const std::vector<std::string>& args,
                                                        const std::string& stdin_file,
                                                        const std::string& workdir = "") const = 0;
@@ -64,6 +66,9 @@ public:
 class MariaDBCommandExecutorRunner : public MariaDBProcessRunner {
 public:
     explicit MariaDBCommandExecutorRunner(const runtime::CommandExecutor& executor);
+
+    runtime::CommandResult run(const std::vector<std::string>& args,
+                               const std::string& workdir = "") const override;
 
     runtime::CommandResult run_with_stdin_file(const std::vector<std::string>& args,
                                                const std::string& stdin_file,

@@ -38,6 +38,8 @@ bool EnvGenerator::generate(const std::string& domain, const std::string& owner,
     env << "DB_USER=" << db_user << "\n";
     env << "DB_PASSWORD=" << db_password << "\n";
     env << "MYSQL_ROOT_PASSWORD=" << utils::PasswordGenerator::generate(48) << "\n";
+    env << "CONTAINERCP_DB_SERVICE_USER=containercp_service\n";
+    env << "CONTAINERCP_DB_SERVICE_PASSWORD=" << utils::PasswordGenerator::generate(48) << "\n";
     env << "\n";
 
     env << "# Redis\n";

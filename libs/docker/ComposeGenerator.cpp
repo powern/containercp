@@ -61,6 +61,7 @@ ComposeGenerator::ComposeGenerator(filesystem::Filesystem& fs, const std::string
         "    restart: unless-stopped\n"
         "    volumes:\n"
         "      - db-data:/var/lib/mysql\n"
+        "      - ./config/mariadb/initdb:/docker-entrypoint-initdb.d:ro\n"
         "    networks:\n"
         "      - containercp-site-{{SITE_ID}}\n"
         "    labels:\n"

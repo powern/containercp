@@ -217,7 +217,7 @@ async function loadDatabases(p, params, lifecycle) {
     });
     lifecycle.onCleanup(destroyDatabaseDrawer);
   }
-  p.innerHTML = `<div class="page-header db-page-header"><div><h1>Databases</h1><p>Monitor database health, runtime, connectivity, credentials, and ownership.</p></div><div class="page-actions"><button class="btn btn-sm" onclick="refreshDatabases()" aria-label="Refresh database inventory">Refresh</button></div></div><div id="db-dashboard-body" aria-live="polite"><div class="empty-state">Loading database inventory...</div></div>`;
+  p.innerHTML = `<div class="page-header db-page-header"><div><h1>Databases</h1><p>Monitor database health, runtime, connectivity, credentials, and ownership.</p></div><div class="page-actions"><button class="btn btn-sm" onclick="showCreateDatabaseModal()" aria-label="Create managed database">Create Database</button><button class="btn btn-sm" onclick="refreshDatabases()" aria-label="Refresh database inventory">Refresh</button></div></div><div id="db-dashboard-body" aria-live="polite"><div class="empty-state">Loading database inventory...</div></div>`;
   await refreshDatabases();
 }
 
@@ -347,7 +347,7 @@ function renderDatabaseDetail(db) {
       ${databaseDetailSection('Metadata', [
         ['Created', esc(db.created_at || 'Unavailable')], ['Updated', esc(db.updated_at || 'Unavailable')], ['Engine version', esc(db.engine_version || db.version || 'Unavailable')], ['Connection verification state', esc(db.connection_status || 'not_checked')], ['Imported state', esc(db.imported_state || 'unknown')]
       ])}
-      <section class="db-detail-section"><h3>Actions</h3><div id="db-rotation-action">${renderDatabaseRotationAction(db)}</div></section>
+      <section class="db-detail-section"><h3>Actions</h3><div id="db-lifecycle-action">${renderDatabaseLifecycleActions(db)}</div><div id="db-rotation-action">${renderDatabaseRotationAction(db)}</div></section>
     </div>`;
   showDatabaseDrawer(content);
 }
@@ -391,6 +391,134 @@ async function loadDatabaseRotationStatus(db) {
 function updateDatabaseRotationAction(db) {
   const el = $('db-rotation-action');
   if (el) el.innerHTML = renderDatabaseRotationAction(db);
+}
+
+function renderDatabaseLifecycleActions(db) {
+  const canVerify = db.can_verify !== false;
+  const canDrop = db.can_drop === true;
+  const block = db.drop_block_reason || (dbOwnershipState(db) === 'imported' ? 'Imported or ownership-uncertain databases are read-only until explicit adoption exists.' : 'Drop is unavailable for this database.');
+  return `<div class="db-action-box">
+    <div><strong>Physical Lifecycle</strong><p>Verify or drop the selected managed MariaDB database through backend jobs.</p></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button class="btn btn-sm" onclick="verifyDatabaseLifecycle(${Number(db.database_id || db.id || 0)})" ${canVerify ? '' : 'disabled'}>Verify</button>
+      <button class="btn btn-sm btn-danger" onclick="showDatabaseDropConfirm(${Number(db.database_id || db.id || 0)})" ${canDrop ? '' : 'disabled'}>Drop Database</button>
+    </div>
+    <div id="db-lifecycle-msg" class="db-action-message">${esc(canDrop ? 'Physical drop is available with exact typed confirmation.' : block)}</div>
+  </div>`;
+}
+
+async function verifyDatabaseLifecycle(databaseId) {
+  const msg = $('db-lifecycle-msg');
+  if (msg) msg.textContent = 'Queueing database verification...';
+  try {
+    const res = await apiPost('/api/databases/' + Number(databaseId) + '/verify', {});
+    const jobId = res.data && res.data.job_id;
+    toast('Database verification queued' + (jobId ? ' (job #' + jobId + ')' : ''), 'success');
+    if (jobId) pollDatabaseLifecycleJob(jobId, databaseId, 'Verification');
+  } catch(e) {
+    const apiErr = e.body && e.body.error && e.body.error.message;
+    if (msg) msg.textContent = apiErr || e.api_message || e.message || 'Failed to queue database verification';
+  }
+}
+
+function showDatabaseDropConfirm(databaseId) {
+  const db = dbDashboardState.selectedDetail;
+  if (!db || Number(db.database_id || db.id) !== Number(databaseId) || db.can_drop !== true) return;
+  const target = db.database_name || db.name || '';
+  const domain = db.domain || '';
+  showModal('Drop Managed Database', `<div class="db-confirm-body">
+    <p><strong>${esc(domain)}</strong> / <code>${esc(target)}</code></p>
+    <ul>
+      <li>The managed physical MariaDB database will be dropped.</li>
+      <li>The managed user and grants will be removed only when backend ownership checks say it is safe.</li>
+      <li>ContainerCP metadata is removed only after physical cleanup succeeds or physical state is already absent.</li>
+      <li>Imported or ownership-uncertain databases cannot be dropped here.</li>
+    </ul>
+    <p style="color:var(--danger);font-size:12px;">Type the exact database name or site domain to confirm. Generic confirmations are rejected.</p>
+    <input id="db-drop-confirm" autocomplete="off" placeholder="${esc(target)}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;margin-top:8px;">
+    <div id="db-drop-confirm-msg" style="font-size:12px;color:var(--text3);margin-top:6px;">No credential value will be displayed.</div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;"><button class="btn btn-sm" onclick="hideModal()">Cancel</button><button class="btn btn-sm btn-danger" onclick="confirmDatabaseDrop(${Number(databaseId)})">Drop Database</button></div>
+  </div>`, 580);
+  const ctx = activeDatabasesLifecycle;
+  const later = ctx && ctx.setTimeout ? ctx.setTimeout.bind(ctx) : setTimeout;
+  later(() => { const input = $('db-drop-confirm'); if (input) input.focus(); }, 0);
+}
+
+async function confirmDatabaseDrop(databaseId) {
+  const db = dbDashboardState.selectedDetail;
+  const input = $('db-drop-confirm');
+  const msg = $('db-drop-confirm-msg');
+  if (!db || !input) return;
+  const confirmation = input.value.trim();
+  if (confirmation !== (db.database_name || db.name || '') && confirmation !== (db.domain || '')) {
+    if (msg) msg.textContent = 'Confirmation must match the database name or site domain.';
+    return;
+  }
+  if (msg) msg.textContent = 'Queueing physical drop...';
+  try {
+    const res = await apiPost('/api/databases/' + Number(databaseId) + '/drop', {confirmation});
+    const jobId = res.data && res.data.job_id;
+    hideModal();
+    toast('Database drop queued' + (jobId ? ' (job #' + jobId + ')' : ''), 'success');
+    if (jobId) pollDatabaseLifecycleJob(jobId, databaseId, 'Drop');
+  } catch(e) {
+    const apiErr = e.body && e.body.error && e.body.error.message;
+    if (msg) msg.textContent = apiErr || e.api_message || e.message || 'Failed to queue database drop';
+  }
+}
+
+function pollDatabaseLifecycleJob(jobId, databaseId, label) {
+  const msg = $('db-lifecycle-msg');
+  if (msg) msg.innerHTML = `Waiting for ${esc(label.toLowerCase())} job progress...`;
+  pollRotationJob(jobId, {
+    lifecycle: activeDatabasesLifecycle,
+    messageEl: 'db-lifecycle-msg',
+    renderRunning: (id, job) => `<div class="db-job-box"><div><strong>${esc(label)} job #${esc(String(id))}</strong>: ${esc(job.message || job.status || 'pending')}</div>${renderRotationJobTimeline(job)}</div>`,
+    renderFailed: (id, job) => `<div class="db-job-box"><div class="badge badge-err">${esc(label)} failed</div>${renderRotationJobTimeline(job)}</div>`,
+    renderCompleted: (id, job) => `<div class="db-job-box"><div class="badge badge-ok">${esc(label)} completed</div>${renderRotationJobTimeline(job)}</div>`,
+    onCompleted: () => { refreshDatabases(); if (label !== 'Drop') openDatabaseDetail(databaseId); },
+    onFailed: () => { refreshDatabases(); }
+  });
+}
+
+async function showCreateDatabaseModal() {
+  try {
+    const [sitesRes, dbRes] = await Promise.all([api('/api/sites'), api('/api/databases')]);
+    const used = new Set((dbRes.data || []).map(db => Number(db.site_id)));
+    const sites = (sitesRes.data || []).filter(site => Number(site.id) > 0 && !used.has(Number(site.id)));
+    if (!sites.length) { toast('No Site without a managed database is available.', 'info'); return; }
+    showModal('Create Managed Database', `<div class="db-confirm-body">
+      <label class="db-filter"><span>Site</span><select id="db-create-site">${sites.map(site => `<option value="${Number(site.id)}">${esc(site.domain || site.name || ('site #' + site.id))}</option>`).join('')}</select></label>
+      <label class="db-filter"><span>Database name</span><input id="db-create-name" autocomplete="off" placeholder="example_db"></label>
+      <label class="db-filter"><span>Database user</span><input id="db-create-user" autocomplete="off" placeholder="example_user"></label>
+      <p style="color:var(--text2);font-size:12px;">Names must use ASCII letters, numbers, and underscores, and must start with a letter.</p>
+      <div id="db-create-msg" style="font-size:12px;color:var(--text3);margin-top:6px;"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;"><button class="btn btn-sm" onclick="hideModal()">Cancel</button><button class="btn btn-sm btn-primary" onclick="confirmCreateDatabase()">Create Database</button></div>
+    </div>`, 560);
+  } catch(e) {
+    toast('Create capability could not be loaded.', 'error');
+  }
+}
+
+async function confirmCreateDatabase() {
+  const site = $('db-create-site');
+  const name = $('db-create-name');
+  const user = $('db-create-user');
+  const msg = $('db-create-msg');
+  if (!site || !name || !user) return;
+  if (msg) msg.textContent = 'Queueing database create...';
+  try {
+    const res = await apiPost('/api/databases', {site_id:Number(site.value), database_name:name.value.trim(), database_user:user.value.trim()});
+    const jobId = res.data && res.data.job_id;
+    const databaseId = res.data && res.data.database_id;
+    hideModal();
+    toast('Database create queued' + (jobId ? ' (job #' + jobId + ')' : ''), 'success');
+    if (jobId) pollDatabaseLifecycleJob(jobId, databaseId, 'Create');
+    refreshDatabases();
+  } catch(e) {
+    const apiErr = e.body && e.body.error && e.body.error.message;
+    if (msg) msg.textContent = apiErr || e.api_message || e.message || 'Failed to queue database create';
+  }
 }
 
 function databaseRotationCapability(db) {
@@ -491,4 +619,4 @@ function renderDatabaseRotationFailure(jobId, job) {
 
 const databasesPage = { mount: loadDatabases, unmount() { destroyDatabaseDrawer(); activeDatabasesLifecycle = null; } };
 export { loadDatabases, databasesPage };
-Object.assign(window, { normalizeDbValue, dbConnectionState, dbCredentialState, dbRuntimeState, dbOwnershipState, computeDatabaseHealthState, dbHealthLabel, dbBadge, dbHealthBadge, dbRuntimeBadge, dbConnectionBadge, dbCredentialBadge, dbOwnershipBadge, dbJsArg, dbDateValue, dbSortRank, getFilteredDatabases, databaseSummaryCards, dbSelect, databaseControlsHtml, toggleDatabaseSortDirection, resetDatabaseFilters, loadDatabases, refreshDatabases, renderDatabaseInventory, renderDatabaseTable, renderDatabaseCards, openDatabaseDetail, showDatabaseDrawer, closeDatabaseDrawer, renderDatabaseDetail, databaseDetailSection, databaseHealthSection, copyableValue, loadDatabaseRotationStatus, updateDatabaseRotationAction, databaseRotationCapability, renderDatabaseRotationAction, showDatabaseRotationConfirm, confirmDatabasePasswordRotation, renderDatabaseRotationJob, renderDatabaseRotationSuccess, renderDatabaseRotationFailure });
+Object.assign(window, { normalizeDbValue, dbConnectionState, dbCredentialState, dbRuntimeState, dbOwnershipState, computeDatabaseHealthState, dbHealthLabel, dbBadge, dbHealthBadge, dbRuntimeBadge, dbConnectionBadge, dbCredentialBadge, dbOwnershipBadge, dbJsArg, dbDateValue, dbSortRank, getFilteredDatabases, databaseSummaryCards, dbSelect, databaseControlsHtml, toggleDatabaseSortDirection, resetDatabaseFilters, loadDatabases, refreshDatabases, renderDatabaseInventory, renderDatabaseTable, renderDatabaseCards, openDatabaseDetail, showDatabaseDrawer, closeDatabaseDrawer, renderDatabaseDetail, databaseDetailSection, databaseHealthSection, copyableValue, renderDatabaseLifecycleActions, verifyDatabaseLifecycle, showDatabaseDropConfirm, confirmDatabaseDrop, pollDatabaseLifecycleJob, showCreateDatabaseModal, confirmCreateDatabase, loadDatabaseRotationStatus, updateDatabaseRotationAction, databaseRotationCapability, renderDatabaseRotationAction, showDatabaseRotationConfirm, confirmDatabasePasswordRotation, renderDatabaseRotationJob, renderDatabaseRotationSuccess, renderDatabaseRotationFailure });

@@ -203,7 +203,10 @@ The API must call the owning subsystem — never duplicate its logic.
   handler.
 - **Backups** — call `BackupManager` and `BackupProvider`.
 - **Databases** — call `DatabaseViewService` for read-only inventory/detail
-  views and `DatabaseManager` only for database metadata lifecycle operations.
+  views, `DatabaseLifecycleJobService`/`DatabaseLifecycleService` for physical
+  MariaDB create/verify/drop/metadata-recovery operations, and `DatabaseManager`
+  only for metadata ownership through those services. Legacy
+  `POST /api/databases/remove` is deprecated metadata-only compatibility.
 - **Proxy** — call `ReverseProxyManager` and `ProxyProvider`.
 
 API handlers should be **thin dispatchers** — validate, delegate,

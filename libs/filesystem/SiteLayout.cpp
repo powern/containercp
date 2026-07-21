@@ -19,6 +19,7 @@ bool SiteLayout::create() {
         "backups",
         "config/nginx",
         "config/apache",
+        "config/mariadb/initdb",
         "compose",
     };
 

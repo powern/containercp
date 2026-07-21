@@ -310,9 +310,19 @@ MariaDBCommandExecutorRunner::MariaDBCommandExecutorRunner(const runtime::Comman
     : executor_(executor) {
 }
 
+runtime::CommandResult MariaDBProcessRunner::run(const std::vector<std::string>&,
+                                                 const std::string&) const {
+    return {127, "", "MariaDB process runner does not support direct command execution"};
+}
+
+runtime::CommandResult MariaDBCommandExecutorRunner::run(const std::vector<std::string>& args,
+                                                         const std::string& workdir) const {
+    return executor_.run(args, workdir);
+}
+
 runtime::CommandResult MariaDBCommandExecutorRunner::run_with_stdin_file(const std::vector<std::string>& args,
-                                                                         const std::string& stdin_file,
-                                                                         const std::string& workdir) const {
+                                                                          const std::string& stdin_file,
+                                                                          const std::string& workdir) const {
     return executor_.run_with_stdin_file(args, stdin_file, workdir);
 }
 

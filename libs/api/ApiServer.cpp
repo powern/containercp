@@ -877,6 +877,91 @@ bool ApiServer::start() {
         return r;
     });
 
+    auto lifecycle_job_response = [](const database::DatabaseLifecycleJobResult& result) -> Response {
+        Response r;
+        if (!result.success) {
+            r.status_code = (result.code == "site_not_found" || result.code == "database_not_found") ? 404 : 400;
+            r.body = "{\"success\":false,\"error\":{\"code\":\"" + JsonFormatter::escape(result.code) +
+                     "\",\"message\":\"" + JsonFormatter::escape(result.message) + "\"}}";
+            return r;
+        }
+        r.status_code = result.job_id == 0 ? 200 : 202;
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":{"
+             << "\"job_id\":" << result.job_id
+             << ",\"operation\":\"" << JsonFormatter::escape(result.operation)
+             << "\",\"database_id\":" << result.database_id
+             << ",\"site_id\":" << result.site_id
+             << ",\"status\":\"" << (result.job_id == 0 ? "completed" : "pending")
+             << "\",\"status_url\":\"" << (result.job_id == 0 ? "" : "/api/jobs?id=" + std::to_string(result.job_id))
+             << "\",\"message\":\"" << JsonFormatter::escape(result.message) << "\"}}";
+        r.body = json.str();
+        return r;
+    };
+
+    router_.add("POST", "/api/databases", [&s, &lifecycle_job_response](const Request& req) {
+        const auto site_id_text = json_extract(req.body, "site_id");
+        uint64_t site_id = 0;
+        try {
+            site_id = std::stoull(site_id_text);
+        } catch (...) {
+            Response r;
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"site_id is required\"}";
+            return r;
+        }
+        const auto result = s.database_lifecycle_jobs().enqueue_create(site_id,
+                                                                       json_extract(req.body, "database_name"),
+                                                                       json_extract(req.body, "database_user"));
+        return lifecycle_job_response(result);
+    });
+
+    router_.add_prefix("POST", "/api/databases/", [&s, &lifecycle_job_response](const Request& req) {
+        Response r;
+        const std::string rest = req.path.substr(std::string("/api/databases/").size());
+        if (rest == "remove") {
+            const std::string name = json_extract(req.body, "name");
+            auto* db = s.databases().find(name);
+            if (!db) {
+                r.body = "{\"success\":false,\"error\":\"Not found\"}";
+                return r;
+            }
+            s.logger().warning("AUDIT", "database_lifecycle operation=legacy-remove stage=requested result=deprecated_metadata_only database_id=" + std::to_string(db->id) + " site_id=" + std::to_string(db->site_id));
+            s.databases().remove(db->id);
+            s.save();
+            r.body = "{\"success\":true,\"data\":{\"message\":\"Database metadata removed; physical MariaDB objects were not dropped\",\"deprecated\":true,\"physical_drop\":false}}";
+            return r;
+        }
+        const auto slash = rest.find('/');
+        if (slash == std::string::npos || slash == 0 || slash + 1 >= rest.size()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Database action path is invalid\"}";
+            return r;
+        }
+        const std::string id_text = rest.substr(0, slash);
+        const std::string action = rest.substr(slash + 1);
+        uint64_t database_id = 0;
+        try {
+            database_id = std::stoull(id_text);
+        } catch (...) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Database id must be numeric\"}";
+            return r;
+        }
+        if (action == "verify") {
+            return lifecycle_job_response(s.database_lifecycle_jobs().enqueue_verify(database_id));
+        }
+        if (action == "drop") {
+            return lifecycle_job_response(s.database_lifecycle_jobs().enqueue_drop(database_id, json_extract(req.body, "confirmation")));
+        }
+        if (action == "forget-metadata") {
+            return lifecycle_job_response(s.database_lifecycle_jobs().forget_metadata(database_id, json_extract(req.body, "confirmation")));
+        }
+        r.status_code = 404;
+        r.body = "{\"success\":false,\"error\":\"Database action not found\"}";
+        return r;
+    });
+
     router_.add_prefix("GET", "/api/databases/", [&s](const Request& req) {
         Response r;
         const std::string id_text = req.path.substr(std::string("/api/databases/").size());
@@ -1656,6 +1741,7 @@ bool ApiServer::start() {
         } else if (type == "database") {
             auto* db = s.databases().find(name);
             if (!db) { r.body = "{\"success\":false,\"error\":\"Not found\"}"; return r; }
+            s.logger().warning("AUDIT", "database_lifecycle operation=legacy-remove stage=requested result=deprecated_metadata_only database_id=" + std::to_string(db->id) + " site_id=" + std::to_string(db->site_id));
             s.databases().remove(db->id);
         } else if (type == "ssl") {
             auto* cert = s.ssl().find_by_domain(name);
@@ -1719,7 +1805,11 @@ bool ApiServer::start() {
 
     router_.add("POST", "/api/databases/remove", [&s, &remove_resource](const Request& req) {
         std::string name = json_extract(req.body, "name");
-        return remove_resource("database", name);
+        auto r = remove_resource("database", name);
+        if (r.status_code == 200) {
+            r.body = "{\"success\":true,\"data\":{\"message\":\"Database metadata removed; physical MariaDB objects were not dropped\",\"deprecated\":true,\"physical_drop\":false}}";
+        }
+        return r;
     });
 
     router_.add("POST", "/api/ssl/remove", [&s, &remove_resource](const Request& req) {

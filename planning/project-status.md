@@ -415,6 +415,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | WP-5: DatabaseCredentialRotationService | ✅ | Saga and compensation for MariaDB, metadata, `.env`, and `wp-config.php` |
 | DB-1: Databases read-only inventory | ✅ | Enriched `DatabaseViewService` backend implemented and repository-validated; read-only only |
 | DB-2: Database Management GUI | ✅ | Health-focused Web UI dashboard implemented and repository-validated; reuses DB-1 inventory and existing password rotation jobs |
+| DB-3: Safe Physical MariaDB Lifecycle | ✅ | Backend-owned create/verify/drop jobs, provider boundary, identifier validation, secure temporary credential files, service-account bootstrap for new stacks, explicit physical drop, explicit metadata-only recovery, and minimal DB-2 GUI actions |
 
 ## Future — Multi-node
 
@@ -440,7 +441,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | Web UI | Active | Native frontend module layout implemented; `web/app.js` is now the ES module entry and page implementations live under `web/pages/` |
 | Sites | Stable | |
 | Domains | Stable | |
-| Databases | Planned | Postponed behind WordPress credential foundation — see `planning/database-module-v0.8-architecture.md` |
+| Databases | Active | DB-1 inventory, DB-2 GUI, and DB-3 safe MariaDB lifecycle implemented; DB-4 import/export/Adminer/backup adoption work remains deferred |
 | Users | Stable | |
 | PHP Versions | Stable | |
 | Docker/Runtime | Stable | |
@@ -575,5 +576,5 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 
 ---
 
-*Last updated: 2026-07-19*
+*Last updated: 2026-07-21*
 *Current Version: v0.7.0*

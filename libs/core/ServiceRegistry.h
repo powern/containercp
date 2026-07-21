@@ -20,8 +20,11 @@
 #include "database/DatabaseCredentialRotationAdapter.h"
 #include "database/DatabaseCredentialRotationJobService.h"
 #include "database/DatabaseCredentialRotationService.h"
+#include "database/DatabaseLifecycleJobService.h"
+#include "database/DatabaseLifecycleService.h"
 #include "database/DatabaseManager.h"
 #include "database/DatabaseViewService.h"
+#include "database/MariaDBProvider.h"
 #include "dns/DnsCheckService.h"
 #include "network/NetworkService.h"
 #include "domain/DomainManager.h"
@@ -80,6 +83,7 @@ public:
     profile::ProfileManager& profiles();
     database::DatabaseManager& databases();
     database::DatabaseViewService& database_view();
+    database::DatabaseLifecycleJobService& database_lifecycle_jobs();
     database::DatabaseCredentialRotationJobService& database_credential_rotation_jobs();
     backup::BackupManager& backups();
     backup::BackupProvider& backup_provider();
@@ -176,6 +180,7 @@ private:
     runtime::CommandExecutor credential_command_executor_;
     database::MariaDBCommandExecutorRunner mariadb_command_runner_;
     database::MariaDBCredentialProvider mariadb_credential_provider_;
+    database::MariaDBProvider mariadb_lifecycle_provider_;
     wordpress::WordPressConfigUpdater wordpress_config_updater_;
     wordpress::WordPressRuntimeCommandExecutorRunner wordpress_runtime_runner_;
     wordpress::WordPressRuntimeVerifier wordpress_runtime_verifier_;
@@ -191,6 +196,8 @@ private:
     runtime::PortManager port_manager_;
     runtime::RuntimeActionExecutor runtime_action_executor_;
     runtime::SiteRuntimeManager site_runtime_;
+    database::DatabaseLifecycleService database_lifecycle_;
+    database::DatabaseLifecycleJobService database_lifecycle_jobs_;
     database::DatabaseViewService database_view_;
     runtime::RuntimeSynchronizer runtime_sync_;
     runtime::HealthRegistry health_;

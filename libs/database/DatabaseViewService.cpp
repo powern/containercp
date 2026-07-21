@@ -137,10 +137,14 @@ DatabaseView DatabaseViewService::build_view(const Database& database) const {
         view.credential_state = "unknown";
         view.ownership_state = "imported";
         view.imported_state = "site_missing";
+        view.can_verify = false;
+        view.can_drop = false;
+        view.drop_block_reason = "site_missing";
         return view;
     }
 
     view.domain = site_record->domain;
+    view.can_verify = true;
     view.runtime_status = normalize_runtime_status(runtime_lookup_(*site_record).status);
 
     int site_database_count = 0;
@@ -156,8 +160,16 @@ DatabaseView DatabaseViewService::build_view(const Database& database) const {
     view.imported_state = view.ownership_state == "imported" ? "detected" : "none";
     if (site_database_count != 1) {
         view.imported_state = "metadata_conflict";
+        view.drop_block_reason = "database_cardinality_invalid";
     } else if (!credential.available && view.ownership_state == "imported") {
         view.imported_state = "credential_unavailable";
+        view.drop_block_reason = "ownership_not_managed";
+    } else if (view.ownership_state == "imported") {
+        view.drop_block_reason = "ownership_not_managed";
+    } else if (!database.enabled) {
+        view.drop_block_reason = "database_disabled";
+    } else {
+        view.can_drop = true;
     }
 
     if (view.runtime_status != "Running" || !credential.available) {
@@ -186,6 +198,10 @@ std::string DatabaseViewService::view_to_json(const DatabaseView& view) {
          << "\",\"credential_state\":\"" << api::JsonFormatter::escape(view.credential_state)
          << "\",\"ownership_state\":\"" << api::JsonFormatter::escape(view.ownership_state)
          << "\",\"imported_state\":\"" << api::JsonFormatter::escape(view.imported_state)
+         << "\",\"can_create\":" << (view.can_create ? "true" : "false")
+         << ",\"can_verify\":" << (view.can_verify ? "true" : "false")
+         << ",\"can_drop\":" << (view.can_drop ? "true" : "false")
+         << ",\"drop_block_reason\":\"" << api::JsonFormatter::escape(view.drop_block_reason)
          << "\",\"created_at\":\"" << api::JsonFormatter::escape(view.created_at)
          << "\",\"updated_at\":\"" << api::JsonFormatter::escape(view.updated_at)
          << "\",\"enabled\":" << (view.enabled ? "true" : "false")

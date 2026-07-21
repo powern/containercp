@@ -274,7 +274,11 @@ subsystems.
 |--------|------|---------|-------|
 | GET | `/api/databases` | List enriched read-only database inventory | `DatabaseViewService` |
 | GET | `/api/databases/<id>` | Read one enriched database view | `DatabaseViewService` |
-| POST | `/api/databases/remove` | Remove a database record | `DatabaseManager` |
+| POST | `/api/databases` | Queue managed MariaDB database creation for a Site | `DatabaseLifecycleJobService` |
+| POST | `/api/databases/<id>/verify` | Queue non-destructive physical/metadata verification | `DatabaseLifecycleJobService` |
+| POST | `/api/databases/<id>/drop` | Queue destructive physical drop with exact typed confirmation | `DatabaseLifecycleJobService` |
+| POST | `/api/databases/<id>/forget-metadata` | Explicit metadata-only recovery removal | `DatabaseLifecycleJobService` |
+| POST | `/api/databases/remove` | Deprecated metadata-only removal by name; never drops physical MariaDB objects | `DatabaseManager` |
 
 **GET /api/databases** — returns DB-1 read-only `DatabaseView` objects. This
 endpoint does not create, drop, import, export, rotate passwords, deploy
@@ -298,6 +302,10 @@ Each item includes:
   "credential_state": "available",
   "ownership_state": "managed",
   "imported_state": "none",
+  "can_create": false,
+  "can_verify": true,
+  "can_drop": true,
+  "drop_block_reason": "",
   "created_at": "",
   "updated_at": "",
   "enabled": true
@@ -317,6 +325,13 @@ Field semantics:
 - `ownership_state`: `managed` or `imported`.
 - `imported_state`: `none`, `detected`, `credential_unavailable`,
   `metadata_conflict`, or `site_missing`.
+- `can_create`: reserved for future richer create discovery; database records
+  currently return `false` because create is a Site-level capability.
+- `can_verify`: whether `POST /api/databases/<id>/verify` can be requested.
+- `can_drop`: whether the database is managed and passes DB-3 drop policy.
+- `drop_block_reason`: machine-readable reason such as
+  `ownership_not_managed`, `database_cardinality_invalid`, `database_disabled`,
+  or `site_missing`.
 - `created_at` and `updated_at` are present for the GUI contract. They are empty
   until database metadata timestamps are added in a later storage task.
 
@@ -327,6 +342,75 @@ SQL password literals, command output with secrets, or one-time Adminer tokens.
 **GET /api/databases/<id>** — returns one `DatabaseView` object. Returns `404`
 when the database record does not exist and `400` for a non-numeric id.
 
+**POST /api/databases** — queues physical creation of one managed MariaDB
+application database for a Site. Body:
+
+```json
+{
+  "site_id": 1,
+  "database_name": "example_db",
+  "database_user": "example_user"
+}
+```
+
+Returns HTTP `202 Accepted` with a public-safe job reference:
+
+```json
+{
+  "success": true,
+  "data": {
+    "job_id": 42,
+    "operation": "create",
+    "database_id": 7,
+    "site_id": 1,
+    "status": "pending",
+    "status_url": "/api/jobs?id=42",
+    "message": "Database lifecycle job queued"
+  }
+}
+```
+
+Create validates that the Site exists and currently has no enabled managed
+database record, validates the MariaDB database/user identifiers, creates
+metadata with a generated password, then the job creates the physical database,
+managed user, grants, verifies login, and persists final metadata. Partial
+physical creation is compensated by dropping only resources created by the job.
+
+**POST /api/databases/<id>/verify** — queues a non-destructive verification job.
+Verify reports through job steps for ownership, runtime availability,
+service-account authentication, database existence, managed-user existence, and
+login/selected-database access. It does not create objects, change grants,
+rotate passwords, restart containers, rewrite WordPress configuration, or adopt
+imported databases.
+
+**POST /api/databases/<id>/drop** — queues destructive physical drop. Body:
+
+```json
+{
+  "confirmation": "example_db"
+}
+```
+
+The confirmation must exactly match either the database name or owning site
+domain. Generic values such as `true`, `yes`, `delete`, or `drop` are rejected.
+The job revalidates the database record, owning Site, one-database cardinality,
+target relation, runtime, service account, and `management_ownership=managed`
+before physical deletion. It drops only the selected managed database, revokes
+that database's grants, and drops the managed user only when grant checks indicate
+the user is not shared. Metadata is removed only after physical cleanup succeeds
+or the physical database is already absent and safe reconciliation succeeds.
+
+**POST /api/databases/<id>/forget-metadata** — explicit metadata-only recovery.
+This endpoint requires the same exact typed confirmation as drop, removes only
+the ContainerCP metadata record, emits an audit warning, and never drops physical
+MariaDB database/user/grant objects. It is intended for stale metadata recovery,
+not normal delete.
+
+**POST /api/databases/remove** — deprecated legacy metadata-only removal by
+database name. It preserves the historical behavior for temporary backward
+compatibility, emits an audit/deprecation warning, returns `deprecated:true` and
+`physical_drop:false`, and must not be used by new GUI code.
+
 **Web UI behavior:** The DB-2 Databases page consumes these DB-1 endpoints as a
 health-focused administrator dashboard. It computes summary cards, composite
 health, search, filters, and sorting client-side from the returned fields. The
@@ -334,7 +418,8 @@ UI must not expose passwords and must not add lifecycle behavior beyond existing
 backend endpoints. Password rotation in the Databases detail panel reuses
 `GET /api/wordpress/database-credentials/status?site_id=N`,
 `POST /api/wordpress/database-credentials/rotate`, and `GET /api/jobs?id=N`.
-Adminer, import, export, backup, and delete remain future phases.
+Adminer, import, export, backup, adoption, and multi-database management remain
+future phases.
 
 ### 2.11a WordPress Database Credentials
 

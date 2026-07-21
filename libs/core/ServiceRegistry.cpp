@@ -41,6 +41,7 @@ ServiceRegistry::ServiceRegistry()
     , storage_(config_.database_dir(), storage_backend_options(config_))
     , mariadb_command_runner_(credential_command_executor_)
     , mariadb_credential_provider_(mariadb_command_runner_)
+    , mariadb_lifecycle_provider_(mariadb_command_runner_)
     , wordpress_runtime_runner_(credential_command_executor_)
     , wordpress_runtime_verifier_(wordpress_runtime_runner_)
     , database_credential_rotation_adapter_(
@@ -81,6 +82,16 @@ ServiceRegistry::ServiceRegistry()
     , runtime_(logger_, config_.sites_dir())
     , runtime_action_executor_(logger_)
     , site_runtime_(logger_, config_.sites_dir(), runtime_action_executor_)
+    , database_lifecycle_(sites_, databases_, site_runtime_, mariadb_lifecycle_provider_, config_.sites_dir(), [this]() {
+        storage_.save_databases(databases_.list());
+        return true;
+    })
+    , database_lifecycle_jobs_(sites_, databases_, jobs_, job_executor_, database_lifecycle_, []() {
+        return utils::PasswordGenerator::generate(48);
+    }, [this]() {
+        storage_.save_databases(databases_.list());
+        return true;
+    })
     , database_view_(logger_, databases_, sites_, site_runtime_, wordpress_config_, mariadb_credential_provider_, config_.sites_dir())
     , mail_orchestrator_(mail_credentials_, runtime_, filesystem_, config_)
     , proxy_view_(logger_, reverse_proxies_, sites_, cert_store_, proxy_provider_, site_runtime_)
@@ -633,6 +644,10 @@ database::DatabaseManager& ServiceRegistry::databases() {
 
 database::DatabaseViewService& ServiceRegistry::database_view() {
     return database_view_;
+}
+
+database::DatabaseLifecycleJobService& ServiceRegistry::database_lifecycle_jobs() {
+    return database_lifecycle_jobs_;
 }
 
 database::DatabaseCredentialRotationJobService& ServiceRegistry::database_credential_rotation_jobs() {

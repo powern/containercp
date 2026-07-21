@@ -37,6 +37,19 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site, core:
         env.generate(site.domain, site.owner, site.db_name, site.db_user, site.db_password);
     }
 
+    fs_.create_directory(site_dir + "config/mariadb/initdb/");
+    fs_.create_file(site_dir + "config/mariadb/initdb/10-containercp-service-account.sh",
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "mariadb -uroot -p\"$MYSQL_ROOT_PASSWORD\" <<SQL\n"
+        "CREATE USER IF NOT EXISTS '$CONTAINERCP_DB_SERVICE_USER'@'%' IDENTIFIED BY '$CONTAINERCP_DB_SERVICE_PASSWORD';\n"
+        "GRANT CREATE USER ON *.* TO '$CONTAINERCP_DB_SERVICE_USER'@'%';\n"
+        "GRANT SELECT ON mysql.user TO '$CONTAINERCP_DB_SERVICE_USER'@'%';\n"
+        "GRANT SELECT ON mysql.db TO '$CONTAINERCP_DB_SERVICE_USER'@'%';\n"
+        "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES, GRANT OPTION ON \\`$MYSQL_DATABASE\\`.* TO '$CONTAINERCP_DB_SERVICE_USER'@'%';\n"
+        "FLUSH PRIVILEGES;\n"
+        "SQL\n");
+
     auto* php_version = php_.get_default();
     std::string php_image = php_version ? php_version->image : "ghcr.io/powern/containercp-php:8.4";
 

@@ -210,14 +210,14 @@ TEST_CASE("WordPress credential rotation API returns job id only") {
 }
 
 TEST_CASE("WordPress credential UI uses public endpoints without raw password fields") {
-    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/web/app.js");
+    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/web/pages/sites.js");
     REQUIRE(in.is_open());
     std::string js((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 
     CHECK(js.find("/api/wordpress/database-credentials/status") != std::string::npos);
     CHECK(js.find("/api/wordpress/database-credentials/rotate") != std::string::npos);
-    const auto start = js.find("WORDPRESS DATABASE CREDENTIALS");
-    const auto end = js.find("PHP MAIL CARD");
+    const auto start = js.find("/* ===== WORDPRESS DATABASE CREDENTIALS ===== */");
+    const auto end = js.find("/* ===== PHP MAIL CARD ===== */");
     REQUIRE(start != std::string::npos);
     REQUIRE(end != std::string::npos);
     const std::string wordpress_block = js.substr(start, end - start);
@@ -229,20 +229,23 @@ TEST_CASE("WordPress credential UI uses public endpoints without raw password fi
     CHECK(wordpress_block.find("targetBadgeClass") != std::string::npos);
     CHECK(wordpress_block.find("disabledReason") != std::string::npos);
     CHECK(wordpress_block.find("renderWordPressRotationDiagnostics") != std::string::npos);
-    CHECK(wordpress_block.find("compensation_result") != std::string::npos);
-    CHECK(wordpress_block.find("manual_recovery_required") != std::string::npos);
     CHECK(wordpress_block.find("siteDatabases[0]") == std::string::npos);
+
+    std::ifstream jobs_in(std::string(TEST_SOURCE_DIR) + "/web/core/jobs.js");
+    REQUIRE(jobs_in.is_open());
+    std::string jobs_js((std::istreambuf_iterator<char>(jobs_in)), std::istreambuf_iterator<char>());
+    CHECK(jobs_js.find("compensation_result") != std::string::npos);
+    CHECK(jobs_js.find("manual_recovery_required") != std::string::npos);
 }
 
 TEST_CASE("Database dashboard UI implements DB-2 health workflow without secret surfaces") {
-    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/web/app.js");
+    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/web/pages/databases.js");
     REQUIRE(in.is_open());
     std::string js((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 
     const auto start = js.find("/* ===== DATABASES ===== */");
-    const auto end = js.find("/* ===== SSL ===== */");
+    const auto end = js.size();
     REQUIRE(start != std::string::npos);
-    REQUIRE(end != std::string::npos);
     const std::string db_block = js.substr(start, end - start);
 
     CHECK(db_block.find("/api/databases") != std::string::npos);
@@ -295,8 +298,11 @@ TEST_CASE("Database dashboard UI implements DB-2 health workflow without secret 
 
     CHECK(js.find("pollRotationJob") != std::string::npos);
     CHECK(js.find("renderRotationJobTimeline") != std::string::npos);
-    CHECK(js.find("compensation_result") != std::string::npos);
-    CHECK(js.find("manual_recovery_required") != std::string::npos);
+    std::ifstream shared_in(std::string(TEST_SOURCE_DIR) + "/web/core/jobs.js");
+    REQUIRE(shared_in.is_open());
+    std::string shared_js((std::istreambuf_iterator<char>(shared_in)), std::istreambuf_iterator<char>());
+    CHECK(shared_js.find("compensation_result") != std::string::npos);
+    CHECK(shared_js.find("manual_recovery_required") != std::string::npos);
 
     CHECK(db_block.find("DB_PASSWORD") == std::string::npos);
     CHECK(db_block.find("MYSQL_ROOT_PASSWORD") == std::string::npos);
@@ -304,6 +310,23 @@ TEST_CASE("Database dashboard UI implements DB-2 health workflow without secret 
     CHECK(db_block.find("localStorage") == std::string::npos);
     CHECK(db_block.find("sessionStorage") == std::string::npos);
     CHECK(db_block.find("console.log") == std::string::npos);
+}
+
+TEST_CASE("Database DB-3 API surface separates physical drop from metadata-only removal") {
+    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/libs/api/ApiServer.cpp");
+    REQUIRE(in.is_open());
+    std::string api((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    CHECK(api.find("POST\", \"/api/databases\"") != std::string::npos);
+    CHECK(api.find("action == \"verify\"") != std::string::npos);
+    CHECK(api.find("action == \"drop\"") != std::string::npos);
+    CHECK(api.find("action == \"forget-metadata\"") != std::string::npos);
+    CHECK(api.find("database_lifecycle_jobs()") != std::string::npos);
+    CHECK(api.find("deprecated_metadata_only") != std::string::npos);
+    CHECK(api.find("physical MariaDB objects were not dropped") != std::string::npos);
+    CHECK(api.find("DB_PASSWORD") == std::string::npos);
+    CHECK(api.find("MYSQL_ROOT_PASSWORD") == std::string::npos);
+    CHECK(api.find("CONTAINERCP_DB_SERVICE_PASSWORD") == std::string::npos);
 }
 
 TEST_CASE("SSL providers response format") {

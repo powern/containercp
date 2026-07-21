@@ -28,6 +28,10 @@ struct DatabaseView {
     std::string credential_state = "unknown";
     std::string ownership_state = "imported";
     std::string imported_state = "unknown";
+    bool can_create = false;
+    bool can_verify = false;
+    bool can_drop = false;
+    std::string drop_block_reason;
     std::string created_at;
     std::string updated_at;
     bool enabled = false;

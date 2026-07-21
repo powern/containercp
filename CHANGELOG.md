@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-21 | `this commit` | Database — Add safe MariaDB lifecycle
+
+**Summary:** Implemented DB-3 safe physical MariaDB lifecycle for ContainerCP v0.8. Added backend-owned create, verify, drop, and metadata-only recovery workflows with a provider boundary, strict identifier validation, secure temporary credential files, service-account runtime authentication for new stacks, explicit destructive confirmation, compensation for partial create, and deprecated legacy metadata-only remove semantics.
+
+**Files changed:** `libs/database/*`, `libs/core/ServiceRegistry.*`, `libs/api/ApiServer.cpp`, `libs/docker/EnvGenerator.cpp`, `libs/docker/ComposeGenerator.cpp`, `libs/filesystem/SiteLayout.cpp`, `libs/provider/DockerComposeProvider.cpp`, `web/pages/databases.js`, `tests/test_database_lifecycle.cpp`, `tests/test_api.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `docs/api/API_REFERENCE.md`, `docs/development/database-lifecycle.md`, `planning/database-module-v0.8-implementation-plan.md`, `planning/database-module-v0.8-architecture.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Databases now exposes backend job-backed create, verify, and physical drop capabilities where policy allows them. Physical deletion is only available through `POST /api/databases/<id>/drop` and requires exact typed confirmation. Imported or ownership-uncertain databases remain read-only. `POST /api/databases/remove` remains metadata-only, is marked deprecated, emits an audit warning, and is not used by the new GUI. `POST /api/databases/<id>/forget-metadata` provides explicit metadata-only recovery.
+
+**Validation:** Clean configure passed with `cmake -S . -B build-db3 -G Ninja -DCMAKE_BUILD_TYPE=Release`. Clean build passed with `cmake --build build-db3 --target containercp_tests containercp containercpd -- -j1`, with no compiler diagnostics. Focused DB-3 tests passed for identifier validation, secure temporary files, service-account option-file escaping, provider argv safety, lifecycle compensation, imported mutation rejection, confirmation validation, audit redaction, and DB-3 API surface (`12` cases, `93` assertions). The stale modular frontend static test for WordPress credential rotation was updated and passed (`1` case, `17` assertions). The full doctest suite excluding only `SiteCreateOperation rollback — what remains after failure` passed (`838` cases, `5848` assertions). Full doctest and CTest without exclusions are blocked in this workspace by long-running existing Docker containers named `site-1-*`, which collide with the rollback integration test's fixed container names; no Docker cleanup was performed without approval. Frontend syntax and baseline checks passed with `node --check` across Web UI JavaScript and `node scripts/check-frontend-baseline.js`. `git diff --check` passed. Browser validation remains blocked because no browser executable is installed. Disposable MariaDB lifecycle validation was not run because the workspace has active site containers and cleanup/destructive lifecycle validation requires explicit approval.
+
+**Known risks:** DB-3 service-account bootstrap applies to newly initialized stacks. Older/imported stacks without `CONTAINERCP_DB_SERVICE_USER` and `CONTAINERCP_DB_SERVICE_PASSWORD` return `service_account_unavailable` and require explicit operator recovery/adoption work. Adminer, import/export, database-aware backup, imported database adoption, and multiple managed databases remain deferred.
+
+---
+
 ## 2026-07-21 | `this commit` | Frontend — Restore Databases DB-2 layout
 
 **Summary:** Fixed the blocking Databases visual regression introduced by the UI 2.0 CSS modularization. Restored the approved DB-2 header structure and DB-specific CSS ownership for summary cards, filters, inventory, drawer typography, and responsive behavior.
