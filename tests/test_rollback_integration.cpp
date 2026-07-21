@@ -48,6 +48,14 @@ TEST_CASE("SiteCreateOperation rollback — what remains after failure") {
     database::DatabaseManager databases;
     proxy::ReverseProxyManager proxies;
 
+    site::Site high_water;
+    high_water.id = 100000 + static_cast<uint64_t>(::getpid() % 100000);
+    high_water.domain = "reserved-rollback-id.local";
+    high_water.name = high_water.domain;
+    high_water.owner = "system";
+    high_water.node_id = 1;
+    sites.set_sites({high_water});
+
     // Proxy provider that returns error — simulates failure after site creation
     class ErrorProxyProvider : public proxy::ProxyProvider {
     public:

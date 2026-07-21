@@ -1,4 +1,6 @@
 #include "SiteCreateOperation.h"
+#include "logger/Logger.h"
+#include "operations/SiteDatabaseVolumeGuard.h"
 #include "utils/PasswordGenerator.h"
 #include "utils/StringUtils.h"
 #include "utils/Validator.h"
@@ -217,6 +219,16 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner,
     site.id = sites_.create(domain, owner, node.id, web_server);
     st.site_id = site.id;
     st.site_record_created = true;
+
+    CommandExecutorDockerRunner docker_runner;
+    auto volume_check = ensure_database_volume_absent_for_create(docker_runner, domain, site.id);
+    if (!volume_check.success) {
+        logger::Logger::instance().warning("SITE_CREATE", "database volume collision refused domain=" + domain + " site_id=" + std::to_string(site.id));
+        do_rollback(st, sites_, domains_, databases_, proxies_,
+                    proxy_provider_, fs_, cfg_);
+        update_job_and_progress(jobs, job_id, 0, "Refused stale database volume reuse");
+        return volume_check;
+    }
 
     update_job_and_progress(jobs, job_id, 15, "Creating domain record...");
     domains_.create(domain, 0, site.id);

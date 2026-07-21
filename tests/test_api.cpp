@@ -329,6 +329,19 @@ TEST_CASE("Database DB-3 API surface separates physical drop from metadata-only 
     CHECK(api.find("CONTAINERCP_DB_SERVICE_PASSWORD") == std::string::npos);
 }
 
+TEST_CASE("MariaDB service-account init script rejects missing variables without echoing secrets") {
+    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/libs/provider/DockerComposeProvider.cpp");
+    REQUIRE(in.is_open());
+    std::string source((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    CHECK(source.find("CONTAINERCP_DB_SERVICE_USER:-") != std::string::npos);
+    CHECK(source.find("CONTAINERCP_DB_SERVICE_PASSWORD:-") != std::string::npos);
+    CHECK(source.find("ContainerCP MariaDB service account environment is missing") != std::string::npos);
+    CHECK(source.find("GRANT CREATE ON *.*") != std::string::npos);
+    CHECK(source.find("set -x") == std::string::npos);
+    CHECK(source.find("echo \\\"$CONTAINERCP_DB_SERVICE_PASSWORD") == std::string::npos);
+}
+
 TEST_CASE("SSL providers response format") {
     std::string json = "{\"success\":true,\"data\":["
         "{\"id\":\"letsencrypt\",\"name\":\"Let's Encrypt\",\"supports_auto_renew\":true,\"supports_dns\":false}"

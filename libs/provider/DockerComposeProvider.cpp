@@ -41,8 +41,13 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site, core:
     fs_.create_file(site_dir + "config/mariadb/initdb/10-containercp-service-account.sh",
         "#!/bin/sh\n"
         "set -eu\n"
+        "if [ -z \"${CONTAINERCP_DB_SERVICE_USER:-}\" ] || [ -z \"${CONTAINERCP_DB_SERVICE_PASSWORD:-}\" ]; then\n"
+        "  echo \"ContainerCP MariaDB service account environment is missing\" >&2\n"
+        "  exit 1\n"
+        "fi\n"
         "mariadb -uroot -p\"$MYSQL_ROOT_PASSWORD\" <<SQL\n"
         "CREATE USER IF NOT EXISTS '$CONTAINERCP_DB_SERVICE_USER'@'%' IDENTIFIED BY '$CONTAINERCP_DB_SERVICE_PASSWORD';\n"
+        "GRANT CREATE ON *.* TO '$CONTAINERCP_DB_SERVICE_USER'@'%';\n"
         "GRANT CREATE USER ON *.* TO '$CONTAINERCP_DB_SERVICE_USER'@'%';\n"
         "GRANT SELECT ON mysql.user TO '$CONTAINERCP_DB_SERVICE_USER'@'%';\n"
         "GRANT SELECT ON mysql.db TO '$CONTAINERCP_DB_SERVICE_USER'@'%';\n"

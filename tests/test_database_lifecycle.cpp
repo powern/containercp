@@ -5,6 +5,8 @@
 #include "database/DatabaseLifecycleService.h"
 #include "database/MariaDBProvider.h"
 #include "database/MariaDBSecureTempFile.h"
+#include "docker/ComposeGenerator.h"
+#include "filesystem/Filesystem.h"
 #include "logger/Logger.h"
 #include "runtime/CommandExecutor.h"
 
@@ -151,6 +153,28 @@ TEST_CASE("MariaDB service-account option file escapes option syntax characters"
     CHECK(content.find("password=with\\sspace\\\\slash\\nline") != std::string::npos);
     CHECK(content.find("host=local\\shost") != std::string::npos);
     CHECK(content.find("with space") == std::string::npos);
+}
+
+TEST_CASE("Compose generation passes DB-3 service-account variables into MariaDB") {
+    filesystem::Filesystem fs;
+    const auto root = std::filesystem::temp_directory_path() / ("containercp-compose-db3-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "templates");
+    docker::ComposeGenerator gen(fs, (root / "templates/").string());
+    const auto compose_path = root / "docker-compose.yml";
+    REQUIRE(gen.generate("test-gui-apache.local", "admin", "php:8.4", compose_path.string(), "12",
+                         "httpd:alpine", "/usr/local/apache2/conf/extra", "/usr/local/apache2/logs",
+                         "/usr/local/apache2/htdocs", "config/apache", "logs/apache", ""));
+    std::ifstream in(compose_path);
+    std::string compose((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    CHECK(compose.find("CONTAINERCP_DB_SERVICE_USER=${CONTAINERCP_DB_SERVICE_USER}") != std::string::npos);
+    CHECK(compose.find("CONTAINERCP_DB_SERVICE_PASSWORD=${CONTAINERCP_DB_SERVICE_PASSWORD}") != std::string::npos);
+    CHECK(compose.find("containercp.site.id=12") != std::string::npos);
+    CHECK(compose.find("containercp.domain=test-gui-apache.local") != std::string::npos);
+    CHECK(compose.find("CONTAINERCP_DB_SERVICE_PASSWORD=plain") == std::string::npos);
+    CHECK(compose.find("MYSQL_ROOT_PASSWORD=plain") == std::string::npos);
+    std::filesystem::remove_all(root);
 }
 
 TEST_CASE("MariaDB provider cleans temporary stdin file when command fails") {

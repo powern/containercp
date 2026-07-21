@@ -66,6 +66,8 @@ Normal sites are returned unchanged by `JsonFormatter::site()`.
 **POST /api/sites/remove** — body: `{"domain":"..."}`. Returns 403 if domain equals
 `server_hostname` (admin-panel system site cannot be removed).
 
+Confirmed Site removal is destructive for resources exclusively owned by the Site. The operation stops the Site stack, removes the Site directory and metadata, and removes the exact owned MariaDB `db-data` named volume only after ownership is verified through ContainerCP/Compose labels or a legacy target-container mount proof. Unknown, mismatched, or shared volumes are refused and reported as operation failures. Recreating a Site with the same domain fails closed if the expected MariaDB volume already exists, rather than silently reusing stale database contents.
+
 ### 2.3 Runtime
 
 | Method | Path | Purpose | Owner |

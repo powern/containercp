@@ -22,6 +22,8 @@ DB-3 implements the safe physical MariaDB lifecycle subset of this architecture:
 - `DatabaseIdentifierValidator` is the single validator for MariaDB database and user identifiers.
 - `MariaDBSecureTempFile` owns host temporary credential/query files with owner-only permissions and cleanup on success, failure, and exception unwinding.
 - New Site stacks receive a `containercp_service` MariaDB service account through `.env` and a first-boot MariaDB init script. `MYSQL_ROOT_PASSWORD` is used only by that bootstrap script during MariaDB entrypoint initialization; normal DB-3 operations do not fall back to root.
+- The generated Compose `mariadb` service passes `CONTAINERCP_DB_SERVICE_USER` and `CONTAINERCP_DB_SERVICE_PASSWORD` into the container so the first-boot init script can consume them.
+- Site database volumes are treated as Site-owned destructive resources only when exact ownership is proven. New volumes carry `containercp.site.id` and `containercp.domain` labels. Legacy unlabeled volumes may be cleaned only when the target MariaDB container mount proves ownership. Site creation fails closed if the expected volume already exists.
 - Older/imported stacks without `CONTAINERCP_DB_SERVICE_USER` and `CONTAINERCP_DB_SERVICE_PASSWORD` report `service_account_unavailable` rather than silently using root or adopting the database.
 - `POST /api/databases/remove` remains deprecated metadata-only compatibility behavior. Physical deletion is available only through `POST /api/databases/<id>/drop`; explicit recovery removal is `POST /api/databases/<id>/forget-metadata`.
 

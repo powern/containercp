@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-21 | `this commit` | Site — Prevent stale database volume reuse
+
+**Summary:** Fixed a DB-3 production validation regression where recreated Sites could silently reuse an old MariaDB named volume and where generated stacks did not pass DB-3 service-account variables into the MariaDB container. New stacks now inject `CONTAINERCP_DB_SERVICE_USER` and `CONTAINERCP_DB_SERVICE_PASSWORD` into the `mariadb` service, generated DB volumes carry Site ownership labels, confirmed Site removal removes only the exact owned MariaDB data volume, and Site creation fails closed when the expected DB volume already exists.
+
+**Files changed:** `libs/docker/ComposeGenerator.cpp`, `libs/provider/DockerComposeProvider.cpp`, `libs/operations/SiteCreateOperation.cpp`, `libs/operations/SiteRemoveOperation.cpp`, `libs/operations/SiteDatabaseVolumeGuard.*`, `tests/test_database_lifecycle.cpp`, `tests/test_site_database_volume_guard.cpp`, `tests/test_api.cpp`, `tests/test_rollback_integration.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `docs/development/database-lifecycle.md`, `docs/api/API_REFERENCE.md`, `planning/database-module-v0.8-architecture.md`, `planning/database-module-v0.8-implementation-plan.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Fully confirmed Site deletion now cleans the Site's exclusively owned MariaDB data volume instead of leaving stale data for future same-domain recreations. Site creation refuses a pre-existing expected MariaDB volume and reports an operator-recovery collision rather than attaching it silently. New MariaDB stacks can initialize the DB-3 service account because the required variables are present inside the container. Existing pre-fix stacks may need explicit Site lifecycle recovery or validation-VM cleanup; unknown/shared/mismatched volumes are never deleted automatically.
+
+**Validation:** Clean configure passed. Clean build passed with `containercp_tests`, `containercp`, and `containercpd`. Focused DB-3, Compose generation, service-account init-script, Site volume ownership, stale-volume collision, cleanup failure, and rollback tests passed (`23` cases, `134` assertions). Site creation rollback integration passed with collision-free fixture names. Full doctest passed (`851` cases, `5893` assertions). CTest passed (`1/1`). Frontend syntax checks and `node scripts/check-frontend-baseline.js` passed. `git diff --check` passed.
+
+**Known risks:** Legacy unlabeled volumes can be removed only when currently mounted by the exact target MariaDB container with matching Site/Compose ownership proof. If a stale legacy volume exists but is not mounted, creation refuses reuse and requires explicit operator recovery instead of automatic deletion.
+
+---
+
 ## 2026-07-21 | `this commit` | Database — Add safe MariaDB lifecycle
 
 **Summary:** Implemented DB-3 safe physical MariaDB lifecycle for ContainerCP v0.8. Added backend-owned create, verify, drop, and metadata-only recovery workflows with a provider boundary, strict identifier validation, secure temporary credential files, service-account runtime authentication for new stacks, explicit destructive confirmation, compensation for partial create, and deprecated legacy metadata-only remove semantics.

@@ -27,6 +27,7 @@ add_executable(containercp_tests
     test_migration_api.cpp
     test_database_credential_rotation.cpp
     test_database_lifecycle.cpp
+    test_site_database_volume_guard.cpp
     test_database_view_service.cpp
     test_mariadb_credential_provider.cpp
     test_migrate_sqlite.cpp
@@ -123,6 +124,8 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/filesystem/SiteLayout.cpp
     ${CMAKE_SOURCE_DIR}/libs/template/TemplateEngine.cpp
     ${CMAKE_SOURCE_DIR}/libs/operations/SiteCreateOperation.cpp
+    ${CMAKE_SOURCE_DIR}/libs/operations/SiteDatabaseVolumeGuard.cpp
+    ${CMAKE_SOURCE_DIR}/libs/operations/SiteRemoveOperation.cpp
     ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressConfigDetector.cpp
     ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressPhpDefineScanner.cpp
     ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressConfigService.cpp

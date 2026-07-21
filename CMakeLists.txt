@@ -75,6 +75,7 @@ set(CONTAINERCP_SOURCES
     libs/mail/providers/DockerMailProvider.cpp
     libs/node/Node.cpp
     libs/operations/SiteCreateOperation.cpp
+    libs/operations/SiteDatabaseVolumeGuard.cpp
     libs/operations/SiteRemoveOperation.cpp
     libs/php/PhpVersion.cpp
     libs/php/PhpVersionManager.cpp

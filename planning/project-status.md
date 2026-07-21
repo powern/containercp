@@ -415,7 +415,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | WP-5: DatabaseCredentialRotationService | ✅ | Saga and compensation for MariaDB, metadata, `.env`, and `wp-config.php` |
 | DB-1: Databases read-only inventory | ✅ | Enriched `DatabaseViewService` backend implemented and repository-validated; read-only only |
 | DB-2: Database Management GUI | ✅ | Health-focused Web UI dashboard implemented and repository-validated; reuses DB-1 inventory and existing password rotation jobs |
-| DB-3: Safe Physical MariaDB Lifecycle | ✅ | Backend-owned create/verify/drop jobs, provider boundary, identifier validation, secure temporary credential files, service-account bootstrap for new stacks, explicit physical drop, explicit metadata-only recovery, and minimal DB-2 GUI actions |
+| DB-3: Safe Physical MariaDB Lifecycle | ✅ | Backend-owned create/verify/drop jobs, provider boundary, identifier validation, secure temporary credential files, service-account bootstrap for new stacks, service-account Compose injection, stale MariaDB volume collision protection, exact owned volume cleanup on confirmed Site removal, explicit physical drop, explicit metadata-only recovery, and minimal DB-2 GUI actions |
 
 ## Future — Multi-node
 

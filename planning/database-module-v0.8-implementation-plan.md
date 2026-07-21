@@ -143,6 +143,11 @@ Backend tasks:
 - [x] Add rollback for partial create failures.
 - [x] Add audit log entries for create, drop, verify, and repair.
 - [x] Ensure `MYSQL_ROOT_PASSWORD` is bootstrap-only and not used for normal runtime operations.
+- [x] Pass DB-3 service-account variables into generated MariaDB containers.
+- [x] Fail MariaDB service-account init clearly when required env variables are absent.
+- [x] Label generated MariaDB data volumes with exact Site ownership.
+- [x] Refuse Site creation when the expected MariaDB data volume already exists.
+- [x] Remove exact owned MariaDB data volume during confirmed destructive Site removal.
 - [ ] Add later explicit Adopt Database workflow for the selected Site's imported database; do not include it in DB-1.
 
 REST API tasks:
@@ -159,6 +164,12 @@ Tests:
 - [x] Unit test validation rejects dangerous names.
 - [x] Unit test provider constructs no shell strings.
 - [x] Unit test option-file lifecycle creates and removes files safely.
+- [x] Unit test generated Compose passes service-account env variables into MariaDB.
+- [x] Unit test init script rejects missing service-account variables.
+- [x] Unit test Site removal identifies exact owned database volumes.
+- [x] Unit test volume cleanup refuses mismatched/shared/unknown volumes.
+- [x] Unit test Site creation stale-volume collision fails closed.
+- [x] Unit test cleanup failure is visible and redacted.
 - [ ] Integration test create creates database, user, and grants in disposable MariaDB. Blocked locally by active Docker site containers; requires approved validation VM/disposable environment.
 - [ ] Integration test drop removes physical objects and metadata. Blocked locally by active Docker site containers; requires approved validation VM/disposable environment.
 - [x] Unit test partial create failure rolls back physical objects and metadata.
@@ -167,8 +178,8 @@ Tests:
 Validation:
 
 - [ ] Disposable local Compose/MariaDB validation passes. Blocked locally by active `site-1-*` Docker containers and no approved cleanup.
-- [ ] Full doctest suite passes. Blocked locally by Docker rollback-test container-name collision; suite excluding only that contaminated case passed.
-- [ ] CTest passes. Blocked for the same Docker rollback-test collision because CTest invokes the same doctest binary.
+- [x] Full doctest suite passes.
+- [x] CTest passes.
 - [x] No compiler warnings.
 
 Exit criteria:
@@ -373,8 +384,8 @@ Validation tasks:
 
 - [x] Clean configure.
 - [x] Clean build with zero compiler warnings.
-- [ ] Full doctest suite. Blocked locally by active Docker `site-1-*` containers; rest of suite passed with only the Docker rollback integration case excluded.
-- [ ] CTest. Blocked for the same Docker rollback integration collision.
+- [x] Full doctest suite.
+- [x] CTest.
 - [ ] Disposable local MariaDB lifecycle validation. Blocked locally by active site containers and no approved cleanup/destructive lifecycle validation.
 - [ ] Validation VM deployment.
 - [ ] Real product validation on a non-production site.

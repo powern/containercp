@@ -1,5 +1,8 @@
 #include "SiteRemoveOperation.h"
 
+#include "logger/Logger.h"
+#include "operations/SiteDatabaseVolumeGuard.h"
+
 #include <cstdlib>
 #include <sstream>
 #include <vector>
@@ -34,7 +37,29 @@ core::OperationResult SiteRemoveOperation::execute(const std::string& domain) {
 
     uint64_t site_id = site->id;
 
-    rt_.remove_site(domain);
+    CommandExecutorDockerRunner docker_runner;
+    auto volume_plan = inspect_site_database_volume(docker_runner, domain, site_id);
+    if (volume_plan.exists && !volume_plan.removable) {
+        logger::Logger::instance().warning("SITE_REMOVE", "database volume cleanup refused before site removal domain=" + domain + " site_id=" + std::to_string(site_id) + " volume=" + volume_plan.volume_name + " reason=" + volume_plan.reason);
+        return {false, "Database volume cleanup refused: " + volume_plan.reason};
+    }
+    if (volume_plan.exists) {
+        logger::Logger::instance().info("SITE_REMOVE", "database volume cleanup planned domain=" + domain + " site_id=" + std::to_string(site_id) + " volume=" + volume_plan.volume_name + " proof=" + volume_plan.reason);
+    }
+
+    auto runtime_remove = rt_.remove_site(domain);
+    if (!runtime_remove.success) {
+        return runtime_remove;
+    }
+
+    auto volume_remove = remove_site_database_volume(docker_runner, volume_plan);
+    if (!volume_remove.success) {
+        logger::Logger::instance().error("SITE_REMOVE", "database volume cleanup failed domain=" + domain + " site_id=" + std::to_string(site_id) + " volume=" + volume_plan.volume_name);
+        return volume_remove;
+    }
+    if (volume_plan.exists) {
+        logger::Logger::instance().info("SITE_REMOVE", "database volume cleanup completed domain=" + domain + " site_id=" + std::to_string(site_id) + " volume=" + volume_plan.volume_name);
+    }
 
     // Remove proxy config BEFORE removing site directory
     proxy_provider_.remove_proxy(domain);
