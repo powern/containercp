@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-21 | `this commit` | Frontend — Modularize Web UI entry and page ownership
+
+**Summary:** Implemented the approved frontend modularization plan with a native ES module entry point, explicit route registration, core API/auth/router/shell/helper modules, shared component helper modules, and page-owned modules for all current menu routes and detail routes. Added a Phase 0 baseline document and a frontend-only modular baseline validation script.
+
+**Files changed:** `web/app.js`, `web/index.html`, `web/js/cache.js`, `web/js/utils.js`, `web/core/*`, `web/components/*`, `web/pages/*`, `scripts/check-frontend-baseline.js`, `docs/WEB-UI.md`, `planning/frontend-modularization-architecture.md`, `planning/frontend-modularization-baseline.md`, `planning/frontend-modularization-checklist.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** The Web UI keeps the existing page structure, routes, visual style, REST API calls, and current no-build/no-npm deployment model. `web/app.js` is now a small module entry point that imports core modules and registers pages. The SSL domain link now resolves to the matching Site Detail page instead of calling an undefined `loadSite()` function. Mail delete refresh handlers now retain the current mail-domain id, and the frontend API helper honors the already-used optional method argument for existing `DELETE` mail calls.
+
+**Validation:** Frontend-only validation passed with `node --check` across every `web/**/*.js` file and `scripts/check-frontend-baseline.js`. The modular baseline check passed with `node scripts/check-frontend-baseline.js`. A module import smoke check passed with a minimal browser API stub. `git diff --check` passed. Browser/manual smoke checks and browser console review were not testable in this environment because no browser session is available. No full CMake configure/build, `containercp` build, `containercpd` build, full CTest, GitHub Actions, or new `build-*` directories were used.
+
+**Known risks:** Temporary global compatibility exports remain for inline event handlers while the behavior-preserving page modules stabilize. Browser runtime validation still needs a real browser session. The Domain Health Score ownership decision remains deferred; current frontend scoring behavior is preserved. Native `confirm()` replacement and broader UI 2.0 design-token work remain separate follow-up work.
+
+---
+
 ## 2026-07-20 | `this commit` | Database — Add DB-2 health dashboard UI
 
 **Summary:** Added the DB-2 Databases management GUI as a health-focused administrator dashboard. The page now shows database health summary cards, composite health states, live search, filters, attention-first sorting, responsive inventory rows/cards, and a database detail drawer with overview, health, relationships, metadata, and actions.

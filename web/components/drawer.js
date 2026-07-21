@@ -1,0 +1,1 @@
+export function closeDrawerById(drawerId, backdropId) { const drawer = document.getElementById(drawerId); const backdrop = document.getElementById(backdropId); if (drawer) drawer.classList.remove('open'); if (backdrop) backdrop.style.display='none'; }

@@ -436,7 +436,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | CLI | Stable | Thin client over UNIX socket |
 | Daemon | Stable | Dual-mode bootstrap/normal |
 | REST API | Active | |
-| Web UI | Active | |
+| Web UI | Active | Native frontend module layout implemented; `web/app.js` is now the ES module entry and page implementations live under `web/pages/` |
 | Sites | Stable | |
 | Domains | Stable | |
 | Databases | Planned | Postponed behind WordPress credential foundation — see `planning/database-module-v0.8-architecture.md` |

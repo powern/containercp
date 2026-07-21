@@ -214,14 +214,14 @@ window.HealthCache = {
 
     // 1. Root DNS
     ctx.rootDns = await tryFetch('rootDns', function() {
-      return fetchDnsForFqdn(domain, 'A,AAAA,MX,TXT,NS,CAA');
+      return window.fetchDnsForFqdn(domain, 'A,AAAA,MX,TXT,NS,CAA');
     });
 
     // 2. MailDomain data (fresh via API if not provided)
     var mail = mailDomain;
     if (!mail && domainRow && domainRow.mail_domain_id && domainRow.mail_domain_id > 0) {
       await tryFetch('mailDomains', async function() {
-        var mdRes = await api('/api/mail/domains');
+        var mdRes = await window.api('/api/mail/domains');
         if (mdRes && mdRes.data) {
           mail = mdRes.data.find(function(m) { return m.domain === domain || m.domain_id === domainRow.id; }) || null;
         }
@@ -235,19 +235,19 @@ window.HealthCache = {
       if (mail.dkim_public_key_dns) {
         var sel = mail.dkim_selector || 'dkim';
         ctx.dkimDns = await tryFetch('dkim', function() {
-          return fetchDnsForFqdn(sel + '._domainkey.' + domain, 'TXT');
+          return window.fetchDnsForFqdn(sel + '._domainkey.' + domain, 'TXT');
         });
       }
       ctx.dmarcDns = await tryFetch('dmarc', function() {
-        return fetchDnsForFqdn('_dmarc.' + domain, 'TXT');
+        return window.fetchDnsForFqdn('_dmarc.' + domain, 'TXT');
       });
       if (mail.mode === 'local-primary') {
         ctx.mtaStsDns = await tryFetch('mtaSts', function() {
-          return fetchDnsForFqdn('_mta-sts.' + domain, 'TXT');
+          return window.fetchDnsForFqdn('_mta-sts.' + domain, 'TXT');
         });
         if (serverHostname) {
           ctx.autoDns = await tryFetch('autodiscover', function() {
-            return fetchDnsForFqdn('autodiscover.' + domain, 'CNAME,A');
+            return window.fetchDnsForFqdn('autodiscover.' + domain, 'CNAME,A');
           });
         }
       }
@@ -258,7 +258,7 @@ window.HealthCache = {
 
     // 4. SSL — refresh via fresh GET /api/domains on force reload
     await tryFetch('ssl', async function() {
-      var domRes = await api('/api/domains');
+      var domRes = await window.api('/api/domains');
       if (domRes && domRes.data) {
         var fresh = domRes.data.find(function(d) { return d.domain === domain || d.id === (domainRow && domainRow.id); });
         if (fresh) {
@@ -278,7 +278,7 @@ window.HealthCache = {
     // 5. Runtime — site_id > 0 only
     if (domainRow && domainRow.site_id > 0) {
       ctx.runtimeStatus = await tryFetch('runtime', async function() {
-        var rtRes = await api('/api/runtime/' + domainRow.site_id);
+        var rtRes = await window.api('/api/runtime/' + domainRow.site_id);
         var status = (rtRes && rtRes.data) ? rtRes.data.web : null;
         ctx.runtimeLoaded = true;
         return status;

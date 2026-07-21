@@ -21,7 +21,7 @@ window.processBatch = async function(items, concurrency, fn) {
 window.dnsStatusBadge = function(status) {
   if (!status) return '<span class="badge badge-info">...</span>';
   const m = {'complete':'badge-ok','partial':'badge-warn','failed':'badge-err'};
-  return `<span class="badge ${m[status]||'badge-info'}">${esc(status)}</span>`;
+  return `<span class="badge ${m[status]||'badge-info'}">${window.esc(status)}</span>`;
 };
 
 window.runtimeStatusBadge = function(status) {
@@ -30,7 +30,7 @@ window.runtimeStatusBadge = function(status) {
     'Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn',
     'Expiring':'badge-warn','Error':'badge-err','Expired':'badge-err',
     'Disabled':'badge-info','Issuing':'badge-warn','Unknown':'badge-info'};
-  return `<span class="badge ${m[status]||'badge-info'}">${esc(status)}</span>`;
+  return `<span class="badge ${m[status]||'badge-info'}">${window.esc(status)}</span>`;
 };
 
 window.healthGradeBadge = function(score, grade) {
@@ -61,14 +61,14 @@ window.getDnsRecs = function(dnsResult, typeName) {
 // Format a value for display (truncate if too long)
 window.fmtVal = function(v, max) {
   if (!v || typeof v !== 'string') return '—';
-  if (v.length > (max || 40)) return esc(v.substr(0, max || 40)) + '...';
-  return esc(v);
+  if (v.length > (max || 40)) return window.esc(v.substr(0, max || 40)) + '...';
+  return window.esc(v);
 };
 
 // Render a status badge
 window.statusBadge = function(label, cls) {
   if (!label) return '<span class="badge badge-info">—</span>';
-  return `<span class="badge ${cls || 'badge-info'}">${esc(label)}</span>`;
+  return `<span class="badge ${cls || 'badge-info'}">${window.esc(label)}</span>`;
 };
 
 // Normalize hostname for comparison: lowercase, strip trailing dot
@@ -155,7 +155,7 @@ window.attachDataCopyListener = function(containerId) {
     const btn = e.target.closest('[data-copy]');
     if (!btn) return;
     const text = btn.getAttribute('data-copy');
-    if (text) copyText(text, btn.getAttribute('title') || 'Copied');
+    if (text) window.copyText(text, btn.getAttribute('title') || 'Copied');
   });
 };
 
