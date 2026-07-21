@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-21 | `this commit` | Backup — Fix DB-5 manifest detection
+
+**Summary:** Fixed DB-5 archive manifest inspection after production validation showed a newly created database-aware backup was classified as `legacy_unknown`. The hardened tar listing validator now accepts the archive root entry and preserves the leading `./` path prefix while validating relative paths.
+
+**Files changed:** `libs/backup/TarBackupProvider.cpp`, `tests/test_backup.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** DB-5 backup records created with the new archive layout are detected as database-aware and expose safe manifest metadata such as `contains_database`, `database_status`, and restore capabilities instead of being treated as legacy files-only archives.
+
+**Validation:** Focused backup doctest passed (`14` cases, `96` assertions). Clean rebuild passed for `containercpd` and `containercp_tests`; full doctest passed (`867` cases, `6186` assertions); CTest passed (`1/1`). Production revalidation is pending.
+
+**Known risks:** This fix changes tar listing validation only; it does not expand DB-5 restore scope beyond one managed MariaDB database per Site.
+
+---
+
 ## 2026-07-21 | `this commit` | Database — Add database-aware Site backups
 
 **Summary:** Implemented DB-5 database-aware Site backup/restore through the existing Backups subsystem. Added `BackupService` and `BackupJobService`, DB-4-backed managed MariaDB SQL dump/import hooks for backup-owned files, safe backup manifests, async create/restore jobs, archive download/remove routes, restore modes, pre-restore recovery backups, hardened tar provider execution, Backups GUI job polling, and operator/API documentation.

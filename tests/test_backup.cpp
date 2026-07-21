@@ -3,7 +3,11 @@
 #include "backup/BackupService.h"
 #include "backup/TarBackupProvider.h"
 
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <unistd.h>
 
 #include "doctest/doctest.h"
 
@@ -105,4 +109,27 @@ TEST_CASE("BackupProvider interface compiles") {
     // Just verify the type is correct
     containercp::backup::BackupProvider* bp = &provider;
     CHECK(bp != nullptr);
+}
+
+TEST_CASE("TarBackupProvider restores archives containing root entry") {
+    namespace fs = std::filesystem;
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto root = fs::temp_directory_path() / ("containercp-tar-provider-" + std::to_string(::getpid()) + "-" + std::to_string(stamp));
+    const auto source = root / "source";
+    const auto dest = root / "dest";
+    const auto archive = root / "backup.tar.gz";
+    fs::create_directories(source / "backup-root");
+    {
+        std::ofstream manifest(source / "backup-root" / "manifest.json");
+        manifest << "{\"schema_version\":\"1\",\"site_id\":1,\"site_domain\":\"example.test\"}\n";
+    }
+
+    containercp::logger::Logger& log = containercp::logger::Logger::instance();
+    containercp::backup::TarBackupProvider provider(log);
+    CHECK(provider.create_backup(source.string(), archive.string()).success);
+    CHECK(provider.restore_backup(archive.string(), dest.string()).success);
+    CHECK(fs::exists(dest / "backup-root" / "manifest.json"));
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
 }

@@ -36,8 +36,9 @@ core::OperationResult validate_tar_listing(const runtime::CommandResult& result)
             return {false, "Backup archive contains unsupported entry type"};
         }
         const auto pos = line.find(" ./");
-        std::string path = pos == std::string::npos ? line : line.substr(pos + 2);
+        std::string path = pos == std::string::npos ? line : line.substr(pos + 1);
         if (path.rfind("./", 0) == 0) path = path.substr(2);
+        if (path.empty() || path == ".") continue;
         if (!safe_relative_tar_path(path)) {
             return {false, "Backup archive contains unsafe path"};
         }
