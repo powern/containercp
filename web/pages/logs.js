@@ -13,5 +13,6 @@ async function loadLogs(p) {
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load logs</div>'; }
 }
 
-export { loadLogs };
+const logsPage = { mount: loadLogs };
+export { loadLogs, logsPage };
 Object.assign(window, { loadLogs });

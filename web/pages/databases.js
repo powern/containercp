@@ -17,6 +17,7 @@ const dbDashboardState = {
   loadError: ''
 };
 window.dbDashboardState = dbDashboardState;
+let activeDatabasesLifecycle = null;
 
 function normalizeDbValue(value, fallback) {
   const v = value == null ? '' : String(value).trim();
@@ -208,7 +209,14 @@ function resetDatabaseFilters() {
   renderDatabaseInventory();
 }
 
-async function loadDatabases(p) {
+async function loadDatabases(p, params, lifecycle) {
+  activeDatabasesLifecycle = lifecycle || activeDatabasesLifecycle;
+  if (lifecycle && lifecycle.addEventListener) {
+    lifecycle.addEventListener(document, 'keydown', e => {
+      if (e.key === 'Escape' && $('db-detail-backdrop') && $('db-detail-backdrop').style.display !== 'none') closeDatabaseDrawer();
+    });
+    lifecycle.onCleanup(destroyDatabaseDrawer);
+  }
   p.innerHTML = `<div class="page-header db-page-header"><div><h1>Databases</h1><p>Monitor database health, runtime, connectivity, credentials, and ownership.</p></div><div class="page-actions"><button class="btn btn-sm" onclick="refreshDatabases()" aria-label="Refresh database inventory">Refresh</button></div></div><div id="db-dashboard-body" aria-live="polite"><div class="empty-state">Loading database inventory...</div></div>`;
   await refreshDatabases();
 }
@@ -218,6 +226,7 @@ async function refreshDatabases() {
   if (body) body.innerHTML = '<div class="empty-state">Loading database inventory...</div>';
   try {
     const data = await api('/api/databases');
+    if (activeDatabasesLifecycle && !activeDatabasesLifecycle.isActive()) return;
     dbDashboardState.items = data.data || [];
     dbDashboardState.loadError = '';
     renderDatabaseInventory();
@@ -276,6 +285,7 @@ async function openDatabaseDetail(databaseId) {
   showDatabaseDrawer(`<div class="empty-state">Loading database detail...</div>`);
   try {
     const res = await api('/api/databases/' + databaseId);
+    if (activeDatabasesLifecycle && !activeDatabasesLifecycle.isActive()) return;
     const db = res.data || {};
     dbDashboardState.selectedDetail = db;
     dbDashboardState.rotationStatus = null;
@@ -299,7 +309,9 @@ function showDatabaseDrawer(content) {
   }
   backdrop.innerHTML = `<aside class="db-detail-drawer" role="dialog" aria-modal="true" aria-label="Database detail" tabindex="-1">${content}</aside>`;
   backdrop.style.display = 'flex';
-  setTimeout(() => {
+  const ctx = activeDatabasesLifecycle;
+  const later = ctx && ctx.setTimeout ? ctx.setTimeout.bind(ctx) : setTimeout;
+  later(() => {
     const drawer = backdrop.querySelector('.db-detail-drawer');
     if (drawer) drawer.focus();
   }, 0);
@@ -313,9 +325,13 @@ function closeDatabaseDrawer() {
   dbDashboardState.rotationStatus = null;
 }
 
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && $('db-detail-backdrop') && $('db-detail-backdrop').style.display !== 'none') closeDatabaseDrawer();
-});
+function destroyDatabaseDrawer() {
+  const backdrop = $('db-detail-backdrop');
+  if (backdrop) backdrop.remove();
+  dbDashboardState.selectedId = null;
+  dbDashboardState.selectedDetail = null;
+  dbDashboardState.rotationStatus = null;
+}
 
 function renderDatabaseDetail(db) {
   const title = db.database_name || db.name || 'Database';
@@ -363,6 +379,7 @@ async function loadDatabaseRotationStatus(db) {
   try {
     if (!db.site_id || db.imported_state === 'site_missing') throw new Error('missing site');
     const res = await api('/api/wordpress/database-credentials/status?site_id=' + Number(db.site_id));
+    if (activeDatabasesLifecycle && !activeDatabasesLifecycle.isActive()) return;
     dbDashboardState.rotationStatus = res.data || {};
   } catch(e) {
     dbDashboardState.rotationStatus = {available:false, database_target_available:false, database_target_message:'Rotation capability could not be loaded for this database.'};
@@ -423,7 +440,9 @@ function showDatabaseRotationConfirm(databaseId) {
     <div id="db-rotate-confirm-msg" style="font-size:12px;color:var(--text3);margin-top:6px;">No password value will be shown.</div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;"><button class="btn btn-sm" onclick="hideModal()">Cancel</button><button class="btn btn-sm btn-warning" onclick="confirmDatabasePasswordRotation(${Number(databaseId)})">Rotate Password</button></div>
   </div>`, 560);
-  setTimeout(() => { const input = $('db-rotate-confirm'); if (input) input.focus(); }, 0);
+  const ctx = activeDatabasesLifecycle;
+  const later = ctx && ctx.setTimeout ? ctx.setTimeout.bind(ctx) : setTimeout;
+  later(() => { const input = $('db-rotate-confirm'); if (input) input.focus(); }, 0);
 }
 
 async function confirmDatabasePasswordRotation(databaseId) {
@@ -443,6 +462,7 @@ async function confirmDatabasePasswordRotation(databaseId) {
     if (action) action.innerHTML = `<div class="db-action-box"><strong>Rotation job ${jobId ? '#' + esc(String(jobId)) : ''}</strong><div id="db-rotation-msg" class="db-action-message">Waiting for job progress...</div></div>`;
     if (jobId) {
       pollRotationJob(jobId, {
+        lifecycle: activeDatabasesLifecycle,
         messageEl: 'db-rotation-msg',
         renderRunning: renderDatabaseRotationJob,
         renderFailed: renderDatabaseRotationFailure,
@@ -469,5 +489,6 @@ function renderDatabaseRotationFailure(jobId, job) {
   return renderWordPressRotationDiagnostics(jobId, job);
 }
 
-export { loadDatabases };
+const databasesPage = { mount: loadDatabases, unmount() { destroyDatabaseDrawer(); activeDatabasesLifecycle = null; } };
+export { loadDatabases, databasesPage };
 Object.assign(window, { normalizeDbValue, dbConnectionState, dbCredentialState, dbRuntimeState, dbOwnershipState, computeDatabaseHealthState, dbHealthLabel, dbBadge, dbHealthBadge, dbRuntimeBadge, dbConnectionBadge, dbCredentialBadge, dbOwnershipBadge, dbJsArg, dbDateValue, dbSortRank, getFilteredDatabases, databaseSummaryCards, dbSelect, databaseControlsHtml, toggleDatabaseSortDirection, resetDatabaseFilters, loadDatabases, refreshDatabases, renderDatabaseInventory, renderDatabaseTable, renderDatabaseCards, openDatabaseDetail, showDatabaseDrawer, closeDatabaseDrawer, renderDatabaseDetail, databaseDetailSection, databaseHealthSection, copyableValue, loadDatabaseRotationStatus, updateDatabaseRotationAction, databaseRotationCapability, renderDatabaseRotationAction, showDatabaseRotationConfirm, confirmDatabasePasswordRotation, renderDatabaseRotationJob, renderDatabaseRotationSuccess, renderDatabaseRotationFailure });

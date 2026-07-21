@@ -4,12 +4,16 @@ import {
 
 
 /* ===== ACCESS ===== */
-async function loadAccess(p) {
+let activeAccessLifecycle = null;
+
+async function loadAccess(p, params, lifecycle) {
+  activeAccessLifecycle = lifecycle || activeAccessLifecycle;
   try {
     const data = await api('/api/access-users');
+    if (lifecycle && !lifecycle.isActive()) return;
     p.innerHTML = `<div class="page-header"><h1>Access Users</h1></div>`;
     p.innerHTML += tb('All Access Users');
-    window.renderTable = () => {
+    const render = () => {
       const tbl = $('access-table');
       if (!tbl) return;
       tbl.innerHTML = buildTable([
@@ -17,6 +21,8 @@ async function loadAccess(p) {
         {label:'Actions',html:r=>`<button class="btn-icon" style="color:var(--red)" onclick="removeAccessUser('${esc(r.username)}')">&#10005;</button>`}
       ], data.data||[]);
     };
+    if (lifecycle && lifecycle.setRenderTable) lifecycle.setRenderTable(render);
+    else window.renderTable = render;
     p.innerHTML += `<div id="access-table"></div>`;
     window.renderTable();
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load access users</div>'; }
@@ -24,8 +30,9 @@ async function loadAccess(p) {
 
 async function removeAccessUser(username) {
   if (!confirm('Remove access user?')) return;
-  try { const res = await apiPost('/api/access-users/remove',{username}); if(res.success){toast('User removed','success');loadAccess($('page'));}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
+  try { const res = await apiPost('/api/access-users/remove',{username}); if(res.success){toast('User removed','success');loadAccess($('page'), null, activeAccessLifecycle);}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
 }
 
-export { loadAccess };
-Object.assign(window, { loadAccess, removeAccessUser });
+const accessPage = { mount: loadAccess, unmount() { activeAccessLifecycle = null; } };
+export { loadAccess, accessPage };
+Object.assign(window, { removeAccessUser });

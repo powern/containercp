@@ -107,5 +107,6 @@ async function changeAdminPassword() {
   } catch(e) { status.textContent = 'Network error'; }
 }
 
-export { loadSettings };
-Object.assign(window, { loadSettings, saveHostname, issueAdminSsl, renewAdminSsl, changeAdminPassword });
+const settingsPage = { mount: loadSettings };
+export { loadSettings, settingsPage };
+Object.assign(window, { saveHostname, issueAdminSsl, renewAdminSsl, changeAdminPassword });

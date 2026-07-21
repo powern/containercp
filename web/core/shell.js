@@ -2,7 +2,9 @@ import { api, apiPost, clearSessionToken, getCurrentUser, getSessionToken, setCu
 import { $, qsa } from './dom.js';
 import { toast } from './notifications.js';
 import { esc } from './utils.js';
-import { navigate } from './router.js';
+import { leaveActiveRoute, navigate } from './router.js';
+
+let statusInterval = null;
 
 /* ===== LOGIN ===== */
 function renderLogin(error) {
@@ -103,6 +105,8 @@ async function doLogout() {
   } catch(e) {}
   clearSessionToken();
   setCurrentUser(null);
+  leaveActiveRoute();
+  if (statusInterval) { clearInterval(statusInterval); statusInterval = null; }
   renderLogin();
 }
 
@@ -173,7 +177,8 @@ function initApp() {
 
   updateStatus();
   loadVersion();
-  setInterval(updateStatus, 30000);
+  if (statusInterval) clearInterval(statusInterval);
+  statusInterval = setInterval(updateStatus, 30000);
   navigate('dashboard');
 }
 

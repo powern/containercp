@@ -4,7 +4,10 @@ import {
 
 
 /* ===== MIGRATION (myVestaCP Import) ===== */
-async function loadMigration(p) {
+let activeMigrationLifecycle = null;
+
+async function loadMigration(p, params, lifecycle) {
+  activeMigrationLifecycle = lifecycle || activeMigrationLifecycle;
   try {
     let html = `<div class="page-header"><h1>Migration</h1><div class="page-actions"></div></div>`;
     html += `<div class="card"><div class="card-header"><h3>Import from myVestaCP</h3></div>
@@ -40,6 +43,7 @@ async function loadMigration(p) {
     // Load backup list
     try {
       const backups = await api('/api/migration/vesta/backups');
+      if (lifecycle && !lifecycle.isActive()) return;
       const sel = document.getElementById('migrate-backup');
       if (backups.data && backups.data.length > 0) {
         sel.innerHTML = '<option value="">Select a backup...</option>';
@@ -318,9 +322,13 @@ async function importMigrationSql() {
     // Poll job status
     resultDiv.innerHTML = '<div class="card" style="margin-top:12px;"><div class="card-header"><h3>SQL Import Running</h3></div><div style="padding:12px;font-size:13px;"><p>Job #' + jobId + ' started. Waiting for completion...</p><div id="migrate-sql-progress"></div></div></div>';
 
-    const poll = setInterval(async () => {
+    const ctx = activeMigrationLifecycle;
+    const schedule = ctx && ctx.setInterval ? ctx.setInterval.bind(ctx) : setInterval;
+    const poll = schedule(async () => {
+      if (ctx && !ctx.isActive()) return;
       try {
         const statusRes = await api('/api/jobs?id=' + jobId);
+        if (ctx && !ctx.isActive()) return;
         // API returns { success, data: { id, type, status, progress, message } }
         // or { success, data: [...] } for list view
         const jobData = statusRes && statusRes.data;
@@ -355,5 +363,6 @@ async function importMigrationSql() {
   }
 }
 
-export { loadMigration };
+const migrationPage = { mount: loadMigration, unmount() { activeMigrationLifecycle = null; } };
+export { loadMigration, migrationPage };
 Object.assign(window, { loadMigration, analyzeBackup, importMigrationSite, importMigrationFiles, importMigrationSql });

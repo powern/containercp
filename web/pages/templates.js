@@ -14,5 +14,5 @@ async function loadTemplates(p) {
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load templates</div>'; }
 }
 
-export { loadTemplates };
-Object.assign(window, { loadTemplates });
+const templatesPage = { mount: loadTemplates };
+export { loadTemplates, templatesPage };

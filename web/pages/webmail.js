@@ -16,5 +16,5 @@ async function loadWebmail(p) {
     </div>`;
 }
 
-export { loadWebmail };
-Object.assign(window, { loadWebmail });
+const webmailPage = { mount: loadWebmail };
+export { loadWebmail, webmailPage };

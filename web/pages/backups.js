@@ -4,9 +4,13 @@ import {
 
 
 /* ===== BACKUPS ===== */
-async function loadBackups(p) {
+let activeBackupsLifecycle = null;
+
+async function loadBackups(p, params, lifecycle) {
+  activeBackupsLifecycle = lifecycle || activeBackupsLifecycle;
   try {
     const data = await api('/api/backups');
+    if (lifecycle && !lifecycle.isActive()) return;
     p.innerHTML = `<div class="page-header"><h1>Backups</h1><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="showBackupModal()">+ Create Backup</button></div></div>`;
     p.innerHTML += tb('All Backups') + buildTable([
       {label:'Filename',html:r=>esc(r.filename)},{label:'Size',html:r=>esc(r.size)+' bytes'},{label:'Status',html:r=>{let m={completed:'badge-ok',failed:'badge-err'};return `<span class="badge ${m[r.status]||'badge-info'}">${esc(r.status)}</span>`;}},{label:'Date',html:r=>esc(r.created_at)},
@@ -49,7 +53,7 @@ async function createBackup() {
     const res = await apiPost('/api/backups/create',{domain});
     if (res.success) {
       toast('Backup created: '+res.data.filename, 'success');
-      loadBackups($('page'));
+      loadBackups($('page'), null, activeBackupsLifecycle);
     } else {
       toast('Error: '+(res.error||'Unknown'), 'error');
     }
@@ -70,7 +74,7 @@ async function restoreBackup(id, filename) {
     const res = await apiPost('/api/backups/restore', {id});
     if (res.success) {
       toast('Backup restored successfully', 'success');
-      loadBackups($('page'));
+      loadBackups($('page'), null, activeBackupsLifecycle);
     } else {
       toast('Error: ' + (res.error || 'Restore failed'), 'error');
     }
@@ -91,7 +95,7 @@ async function removeBackup(id) {
     const res = await apiPost('/api/backups/remove', {id});
     if (res.success) {
       toast('Backup removed', 'success');
-      loadBackups($('page'));
+      loadBackups($('page'), null, activeBackupsLifecycle);
     } else {
       toast('Error: ' + (res.error || 'Remove failed'), 'error');
     }
@@ -104,5 +108,6 @@ async function removeBackup(id) {
   }
 }
 
-export { loadBackups };
-Object.assign(window, { loadBackups, showBackupModal, createBackup, restoreBackup, removeBackup });
+const backupsPage = { mount: loadBackups, unmount() { activeBackupsLifecycle = null; creatingBackup = false; restoringBackup = false; } };
+export { loadBackups, backupsPage };
+Object.assign(window, { showBackupModal, createBackup, restoreBackup, removeBackup });

@@ -2,10 +2,14 @@ import { api } from './api.js';
 import { $ } from './dom.js';
 import { esc } from './utils.js';
 
-export function pollJobProgress(jobId, onComplete) {
-  const interval = setInterval(async () => {
+export function pollJobProgress(jobId, onComplete, lifecycle) {
+  const setPollInterval = lifecycle && lifecycle.setInterval ? lifecycle.setInterval.bind(lifecycle) : setInterval;
+  const clearPollInterval = clearInterval;
+  const interval = setPollInterval(async () => {
+    if (lifecycle && !lifecycle.isActive()) return;
     try {
       const res = await api('/api/jobs?id=' + jobId);
+      if (lifecycle && !lifecycle.isActive()) return;
       if (res.success && res.data) {
         const job = res.data;
         const pbar = $('progress-bar');
@@ -18,7 +22,7 @@ export function pollJobProgress(jobId, onComplete) {
         if (pstatus) pstatus.textContent = job.status;
 
         if (job.status === 'completed' || job.status === 'failed') {
-          clearInterval(interval);
+          clearPollInterval(interval);
           if (job.status === 'failed') {
             if (pbar) pbar.style.background = 'var(--red)';
             if (pstep) pstep.textContent = 'Error: ' + (job.message || 'Deployment failed');
@@ -28,18 +32,22 @@ export function pollJobProgress(jobId, onComplete) {
         }
       }
     } catch(e) {
-      clearInterval(interval);
+      clearPollInterval(interval);
     }
   }, 500);
+  return () => clearInterval(interval);
 }
 
 export async function pollRotationJob(jobId, opts, attempts) {
   opts = opts || {};
+  const lifecycle = opts.lifecycle;
+  if (lifecycle && !lifecycle.isActive()) return;
   attempts = attempts || 0;
   const maxAttempts = opts.maxAttempts || 30;
   if (attempts > maxAttempts) return;
   try {
     const res = await api('/api/jobs?id=' + jobId);
+    if (lifecycle && !lifecycle.isActive()) return;
     const job = res.data || {};
     const msg = opts.messageEl ? $(opts.messageEl) : null;
     if (msg) {
@@ -57,7 +65,9 @@ export async function pollRotationJob(jobId, opts, attempts) {
       return;
     }
   } catch(e) {}
-  setTimeout(() => pollRotationJob(jobId, opts, attempts + 1), opts.intervalMs || 2000);
+  const schedule = lifecycle && lifecycle.setTimeout ? lifecycle.setTimeout.bind(lifecycle) : setTimeout;
+  const timeout = schedule(() => pollRotationJob(jobId, opts, attempts + 1), opts.intervalMs || 2000);
+  return () => clearTimeout(timeout);
 }
 
 export function renderWordPressRotationDiagnostics(jobId, job) {

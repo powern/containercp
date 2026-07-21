@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-21 | `this commit` | Frontend — Add router-owned page lifecycle
+
+**Summary:** Completed the next frontend modularization phase by adding router-owned page lifecycle contexts, explicit page `mount` objects, route cleanup, lifecycle-owned timers/listeners/pollers, and reduced low-risk compatibility globals without changing the visual UI.
+
+**Files changed:** `web/app.js`, `web/core/router.js`, `web/core/lifecycle.js`, `web/core/context.js`, `web/core/jobs.js`, `web/core/modals.js`, `web/core/shell.js`, `web/pages/*`, `scripts/check-frontend-baseline.js`, `docs/WEB-UI.md`, `planning/frontend-modularization-checklist.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Existing routes, inline actions, page markup, CSS classes, search behavior, modals, drawers, and API calls are preserved. Navigating between pages now cleans route-owned listeners, timers, pollers, stale async updates, drawer teardown, and route-local table refresh hooks so background page activity does not accumulate.
+
+**Validation:** Frontend-only validation passed with `node --check` across all Web UI JavaScript files and `scripts/check-frontend-baseline.js`, `node scripts/check-frontend-baseline.js`, a module import smoke check with a minimal browser API stub, and `git diff --check`. No full CMake configure/build, `containercp` build, `containercpd` build, full CTest, GitHub Actions, backend, C++, CMake, API route, CSS, or UI 2.0 redesign changes were used.
+
+**Known risks:** Temporary compatibility exports remain where inline handlers still require global functions. Browser/manual validation beyond the reported production smoke requires an available browser session.
+
+---
+
 ## 2026-07-21 | `this commit` | Frontend — Preserve API proxy paths
 
 **Summary:** Fixed the production Web UI API proxy regression introduced during frontend modularization by preserving the full frontend API path when constructing `/ui-api` requests.

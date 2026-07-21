@@ -4,11 +4,12 @@ import {
 
 
 /* ===== DASHBOARD ===== */
-async function loadDashboard(p) {
+async function loadDashboard(p, params, lifecycle) {
   try {
     const [health, sites, jobs] = await Promise.all([
       api('/api/health'), api('/api/sites'), api('/api/jobs')
     ]);
+    if (lifecycle && !lifecycle.isActive()) return;
     const ok = health.data?.status === 'ok';
     const recentJobs = (jobs.data||[]).slice(-5).reverse();
     p.innerHTML = `
@@ -30,6 +31,7 @@ async function loadDashboard(p) {
         ${recentJobs.length ? recentJobs.map(j => `<div class="activity-item"><div class="activity-icon" style="background:${j.status==='completed'?'var(--green)':j.status==='failed'?'var(--red)':'var(--yellow)'}"></div><div class="activity-text">${esc(j.type)}: ${esc(j.message||j.status)}</div><div class="activity-time">${j.progress}%</div></div>`).join('') : '<div class="activity-item"><div class="activity-text" style="color:var(--text3)">No recent jobs</div></div>'}
       </div>`;
     Promise.all([api('/api/domains'), api('/api/backups'), api('/api/ssl')]).then(([d,b,s])=>{
+      if (lifecycle && !lifecycle.isActive()) return;
       const cards = qsa('.card .count');
       if (cards.length >= 4) { cards[1].textContent = (d.data||[]).length; cards[1].className='count'+(cards[1].textContent==='0'?' zero':''); }
       if (cards.length >= 4) { cards[2].textContent = (b.data||[]).length; cards[2].className='count'+(cards[2].textContent==='0'?' zero':''); }
@@ -37,6 +39,7 @@ async function loadDashboard(p) {
     }).catch(()=>{});
     // Mail health dot
     api('/api/mail/health').then(h => {
+      if (lifecycle && !lifecycle.isActive()) return;
       const dot = $('mail-health-dot');
       if (!dot) return;
       const status = h.data?.status || 'error';
@@ -45,6 +48,7 @@ async function loadDashboard(p) {
       const l = dot.querySelector('.health-label');
       if (l) l.textContent = status === 'ok' ? 'Healthy' : status === 'degraded' ? 'Warning' : 'Error';
     }).catch(() => {
+      if (lifecycle && !lifecycle.isActive()) return;
       const dot = $('mail-health-dot');
       if (dot) { const d = dot.querySelector('.health-dot'); if(d) d.className = 'health-dot'; const l = dot.querySelector('.health-label'); if(l) l.textContent = 'Inactive'; }
     });
@@ -55,5 +59,5 @@ function card(label, count, color, sub) {
   return `<div class="card"><div class="card-header"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg><h3>${label}</h3></div><div class="count${count===0?' zero':''}">${sub||count}</div></div>`;
 }
 
-export { loadDashboard };
-Object.assign(window, { loadDashboard, card });
+const dashboardPage = { mount: loadDashboard };
+export { loadDashboard, dashboardPage };

@@ -18,7 +18,7 @@ async function sslAction(domain, action, body) {
   } catch(e) {
     toast('Network error: ' + e.message, 'error');
   }
-  loadSsl($('page'));
+  loadSsl($('page'), null, activeSslLifecycle);
 }
 
 async function issueSsl(domain) {
@@ -98,12 +98,16 @@ function fmtDate(iso) {
   } catch(e) { return iso; }
 }
 
-async function loadSsl(p) {
+let activeSslLifecycle = null;
+
+async function loadSsl(p, params, lifecycle) {
+  activeSslLifecycle = lifecycle || activeSslLifecycle;
   try {
     const data = await api('/api/ssl');
+    if (lifecycle && !lifecycle.isActive()) return;
     p.innerHTML = `<div class="page-header"><h1>SSL Certificates</h1></div>`;
     p.innerHTML += tb('All Sites');
-    window.renderTable = () => {
+    const render = () => {
       const tbl = $('ssl-table');
       if (!tbl) return;
       tbl.innerHTML = buildTable([
@@ -116,6 +120,8 @@ async function loadSsl(p) {
         {label:'Actions', html:r=>sslActions(r)}
       ], (data.data||[]));
     };
+    if (lifecycle && lifecycle.setRenderTable) lifecycle.setRenderTable(render);
+    else window.renderTable = render;
     p.innerHTML += `<div id="ssl-table"></div>`;
     window.renderTable();
   } catch(e) {
@@ -123,5 +129,6 @@ async function loadSsl(p) {
   }
 }
 
-export { loadSsl };
+const sslPage = { mount: loadSsl, unmount() { activeSslLifecycle = null; } };
+export { loadSsl, sslPage };
 Object.assign(window, { sslAction, issueSsl, renewSsl, toggleSsl, toggleRedirect, sslStatusBadge, sslActions, loadSite, fmtDate, loadSsl });

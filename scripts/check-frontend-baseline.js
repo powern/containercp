@@ -27,6 +27,8 @@ const indexHtml = read('web/index.html');
 const appJs = read('web/app.js');
 const shellJs = read('web/core/shell.js');
 const contextJs = read('web/core/context.js');
+const routerJs = read('web/core/router.js');
+const lifecycleJs = read('web/core/lifecycle.js');
 const cacheJs = read('web/js/cache.js');
 const utilsJs = read('web/js/utils.js');
 
@@ -49,6 +51,45 @@ for (const route of mainRoutes) {
 const detailRoutes = ['site-detail', 'domain-detail', 'mail-domain', 'mail-health'];
 for (const route of detailRoutes) {
   requireIncludes(appJs, `registerRoute('${route}'`, `missing detail route registration for ${route}`);
+}
+
+requireIncludes(routerJs, 'createPageLifecycle', 'router does not create page lifecycle contexts');
+requireIncludes(routerJs, 'leaveActiveRoute()', 'router does not leave active routes before navigation');
+requireIncludes(routerJs, 'previous.lifecycle.cleanup()', 'router does not cleanup previous page lifecycle');
+requireIncludes(routerJs, 'route.mount', 'router does not use explicit page mount lifecycle');
+requireIncludes(routerJs, 'destroyModal()', 'router does not teardown modal overlay on route cleanup');
+if (routerJs.includes('window.navigate = navigate')) fail('router owns direct navigate global instead of compatibility layer');
+if (routerJs.includes('window.navigateTo = navigateTo')) fail('router owns direct navigateTo global instead of compatibility layer');
+
+for (const needle of ['createPageLifecycle', 'setTimeout(fn, delay)', 'setInterval(fn, delay)', 'addEventListener(target, type, listener, options)', 'createAbortController()', 'setRenderTable(fn)', 'cleanup: runCleanup']) {
+  requireIncludes(lifecycleJs, needle, `missing lifecycle primitive ${needle}`);
+}
+
+const pageObjects = {
+  dashboard: 'dashboardPage',
+  sites: 'sitesPage',
+  domains: 'domainsPage',
+  databases: 'databasesPage',
+  ssl: 'sslPage',
+  mail: 'mailPage',
+  webmail: 'webmailPage',
+  proxy: 'proxyPage',
+  access: 'accessPage',
+  backups: 'backupsPage',
+  migration: 'migrationPage',
+  profiles: 'profilesPage',
+  templates: 'templatesPage',
+  nodes: 'nodesPage',
+  logs: 'logsPage',
+  settings: 'settingsPage',
+  'site-detail': 'siteDetailPage',
+  'domain-detail': 'domainDetailPage',
+  'mail-domain': 'mailDomainPage',
+  'mail-health': 'mailHealthPage',
+};
+
+for (const [route, pageObject] of Object.entries(pageObjects)) {
+  requireIncludes(appJs, `registerRoute('${route}', ${pageObject})`, `route ${route} is not registered with explicit page object ${pageObject}`);
 }
 
 const appGlobals = [
@@ -107,6 +148,12 @@ function collectJs(dir) {
 }
 
 const combinedJs = collectJs('web').map(read).join('\n');
+for (const pageObject of Object.values(pageObjects)) {
+  if (!combinedJs.includes(`const ${pageObject} = { mount:`)) {
+    fail(`missing explicit lifecycle page object ${pageObject}`);
+  }
+}
+
 const forbiddenSecretSurfaces = [
   'database_password',
   'mysql_password',

@@ -4,10 +4,14 @@ import {
 
 
 /* ===== MAIL ===== */
-async function loadMail(p) {
+let activeMailLifecycle = null;
+
+async function loadMail(p, params, lifecycle) {
+  activeMailLifecycle = lifecycle || activeMailLifecycle;
   try {
     // Check module status first
     const status = await api('/api/mail/status');
+    if (lifecycle && !lifecycle.isActive()) return;
     const state = status.data?.state || 'inactive';
     const dCount = status.data?.domains ?? 0;
     const mbCount = status.data?.mailboxes ?? 0;
@@ -39,11 +43,15 @@ async function loadMail(p) {
     if (state === 'active') {
       // List mail domains
       const res = await api('/api/mail/domains');
+      if (lifecycle && !lifecycle.isActive()) return;
       const domains = res.data || [];
       html += `<div class="page-header" style="margin-top:8px;"><h3>Mail Domains</h3><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="showCreateMailDomain()">+ Add Domain</button></div></div>`;
-      window.renderTable = () => {
+      html += `<div id="mail-table"></div>`;
+      const render = () => {
+        const tbl = $('mail-table');
+        if (!tbl) return;
         const filtered = domains.filter(r => !window.searchTerm || r.domain.includes(window.searchTerm));
-        html += buildTable([
+        tbl.innerHTML = buildTable([
           {label:'Domain',html:r=>`<a href="#" onclick="navigate('mail-domain',${r.id});return false" style="color:var(--primary);text-decoration:none;">${esc(r.domain)}</a>`},
           {label:'Mode',html:r=>`<span class="badge badge-info">${esc(r.mode)}</span>`},
           {label:'Mailboxes',html:r=>esc(r.max_mailboxes||'∞')},
@@ -52,9 +60,11 @@ async function loadMail(p) {
           {label:'Actions',html:r=>`<button class="btn-icon" onclick="navigate('mail-domain',${r.id})" title="View">&#128065;</button><button class="btn-icon" style="color:var(--red)" title="Remove" onclick="removeMailDomain(${r.id})">&#10005;</button>`}
         ], filtered, 'No mail domains');
       };
-      window.renderTable();
+      if (lifecycle && lifecycle.setRenderTable) lifecycle.setRenderTable(render);
+      else window.renderTable = render;
     }
     p.innerHTML = html;
+    if (state === 'active' && window.renderTable) window.renderTable();
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load mail</div>'; }
 }
 
@@ -164,16 +174,18 @@ async function removeMailDomain(id) {
   } catch(e) { toast('Network error', 'error'); }
 }
 
-async function loadMailDomain(p, id) {
+async function loadMailDomain(p, id, lifecycle) {
+  activeMailLifecycle = lifecycle || activeMailLifecycle;
   try {
     const dd = await api('/api/mail/domains/' + id);
+    if (lifecycle && !lifecycle.isActive()) return;
     const domain = dd.data;
     if (!domain) { p.innerHTML = '<div class="empty-state">Mail domain not found</div>'; return; }
 
     // Fetch mailboxes and aliases
     let mailboxes = [], aliases = [];
-    try { const mb = await api('/api/mail/domains/' + id + '/mailboxes'); mailboxes = mb.data||[]; } catch(e) {}
-    try { const al = await api('/api/mail/domains/' + id + '/aliases'); aliases = al.data||[]; } catch(e) {}
+    try { const mb = await api('/api/mail/domains/' + id + '/mailboxes'); if (lifecycle && !lifecycle.isActive()) return; mailboxes = mb.data||[]; } catch(e) {}
+    try { const al = await api('/api/mail/domains/' + id + '/aliases'); if (lifecycle && !lifecycle.isActive()) return; aliases = al.data||[]; } catch(e) {}
 
     const modeLabel = `<span class="badge badge-info">${esc(domain.mode)}</span>`;
     const dkimStatus = domain.dkim_public_key_dns ? '<span class="badge badge-ok">✓ Generated</span>' : '<span class="badge badge-info">Not generated</span>';
@@ -288,7 +300,8 @@ async function loadMailDomain(p, id) {
       const d = window._dkimData;
       const bind = (suffix, text, msg) => {
         const el = p.querySelector(`[data-copy="dkim-${suffix}"]`);
-        if (el) el.addEventListener('click', () => copyText(text, msg));
+        if (el && activeMailLifecycle && activeMailLifecycle.addEventListener) activeMailLifecycle.addEventListener(el, 'click', () => copyText(text, msg));
+        else if (el) el.addEventListener('click', () => copyText(text, msg));
       };
       bind('host', d.hostLocal, 'Host copied');
       bind('value', d.value, 'Value copied');
@@ -394,5 +407,8 @@ async function loadMailHealth(p) {
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load mail health</div>'; }
 }
 
-export { loadMail, loadMailDomain, loadMailHealth };
+const mailPage = { mount: loadMail, unmount() { activeMailLifecycle = null; } };
+const mailDomainPage = { mount: loadMailDomain, unmount() { activeMailLifecycle = null; } };
+const mailHealthPage = { mount: loadMailHealth, unmount() { activeMailLifecycle = null; } };
+export { loadMail, loadMailDomain, loadMailHealth, mailPage, mailDomainPage, mailHealthPage };
 Object.assign(window, { loadMail, activateMail, deactivateMail, showCreateMailDomain, showCreateMailDomainSimple, onMailDomainSelectChange, createMailDomain, removeMailDomain, loadMailDomain, showCreateMailbox, createMailbox, removeMailbox, showCreateAlias, createAlias, removeAlias, generateMailDkim, regenMailConfig, loadMailHealth });

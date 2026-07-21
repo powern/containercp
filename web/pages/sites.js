@@ -4,12 +4,16 @@ import {
 
 
 /* ===== SITES ===== */
-async function loadSites(p) {
+let activeSitesLifecycle = null;
+
+async function loadSites(p, params, lifecycle) {
+  activeSitesLifecycle = lifecycle || activeSitesLifecycle;
   try {
     const data = await api('/api/sites');
+    if (lifecycle && !lifecycle.isActive()) return;
     p.innerHTML = `<div class="page-header"><h1>Sites</h1><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="showCreateSiteWizard()">+ Create Site</button></div></div>`;
     p.innerHTML += tb('All Sites');
-    window.renderTable = () => {
+    const render = () => {
       const tbl = $('sites-table');
       if (!tbl) return;
       const filtered = (data.data||[]).filter(r => !window.searchTerm || r.domain.includes(window.searchTerm) || r.owner.includes(window.searchTerm));
@@ -27,6 +31,7 @@ async function loadSites(p) {
       filtered.forEach(site => {
         if (site.web_status || site.php_status || site.https_status) return; // already has explicit status
         api('/api/runtime/' + site.id).then(rt => {
+          if (activeSitesLifecycle && !activeSitesLifecycle.isActive()) return;
           if (!rt.success) return;
           const update = (srv, val) => {
             const el = tbl.querySelector(`span[data-rt-id="${site.id}"][data-rt-service="${srv}"]`);
@@ -38,6 +43,8 @@ async function loadSites(p) {
         }).catch(()=>{});
       });
     };
+    if (lifecycle && lifecycle.setRenderTable) lifecycle.setRenderTable(render);
+    else window.renderTable = render;
     p.innerHTML += `<div id="sites-table"></div>`;
     window.renderTable();
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load sites</div>'; }
@@ -49,7 +56,7 @@ async function removeSite(domain) {
   if (!confirm('Remove site '+domain+'? This cannot be undone.')) return;
   try {
     const res = await apiPost('/api/sites/remove', {domain});
-    if (res.success) { toast('Site removed: '+domain, 'success'); loadSites($('page')); }
+    if (res.success) { toast('Site removed: '+domain, 'success'); loadSites($('page'), null, activeSitesLifecycle); }
     else toast('Error: '+res.error, 'error');
   } catch(e) { toast('Network error', 'error'); }
 }
@@ -113,13 +120,17 @@ async function startSiteWizard() {
           $('progress-bar').style.width = '100%';
           $('progress-step').textContent = 'Site created successfully';
           $('progress-status').textContent = 'Completed';
-          setTimeout(() => { document.getElementById('progress-overlay')?.remove(); navigate('sites'); }, 1500);
-        });
+          const ctx = activeSitesLifecycle;
+          const later = ctx && ctx.setTimeout ? ctx.setTimeout.bind(ctx) : setTimeout;
+          later(() => { document.getElementById('progress-overlay')?.remove(); navigate('sites'); }, 1500);
+        }, activeSitesLifecycle);
       } else {
         $('progress-bar').style.width = '100%';
         $('progress-step').textContent = 'Site created successfully';
         $('progress-status').textContent = 'Completed';
-        setTimeout(() => { document.getElementById('progress-overlay')?.remove(); navigate('sites'); }, 1500);
+        const ctx = activeSitesLifecycle;
+        const later = ctx && ctx.setTimeout ? ctx.setTimeout.bind(ctx) : setTimeout;
+        later(() => { document.getElementById('progress-overlay')?.remove(); navigate('sites'); }, 1500);
       }
     } else {
       $('progress-step').textContent = 'Error: ' + (res.error||'Unknown');
@@ -134,9 +145,11 @@ async function startSiteWizard() {
 }
 
 /* ===== JOB PROGRESS POLLING ===== *//* ===== SITE DETAIL ===== */
-async function loadSiteDetail(p, siteId) {
+async function loadSiteDetail(p, siteId, lifecycle) {
+  activeSitesLifecycle = lifecycle || activeSitesLifecycle;
   try {
     const data = await api('/api/sites');
+    if (lifecycle && !lifecycle.isActive()) return;
     const site = (data.data||[]).find(s => s.id == siteId);
     if (!site) { p.innerHTML = '<div class="empty-state">Site not found</div>'; return; }
 
@@ -182,6 +195,7 @@ async function loadSiteDetail(p, siteId) {
     const [domains, databases, ssl, proxy, backups] = await Promise.all([
       api('/api/domains'), api('/api/databases'), api('/api/ssl'), api('/api/proxy'), api('/api/backups')
     ]);
+    if (lifecycle && !lifecycle.isActive()) return;
     const colLeft = $('site-cols-left');
     const colRight = $('site-cols-right');
     const colBottom = $('site-cols-bottom');
@@ -287,6 +301,7 @@ async function rotateWordPressDatabasePassword(siteId, databaseId, domain) {
 
 async function pollWordPressRotationJob(jobId, siteId, domain, attempts) {
   pollRotationJob(jobId, {
+    lifecycle: activeSitesLifecycle,
     maxAttempts: 30,
     messageEl: 'wp-rotate-msg',
     renderFailed: renderWordPressRotationDiagnostics,
@@ -464,6 +479,7 @@ function loadRuntimeCard(siteId, domain, backend) {
 
 function refreshRuntimeCard(siteId, domain, backend) {
   api('/api/runtime/' + siteId).then(rt => {
+    if (activeSitesLifecycle && !activeSitesLifecycle.isActive()) return;
     if (!rt.success) return;
     const badge = (s) => {
       const m={'Running':'badge-ok','Healthy':'badge-ok','Active':'badge-ok','Stopped':'badge-err','Unhealthy':'badge-warn','Starting':'badge-warn','Expiring':'badge-warn','Error':'badge-err','Expired':'badge-err','Disabled':'badge-info','Issuing':'badge-warn','Unknown':'badge-info'};
@@ -527,7 +543,9 @@ function runRuntimeAction(siteId, domain, action) {
       return;
     }
     // Refresh runtime status after delay
-    setTimeout(() => {
+    const ctx = activeSitesLifecycle;
+    const later = ctx && ctx.setTimeout ? ctx.setTimeout.bind(ctx) : setTimeout;
+    later(() => {
       const domainEl = document.querySelector('#rt-card');
       if (domainEl) refreshRuntimeCard(siteId, domain, '');
     }, 1500);
@@ -536,5 +554,7 @@ function runRuntimeAction(siteId, domain, action) {
   });
 }
 
-export { loadSites, loadSiteDetail };
+const sitesPage = { mount: loadSites, unmount() { activeSitesLifecycle = null; } };
+const siteDetailPage = { mount: loadSiteDetail, unmount() { activeSitesLifecycle = null; } };
+export { loadSites, loadSiteDetail, sitesPage, siteDetailPage };
 Object.assign(window, { loadSites, removeSite, showCreateSiteWizard, startSiteWizard, loadSiteDetail, loadWordPressCredentialCard, renderWordPressCredentialCard, rotateWordPressDatabasePassword, pollWordPressRotationJob, loadPhpMailCard, renderPhpMailCard, enablePhpMail, disablePhpMail, loadRuntimeCard, refreshRuntimeCard, buildRuntimeActions, runRuntimeAction });

@@ -15,3 +15,4 @@ export function showModal(title, bodyHtml, width) {
 }
 
 export function hideModal() { const o=document.getElementById('modal-overlay'); if(o)o.style.display='none'; }
+export function destroyModal() { const o=document.getElementById('modal-overlay'); if(o)o.remove(); }

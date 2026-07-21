@@ -4,7 +4,10 @@ import {
 
 
 /* ===== PROXY ===== */
-async function loadProxy(p) {
+let activeProxyLifecycle = null;
+
+async function loadProxy(p, params, lifecycle) {
+  activeProxyLifecycle = lifecycle || activeProxyLifecycle;
   if (p._loading) return;
   p._loading = true;
 
@@ -13,6 +16,7 @@ async function loadProxy(p) {
       api('/api/proxy'),
       api('/api/proxy/health')
     ]);
+    if (lifecycle && !lifecycle.isActive()) return;
 
     const health = healthData.data || {};
     const container = health.container || {};
@@ -83,7 +87,7 @@ async function loadProxy(p) {
         <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">${actionBtns}</div>
       </div>`;
     p.innerHTML += tb('Proxy Entries');
-    window.renderTable = () => {
+    const render = () => {
       const tbl = $('proxy-table');
       if (!tbl) return;
       const rows = (proxyData.data||[]).filter(r=>!window.searchTerm||r.domain.includes(window.searchTerm));
@@ -112,6 +116,8 @@ async function loadProxy(p) {
         }}
       ], rows, 'No proxy entries');
     };
+    if (lifecycle && lifecycle.setRenderTable) lifecycle.setRenderTable(render);
+    else window.renderTable = render;
     p.innerHTML += `<div id="proxy-table"></div>`;
     window.renderTable();
   } catch (e) {
@@ -159,7 +165,7 @@ async function proxyAction(action) {
   _proxyActionPending = false;
   // Refresh health card and proxy entries without full page reload
   const p = document.getElementById('page');
-  if (p && !p._loading) loadProxy(p);
+  if (p && !p._loading) loadProxy(p, null, activeProxyLifecycle);
 }
 
 async function removeProxy(domain) {
@@ -167,5 +173,6 @@ async function removeProxy(domain) {
   try { const res = await apiPost('/api/proxy/remove',{domain}); if(res.success){toast('Proxy removed','success');window.renderTable&&renderTable();}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
 }
 
-export { loadProxy };
+const proxyPage = { mount: loadProxy, unmount() { activeProxyLifecycle = null; _proxyActionPending = false; } };
+export { loadProxy, proxyPage };
 Object.assign(window, { loadProxy, setProxyButtonsEnabled, setProxyButtonText, proxyAction, removeProxy });

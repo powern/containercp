@@ -135,40 +135,40 @@ Checklist items:
 
 - [x] Review this checklist and Phase 1 architecture notes before implementation.
 - [x] Mark selected Phase 1 tasks as `[-]` before editing.
-- [ ] Create `web/core/utils.js` only when moving real utility code.
-- [ ] Move `esc` into the core utility boundary without changing output semantics.
-- [ ] Move attribute escaping into the core utility boundary.
-- [ ] Add a centralized JavaScript string serialization helper for compatibility handlers.
-- [ ] Preserve current date and null-display formatting behavior when moving shared helpers.
-- [ ] Create `web/core/api.js` only when moving real API code.
-- [ ] Move `api` behavior into the core API boundary without endpoint-specific logic.
-- [ ] Move `apiPost` behavior into the core API boundary without changing current callers.
-- [ ] Add explicit API error normalization boundaries without exposing raw secrets.
-- [ ] Preserve current `X-Session-Token` request behavior.
-- [ ] Preserve current 401/auth failure behavior.
-- [ ] Create `web/core/notifications.js` only when moving toast code.
-- [ ] Move `toast` into the notification boundary with current visual behavior preserved.
-- [ ] Track toast timeout cleanup behavior for later lifecycle integration.
-- [ ] Create `web/core/modals.js` only when moving modal code.
-- [ ] Move `showModal` and `hideModal` into the modal boundary without redesigning dialogs.
-- [ ] Document modal body HTML escaping responsibilities.
-- [ ] Create `web/core/clipboard.js` only when moving clipboard code.
-- [ ] Move `copyText` into the clipboard boundary with current feedback behavior preserved.
-- [ ] Create `web/core/compat.js` only when exposing moved functions for legacy callers.
-- [ ] Expose `api` through the compatibility layer while inline handlers require it.
-- [ ] Expose `apiPost` through the compatibility layer while inline handlers require it.
-- [ ] Expose `toast` through the compatibility layer while inline handlers require it.
-- [ ] Expose `esc` through the compatibility layer while legacy utility files require it.
-- [ ] Expose `$`, `qs`, and `qsa` through the compatibility layer while legacy code requires them.
-- [ ] Expose `showModal` and `hideModal` through the compatibility layer while page code requires them.
-- [ ] Expose `copyText` through the compatibility layer while inline handlers require it.
-- [ ] Add static tests for required compatibility exports.
-- [ ] Add static tests for centralized escaping imports or compatibility references.
-- [ ] Run `node --check` on all frontend JS files.
-- [ ] Run `git diff --check`.
-- [ ] Run focused frontend/API tests.
-- [ ] Run frontend-only validation; do not run full CMake build or CTest unless compiled/backend files changed with explicit approval.
-- [ ] Update this checklist with validation results before ending the session.
+- [x] Create `web/core/utils.js` only when moving real utility code.
+- [x] Move `esc` into the core utility boundary without changing output semantics.
+- [x] Move attribute escaping into the core utility boundary.
+- [x] Add a centralized JavaScript string serialization helper for compatibility handlers.
+- [x] Preserve current date and null-display formatting behavior when moving shared helpers.
+- [x] Create `web/core/api.js` only when moving real API code.
+- [x] Move `api` behavior into the core API boundary without endpoint-specific logic.
+- [x] Move `apiPost` behavior into the core API boundary without changing current callers.
+- [x] Add explicit API error normalization boundaries without exposing raw secrets.
+- [x] Preserve current `X-Session-Token` request behavior.
+- [x] Preserve current 401/auth failure behavior.
+- [x] Create `web/core/notifications.js` only when moving toast code.
+- [x] Move `toast` into the notification boundary with current visual behavior preserved.
+- [x] Track toast timeout cleanup behavior for later lifecycle integration.
+- [x] Create `web/core/modals.js` only when moving modal code.
+- [x] Move `showModal` and `hideModal` into the modal boundary without redesigning dialogs.
+- [x] Document modal body HTML escaping responsibilities.
+- [x] Create `web/core/clipboard.js` only when moving clipboard code.
+- [x] Move `copyText` into the clipboard boundary with current feedback behavior preserved.
+- [x] Create `web/core/context.js` only when exposing moved functions for legacy callers.
+- [x] Expose `api` through the compatibility layer while inline handlers require it.
+- [x] Expose `apiPost` through the compatibility layer while inline handlers require it.
+- [x] Expose `toast` through the compatibility layer while inline handlers require it.
+- [x] Expose `esc` through the compatibility layer while legacy utility files require it.
+- [x] Expose `$`, `qs`, and `qsa` through the compatibility layer while legacy code requires them.
+- [x] Expose `showModal` and `hideModal` through the compatibility layer while page code requires them.
+- [x] Expose `copyText` through the compatibility layer while inline handlers require it.
+- [x] Add static tests for required compatibility exports.
+- [x] Add static tests for centralized escaping imports or compatibility references.
+- [x] Run `node --check` on all frontend JS files.
+- [x] Run `git diff --check`.
+- [x] Run focused frontend/API tests.
+- [x] Run frontend-only validation; do not run full CMake build or CTest unless compiled/backend files changed with explicit approval.
+- [x] Update this checklist with validation results before ending the session.
 
 Expected files:
 
@@ -212,35 +212,35 @@ Checklist items:
 
 - [x] Review this checklist and Phase 2 architecture notes before implementation.
 - [x] Mark selected Phase 2 tasks as `[-]` before editing.
-- [ ] Create `web/core/router.js` only when moving real router code.
-- [ ] Move route registration into the router boundary.
-- [ ] Preserve `navigate(page, params)` behavior.
-- [ ] Preserve `navigateTo(page)` behavior.
-- [ ] Preserve active nav mapping for `site-detail` to `sites`.
-- [ ] Preserve active nav mapping for `domain-detail` to `domains`.
-- [ ] Preserve non-menu routes `mail-domain` and `mail-health`.
-- [ ] Preserve auth bootstrap navigation to Dashboard.
-- [ ] Do not add browser history or deep links in this phase.
-- [ ] Create `web/core/lifecycle.js` only when adding cleanup infrastructure.
-- [ ] Add cleanup registration for timers.
-- [ ] Add cleanup registration for timeout chains.
-- [ ] Add cleanup registration for delegated listeners.
-- [ ] Add cleanup registration for modal or drawer teardown.
-- [ ] Add an active-generation or active-flag pattern for stale async updates.
-- [ ] Add optional AbortController support where it does not change behavior.
-- [ ] Create `web/core/state.js` only if shared app/session state is moved.
-- [ ] Keep page-local state out of `core/state.js`.
-- [ ] Expose `window.navigate` through compatibility while inline links remain.
-- [ ] Expose `window.navigateTo` through compatibility while legacy listeners remain.
-- [ ] Add static route registry tests for every main menu item.
-- [ ] Add static route registry tests for every detail route.
-- [ ] Add a repeated-navigation validation checklist.
-- [ ] Add lifecycle cleanup tests or static checks where feasible.
-- [ ] Run `node --check` on all frontend JS files.
-- [ ] Run `git diff --check`.
-- [ ] Run focused frontend/API tests.
-- [ ] Run frontend-only validation; do not run full CMake build or CTest unless compiled/backend files changed with explicit approval.
-- [ ] Update this checklist with validation results before ending the session.
+- [x] Create `web/core/router.js` only when moving real router code.
+- [x] Move route registration into the router boundary.
+- [x] Preserve `navigate(page, params)` behavior.
+- [x] Preserve `navigateTo(page)` behavior.
+- [x] Preserve active nav mapping for `site-detail` to `sites`.
+- [x] Preserve active nav mapping for `domain-detail` to `domains`.
+- [x] Preserve non-menu routes `mail-domain` and `mail-health`.
+- [x] Preserve auth bootstrap navigation to Dashboard.
+- [x] Do not add browser history or deep links in this phase.
+- [x] Create `web/core/lifecycle.js` only when adding cleanup infrastructure.
+- [x] Add cleanup registration for timers.
+- [x] Add cleanup registration for timeout chains.
+- [x] Add cleanup registration for delegated listeners.
+- [x] Add cleanup registration for modal or drawer teardown.
+- [x] Add an active-generation or active-flag pattern for stale async updates.
+- [x] Add optional AbortController support where it does not change behavior.
+- [x] Create `web/core/state.js` only if shared app/session state is moved; not needed for this lifecycle phase.
+- [x] Keep page-local state out of `core/state.js`.
+- [x] Expose `window.navigate` through compatibility while inline links remain.
+- [x] Expose `window.navigateTo` through compatibility while legacy listeners remain.
+- [x] Add static route registry tests for every main menu item.
+- [x] Add static route registry tests for every detail route.
+- [x] Add a repeated-navigation validation checklist.
+- [x] Add lifecycle cleanup tests or static checks where feasible.
+- [x] Run `node --check` on all frontend JS files.
+- [x] Run `git diff --check`.
+- [x] Run focused frontend/API tests.
+- [x] Run frontend-only validation; do not run full CMake build or CTest unless compiled/backend files changed with explicit approval.
+- [x] Update this checklist with validation results before ending the session.
 
 Expected files:
 
@@ -271,6 +271,64 @@ Rollback notes:
 
 - Revert the Phase 2 commit to restore the existing if/else `navigate()` chain.
 - Keep Phase 1 helpers if they are already stable and independent.
+
+Phase 2 lifecycle implementation results, 2026-07-21:
+
+- [x] Router now creates one lifecycle context per route transition.
+- [x] Router calls the previous page `unmount()` and lifecycle cleanup before mounting the next page.
+- [x] Router accepts explicit page objects with `mount` and optional `unmount` hooks.
+- [x] Every current page module exports an explicit page object used by `web/app.js` route registration.
+- [x] Lifecycle context supports cleanup registration for intervals, timeouts, delegated listeners, AbortController, modal teardown, and route-local `window.renderTable` compatibility.
+- [x] Sites route owns runtime row stale guards, site creation job polling, delayed navigation timeout, WordPress rotation polling, and runtime refresh timeout through the active lifecycle context.
+- [x] Domains route owns list table rendering and progressive DNS/runtime/health async updates through the active lifecycle context.
+- [x] Databases route owns Escape key drawer listener, drawer teardown, drawer focus timeout, detail async stale guards, and rotation polling through the active lifecycle context.
+- [x] Migration route owns SQL import polling interval through the active lifecycle context.
+- [x] Mail route owns table rendering and DKIM copy listeners through the active lifecycle context.
+- [x] SSL, Proxy, Access, and Backups routes own route-local table refresh state through the active lifecycle context.
+- [x] App shell status interval now has one owner and is cleared before reinitialization or logout.
+- [x] Low-risk unused page loader globals were removed for Dashboard, Profiles, Templates, Nodes, Webmail, Settings, Access, and Backups.
+- [x] Frontend baseline validation now checks lifecycle primitives, route cleanup ownership, and explicit page-object route registration.
+- [x] No browser history or deep-link behavior was added.
+- [x] No backend, C++, CMake, API route, CSS, visual redesign, or UI 2.0 work was included.
+
+Repeated-navigation validation checklist:
+
+- [x] Navigating away from a page calls previous page cleanup before mounting the next page.
+- [x] Navigating to the same route again still cleans the previous route instance first.
+- [x] Route-local `window.renderTable` is cleared only if it still belongs to the leaving route.
+- [x] Databases Escape listener is registered per page lifecycle and removed on navigation.
+- [x] Databases drawer/backdrop DOM is removed on navigation.
+- [x] Migration SQL polling interval is cancelled on navigation.
+- [x] Sites job polling and delayed refresh/navigation timers are cancelled on navigation.
+- [x] WordPress/database rotation polling timeout chains are cancelled on navigation.
+- [x] Domains progressive async row updates check the active lifecycle before mutating the DOM.
+
+Remaining temporary compatibility exports after Phase 2:
+
+- [x] `web/core/context.js`: `$`, `qs`, `qsa`, `api`, `apiPost`, `esc`, `escAttr`, `jsString`, `dbJsArg`, `toast`, `showModal`, `hideModal`, `destroyModal`, `copyText`, `navigate`, `navigateTo`, `pollJobProgress`, `pollRotationJob`, `renderWordPressRotationDiagnostics`, `renderRotationJobTimeline`; required by legacy helper files, modal teardown, and inline handlers until delegated-handler migration is complete.
+- [x] `web/core/shell.js`: `renderLogin`, `doLogin`, `renderChangePassword`, `doChangePassword`, `doLogout`, `initApp`, `checkAuth`, `toggleTheme`, `loadVersion`, `updateStatus`; required by auth/shell inline handlers and bootstrap compatibility.
+- [x] `web/js/cache.js`: `DnsCache`, `RuntimeCache`, `HealthCache`; required by Domains and existing cache helpers until cache modules are split.
+- [x] `web/js/utils.js`: DNS, runtime, health, copy, and Domain Health helper globals; required by Domains and cache helpers until delegated utility imports replace them.
+- [x] `web/pages/sites.js`: Site action/card/runtime globals remain for existing inline handlers.
+- [x] `web/pages/domains.js`: Domain detail, tab, DNS, mail, security, health, proxy, SSL, and remove globals remain for existing inline handlers and legacy cross-helper references.
+- [x] `web/pages/databases.js`: Database inventory, filter, drawer, rotation, and badge globals remain for existing inline handlers in the DB-2 page.
+- [x] `web/pages/mail.js`: Mail module, mail-domain, mailbox, alias, DKIM, and mail-health globals remain for existing inline handlers.
+- [x] `web/pages/ssl.js`: SSL action/status/link globals remain for existing inline handlers.
+- [x] `web/pages/proxy.js`: Proxy action/remove globals remain for existing inline handlers; internal helper exports remain temporary while proxy inline handlers are migrated.
+- [x] `web/pages/backups.js`: Backup modal/create/restore/remove globals remain for existing inline handlers.
+- [x] `web/pages/access.js`: `removeAccessUser` remains for existing inline handlers.
+- [x] `web/pages/logs.js`: `loadLogs` remains for the existing Refresh inline handler.
+- [x] `web/pages/migration.js`: Migration analyze/import globals remain for existing inline handlers.
+- [x] `web/pages/settings.js`: Settings action globals remain for existing inline handlers.
+
+Phase 2 validation results, 2026-07-21:
+
+- [x] `node --check` passed for every `web/**/*.js`, `web/*.js`, and `scripts/check-frontend-baseline.js` file.
+- [x] `node scripts/check-frontend-baseline.js` passed.
+- [x] Module import smoke check passed with a minimal browser API stub.
+- [x] `git diff --check` passed.
+- [x] Browser production smoke was already completed by deployment feedback before this phase; browser execution is otherwise not directly available in this environment.
+- [x] Full CMake configure/build, `containercp` build, `containercpd` build, full CTest, GitHub Actions, backend changes, C++ changes, CMake changes, and API route changes were not used.
 
 ## Phase 3: Application State Boundaries
 

@@ -13,5 +13,5 @@ async function loadNodes(p) {
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load nodes</div>'; }
 }
 
-export { loadNodes };
-Object.assign(window, { loadNodes });
+const nodesPage = { mount: loadNodes };
+export { loadNodes, nodesPage };

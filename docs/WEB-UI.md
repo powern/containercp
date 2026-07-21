@@ -118,10 +118,13 @@ The Web UI is split into native browser modules while preserving the existing AP
 | Entry point and route registration | `web/app.js` |
 | Core API/auth/session helpers | `web/core/api.js` |
 | Router and navigation registry | `web/core/router.js` |
+| Page lifecycle cleanup | `web/core/lifecycle.js` |
 | Shell, login, status, version, theme | `web/core/shell.js` |
 | Shared escaping, modal, toast, clipboard, job helpers | `web/core/` |
 | Shared component helpers | `web/components/` |
 | Page modules | `web/pages/` |
 | Existing DNS/runtime/health cache helpers | `web/js/cache.js`, `web/js/utils.js` |
 
-The page modules currently keep temporary global compatibility exports for existing inline event handlers. Future cleanup can remove those shims after controls are migrated to delegated event handlers.
+The router owns page transitions. Each registered page exposes an explicit `mount` lifecycle entry point and may define `unmount` cleanup. Route lifecycle contexts clean route-owned listeners, timers, pollers, stale async updates, drawer teardown, and route-local table refresh hooks before the next page mounts.
+
+The page modules currently keep temporary global compatibility exports only where existing inline event handlers or legacy helper files still require them. Future cleanup can remove those shims after controls are migrated to delegated event handlers.

@@ -13,5 +13,5 @@ async function loadProfiles(p) {
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load profiles</div>'; }
 }
 
-export { loadProfiles };
-Object.assign(window, { loadProfiles });
+const profilesPage = { mount: loadProfiles };
+export { loadProfiles, profilesPage };

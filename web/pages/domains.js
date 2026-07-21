@@ -27,6 +27,7 @@ const compareSpfRecords = window.compareSpfRecords;
 const compareDkimRecords = window.compareDkimRecords;
 const compareDmarcRecords = window.compareDmarcRecords;
 const computeDomainHealthScore = window.computeDomainHealthScore;
+let activeDomainsLifecycle = null;
 
 /* ===== DOMAINS ===== */
 function domainTypeBadge(type) {
@@ -45,14 +46,16 @@ function domainUsableHttps(r) {
   return r.ssl_status === 'Active' || r.ssl_status === 'Expiring';
 }
 
-async function loadDomains(p) {
+async function loadDomains(p, params, lifecycle) {
+  activeDomainsLifecycle = lifecycle || activeDomainsLifecycle;
   try {
     const data = await api('/api/domains');
+    if (lifecycle && !lifecycle.isActive()) return;
     const domains = data.data || [];
     p.innerHTML = `<div class="page-header"><h1>Domains</h1><div class="page-actions" style="font-size:12px;color:var(--text3);font-weight:normal;">${domains.length} domain${domains.length===1?'':'s'}</div></div>`;
     p.innerHTML += tb('All Domains');
 
-    window.renderTable = () => {
+    const render = () => {
       const tbl = $('domains-table');
       if (!tbl) return;
       const lowerSearch = (window.searchTerm||'').toLowerCase();
@@ -106,6 +109,8 @@ async function loadDomains(p) {
         }}
       ], rows, 'No domains');
     };
+    if (lifecycle && lifecycle.setRenderTable) lifecycle.setRenderTable(render);
+    else window.renderTable = render;
     p.innerHTML += `<div id="domains-table"></div>`;
     window.renderTable();
 
@@ -117,14 +122,17 @@ async function loadDomains(p) {
 
     const domainListTypes = 'A,AAAA,MX';
     await window.processBatch(rows, 3, async (r) => {
+      if (activeDomainsLifecycle && !activeDomainsLifecycle.isActive()) return;
       if (DnsCache.get(r.domain, domainListTypes)) return;
       if (DnsCache.isLoading(r.domain, domainListTypes)) {
         await DnsCache.waitFor(r.domain, domainListTypes);
+        if (activeDomainsLifecycle && !activeDomainsLifecycle.isActive()) return;
         return;
       }
       DnsCache.setLoading(r.domain, domainListTypes);
       try {
         const res = await api('/api/domains/' + encodeURIComponent(r.domain) + '/dns-check?types=' + domainListTypes);
+        if (activeDomainsLifecycle && !activeDomainsLifecycle.isActive()) return;
         DnsCache.set(r.domain, domainListTypes, res.data || {});
       } catch(e) {
         DnsCache.set(r.domain, domainListTypes, null);
@@ -139,6 +147,7 @@ async function loadDomains(p) {
       cells[4].innerHTML = window.dnsStatusBadge(dnsData ? dnsData.overall_status : null);
       // Health score uses HealthCache.load (full context) or shows '...'
       window.HealthCache.load(r.domain, r, null, null).then(function(healthResult) {
+        if (activeDomainsLifecycle && !activeDomainsLifecycle.isActive()) return;
         if (!healthResult || healthResult.score == null) return;
         var hRow = document.querySelector(`#domains-table table tbody tr:nth-child(${idx+1})`);
         if (!hRow) return;
@@ -151,9 +160,11 @@ async function loadDomains(p) {
     // Progressive Runtime loading (separate pass, concurrency=3)
     const siteRows = rows.filter(r => r.site_id && r.site_id > 0);
     await window.processBatch(siteRows, 3, async (r) => {
+      if (activeDomainsLifecycle && !activeDomainsLifecycle.isActive()) return;
       if (RuntimeCache.get(r.site_id)) return;
       try {
         const res = await api('/api/runtime/' + r.site_id);
+        if (activeDomainsLifecycle && !activeDomainsLifecycle.isActive()) return;
         RuntimeCache.set(r.site_id, res.data || {});
       } catch(e) {
         return;
@@ -174,11 +185,13 @@ async function loadDomains(p) {
 let _currentDomain = null;
 let _domainIdForTab = null;
 
-async function loadDomainDetail(p, domainId) {
+async function loadDomainDetail(p, domainId, lifecycle) {
+  activeDomainsLifecycle = lifecycle || activeDomainsLifecycle;
   _domainIdForTab = domainId;
   try {
     // Fetch domain data (from enriched list)
     const allDomains = await api('/api/domains');
+    if (lifecycle && !lifecycle.isActive()) return;
     const domainRow = (allDomains.data || []).find(d => d.id == domainId);
     if (!domainRow) { p.innerHTML = '<div class="empty-state">Domain not found</div>'; return; }
     _currentDomain = domainRow;
@@ -1167,7 +1180,8 @@ function toggleEvidencePanel(panelId, anchorEl, html) {
   _openEvidencePanel = panelId;
   // Wire Dismiss button
   const dismissBtn = container.querySelector('[data-evidence-dismiss]');
-  if (dismissBtn) dismissBtn.addEventListener('click', closeEvidencePanel);
+  if (dismissBtn && activeDomainsLifecycle && activeDomainsLifecycle.addEventListener) activeDomainsLifecycle.addEventListener(dismissBtn, 'click', closeEvidencePanel);
+  else if (dismissBtn) dismissBtn.addEventListener('click', closeEvidencePanel);
 }
 
 function evidenceHtml(type, configured, published, dnsDetails, copyValue, steps) {
@@ -1389,7 +1403,7 @@ function loadDomainSecurity() {
 function attachSecurityDelegation() {
   var sec = document.getElementById('security-tab-content');
   if (!sec) return;
-  sec.addEventListener('click', function(e) {
+  const listener = function(e) {
     // Copy buttons
     var copyBtn = e.target.closest('[data-copy]');
     if (copyBtn) {
@@ -1439,7 +1453,9 @@ function attachSecurityDelegation() {
     var steps = getEvidenceSteps(type, dd.domainRow.domain);
     var html = evidenceHtml(type, configured, published, '', copyValue, steps);
     toggleEvidencePanel('ev-' + key, card, html);
-  });
+  };
+  if (activeDomainsLifecycle && activeDomainsLifecycle.addEventListener) activeDomainsLifecycle.addEventListener(sec, 'click', listener);
+  else sec.addEventListener('click', listener);
 }
 
 window.selectDmarcPolicy = function(value) {
@@ -1522,7 +1538,7 @@ function loadDomainHealth() {
 function attachHealthDelegation() {
   var root = document.getElementById('health-tab-content');
   if (!root) return;
-  root.addEventListener('click', function(e) {
+  const listener = function(e) {
     if (e.target.closest('[data-health-check-again]')) {
       var dd = window._domainDetailData;
       if (dd) {
@@ -1542,12 +1558,16 @@ function attachHealthDelegation() {
       }
       loadDomainHealth();
     }
-  });
+  };
+  if (activeDomainsLifecycle && activeDomainsLifecycle.addEventListener) activeDomainsLifecycle.addEventListener(root, 'click', listener);
+  else root.addEventListener('click', listener);
 }
 async function removeDomain(domain) {
   if (!confirm('Remove domain '+domain+'?')) return;
-  try { const res = await apiPost('/api/domains/remove',{domain}); if(res.success){toast('Domain removed','success');loadDomains($('page'));}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
+  try { const res = await apiPost('/api/domains/remove',{domain}); if(res.success){toast('Domain removed','success');loadDomains($('page'), null, activeDomainsLifecycle);}else toast('Error: '+res.error,'error'); } catch(e){toast('Network error','error');}
 }
 
-export { loadDomains, loadDomainDetail };
+const domainsPage = { mount: loadDomains, unmount() { activeDomainsLifecycle = null; } };
+const domainDetailPage = { mount: loadDomainDetail, unmount() { activeDomainsLifecycle = null; } };
+export { loadDomains, loadDomainDetail, domainsPage, domainDetailPage };
 Object.assign(window, { domainTypeBadge, domainSslBadge, domainUsableHttps, loadDomains, loadDomainDetail, switchDomainTab, fetchDnsForFqdn, runSystemAction, loadSslDetails, loadDomainOverview, refreshDomainOverview, loadDomainDnsRecords, refreshDnsRecordsTab, loadDomainMail, refreshMailTab, closeEvidencePanel, toggleEvidencePanel, evidenceHtml, getEvidenceReason, getEvidenceSteps, getRecDefs, loadDomainSecurity, attachSecurityDelegation, loadDomainHealth, attachHealthDelegation, removeDomain });
