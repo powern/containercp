@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-21 | `this commit` | Docs — Record DB-5 production validation
+
+**Summary:** Recorded completed DB-5 production validation after the tar manifest detection fix was deployed to the validation host.
+
+**Files changed:** `CHANGELOG.md`, `planning/project-status.md`, `planning/database-module-v0.8-implementation-plan.md`
+
+**User-visible behavior:** Project status now reflects that database-aware Site backups were validated end-to-end on the target production VM using the existing Backups workflow.
+
+**Validation:** Deployed commit `a4e11e8` to `web2.softico.ua`; daemon health check passed. On target Site ID `13`, backup `3` was reclassified as database-aware, fresh backup `4` completed with `contains_database=true`, `database_status=included`, `backup_completeness=complete`, and `restore_capability=full,files_only,database_only`. A `database_only` restore from backup `4` completed as job `2`, created pre-restore recovery backup `5`, left DB ID `13` verified/managed/importable/exportable, and the target Site returned HTTP `200` through the local proxy.
+
+**Known risks:** Browser automation remains unavailable in this workspace; GUI validation is limited to frontend regression scripts and API-backed production validation.
+
+---
+
 ## 2026-07-21 | `this commit` | Backup — Fix DB-5 manifest detection
 
 **Summary:** Fixed DB-5 archive manifest inspection after production validation showed a newly created database-aware backup was classified as `legacy_unknown`. The hardened tar listing validator now accepts the archive root entry and preserves the leading `./` path prefix while validating relative paths.
@@ -14,7 +28,7 @@ Format: date | commit | summary
 
 **User-visible behavior:** DB-5 backup records created with the new archive layout are detected as database-aware and expose safe manifest metadata such as `contains_database`, `database_status`, and restore capabilities instead of being treated as legacy files-only archives.
 
-**Validation:** Focused backup doctest passed (`14` cases, `96` assertions). Clean rebuild passed for `containercpd` and `containercp_tests`; full doctest passed (`867` cases, `6186` assertions); CTest passed (`1/1`). Production revalidation is pending.
+**Validation:** Focused backup doctest passed (`14` cases, `96` assertions). Clean rebuild passed for `containercpd` and `containercp_tests`; full doctest passed (`867` cases, `6186` assertions); CTest passed (`1/1`). Deployed commit `a4e11e8` to `web2.softico.ua`; daemon health check passed. Existing backup `3` was reclassified from legacy metadata to database-aware safe metadata, and fresh backup `4` exposed `contains_database=true`, `database_status=included`, `backup_completeness=complete`, and `restore_capability=full,files_only,database_only`.
 
 **Known risks:** This fix changes tar listing validation only; it does not expand DB-5 restore scope beyond one managed MariaDB database per Site.
 
@@ -28,7 +42,7 @@ Format: date | commit | summary
 
 **User-visible behavior:** Backups created from the Backups page now queue a backend job and, for eligible Sites, include both Site files and the managed MariaDB logical dump. Backup records show database inclusion metadata without exposing paths or secrets. Completed backups can be downloaded by ID. Restore supports `full`, `files_only`, and `database_only` modes with exact typed confirmation for database import and a pre-restore recovery backup before destructive steps. The Databases page remains limited to database lifecycle, password rotation, export SQL, and import SQL actions.
 
-**Validation:** Clean configure passed with `cmake -S . -B build-db5`. Clean build passed with `cmake --build build-db5 -j2` for `containercp_tests`, `containercp`, and `containercpd` with no compiler warnings. Focused backup doctest passed with `13` cases and `93` assertions. Full doctest passed (`866` cases, `6183` assertions). Standalone CTest passed (`1/1`) after an immediate post-doctest CTest run hit the known Docker integration-test state collision in an existing disposable MariaDB lifecycle test. Frontend syntax and regression checks passed: `node --check web/pages/backups.js`, `node --check scripts/test-backup-actions.js`, `node scripts/test-backup-actions.js`, `node scripts/check-frontend-baseline.js`, `node scripts/test-database-drop-modal.js`, and `node scripts/test-database-transfer-actions.js`. `git diff --check` passed. Production validation is pending.
+**Validation:** Clean configure passed with `cmake -S . -B build-db5`. Clean build passed with `cmake --build build-db5 -j2` for `containercp_tests`, `containercp`, and `containercpd` with no compiler warnings. Focused backup doctest passed with `13` cases and `93` assertions. Full doctest passed (`866` cases, `6183` assertions). Standalone CTest passed (`1/1`) after an immediate post-doctest CTest run hit the known Docker integration-test state collision in an existing disposable MariaDB lifecycle test. Frontend syntax and regression checks passed: `node --check web/pages/backups.js`, `node --check scripts/test-backup-actions.js`, `node scripts/test-backup-actions.js`, `node scripts/check-frontend-baseline.js`, `node scripts/test-database-drop-modal.js`, and `node scripts/test-database-transfer-actions.js`. `git diff --check` passed. Production validation on `test-gui-apache.local` / Site ID `13` passed after follow-up manifest detection fix `a4e11e8`: database-aware backup create completed, safe metadata reported MariaDB payload inclusion, `database_only` restore completed with pre-restore recovery backup, DB ID `13` remained verified/managed, and the target Site returned HTTP `200` through the local proxy.
 
 **Known risks:** DB-5 initial scope supports one managed MariaDB database per Site only. Imported/ownership-uncertain databases, retention policies, scheduled backups, non-MariaDB engines, and multi-database Sites remain unsupported. Backup archives include Site files, so any `.env` present in the Site directory is protected by archive permissions but remains secret material inside the archive.
 

@@ -399,8 +399,8 @@ Validation tasks:
 - [x] Full doctest suite.
 - [x] CTest.
 - [x] Disposable local MariaDB lifecycle validation with isolated non-`site-*` project and cached `mariadb:lts` image.
-- [ ] DB-5 validation VM deployment.
-- [ ] DB-5 real product validation on `test-gui-apache.local`.
+- [x] DB-5 validation VM deployment.
+- [x] DB-5 real product validation on `test-gui-apache.local`.
 - [x] Code review and security review.
 
 Exit criteria:
