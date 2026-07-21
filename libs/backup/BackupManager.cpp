@@ -3,8 +3,8 @@
 namespace containercp::backup {
 
 uint64_t BackupManager::create(uint64_t site_id, uint64_t owner_id, const std::string& filename,
-                                uint64_t size, const std::string& created_at,
-                                const std::string& file_path, const std::string& compression) {
+                                 uint64_t size, const std::string& created_at,
+                                 const std::string& file_path, const std::string& compression) {
     Backup b;
     b.id = next_id_++;
     b.name = filename;
@@ -19,6 +19,25 @@ uint64_t BackupManager::create(uint64_t site_id, uint64_t owner_id, const std::s
     b.compression = compression;
     backups_.push_back(std::move(b));
     return b.id;
+}
+
+uint64_t BackupManager::reserve_id() {
+    return next_id_++;
+}
+
+bool BackupManager::add_with_id(const Backup& backup) {
+    for (const auto& existing : backups_) {
+        if (existing.id == backup.id) {
+            return false;
+        }
+    }
+    Backup b = backup;
+    b.name = b.filename;
+    backups_.push_back(std::move(b));
+    if (backup.id >= next_id_) {
+        next_id_ = backup.id + 1;
+    }
+    return true;
 }
 
 bool BackupManager::remove(uint64_t id) {

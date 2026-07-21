@@ -1,5 +1,6 @@
 #include "backup/BackupManager.h"
 #include "backup/BackupProvider.h"
+#include "backup/BackupService.h"
 #include "backup/TarBackupProvider.h"
 
 #include <string>
@@ -39,6 +40,60 @@ TEST_CASE("BackupManager find_by_site") {
 
     auto site3 = mgr.find_by_site(3);
     CHECK(site3.empty());
+}
+
+TEST_CASE("BackupManager reserve_id and add_with_id keep ids stable") {
+    containercp::backup::BackupManager mgr;
+
+    const auto reserved = mgr.reserve_id();
+    CHECK(reserved == 1);
+
+    containercp::backup::Backup b;
+    b.id = reserved;
+    b.filename = "db5.tar.gz";
+    b.site_id = 7;
+    b.size = 4096;
+    b.created_at = "2026-07-21T00:00:00Z";
+    b.file_path = "/tmp/db5.tar.gz";
+    b.contains_database = true;
+    b.database_status = "included";
+
+    CHECK(mgr.add_with_id(b));
+    CHECK_FALSE(mgr.add_with_id(b));
+    auto* found = mgr.find(reserved);
+    REQUIRE(found != nullptr);
+    CHECK(found->id == reserved);
+    CHECK(found->name == b.filename);
+
+    CHECK(mgr.create(7, 0, "next.tar.gz", 1, "later", "/tmp/next.tar.gz", "gzip") == 2);
+}
+
+TEST_CASE("DB-5 backup manifest JSON round trips safe metadata") {
+    containercp::backup::BackupManifest manifest;
+    manifest.backup_id = 12;
+    manifest.site_id = 34;
+    manifest.site_domain = "example.test";
+    manifest.created_at = "2026-07-21T12:00:00Z";
+    manifest.backup_type = "manual";
+    manifest.database_name = "example_db";
+    manifest.sql_dump_size = 12345;
+    manifest.sql_dump_checksum = "abcdef";
+    manifest.archive_checksum = "archive";
+    manifest.warnings = {"legacy_backup_database_unknown"};
+
+    const auto json = containercp::backup::backup_manifest_to_json(manifest);
+    CHECK(json.find("file_path") == std::string::npos);
+    CHECK(json.find("password") == std::string::npos);
+
+    const auto parsed = containercp::backup::backup_manifest_from_json(json);
+    REQUIRE(parsed.has_value());
+    CHECK(parsed->backup_id == manifest.backup_id);
+    CHECK(parsed->site_id == manifest.site_id);
+    CHECK(parsed->site_domain == manifest.site_domain);
+    CHECK(parsed->database_name == manifest.database_name);
+    CHECK(parsed->sql_dump_size == manifest.sql_dump_size);
+    CHECK(parsed->sql_dump_checksum == manifest.sql_dump_checksum);
+    CHECK(parsed->restore_capability == manifest.restore_capability);
 }
 
 TEST_CASE("BackupProvider interface compiles") {

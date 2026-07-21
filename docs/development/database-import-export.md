@@ -2,6 +2,8 @@
 
 DB-4 provides job-backed logical SQL export and import for one managed MariaDB application database per Site.
 
+DB-5 reuses the same provider-backed dump/import primitives for database-aware Site backups, but backup archives, backup records, retention, download, and restore orchestration belong to the Backups subsystem. The Databases page remains limited to Create, Verify, Drop, Rotate Password, Export SQL, and Import SQL.
+
 ## Supported Targets
 
 Allowed:

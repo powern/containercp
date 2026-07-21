@@ -295,17 +295,19 @@ Purpose: make site backups database-aware.
 
 Backend tasks:
 
-- [ ] Extend backup workflow to call `DatabaseDumpService` before tar archive creation.
-- [ ] Store database dump artifacts under backup staging.
-- [ ] Include dump metadata in backup record or manifest.
-- [ ] On restore, import SQL dumps only after explicit confirmation.
-- [ ] Fail the job if any database dump/import fails.
-- [ ] Document whether `.env` is included and how secrets are handled.
+- [x] Extend backup workflow to call `DatabaseDumpService` before tar archive creation.
+- [x] Store database dump artifacts under backup staging.
+- [x] Include dump metadata in backup record and manifest-derived API metadata.
+- [x] On restore, import SQL dumps only after explicit confirmation.
+- [x] Fail the job if any database dump/import fails.
+- [x] Document whether `.env` is included and how secrets are handled.
 
 Tests:
 
-- [ ] Backup test includes a dump for the Site's managed database.
-- [ ] Restore test imports database dump successfully.
+- [x] Unit test DB-5 manifest safe metadata round trip.
+- [x] Unit test backup ID reservation and explicit record insertion.
+- [ ] Integration test includes a dump for the Site's managed database.
+- [ ] Integration test imports database dump successfully.
 - [ ] Negative test failed dump marks backup failed.
 - [ ] Negative test failed import marks restore failed.
 
@@ -397,8 +399,8 @@ Validation tasks:
 - [x] Full doctest suite.
 - [x] CTest.
 - [x] Disposable local MariaDB lifecycle validation with isolated non-`site-*` project and cached `mariadb:lts` image.
-- [ ] Validation VM deployment.
-- [ ] Real product validation on a non-production site.
+- [ ] DB-5 validation VM deployment.
+- [ ] DB-5 real product validation on `test-gui-apache.local`.
 - [x] Code review and security review.
 
 Exit criteria:

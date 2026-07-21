@@ -2,6 +2,7 @@
 
 DB-3 adds safe physical MariaDB lifecycle operations behind the REST API.
 DB-4 adds logical SQL export/import for managed MariaDB databases only.
+DB-5 adds database-aware Site backup/restore through the Backups subsystem.
 
 ## Ownership
 
@@ -9,6 +10,8 @@ DB-4 adds logical SQL export/import for managed MariaDB databases only.
 - Physical lifecycle orchestration is owned by `DatabaseLifecycleService`.
 - Async queueing and job responses are owned by `DatabaseLifecycleJobService`.
 - Logical export/import orchestration, staging, artifact metadata, expiry, and cleanup are owned by `DatabaseDumpService` and `DatabaseDumpJobService`.
+- Site backup archive creation, backup records, backup listing/download/removal, and restore orchestration are owned by `BackupService` and `BackupJobService`.
+- DB-5 backup jobs call `DatabaseDumpService` for the managed SQL payload instead of duplicating MariaDB dump/import logic.
 - Engine-specific SQL and Docker command construction are owned by `MariaDBProvider` behind the `DatabaseProvider` interface.
 - API handlers validate simple request shape only and delegate to the database services.
 
@@ -92,6 +95,14 @@ Artifacts are stored outside web roots under the ContainerCP data root in `datab
 Imports accept only uncompressed `.sql` content. The Web UI uses a bounded raw `application/sql` upload because the current HTTP framework does not include a streaming multipart parser. Uploads are limited to 5 MiB and must match the DB-4 ContainerCP-generated export policy. Known account/grant/database-switching constructs such as `CREATE DATABASE`, `DROP DATABASE`, `USE`, `GRANT`, `CREATE USER`, `ALTER USER`, `DEFINER`, and `LOAD DATA LOCAL INFILE` are rejected before import.
 
 Import mode is non-restore execute/import into the existing managed database. The operator must type the exact database name or Site domain. The import job creates a pre-import recovery export before execution, then runs `mariadb --local-infile=0 --database <selected-db>` through `MariaDBProvider`. If MariaDB fails mid-file or post-import verification fails, the job reports `manual_recovery_required` and `failed_target_may_be_partial`; DB-4 does not falsely claim transactional rollback for DDL.
+
+## Database-Aware Site Backups
+
+DB-5 Site backup support is exposed only through the Backups API and Backups Web UI. It supports the same narrow managed target as DB-4: one enabled MariaDB database per Site, managed credentials available, runtime `Running`, and verified service-account access. Imported or ownership-uncertain databases are not silently treated as backed up.
+
+The archive contains `backup-root/manifest.json`, `backup-root/site/`, `backup-root/database/managed.sql`, and `backup-root/database/metadata.json`. The public API returns safe metadata only; it does not return archive paths, staging paths, `.env` values, SQL contents, command output, or option-file paths.
+
+Restore supports `full`, `files_only`, and `database_only` modes. Full and database-only restore require exact typed confirmation and validate the SQL payload checksum before import. A pre-restore recovery backup is created before destructive restore steps.
 
 ## Legacy Removal
 

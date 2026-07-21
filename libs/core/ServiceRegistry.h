@@ -7,6 +7,8 @@
 #include "auth/AuthUserManager.h"
 #include "access/LocalSftpProvider.h"
 #include "backup/BackupManager.h"
+#include "backup/BackupJobService.h"
+#include "backup/BackupService.h"
 #include "backup/TarBackupProvider.h"
 #include "jobs/JobManager.h"
 #include "jobs/JobExecutor.h"
@@ -91,6 +93,8 @@ public:
     database::DatabaseCredentialRotationJobService& database_credential_rotation_jobs();
     backup::BackupManager& backups();
     backup::BackupProvider& backup_provider();
+    backup::BackupService& backup_service();
+    backup::BackupJobService& backup_jobs();
     jobs::JobManager& jobs();
     jobs::JobExecutor& job_executor();
     access::AccessUserManager& access_users();
@@ -204,6 +208,8 @@ private:
     database::DatabaseLifecycleJobService database_lifecycle_jobs_;
     database::DatabaseDumpService database_dump_;
     database::DatabaseDumpJobService database_dump_jobs_;
+    backup::BackupService backup_service_;
+    backup::BackupJobService backup_jobs_;
     database::DatabaseViewService database_view_;
     runtime::RuntimeSynchronizer runtime_sync_;
     runtime::HealthRegistry health_;

@@ -223,7 +223,7 @@ DB-4 initial import policy accepts only uncompressed ContainerCP-generated `.sql
 
 ## Backup/Restore Threats
 
-The current tar backup does not create logical SQL dumps. If v0.8 presents backups as database-aware, backup jobs must fail when DB dumps fail.
+DB-5 backup jobs create logical SQL dumps before archive finalization. Backup jobs fail when expected database dumps fail; restore jobs fail when database import fails or post-import verification fails.
 
 Required controls:
 
@@ -231,7 +231,7 @@ Required controls:
 - Backup job status reflects database dump failures.
 - Site Backup flows as `Site Backup -> Managed Database Dump -> Archive`.
 - Restore requires explicit confirmation before database import.
-- Restore verifies backup/site identity before import.
+- Restore verifies backup payload checksums and target Site/database eligibility before import.
 - Restore failure leaves diagnostics and does not silently mark success.
 - Backup archive permissions are restrictive.
 
@@ -245,7 +245,7 @@ Required controls:
 - [ ] Metadata-only removal is clearly separated from physical drop.
 - [ ] Import staging rejects path traversal and oversized files.
 - [ ] Export/download paths are contained under approved directories.
-- [ ] Backup fails if database dump fails.
+- [x] Backup fails if database dump fails.
 - [ ] Adminer has no public host port.
 - [ ] Adminer token expires and can be revoked.
 - [ ] Adminer cleanup removes expired token, proxy route, and temporary container.

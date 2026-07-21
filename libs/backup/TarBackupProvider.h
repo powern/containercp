@@ -3,6 +3,7 @@
 
 #include "backup/BackupProvider.h"
 #include "logger/Logger.h"
+#include "runtime/CommandExecutor.h"
 
 namespace containercp::backup {
 
@@ -18,6 +19,7 @@ public:
 
 private:
     logger::Logger& logger_;
+    runtime::CommandExecutor executor_;
 };
 
 } // namespace containercp::backup

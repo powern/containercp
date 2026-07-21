@@ -200,7 +200,9 @@ bool write_owner_file(const fs::path& path, const std::string& content) {
         data += written;
         remaining -= static_cast<std::size_t>(written);
     }
-    return ::fsync(fd) == 0 && ::close(fd) == 0;
+    const bool synced = ::fsync(fd) == 0;
+    const bool closed = ::close(fd) == 0;
+    return synced && closed;
 }
 
 std::string field(const std::string& key, const std::string& value) {
@@ -511,6 +513,42 @@ DatabaseDumpResult DatabaseDumpService::exportManagedDatabase(uint64_t database_
     return finalize_export_artifact(resolved, job_id, artifact_id, tmp_path, std::move(steps), "export");
 }
 
+DatabaseDumpResult DatabaseDumpService::exportManagedDatabaseFile(uint64_t database_id, uint64_t job_id, const fs::path& output_path) {
+    auto steps = dump_steps("export");
+    if (output_path.empty() || output_path.filename().string().empty()) {
+        return dump_failure(std::move(steps), "Preparing export staging", "target_invalid", "Backup database dump target is invalid");
+    }
+    ResolvedTarget resolved;
+    auto resolved_result = resolve_target(database_id, resolved, "export", job_id);
+    steps = std::move(resolved_result.steps);
+    if (!resolved_result.success) return resolved_result;
+    if (runtime_lookup_(*resolved.site_record) != "Running") return dump_failure(std::move(steps), "Checking MariaDB runtime", "runtime_unavailable", "MariaDB runtime is not running");
+    mark_step(steps, "Checking MariaDB runtime", true);
+    if (!provider_.verify_service_account(resolved.target, resolved.service_account).success) return dump_failure(std::move(steps), "Preparing secure credentials", "service_account_unavailable", "MariaDB service account verification failed");
+    mark_step(steps, "Preparing secure credentials", true);
+    if (!ensure_private_dir(output_path.parent_path())) return dump_failure(std::move(steps), "Preparing export staging", "artifact_storage_unavailable", "Backup dump staging is unavailable");
+    mark_step(steps, "Preparing export staging", true);
+    auto exported = provider_.export_database(resolved.target, resolved.database->db_name, resolved.database->db_user, resolved.database->db_password, output_path.string());
+    if (!exported.success) {
+        (void)fs::remove(output_path);
+        mark_step(steps, "Cleaning partial artifact on failure", true);
+        return dump_failure(std::move(steps), "Creating logical SQL dump", exported.code, "Database export failed: " + exported.message);
+    }
+    mark_step(steps, "Creating logical SQL dump", true);
+    uint64_t size = 0;
+    if (!safe_file_stat(output_path, size)) return dump_failure(std::move(steps), "Validating export artifact", "artifact_file_invalid", "Export artifact is not a safe regular file");
+    mark_step(steps, "Validating export artifact", true);
+    const auto checksum = sha256_file(output_path);
+    if (checksum.empty()) return dump_failure(std::move(steps), "Calculating artifact metadata", "checksum_failed", "Export checksum could not be calculated");
+    mark_step(steps, "Calculating artifact metadata", true);
+    mark_step(steps, "Finalizing artifact", true);
+    audit_dump("backup", "database_dump_completed", "success", {}, job_id, resolved.site_record->id, resolved.database->id, resolved.site_record->domain, {});
+    auto ok = dump_success(std::move(steps), "export_completed", "Database export completed");
+    ok.dump_size = size;
+    ok.dump_checksum = checksum;
+    return ok;
+}
+
 DatabaseDumpResult DatabaseDumpService::create_recovery_export(const ResolvedTarget& target, uint64_t job_id) {
     const std::string id = database_generate_artifact_id();
     auto steps = dump_steps("export");
@@ -568,6 +606,49 @@ DatabaseDumpResult DatabaseDumpService::importManagedDatabase(uint64_t database_
     audit_dump("import", "completed", "success", {}, job_id, resolved.site_record->id, database_id, resolved.site_record->domain, artifact_id);
     auto ok = dump_success(std::move(steps), "import_completed", "Database import completed", artifact_id);
     ok.recovery_artifact_id = recovery.artifact_id;
+    return ok;
+}
+
+DatabaseDumpResult DatabaseDumpService::importManagedDatabaseFile(uint64_t database_id, uint64_t job_id, const fs::path& input_path, const std::string& confirmation, bool create_recovery) {
+    ResolvedTarget resolved;
+    auto resolved_result = resolve_target(database_id, resolved, "import", job_id);
+    auto steps = std::move(resolved_result.steps);
+    if (!resolved_result.success) return resolved_result;
+    if (!confirmation_valid(confirmation, resolved.database->db_name, resolved.site_record->domain)) {
+        audit_dump("restore", "confirmation", "rejected", "confirmation_mismatch", job_id, resolved.site_record->id, database_id, resolved.site_record->domain, {}, DatabaseLifecycleAuditEvent::Level::Warning);
+        return dump_failure(std::move(steps), "Validating database ownership", "confirmation_mismatch", "Confirmation must match the database name or site domain");
+    }
+    std::string code, message;
+    if (!database_import_content_policy_allows(input_path, code, message)) return dump_failure(std::move(steps), "Validating import artifact", code, message);
+    mark_step(steps, "Validating import artifact", true);
+    if (runtime_lookup_(*resolved.site_record) != "Running") return dump_failure(std::move(steps), "Checking MariaDB runtime", "runtime_unavailable", "MariaDB runtime is not running");
+    mark_step(steps, "Checking MariaDB runtime", true);
+    if (!provider_.verify_service_account(resolved.target, resolved.service_account).success) return dump_failure(std::move(steps), "Preparing secure credentials", "service_account_unavailable", "MariaDB service account verification failed");
+    mark_step(steps, "Preparing secure credentials", true);
+    std::string recovery_id;
+    if (create_recovery) {
+        auto recovery = create_recovery_export(resolved, job_id);
+        if (!recovery.success) return dump_failure(std::move(steps), "Preparing recovery export if required", recovery.code, "Pre-restore database recovery export failed; import was not started");
+        recovery_id = recovery.artifact_id;
+    }
+    mark_step(steps, "Preparing recovery export if required", true);
+    audit_dump("restore", "database_restore_started", "accepted", {}, job_id, resolved.site_record->id, database_id, resolved.site_record->domain, {});
+    auto imported = provider_.import_sql_file(resolved.target, resolved.database->db_name, resolved.database->db_user, resolved.database->db_password, input_path.string());
+    if (!imported.success) {
+        mark_step(steps, "Manual recovery required", true, "failed_target_may_be_partial");
+        return dump_failure(std::move(steps), "Importing SQL", imported.code, "Database restore failed; target may be partially modified", true, recovery_id);
+    }
+    mark_step(steps, "Importing SQL", true);
+    if (!provider_.verify_login(resolved.target, resolved.database->db_name, resolved.database->db_user, resolved.database->db_password).success ||
+        !provider_.database_exists(resolved.target, resolved.service_account, resolved.database->db_name).success) {
+        mark_step(steps, "Manual recovery required", true, "failed_target_may_be_partial");
+        return dump_failure(std::move(steps), "Verifying database access", "post_import_verification_failed", "Restore import ran but target verification failed", true, recovery_id);
+    }
+    mark_step(steps, "Verifying database access", true);
+    mark_step(steps, "Cleaning staging", true);
+    audit_dump("restore", "database_restore_completed", "success", {}, job_id, resolved.site_record->id, database_id, resolved.site_record->domain, {});
+    auto ok = dump_success(std::move(steps), "import_completed", "Database import completed");
+    ok.recovery_artifact_id = recovery_id;
     return ok;
 }
 

@@ -18,6 +18,16 @@ struct Backup : core::Resource {
     std::string status = "completed";
     std::string file_path;
     std::string compression = "gzip";
+    std::string manifest_version = "legacy_unknown";
+    std::string backup_completeness = "legacy_unknown";
+    bool contains_database = false;
+    std::string database_status = "legacy_unknown";
+    std::string database_engine;
+    std::string database_name;
+    uint64_t database_dump_size = 0;
+    std::string database_dump_checksum;
+    std::string restore_capability = "files_only";
+    std::string warning_codes;
 };
 
 } // namespace containercp::backup

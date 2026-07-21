@@ -875,25 +875,46 @@ bool ApiServer::start() {
 
     router_.add("GET", "/api/backups", [&s](const Request&) {
         Response r;
-        std::ostringstream json;
-        json << "{\"success\":true,\"data\":[";
-        bool first = true;
-        for (const auto& b : s.backups().list()) {
-            if (!first) json << ",";
-            first = false;
-            json << "{\"id\":" << b.id
-                 << ",\"site_id\":" << b.site_id
-                 << ",\"filename\":\"" << JsonFormatter::escape(b.filename)
-                 << "\",\"type\":\"" << JsonFormatter::escape(b.type)
-                 << "\",\"size\":" << b.size
-                 << ",\"created_at\":\"" << JsonFormatter::escape(b.created_at)
-                 << "\",\"status\":\"" << JsonFormatter::escape(b.status)
-                 << "\",\"file_path\":\"" << JsonFormatter::escape(b.file_path)
-                 << "\",\"compression\":\"" << JsonFormatter::escape(b.compression)
-                 << "\"}";
+        r.body = "{\"success\":true,\"data\":" + s.backup_service().backups_json() + "}";
+        return r;
+    });
+
+    router_.add_prefix("GET", "/api/backups/", [&s](const Request& req) {
+        Response r;
+        const std::string rest = req.path.substr(std::string("/api/backups/").size());
+        const auto slash = rest.find('/');
+        const std::string id_text = slash == std::string::npos ? rest : rest.substr(0, slash);
+        uint64_t backup_id = 0;
+        try { backup_id = std::stoull(id_text); } catch (...) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":{\"code\":\"backup_id_invalid\",\"message\":\"Backup id must be numeric\"}}";
+            return r;
         }
-        json << "]}";
-        r.body = json.str();
+        auto* backup = s.backups().find(backup_id);
+        if (backup == nullptr) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":{\"code\":\"backup_not_found\",\"message\":\"Backup was not found\"}}";
+            return r;
+        }
+        if (slash == std::string::npos) {
+            r.body = "{\"success\":true,\"data\":" + s.backup_service().backup_json(*backup) + "}";
+            return r;
+        }
+        const std::string action = rest.substr(slash + 1);
+        if (action == "download") {
+            auto download = s.backup_service().download_backup(backup_id);
+            if (!download.success) {
+                r.status_code = 404;
+                r.body = "{\"success\":false,\"error\":{\"code\":\"" + JsonFormatter::escape(download.code) + "\",\"message\":\"" + JsonFormatter::escape(download.message) + "\"}}";
+                return r;
+            }
+            r.content_type = download.content_type;
+            r.headers["Content-Disposition"] = "attachment; filename=\"" + JsonFormatter::escape(download.filename) + "\"";
+            r.body = std::move(download.body);
+            return r;
+        }
+        r.status_code = 404;
+        r.body = "{\"success\":false,\"error\":\"Not found\"}";
         return r;
     });
 
@@ -942,6 +963,29 @@ bool ApiServer::start() {
              << ",\"site_id\":" << result.site_id
              << ",\"artifact_id\":\"" << JsonFormatter::escape(result.artifact_id)
              << "\",\"status\":\"pending\""
+             << ",\"status_url\":\"/api/jobs?id=" << result.job_id
+             << "\",\"message\":\"" << JsonFormatter::escape(result.message) << "\"}}";
+        r.body = json.str();
+        return r;
+    };
+
+    auto backup_job_response = [](const backup::BackupJobResult& result) -> Response {
+        Response r;
+        if (!result.success) {
+            r.status_code = (result.code == "backup_not_found" || result.code == "site_not_found") ? 404 : 400;
+            r.body = "{\"success\":false,\"error\":{\"code\":\"" + JsonFormatter::escape(result.code) +
+                     "\",\"message\":\"" + JsonFormatter::escape(result.message) + "\"}}";
+            return r;
+        }
+        r.status_code = 202;
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":{";
+        json << "\"job_id\":" << result.job_id
+             << ",\"operation\":\"" << JsonFormatter::escape(result.operation)
+             << "\",\"backup_id\":" << result.backup_id
+             << ",\"site_id\":" << result.site_id
+             << ",\"recovery_backup_id\":" << result.recovery_backup_id
+             << ",\"status\":\"pending\""
              << ",\"status_url\":\"/api/jobs?id=" << result.job_id
              << "\",\"message\":\"" << JsonFormatter::escape(result.message) << "\"}}";
         r.body = json.str();
@@ -1400,49 +1444,24 @@ bool ApiServer::start() {
         return r;
     });
 
-    router_.add("POST", "/api/backups/create", [&s](const Request& req) {
+    auto backup_create_handler = [&s, &backup_job_response](const Request& req) {
         Response r;
         std::string domain = json_extract(req.body, "domain");
-        if (domain.empty()) {
-            r.status_code = 400;
-            r.body = "{\"success\":false,\"error\":\"domain required\"}";
-            return r;
+        uint64_t site_id = 0;
+        if (!json_extract(req.body, "site_id").empty()) {
+            try { site_id = std::stoull(json_extract(req.body, "site_id")); } catch (...) { site_id = 0; }
         }
-
-        auto* site = s.sites().find(domain);
+        auto* site = site_id != 0 ? s.sites().find_by_id(site_id) : s.sites().find(domain);
         if (!site) {
-            r.body = "{\"success\":false,\"error\":\"Site not found\"}";
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":{\"code\":\"site_not_found\",\"message\":\"Site was not found\"}}";
             return r;
         }
+        return backup_job_response(s.backup_jobs().enqueue_create(site->id));
+    };
 
-        auto now = std::chrono::system_clock::now();
-        auto tt = std::chrono::system_clock::to_time_t(now);
-        std::ostringstream ts;
-        ts << std::put_time(std::gmtime(&tt), "%Y%m%dT%H%M%SZ");
-        std::string timestamp = ts.str();
-        std::string filename = domain + "-" + timestamp + ".tar.gz";
-        std::string file_path = s.config().data_root() + "/backups/" + filename;
-        std::string site_dir = s.config().sites_dir() + domain + "/";
-
-        s.filesystem().create_directory(s.config().data_root() + "/backups/");
-        auto result = s.backup_provider().create_backup(site_dir, file_path);
-        if (!result.success) {
-            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
-            return r;
-        }
-
-        std::ifstream f(file_path, std::ios::ate | std::ios::binary);
-        uint64_t size = f.tellg();
-        f.close();
-
-        s.backups().create(site->id, 0, filename, size, timestamp, file_path, "gzip");
-        s.save();
-
-        std::ostringstream json;
-        json << "{\"success\":true,\"data\":{\"filename\":\"" << filename << "\",\"size\":" << size << "}}";
-        r.body = json.str();
-        return r;
-    });
+    router_.add("POST", "/api/backups", backup_create_handler);
+    router_.add("POST", "/api/backups/create", backup_create_handler);
 
     router_.add("POST", "/api/backups/remove", [&s](const Request& req) {
         Response r;
@@ -1458,48 +1477,63 @@ bool ApiServer::start() {
             r.body = "{\"success\":false,\"error\":\"Backup not found\"}";
             return r;
         }
-        if (!b->file_path.empty()) {
-            s.backup_provider().remove_backup(b->file_path);
+        auto removed = s.backup_service().remove_backup(id);
+        if (!removed.success) {
+            r.status_code = removed.code == "backup_not_found" ? 404 : 400;
+            r.body = "{\"success\":false,\"error\":{\"code\":\"" + JsonFormatter::escape(removed.code) + "\",\"message\":\"" + JsonFormatter::escape(removed.message) + "\"}}";
+            return r;
         }
-        s.backups().remove(id);
         s.save();
-        r.body = "{\"success\":true,\"data\":{\"message\":\"Backup removed\"}}";
+        r.body = "{\"success\":true,\"data\":{\"message\":\"Backup removed\",\"backup_id\":" + std::to_string(id) + "}}";
         return r;
     });
 
-    router_.add("POST", "/api/backups/restore", [&s](const Request& req) {
+    auto backup_restore_handler = [&s, &backup_job_response](const Request& req, uint64_t route_backup_id) {
         Response r;
         std::string id_str = json_extract(req.body, "id");
-        if (id_str.empty()) {
+        uint64_t id = route_backup_id;
+        if (id == 0 && id_str.empty()) {
             r.status_code = 400;
-            r.body = "{\"success\":false,\"error\":\"id required\"}";
+            r.body = "{\"success\":false,\"error\":{\"code\":\"backup_id_required\",\"message\":\"Backup id is required\"}}";
             return r;
         }
-        uint64_t id = std::stoull(id_str);
-        auto* b = s.backups().find(id);
-        if (!b) {
-            r.body = "{\"success\":false,\"error\":\"Backup not found\"}";
-            return r;
-        }
-        std::string site_domain;
-        for (const auto& site : s.sites().list()) {
-            if (site.id == b->site_id) {
-                site_domain = site.domain;
-                break;
+        if (id == 0) {
+            try { id = std::stoull(id_str); } catch (...) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":{\"code\":\"backup_id_invalid\",\"message\":\"Backup id must be numeric\"}}";
+                return r;
             }
         }
-        if (site_domain.empty()) {
-            r.body = "{\"success\":false,\"error\":\"Site not found\"}";
+        uint64_t target_site_id = 0;
+        const auto target_site = json_extract(req.body, "target_site_id");
+        if (!target_site.empty()) {
+            try { target_site_id = std::stoull(target_site); } catch (...) { target_site_id = 0; }
+        }
+        std::string mode = json_extract(req.body, "mode");
+        if (mode.empty()) mode = "full";
+        return backup_job_response(s.backup_jobs().enqueue_restore(id, target_site_id, mode, json_extract(req.body, "confirmation")));
+    };
+
+    router_.add("POST", "/api/backups/restore", [backup_restore_handler](const Request& req) {
+        return backup_restore_handler(req, 0);
+    });
+
+    router_.add_prefix("POST", "/api/backups/", [backup_restore_handler](const Request& req) {
+        Response r;
+        const std::string rest = req.path.substr(std::string("/api/backups/").size());
+        const auto slash = rest.find('/');
+        if (slash == std::string::npos || rest.substr(slash + 1) != "restore") {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Not found\"}";
             return r;
         }
-        std::string site_dir = s.config().sites_dir() + site_domain + "/";
-        auto result = s.backup_provider().restore_backup(b->file_path, site_dir);
-        if (!result.success) {
-            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
+        uint64_t backup_id = 0;
+        try { backup_id = std::stoull(rest.substr(0, slash)); } catch (...) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":{\"code\":\"backup_id_invalid\",\"message\":\"Backup id must be numeric\"}}";
             return r;
         }
-        r.body = "{\"success\":true,\"data\":{\"message\":\"Backup restored: " + JsonFormatter::escape(b->filename) + "\"}}";
-        return r;
+        return backup_restore_handler(req, backup_id);
     });
 
     // GET /api/ssl/providers — list available providers

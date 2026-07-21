@@ -417,6 +417,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | DB-2: Database Management GUI | ✅ | Health-focused Web UI dashboard implemented and repository-validated; reuses DB-1 inventory and existing password rotation jobs |
 | DB-3: Safe Physical MariaDB Lifecycle | ✅ | Backend-owned create/verify/drop jobs, provider boundary, identifier validation, secure temporary credential files, narrow MariaDB 12-compatible service-account bootstrap for new stacks, service-account Compose injection, repeated drop/create support without `RELOAD`, stale MariaDB volume collision protection, exact owned volume cleanup on confirmed Site removal, explicit physical drop, explicit metadata-only recovery, and minimal DB-2 GUI actions |
 | DB-4: Logical SQL Export and Import | ✅ | Job-backed MariaDB `.sql` export/import for managed databases only, opaque expiring artifacts, authenticated download path through WebServer, raw bounded upload staging, pre-import recovery export, execute/import semantics, and capability-driven Databases drawer actions |
+| DB-5: Database-Aware Site Backups | 🔄 | BackupService/BackupJobService, DB-4-backed SQL payloads in backup archives, safe manifest metadata, async create/restore, download/remove, restore modes, and Backups GUI implemented locally; local build/doctest/CTest/frontend validation passed, VM validation pending |
 
 ## Future — Multi-node
 
@@ -442,7 +443,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | Web UI | Active | Native frontend module layout implemented; `web/app.js` is now the ES module entry and page implementations live under `web/pages/` |
 | Sites | Stable | |
 | Domains | Stable | |
-| Databases | Active | DB-1 inventory, DB-2 GUI, DB-3 safe MariaDB lifecycle, and DB-4 logical SQL export/import implemented; Adminer, database-aware backups, imported adoption, and multi-database support remain deferred |
+| Databases | Active | DB-1 inventory, DB-2 GUI, DB-3 safe MariaDB lifecycle, DB-4 logical SQL export/import, and DB-5 database-aware backup integration implemented locally; Adminer, imported adoption, and multi-database support remain deferred |
 | Users | Stable | |
 | PHP Versions | Stable | |
 | Docker/Runtime | Stable | |
@@ -468,7 +469,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | RC1 pass | 128/137 (9 stability deferred) |
 | RC2 validation | All items verified on real Debian 13 |
 | Bugs discovered during RC1 | 13 (all fixed) |
-| Current Epic | v0.8 WordPress credential foundation planning |
+| Current Epic | v0.8 Databases DB-5 backup validation |
 
 ---
 

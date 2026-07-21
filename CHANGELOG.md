@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-21 | `this commit` | Database — Add database-aware Site backups
+
+**Summary:** Implemented DB-5 database-aware Site backup/restore through the existing Backups subsystem. Added `BackupService` and `BackupJobService`, DB-4-backed managed MariaDB SQL dump/import hooks for backup-owned files, safe backup manifests, async create/restore jobs, archive download/remove routes, restore modes, pre-restore recovery backups, hardened tar provider execution, Backups GUI job polling, and operator/API documentation.
+
+**Files changed:** `libs/backup/Backup.*`, `libs/backup/BackupManager.*`, `libs/backup/BackupService.*`, `libs/backup/BackupJobService.*`, `libs/backup/TarBackupProvider.*`, `libs/database/DatabaseDumpService.*`, `libs/core/ServiceRegistry.*`, `libs/api/ApiServer.cpp`, `web/pages/backups.js`, `scripts/test-backup-actions.js`, `tests/test_backup.cpp`, `tests/CMakeLists.txt`, `CMakeLists.txt`, `docs/api/API_REFERENCE.md`, `docs/development/database-lifecycle.md`, `docs/development/database-import-export.md`, `docs/development/database-aware-backups.md`, `planning/database-module-v0.8-architecture.md`, `planning/database-module-v0.8-threat-model.md`, `planning/database-module-v0.8-implementation-plan.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Backups created from the Backups page now queue a backend job and, for eligible Sites, include both Site files and the managed MariaDB logical dump. Backup records show database inclusion metadata without exposing paths or secrets. Completed backups can be downloaded by ID. Restore supports `full`, `files_only`, and `database_only` modes with exact typed confirmation for database import and a pre-restore recovery backup before destructive steps. The Databases page remains limited to database lifecycle, password rotation, export SQL, and import SQL actions.
+
+**Validation:** Clean configure passed with `cmake -S . -B build-db5`. Clean build passed with `cmake --build build-db5 -j2` for `containercp_tests`, `containercp`, and `containercpd` with no compiler warnings. Focused backup doctest passed with `13` cases and `93` assertions. Full doctest passed (`866` cases, `6183` assertions). Standalone CTest passed (`1/1`) after an immediate post-doctest CTest run hit the known Docker integration-test state collision in an existing disposable MariaDB lifecycle test. Frontend syntax and regression checks passed: `node --check web/pages/backups.js`, `node --check scripts/test-backup-actions.js`, `node scripts/test-backup-actions.js`, `node scripts/check-frontend-baseline.js`, `node scripts/test-database-drop-modal.js`, and `node scripts/test-database-transfer-actions.js`. `git diff --check` passed. Production validation is pending.
+
+**Known risks:** DB-5 initial scope supports one managed MariaDB database per Site only. Imported/ownership-uncertain databases, retention policies, scheduled backups, non-MariaDB engines, and multi-database Sites remain unsupported. Backup archives include Site files, so any `.env` present in the Site directory is protected by archive permissions but remains secret material inside the archive.
+
+---
+
 ## 2026-07-21 | `this commit` | Database — Add logical SQL export and import
 
 **Summary:** Implemented DB-4 logical SQL export/import for managed MariaDB databases. Added `DatabaseDumpService`, `DatabaseDumpJobService`, provider-backed `mariadb-dump` export, provider-backed `mariadb` import, opaque expiring artifact metadata, authenticated download path through the Web UI proxy, revoke/delete support, bounded raw `.sql` upload staging, pre-import recovery exports, backend-derived transfer capabilities, and Databases drawer actions.

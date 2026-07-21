@@ -94,6 +94,11 @@ ServiceRegistry::ServiceRegistry()
     })
     , database_dump_(sites_, databases_, site_runtime_, mariadb_lifecycle_provider_, config_.sites_dir(), std::filesystem::path(config_.data_root()) / "database-artifacts")
     , database_dump_jobs_(databases_, jobs_, job_executor_, database_dump_)
+    , backup_service_(sites_, databases_, backups_, backup_provider_, database_dump_, runtime_action_executor_, config_.data_root(), config_.sites_dir())
+    , backup_jobs_(jobs_, job_executor_, backup_service_, [this]() {
+        storage_.save_backups(backups_.list());
+        return true;
+    })
     , database_view_(logger_, databases_, sites_, site_runtime_, wordpress_config_, mariadb_credential_provider_, config_.sites_dir())
     , mail_orchestrator_(mail_credentials_, runtime_, filesystem_, config_)
     , proxy_view_(logger_, reverse_proxies_, sites_, cert_store_, proxy_provider_, site_runtime_)
@@ -585,6 +590,7 @@ void ServiceRegistry::start() {
     }
 
     job_executor_.start();
+    backup_service_.cleanup_staging();
     renewal_scheduler_.start();
 
     // Start background proxy health monitor (after all startup init is complete)
@@ -679,6 +685,14 @@ jobs::JobExecutor& ServiceRegistry::job_executor() {
 
 backup::BackupProvider& ServiceRegistry::backup_provider() {
     return backup_provider_;
+}
+
+backup::BackupService& ServiceRegistry::backup_service() {
+    return backup_service_;
+}
+
+backup::BackupJobService& ServiceRegistry::backup_jobs() {
+    return backup_jobs_;
 }
 
 access::AccessUserManager& ServiceRegistry::access_users() {

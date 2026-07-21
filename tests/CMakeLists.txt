@@ -108,6 +108,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/profile/ProfileManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/backup/Backup.cpp
     ${CMAKE_SOURCE_DIR}/libs/backup/BackupManager.cpp
+    ${CMAKE_SOURCE_DIR}/libs/backup/BackupService.cpp
     ${CMAKE_SOURCE_DIR}/libs/backup/TarBackupProvider.cpp
     ${CMAKE_SOURCE_DIR}/libs/logger/Logger.cpp
     ${CMAKE_SOURCE_DIR}/libs/jobs/JobManager.cpp

@@ -42,6 +42,8 @@ struct DatabaseDumpResult {
     bool manual_recovery_required = false;
     std::string artifact_id;
     std::string recovery_artifact_id;
+    uint64_t dump_size = 0;
+    std::string dump_checksum;
 };
 
 struct DatabaseUploadResult {
@@ -76,6 +78,8 @@ public:
 
     DatabaseDumpResult exportManagedDatabase(uint64_t database_id, uint64_t job_id, const std::string& artifact_id);
     DatabaseDumpResult importManagedDatabase(uint64_t database_id, uint64_t job_id, const std::string& artifact_id, const std::string& confirmation);
+    DatabaseDumpResult exportManagedDatabaseFile(uint64_t database_id, uint64_t job_id, const std::filesystem::path& output_path);
+    DatabaseDumpResult importManagedDatabaseFile(uint64_t database_id, uint64_t job_id, const std::filesystem::path& input_path, const std::string& confirmation, bool create_recovery_export);
     DatabaseUploadResult stageImportUpload(uint64_t database_id, const std::string& original_filename, const std::string& content);
 
     std::optional<DatabaseArtifactMetadata> artifact(uint64_t database_id, const std::string& artifact_id) const;

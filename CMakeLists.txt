@@ -22,7 +22,9 @@ set(CONTAINERCP_SOURCES
     libs/auth/AuthService.cpp
     libs/auth/AuthUserManager.cpp
     libs/backup/Backup.cpp
+    libs/backup/BackupJobService.cpp
     libs/backup/BackupManager.cpp
+    libs/backup/BackupService.cpp
     libs/backup/TarBackupProvider.cpp
     libs/config/Config.cpp
     libs/core/Application.cpp

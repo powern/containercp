@@ -206,10 +206,69 @@ Fields: `version`, `server_hostname`.
 
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|
-| GET | `/api/backups` | List backups | `BackupManager` |
-| POST | `/api/backups/create` | Create a backup | `BackupManager` |
-| POST | `/api/backups/remove` | Remove a backup | `BackupManager` |
-| POST | `/api/backups/restore` | Restore a backup | `BackupManager` |
+| GET | `/api/backups` | List backups with DB-aware safe metadata | `BackupService` |
+| GET | `/api/backups/<id>` | Read one backup metadata record | `BackupService` |
+| GET | `/api/backups/<id>/download` | Download backup archive by ID | `BackupService` |
+| POST | `/api/backups` | Create a database-aware Site backup asynchronously | `BackupJobService` |
+| POST | `/api/backups/create` | Compatibility create route; queues the same DB-aware job | `BackupJobService` |
+| POST | `/api/backups/<id>/restore` | Restore a backup asynchronously | `BackupJobService` |
+| POST | `/api/backups/restore` | Compatibility restore route; queues the same restore job | `BackupJobService` |
+| POST | `/api/backups/remove` | Remove a backup archive and metadata | `BackupService` |
+
+DB-5 backup records are safe for UI display and never include `file_path`, staging paths, credentials, `.env` contents, SQL contents, command output, or option-file paths.
+
+`GET /api/backups` returns:
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "site_id": 13,
+      "filename": "example.test-20260721T120000Z.tar.gz",
+      "type": "manual",
+      "size": 123456,
+      "created_at": "2026-07-21T12:00:00Z",
+      "status": "completed",
+      "compression": "gzip",
+      "contains_database": true,
+      "database_status": "included",
+      "database_engine": "mariadb",
+      "database_name": "example_test_db",
+      "database_dump_size": 4567,
+      "database_dump_checksum": "sha256hex",
+      "manifest_version": "1",
+      "backup_completeness": "complete",
+      "restore_capability": "full,files_only,database_only",
+      "warning_codes": []
+    }
+  ]
+}
+```
+
+`POST /api/backups` accepts either `{"site_id":13}` or the compatibility `{"domain":"example.test"}` shape. It returns HTTP `202` with `job_id`, `operation`, `site_id`, `status_url`, and a public-safe message.
+
+DB-aware create scope is intentionally narrow in DB-5: one enabled managed MariaDB database for the Site, runtime `Running`, service-account credentials available, and DB-4 transfer eligibility satisfied. Imported, ownership-uncertain, credential-unavailable, non-MariaDB, and multi-database Sites are rejected instead of being silently marked protected.
+
+Backup archives use this logical layout:
+
+```text
+backup-root/manifest.json
+backup-root/site/...
+backup-root/database/managed.sql
+backup-root/database/metadata.json
+```
+
+Restore modes for `POST /api/backups/<id>/restore`:
+
+| Mode | Behavior | Confirmation |
+|------|----------|--------------|
+| `full` | Restore Site files and import the managed database dump | exact target Site domain |
+| `files_only` | Restore Site files only | no database import confirmation required |
+| `database_only` | Import the managed database dump only | exact target Site domain or database name |
+
+Generic confirmations such as `yes`, `true`, `restore`, and `confirm` are rejected. Full/database restore validates the database payload checksum before import, creates a pre-restore recovery backup, and reports manual recovery if automatic recovery cannot fully compensate a failure.
 
 ### 2.8 Users
 
@@ -1309,7 +1368,7 @@ async jobs.
 | `/api/sites/*` | Sites subsystem (`SiteManager`) | Runtime status, SSL status |
 | `/api/ssl/*` | SSL subsystem (`CertificateStore`) | Metadata file I/O |
 | `/api/jobs/*` | Jobs subsystem (`JobManager`) | Async execution |
-| `/api/backups/*` | Backups subsystem (`BackupManager`, `BackupProvider`) | Archive logic |
+| `/api/backups/*` | Backups subsystem (`BackupService`, `BackupJobService`, `BackupProvider`) | Archive orchestration, database dump/import logic |
 | `/api/settings/*` | Config (`Config`) | File I/O, persistence |
 | `/api/mail/*` | Mail resource management (`MailDomainManager`, `MailboxManager`, `MailAliasManager`) | Mail server config, Docker logic, Postfix/Dovecot (future stages) |
 

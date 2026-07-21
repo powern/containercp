@@ -472,14 +472,15 @@ Break-glass password recovery, if retained, is optional, disabled by default, an
 
 ## Backup Architecture
 
-The current tar backup captures the site directory. A database module cannot claim backup support until it creates a logical SQL dump and records the dump in backup metadata.
+DB-5 makes the existing Backups subsystem database-aware by adding a backup orchestration service that reuses DB-4 logical dump/import primitives.
 
 v0.8 backup behavior:
 
-- Site backup should queue a pre-backup dump job for the selected Site's managed database.
-- Dumps should be written under a controlled backup staging path, then included in the final archive.
-- Restore should restore files first, then import database dumps through `DatabaseDumpService`.
-- Restore must never import into a running production database without explicit operator confirmation.
+- `BackupService` owns archive staging, manifest creation, backup metadata, listing/download/remove, and restore orchestration.
+- `BackupJobService` queues backup create/restore work through `JobExecutor`.
+- `DatabaseDumpService` remains the single owner of logical SQL dump/import execution and MariaDB credential handling.
+- Dumps are written under a controlled backup staging path, then included in the final archive as `backup-root/database/managed.sql`.
+- Restore supports `full`, `files_only`, and `database_only`; full/database restore validates the SQL payload checksum and requires exact typed confirmation before import.
 - Failed dump/import makes the backup/restore job fail, not partially succeed silently.
 
 ## Adminer Architecture
@@ -528,7 +529,7 @@ v0.8 implementation is not complete until these checks pass:
 - What exact MariaDB grants should the runtime service account receive for each operation?
 - Should DB-1 expose logs from Docker Compose only, MariaDB logs only, or both?
 - What maximum import size should be supported in v0.8?
-- Should the managed database dump be included inside the existing site tar archive or stored as a sibling artifact referenced by the backup record?
+- DB-5 decision: the managed database dump is included inside the backup archive under `backup-root/database/managed.sql`, with public-safe metadata in `backup-root/manifest.json`.
 
 ## Related Documents
 
