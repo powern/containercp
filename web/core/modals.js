@@ -1,6 +1,17 @@
 import { esc } from './utils.js';
 
+let modalCleanup = null;
+
+function runModalCleanup() {
+  const cleanup = modalCleanup;
+  modalCleanup = null;
+  if (typeof cleanup === 'function') {
+    try { cleanup(); } catch(e) {}
+  }
+}
+
 export function showModal(title, bodyHtml, width) {
+  runModalCleanup();
   let overlay = document.getElementById('modal-overlay');
   if (!overlay) {
     overlay = document.createElement('div'); overlay.id = 'modal-overlay';
@@ -14,5 +25,6 @@ export function showModal(title, bodyHtml, width) {
   overlay.style.display = 'flex';
 }
 
-export function hideModal() { const o=document.getElementById('modal-overlay'); if(o)o.style.display='none'; }
-export function destroyModal() { const o=document.getElementById('modal-overlay'); if(o)o.remove(); }
+export function setModalCleanup(cleanup) { modalCleanup = typeof cleanup === 'function' ? cleanup : null; }
+export function hideModal() { runModalCleanup(); const o=document.getElementById('modal-overlay'); if(o)o.style.display='none'; }
+export function destroyModal() { runModalCleanup(); const o=document.getElementById('modal-overlay'); if(o)o.remove(); }

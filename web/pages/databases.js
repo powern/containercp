@@ -1,5 +1,5 @@
 import {
-  api, apiPost, card, copyText, esc, hideModal, pollRotationJob, renderRotationJobTimeline, renderWordPressRotationDiagnostics, showModal, toast
+  api, apiPost, card, copyText, esc, hideModal, pollRotationJob, renderRotationJobTimeline, renderWordPressRotationDiagnostics, setModalCleanup, showModal, toast
 } from '../core/context.js';
 
 
@@ -14,6 +14,7 @@ const dbDashboardState = {
   selectedDetail: null,
   rotationStatus: null,
   rotationLoading: false,
+  dropSubmitting: false,
   loadError: ''
 };
 window.dbDashboardState = dbDashboardState;
@@ -426,6 +427,7 @@ function showDatabaseDropConfirm(databaseId) {
   if (!db || Number(db.database_id || db.id) !== Number(databaseId) || db.can_drop !== true) return;
   const target = db.database_name || db.name || '';
   const domain = db.domain || '';
+  dbDashboardState.dropSubmitting = false;
   showModal('Drop Managed Database', `<div class="db-confirm-body">
     <p><strong>${esc(domain)}</strong> / <code>${esc(target)}</code></p>
     <ul>
@@ -436,34 +438,85 @@ function showDatabaseDropConfirm(databaseId) {
     </ul>
     <p style="color:var(--danger);font-size:12px;">Type the exact database name or site domain to confirm. Generic confirmations are rejected.</p>
     <input id="db-drop-confirm" autocomplete="off" placeholder="${esc(target)}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;margin-top:8px;">
-    <div id="db-drop-confirm-msg" style="font-size:12px;color:var(--text3);margin-top:6px;">No credential value will be displayed.</div>
-    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;"><button class="btn btn-sm" onclick="hideModal()">Cancel</button><button class="btn btn-sm btn-danger" onclick="confirmDatabaseDrop(${Number(databaseId)})">Drop Database</button></div>
+    <div id="db-drop-confirm-msg" role="alert" style="font-size:12px;color:var(--text3);margin-top:6px;">Enter the database name or site domain to enable physical drop. No credential value will be displayed.</div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;"><button id="db-drop-cancel" class="btn btn-sm" type="button">Cancel</button><button id="db-drop-submit" class="btn btn-sm btn-danger" type="button" disabled>Drop Database</button></div>
   </div>`, 580);
+  bindDatabaseDropConfirm(databaseId, db);
   const ctx = activeDatabasesLifecycle;
   const later = ctx && ctx.setTimeout ? ctx.setTimeout.bind(ctx) : setTimeout;
   later(() => { const input = $('db-drop-confirm'); if (input) input.focus(); }, 0);
 }
 
-async function confirmDatabaseDrop(databaseId) {
-  const db = dbDashboardState.selectedDetail;
+function databaseDropConfirmationMatches(db, confirmation) {
+  const value = String(confirmation || '').trim();
+  return value !== '' && (value === (db.database_name || db.name || '') || value === (db.domain || ''));
+}
+
+function bindDatabaseDropConfirm(databaseId, db) {
   const input = $('db-drop-confirm');
   const msg = $('db-drop-confirm-msg');
-  if (!db || !input) return;
-  const confirmation = input.value.trim();
-  if (confirmation !== (db.database_name || db.name || '') && confirmation !== (db.domain || '')) {
-    if (msg) msg.textContent = 'Confirmation must match the database name or site domain.';
+  const submit = $('db-drop-submit');
+  const cancel = $('db-drop-cancel');
+  if (!input || !submit || !cancel) {
+    if (msg) msg.textContent = 'Drop confirmation controls could not be initialized.';
     return;
   }
+  const updateState = () => {
+    const ok = databaseDropConfirmationMatches(db, input.value);
+    submit.disabled = dbDashboardState.dropSubmitting || !ok;
+    if (!ok && input.value.trim()) {
+      if (msg) msg.textContent = 'Confirmation must exactly match the database name or site domain.';
+    } else if (!dbDashboardState.dropSubmitting) {
+      if (msg) msg.textContent = ok ? 'Confirmation matched. Review the action and submit once.' : 'Enter the database name or site domain to enable physical drop. No credential value will be displayed.';
+    }
+  };
+  const onSubmit = () => confirmDatabaseDrop(databaseId, { db, input, msg, submit, updateState });
+  const onCancel = () => hideModal();
+  input.addEventListener('input', updateState);
+  submit.addEventListener('click', onSubmit);
+  cancel.addEventListener('click', onCancel);
+  const cleanup = () => {
+    input.removeEventListener('input', updateState);
+    submit.removeEventListener('click', onSubmit);
+    cancel.removeEventListener('click', onCancel);
+    dbDashboardState.dropSubmitting = false;
+  };
+  setModalCleanup(cleanup);
+  if (activeDatabasesLifecycle && activeDatabasesLifecycle.onCleanup) activeDatabasesLifecycle.onCleanup(cleanup);
+  updateState();
+}
+
+async function confirmDatabaseDrop(databaseId, controls) {
+  controls = controls || {};
+  const db = controls.db || dbDashboardState.selectedDetail;
+  const input = controls.input || $('db-drop-confirm');
+  const msg = controls.msg || $('db-drop-confirm-msg');
+  const submit = controls.submit || $('db-drop-submit');
+  if (!db || !input) {
+    if (msg) msg.textContent = 'Drop confirmation expired. Reopen the database detail and try again.';
+    return;
+  }
+  if (dbDashboardState.dropSubmitting) return;
+  const confirmation = input.value.trim();
+  if (!databaseDropConfirmationMatches(db, confirmation)) {
+    if (msg) msg.textContent = 'Confirmation must exactly match the database name or site domain.';
+    return;
+  }
+  dbDashboardState.dropSubmitting = true;
+  if (submit) submit.disabled = true;
   if (msg) msg.textContent = 'Queueing physical drop...';
   try {
     const res = await apiPost('/api/databases/' + Number(databaseId) + '/drop', {confirmation});
-    const jobId = res.data && res.data.job_id;
+    const jobId = Number(res.data && res.data.job_id);
+    if (!Number.isFinite(jobId) || jobId <= 0) throw new Error('Database drop did not return a valid job id.');
     hideModal();
-    toast('Database drop queued' + (jobId ? ' (job #' + jobId + ')' : ''), 'success');
-    if (jobId) pollDatabaseLifecycleJob(jobId, databaseId, 'Drop');
+    toast('Database drop queued (job #' + jobId + ')', 'success');
+    pollDatabaseLifecycleJob(jobId, databaseId, 'Drop');
   } catch(e) {
     const apiErr = e.body && e.body.error && e.body.error.message;
     if (msg) msg.textContent = apiErr || e.api_message || e.message || 'Failed to queue database drop';
+    dbDashboardState.dropSubmitting = false;
+    if (submit) submit.disabled = !databaseDropConfirmationMatches(db, input.value);
   }
 }
 
@@ -617,6 +670,6 @@ function renderDatabaseRotationFailure(jobId, job) {
   return renderWordPressRotationDiagnostics(jobId, job);
 }
 
-const databasesPage = { mount: loadDatabases, unmount() { destroyDatabaseDrawer(); activeDatabasesLifecycle = null; } };
+const databasesPage = { mount: loadDatabases, unmount() { hideModal(); destroyDatabaseDrawer(); activeDatabasesLifecycle = null; } };
 export { loadDatabases, databasesPage };
-Object.assign(window, { normalizeDbValue, dbConnectionState, dbCredentialState, dbRuntimeState, dbOwnershipState, computeDatabaseHealthState, dbHealthLabel, dbBadge, dbHealthBadge, dbRuntimeBadge, dbConnectionBadge, dbCredentialBadge, dbOwnershipBadge, dbJsArg, dbDateValue, dbSortRank, getFilteredDatabases, databaseSummaryCards, dbSelect, databaseControlsHtml, toggleDatabaseSortDirection, resetDatabaseFilters, loadDatabases, refreshDatabases, renderDatabaseInventory, renderDatabaseTable, renderDatabaseCards, openDatabaseDetail, showDatabaseDrawer, closeDatabaseDrawer, renderDatabaseDetail, databaseDetailSection, databaseHealthSection, copyableValue, renderDatabaseLifecycleActions, verifyDatabaseLifecycle, showDatabaseDropConfirm, confirmDatabaseDrop, pollDatabaseLifecycleJob, showCreateDatabaseModal, confirmCreateDatabase, loadDatabaseRotationStatus, updateDatabaseRotationAction, databaseRotationCapability, renderDatabaseRotationAction, showDatabaseRotationConfirm, confirmDatabasePasswordRotation, renderDatabaseRotationJob, renderDatabaseRotationSuccess, renderDatabaseRotationFailure });
+Object.assign(window, { normalizeDbValue, dbConnectionState, dbCredentialState, dbRuntimeState, dbOwnershipState, computeDatabaseHealthState, dbHealthLabel, dbBadge, dbHealthBadge, dbRuntimeBadge, dbConnectionBadge, dbCredentialBadge, dbOwnershipBadge, dbJsArg, dbDateValue, dbSortRank, getFilteredDatabases, databaseSummaryCards, dbSelect, databaseControlsHtml, toggleDatabaseSortDirection, resetDatabaseFilters, loadDatabases, refreshDatabases, renderDatabaseInventory, renderDatabaseTable, renderDatabaseCards, openDatabaseDetail, showDatabaseDrawer, closeDatabaseDrawer, renderDatabaseDetail, databaseDetailSection, databaseHealthSection, copyableValue, renderDatabaseLifecycleActions, verifyDatabaseLifecycle, showDatabaseDropConfirm, databaseDropConfirmationMatches, bindDatabaseDropConfirm, confirmDatabaseDrop, pollDatabaseLifecycleJob, showCreateDatabaseModal, confirmCreateDatabase, loadDatabaseRotationStatus, updateDatabaseRotationAction, databaseRotationCapability, renderDatabaseRotationAction, showDatabaseRotationConfirm, confirmDatabasePasswordRotation, renderDatabaseRotationJob, renderDatabaseRotationSuccess, renderDatabaseRotationFailure });

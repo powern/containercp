@@ -22,7 +22,7 @@ import { api, apiPost } from './api.js';
 import { $, qs, qsa } from './dom.js';
 import { esc, escAttr, jsString, dbJsArg } from './utils.js';
 import { toast } from './notifications.js';
-import { showModal, hideModal, destroyModal } from './modals.js';
+import { showModal, hideModal, destroyModal, setModalCleanup } from './modals.js';
 import { copyText } from './clipboard.js';
 import { navigate, navigateTo } from './router.js';
 import { pollJobProgress, pollRotationJob, renderWordPressRotationDiagnostics, renderRotationJobTimeline } from './jobs.js';
@@ -30,6 +30,6 @@ import { pollJobProgress, pollRotationJob, renderWordPressRotationDiagnostics, r
 window.searchTerm = window.searchTerm || '';
 Object.assign(window, {
   $, qs, qsa, api, apiPost, esc, escAttr, jsString, dbJsArg, toast,
-  showModal, hideModal, destroyModal, copyText, navigate, navigateTo, pollJobProgress,
+  showModal, hideModal, destroyModal, setModalCleanup, copyText, navigate, navigateTo, pollJobProgress,
   pollRotationJob, renderWordPressRotationDiagnostics, renderRotationJobTimeline
 });

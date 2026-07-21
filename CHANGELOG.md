@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-21 | `this commit` | Frontend — Fix database drop submission
+
+**Summary:** Fixed the Databases detail drawer physical-drop regression where the Drop Managed Database modal could remain open without visible progress or error. The destructive drop confirmation now uses real event listeners bound after modal creation, captures the selected database at modal-open time, validates exact confirmation before enabling submit, blocks duplicate requests, displays API/backend errors in the modal, and starts lifecycle job polling only after a valid job ID is returned.
+
+**Files changed:** `web/pages/databases.js`, `web/core/modals.js`, `web/core/context.js`, `scripts/test-database-drop-modal.js`, `CHANGELOG.md`
+
+**User-visible behavior:** The Drop Database button stays disabled until the entered value exactly matches the database name or site domain. During submission the button is disabled and the modal reports queueing progress. Failed API responses are shown in the modal and allow retry. Successful queue responses close the modal, show a safe toast, start job timeline polling, and refresh the database inventory after completion.
+
+**Validation:** `node --check` passed for Web UI JavaScript, `scripts/check-frontend-baseline.js`, and the new drop-modal regression harness. `node scripts/check-frontend-baseline.js` passed. `node scripts/test-database-drop-modal.js` passed. Focused DB-3 API/lifecycle/provider/service-account/Site-volume tests passed (`22` cases, `121` assertions). `git diff --check` passed. Browser automation remains unavailable in this workspace; production validation is performed on the disposable Site through the deployed Web UI/API path.
+
+**Known risks:** The Databases page still carries temporary compatibility globals for other existing inline actions. This fix removes inline-handler dependence for the destructive DB drop confirmation path only.
+
+---
+
 ## 2026-07-21 | `this commit` | Site — Prevent stale database volume reuse
 
 **Summary:** Fixed a DB-3 production validation regression where recreated Sites could silently reuse an old MariaDB named volume and where generated stacks did not pass DB-3 service-account variables into the MariaDB container. New stacks now inject `CONTAINERCP_DB_SERVICE_USER` and `CONTAINERCP_DB_SERVICE_PASSWORD` into the `mariadb` service, generated DB volumes carry Site ownership labels, confirmed Site removal removes only the exact owned MariaDB data volume, and Site creation fails closed when the expected DB volume already exists.
