@@ -4018,7 +4018,39 @@ bool ApiServer::start() {
         opts_ptr->keep_staging = keep_staging;
 
         bool queued = s.job_executor().submit(job_id, [&s, opts_ptr](jobs::JobManager& jobs, uint64_t queued_job_id) {
-            auto fail = [&](int progress, const std::string& message) {
+            auto mark_steps = [&](int current, bool complete = false) {
+                auto* job = jobs.find(queued_job_id);
+                if (!job) return;
+                auto steps = job->step_details;
+                for (std::size_t i = 0; i < steps.size(); ++i) {
+                    const bool touched = complete || static_cast<int>(i) <= current;
+                    steps[i].skipped = !touched;
+                    steps[i].started = touched;
+                    steps[i].completed = complete || static_cast<int>(i) < current;
+                    steps[i].failed = false;
+                    if (steps[i].completed) steps[i].result = "success";
+                }
+                jobs.update_step_details(queued_job_id, steps);
+            };
+            auto fail = [&](int progress, int current, const std::string& message) {
+                auto* job = jobs.find(queued_job_id);
+                if (job) {
+                    auto steps = job->step_details;
+                    for (std::size_t i = 0; i < steps.size(); ++i) {
+                        const bool touched = static_cast<int>(i) <= current;
+                        steps[i].skipped = !touched;
+                        steps[i].started = touched;
+                        steps[i].completed = static_cast<int>(i) < current;
+                        steps[i].failed = static_cast<int>(i) == current;
+                        if (steps[i].failed) {
+                            steps[i].result = "failed";
+                            steps[i].message = message;
+                        } else if (steps[i].completed) {
+                            steps[i].result = "success";
+                        }
+                    }
+                    jobs.update_step_details(queued_job_id, steps);
+                }
                 jobs.update(queued_job_id, "failed", progress, message);
             };
 
@@ -4027,17 +4059,19 @@ bool ApiServer::start() {
                                                   &s.sites(), &s.domains());
 
             jobs.update(queued_job_id, "running", 5, "Analyzing backup");
+            mark_steps(0);
             auto manifest = importer.inspect(*opts_ptr);
             if (!manifest.errors.empty()) {
-                fail(5, "Analyze failed: " + manifest.errors.front());
+                fail(5, 0, "Analyze failed: " + manifest.errors.front());
                 return;
             }
 
             if (!manifest.site_exists) {
                 jobs.update(queued_job_id, "running", 12, "Creating Site");
+                mark_steps(1);
                 auto* node = s.nodes().find("local");
                 if (!node) {
-                    fail(12, "No node available");
+                    fail(12, 1, "No node available");
                     return;
                 }
 
@@ -4049,13 +4083,13 @@ bool ApiServer::start() {
                 auto result = site_op.execute(opts_ptr->owner, opts_ptr->domain, *node, false, "", nullptr, 0);
                 s.save();
                 if (!result.success) {
-                    fail(20, "Site creation failed: " + result.message);
+                    fail(20, 1, "Site creation failed: " + result.message);
                     return;
                 }
 
                 auto* created_site = s.sites().find(opts_ptr->domain);
                 if (!created_site) {
-                    fail(20, "Site record not found after create");
+                    fail(20, 1, "Site record not found after create");
                     return;
                 }
 
@@ -4065,72 +4099,80 @@ bool ApiServer::start() {
                     + "\",\"site_id\":" + std::to_string(created_site->id)
                     + ",\"stage\":1,\"files_pending\":true,\"files_imported\":false,\"sql_pending\":true}";
                 if (!s.filesystem().create_file(marker_path, marker)) {
-                    fail(25, "Site created but migration marker could not be written");
+                    fail(25, 1, "Site created but migration marker could not be written");
                     return;
                 }
+                mark_steps(3);
             } else if (!manifest.migration_marker_found) {
-                fail(12, "Existing site is not an active myVesta migration");
+                fail(12, 1, "Existing site is not an active myVesta migration");
                 return;
             }
 
             jobs.update(queued_job_id, "running", 35, "Resolving migration state");
             manifest = importer.inspect(*opts_ptr);
             if (!manifest.errors.empty()) {
-                fail(35, "Analyze failed after Site create: " + manifest.errors.front());
+                fail(35, 0, "Analyze failed after Site create: " + manifest.errors.front());
                 return;
             }
 
             if (manifest.migration_completed || manifest.migration_stage == 3) {
+                mark_steps(10, true);
                 jobs.update(queued_job_id, "completed", 100, "Migration already completed");
                 return;
             }
 
             if (manifest.can_import_files) {
                 jobs.update(queued_job_id, "running", 45, "Importing files");
+                mark_steps(4);
                 auto files = importer.import_files(*opts_ptr);
                 if (!files.success) {
                     std::string err = files.errors.empty() ? "File import failed" : files.errors.front();
-                    fail(45, err);
+                    fail(45, 4, err);
                     return;
                 }
+                mark_steps(5);
             } else if (manifest.migration_stage == 1) {
                 std::string reason = manifest.marker_error.empty() ? "File import is not available" : manifest.marker_error;
-                fail(45, reason);
+                fail(45, 4, reason);
                 return;
             }
 
             jobs.update(queued_job_id, "running", 65, "Resolving SQL import state");
             manifest = importer.inspect(*opts_ptr);
             if (!manifest.errors.empty()) {
-                fail(65, "Analyze failed before SQL import: " + manifest.errors.front());
+                fail(65, 5, "Analyze failed before SQL import: " + manifest.errors.front());
                 return;
             }
 
             if (manifest.can_import_sql) {
                 jobs.update(queued_job_id, "running", 72, "Importing SQL and configuring WordPress");
+                mark_steps(5);
                 auto sql = importer.import_sql(*opts_ptr);
                 if (!sql.success) {
                     std::string err = sql.errors.empty() ? "SQL import failed" : sql.errors.front();
-                    fail(72, err);
+                    fail(72, 5, err);
                     return;
                 }
+                mark_steps(9);
             } else if (manifest.migration_stage != 3) {
                 std::string reason = manifest.marker_error.empty() ? "SQL import is not available" : manifest.marker_error;
-                fail(72, reason);
+                fail(72, 5, reason);
                 return;
             }
 
             jobs.update(queued_job_id, "running", 95, "Finalizing migration");
+            mark_steps(10);
             manifest = importer.inspect(*opts_ptr);
             if (!manifest.errors.empty()) {
-                fail(95, "Final analysis failed: " + manifest.errors.front());
+                fail(95, 10, "Final analysis failed: " + manifest.errors.front());
                 return;
             }
             if (!manifest.migration_completed && manifest.migration_stage != 3) {
-                fail(95, "Migration did not reach completed state");
+                fail(95, 10, "Migration did not reach completed state");
                 return;
             }
 
+            mark_steps(10, true);
             jobs.update(queued_job_id, "completed", 100, "Migration completed");
         });
 

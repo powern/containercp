@@ -1986,6 +1986,93 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
     logger_.info("MIGRATION", "wp-config.php updated with all 4 constants and trusted proxy block");
     }
 
+    // Align WordPress canonical URLs with the proxy scheme ContainerCP generated.
+    // Imported Vesta databases may force HTTPS even when the migrated domain has no SSL vhost yet.
+    {
+        auto sql_literal = [](const std::string& value) {
+            std::string out = "'";
+            for (char ch : value) {
+                if (ch == '\'') out += "''";
+                else out += ch;
+            }
+            out += "'";
+            return out;
+        };
+        auto sql_identifier = [](const std::string& value) {
+            std::string out = "`";
+            for (char ch : value) {
+                if (ch == '`') out += "``";
+                else out += ch;
+            }
+            out += "`";
+            return out;
+        };
+
+        bool ssl_enabled = false;
+        if (domains_) {
+            if (auto* domain = domains_->find(opts.domain)) {
+                ssl_enabled = domain->ssl_enabled;
+            }
+        }
+        std::string canonical_url = std::string(ssl_enabled ? "https://" : "http://") + opts.domain;
+
+        auto options_query = executor_.run({
+            "docker", "exec", db_container,
+            "env", "MYSQL_PWD=" + db_password,
+            "mariadb", "-N", "-u" + db_user, db_name,
+            "-e", "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=" + sql_literal(db_name)
+                  + " ORDER BY TABLE_NAME"
+        });
+        if (options_query.exit_code != 0) {
+            logger_.error("MIGRATION", "Cannot list WordPress tables for URL normalization: " + options_query.err);
+            result.errors.push_back("Cannot list WordPress tables for URL normalization");
+            do_rollback();
+            if (result.wp_config_updated && !wp_config_bak.empty()) {
+                executor_.run({"cp", wp_config_bak, wp_config_path});
+            }
+            cleanup_stg(); return result;
+        }
+
+        std::string options_table;
+        std::istringstream options_stream(options_query.out);
+        std::string candidate;
+        while (std::getline(options_stream, candidate)) {
+            while (!candidate.empty() && (candidate.back() == '\n' || candidate.back() == '\r' || candidate.back() == ' ')) candidate.pop_back();
+            const std::string suffix = "_options";
+            if (candidate.size() >= suffix.size() &&
+                candidate.compare(candidate.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                options_table = candidate;
+                break;
+            }
+        }
+
+        if (!options_table.empty()) {
+            std::string update_urls = "UPDATE " + sql_identifier(options_table)
+                + " SET option_value=" + sql_literal(canonical_url)
+                + " WHERE option_name IN ('siteurl','home')";
+            auto update_res = executor_.run({
+                "docker", "exec", db_container,
+                "env", "MYSQL_PWD=" + db_password,
+                "mariadb", "-N", "-u" + db_user, db_name,
+                "-e", update_urls
+            });
+            if (update_res.exit_code != 0) {
+                logger_.error("MIGRATION", "WordPress URL normalization failed: " + update_res.err);
+                result.errors.push_back("WordPress URL normalization failed");
+                do_rollback();
+                if (result.wp_config_updated && !wp_config_bak.empty()) {
+                    executor_.run({"cp", wp_config_bak, wp_config_path});
+                }
+                cleanup_stg(); return result;
+            }
+            logger_.info("MIGRATION", "WordPress siteurl/home normalized to " + canonical_url
+                         + " in " + options_table);
+        } else {
+            logger_.warning("MIGRATION", "No WordPress options table found for URL normalization");
+            result.warnings.push_back("No WordPress options table found for URL normalization");
+        }
+    }
+
     // Restart PHP
     logger_.info("MIGRATION", "Restarting PHP");
     executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "restart", "php"});
