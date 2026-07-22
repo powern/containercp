@@ -150,17 +150,24 @@ std::string ProxyConfigBuilder::normalize_upstream(const std::string& raw) {
 }
 
 std::string ProxyConfigBuilder::sql_console_route_locations(const std::string& launch_id,
+                                                            uint64_t database_id,
                                                             const std::string& adminer_upstream,
                                                             const std::string& auth_upstream) {
     const bool valid_launch_id = launch_id.size() == 32 &&
         std::all_of(launch_id.begin(), launch_id.end(), [](unsigned char c) { return std::isxdigit(c) != 0; });
-    if (!valid_launch_id) return {};
+    if (!valid_launch_id || database_id == 0) return {};
     const auto adminer = normalize_upstream(adminer_upstream);
     const auto auth = normalize_upstream(auth_upstream);
     if (adminer.empty() || auth.empty()) return {};
 
     std::ostringstream conf;
     conf << "    # containercp-sql-console-route " << launch_id << " begin\n"
+         << "    location = /sql-console/internal/redeem {\n"
+         << "        return 404;\n"
+         << "    }\n"
+         << "    location = /sql-console/internal/logout {\n"
+         << "        return 404;\n"
+         << "    }\n"
          << "    location = /sql-console/internal/auth/" << launch_id << " {\n"
          << "        internal;\n"
          << "        proxy_pass http://" << auth << "/sql-console/internal/auth/" << launch_id << ";\n"
@@ -177,6 +184,8 @@ std::string ProxyConfigBuilder::sql_console_route_locations(const std::string& l
          << "        rewrite ^/sql-console/" << launch_id << "/?(.*)$ /$1 break;\n"
          << "        proxy_pass $sql_console_backend;\n"
          << "        proxy_set_header Host $host;\n"
+         << "        proxy_set_header X-ContainerCP-SqlConsole-Launch-Id " << launch_id << ";\n"
+         << "        proxy_set_header X-ContainerCP-SqlConsole-Database-Id " << database_id << ";\n"
          << "        proxy_set_header X-Real-IP $remote_addr;\n"
          << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
          << "        proxy_set_header X-Forwarded-Proto $scheme;\n"

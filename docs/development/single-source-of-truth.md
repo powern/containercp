@@ -36,6 +36,8 @@ or duplicate the logic.
 | SQL Console tool providers | `SqlConsoleProvider` (`libs/sqlconsole/`) | Adminer, future native SQL editor |
 | Adminer SQL Console runtime | `AdminerSqlConsoleProvider` (`libs/sqlconsole/`) | future proxy route |
 | SQL Console proxy routes | `NginxProxyProvider` (`libs/proxy/`) | `ServiceRegistry`, WebServer auth endpoint |
+| Adminer SQL Console SSO assets | `ServiceRegistry` (`libs/core/`) | `AdminerSqlConsoleProvider` |
+| Adminer SQL Console credential redemption | `WebServer` (`libs/api/`) + `DatabaseSqlConsoleService` | Adminer SSO plugin |
 
 ## Examples
 

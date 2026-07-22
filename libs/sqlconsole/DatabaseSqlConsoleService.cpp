@@ -155,13 +155,7 @@ SqlConsoleOperationResult DatabaseSqlConsoleService::redeem_launch_session(const
 }
 
 SqlConsoleOperationResult DatabaseSqlConsoleService::authorize_launch_session(const std::string& launch_id, const std::string& launch_secret) {
-    const auto* session = sessions_.find(launch_id);
-    if (session != nullptr && session->status == SqlConsoleSessionStatus::Redeemed) {
-        auto result = sessions_.touch(launch_id, launch_secret);
-        persist_sessions();
-        return result;
-    }
-    auto result = sessions_.redeem(launch_id, launch_secret);
+    auto result = sessions_.authorize(launch_id, launch_secret);
     persist_sessions();
     return result;
 }
@@ -184,6 +178,27 @@ SqlConsoleInternalRedeemResult DatabaseSqlConsoleService::redeem_internal_launch
     }
     result.temporary_credential = {session->database_name, session->temporary_user_name, session->temporary_user_password};
     return result;
+}
+
+SqlConsoleInternalRedeemResult DatabaseSqlConsoleService::redeem_internal_launch_session(const std::string& launch_id,
+                                                                                        const std::string& launch_secret,
+                                                                                        uint64_t database_id) {
+    SqlConsoleInternalRedeemResult result;
+    const auto* session = sessions_.find(launch_id);
+    if (session == nullptr) {
+        result.success = false;
+        result.code = "session_not_found";
+        result.message = "SQL Console launch session was not found";
+        return result;
+    }
+    if (database_id == 0 || session->database_id != database_id) {
+        result.success = false;
+        result.code = "database_mismatch";
+        result.message = "SQL Console launch session database does not match route context";
+        result.session = sql_console_public_session(*session);
+        return result;
+    }
+    return redeem_internal_launch_session(launch_id, launch_secret);
 }
 
 SqlConsoleOperationResult DatabaseSqlConsoleService::touch_launch_session(const std::string& launch_id, const std::string& launch_secret) {

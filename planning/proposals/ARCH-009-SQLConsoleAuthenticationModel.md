@@ -49,6 +49,15 @@ validates/touches the SQL Console session without returning credentials.
 Launch starts Adminer and installs the route; revoke removes the route,
 stops Adminer, and drops the temporary MariaDB user.
 
+**Intermediate SSO implementation note:** Adminer server-side SSO has been
+added before GUI exposure. A static Adminer plugin and internal-token file
+are mounted read-only into the temporary Adminer container. The browser only
+receives the opaque launch ID and `HttpOnly` launch cookie. The plugin redeems
+the launch through WebServer's internal endpoint, enforces the selected database
+ID, stores temporary credentials only in the Adminer PHP session, and suppresses
+manual Adminer login. Public Nginx SQL Console routes block the internal redeem
+and logout paths.
+
 ---
 
 ## 1. Executive Summary

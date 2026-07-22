@@ -145,6 +145,26 @@ libs/runtime/
 └── PortManager.h/.cpp              # Port allocation (not runtime)
 ```
 
+## SQL Console Adminer Runtime
+
+Adminer-backed SQL Console sessions use a temporary runtime outside the site's
+Compose file. `AdminerSqlConsoleProvider` starts an on-demand Adminer container
+through `CommandExecutor` vector arguments and attaches it only to the selected
+site's private Docker network. The container publishes no host ports.
+
+Runtime inputs are intentionally non-secret:
+
+- container name derived from the opaque launch ID,
+- target site private network name,
+- read-only mount path for the static SSO plugin,
+- read-only mount path for the internal token file.
+
+Database usernames, passwords, launch secrets, persistent application
+credentials, and SQL contents are never passed through Docker environment
+variables, labels, process arguments, or Compose files. Temporary credentials are
+delivered after startup by the server-side Adminer SSO plugin over the internal
+WebServer endpoint.
+
 ## RuntimeSynchronizer
 
 The `RuntimeSynchronizer` provides a lightweight callback registry for

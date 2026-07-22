@@ -49,6 +49,16 @@ cookie. Direct browser navigation does not rely on the frontend
 `X-Session-Token` header. Revoke removes the route and stops Adminer before
 dropping the temporary MariaDB user.
 
+The intermediate Adminer SSO phase added server-side credential handoff.
+ContainerCP writes a static Adminer plugin and a process-local internal token
+file under `data_root/sqlconsole/adminer/`, mounts them read-only into the
+temporary Adminer container, and passes only non-secret launch/database IDs as
+Nginx upstream headers. The plugin validates the `HttpOnly` launch cookie,
+redeems the launch session through WebServer's internal SSO endpoint, stores
+temporary credentials only in the Adminer PHP session, and suppresses the
+standard Adminer login form. Adminer logout calls an internal cleanup endpoint
+that removes the route, stops Adminer, and drops the temporary MariaDB user.
+
 The current implementation still does not expose Web UI controls for
 Adminer.
 
@@ -64,6 +74,8 @@ Adminer.
 | Adminer temporary runtime lifecycle | `libs/sqlconsole/AdminerSqlConsoleProvider` |
 | SQL Console admin-domain route config | `libs/proxy/NginxProxyProvider` |
 | SQL Console launch-cookie route auth | `libs/api/WebServer` |
+| Adminer SSO plugin and internal token asset | `libs/core/ServiceRegistry` |
+| Adminer credential redemption endpoint | `libs/api/WebServer` |
 | Database lifecycle operations | `libs/database/DatabaseLifecycleService` |
 | MariaDB operations | `libs/database/MariaDBProvider` |
 | SQL Console temporary MariaDB users | `libs/database/MariaDBProvider` |
@@ -92,13 +104,48 @@ Runtime rules:
 - no database user, password, launch secret, service-account credential,
   or SQL content is passed through Docker environment variables,
   command-line arguments, or labels,
+- the Adminer SSO plugin and internal-token files are mounted read-only;
+  only their filesystem paths appear in Docker arguments,
 - the provider returns only a private upstream such as
   `http://ccp-sqlconsole-<launch-prefix>:8080` for future server-side
   proxy routing.
 
-Credential handoff remains a later server-side proxy/internal-SSO phase.
 The frontend must not receive credentials, and Adminer must not become
 publicly reachable outside the authenticated admin-panel route.
+
+## Adminer SSO Handoff
+
+Adminer SSO uses this flow:
+
+1. The authenticated launch API creates a SQL Console session and temporary
+   MariaDB user.
+2. `ServiceRegistry` prepares the static Adminer SSO plugin and internal token
+   file with owner-only permissions for the token.
+3. `AdminerSqlConsoleProvider` starts Adminer with read-only mounts for the
+   plugin and token file. No credentials are passed in Docker env, labels, or
+   argv.
+4. Nginx forwards `X-ContainerCP-SqlConsole-Launch-Id` and
+   `X-ContainerCP-SqlConsole-Database-Id` to Adminer. These values are
+   non-secret.
+5. The plugin calls WebServer `/sql-console/internal/redeem` with the mounted
+   internal token and `ccp_sql_console_secret` cookie.
+6. WebServer verifies the token, cookie, launch ID, and database ID before
+   returning the temporary database credential to the Adminer server process.
+7. The plugin stores the credential only in the Adminer PHP session and
+   pre-populates Adminer's server-side auth state. It does not render a login
+   form or hidden credential fields.
+
+Replay protection is enforced by SQL Console's single-use internal redemption:
+the first successful SSO redemption marks the launch redeemed. Repeated
+redemption fails, while normal proxied requests continue through the Adminer PHP
+session and Nginx cookie authorization.
+
+Logout and expiry cleanup:
+
+- Adminer logout calls `/sql-console/internal/logout` with the internal token.
+- WebServer route auth cleans up expired or revoked launches when encountered.
+- Cleanup removes the Nginx route, stops Adminer, and asks SQL Console to drop
+  the temporary MariaDB user.
 
 ## Proxy Route Authorization
 
@@ -115,11 +162,18 @@ The central Nginx proxy route:
 - forwards only the SQL Console cookie to the auth endpoint,
 - proxies the approved launch path to the private Adminer container
   upstream after auth succeeds,
+- blocks public Nginx access to `/sql-console/internal/redeem` and
+  `/sql-console/internal/logout`,
 - is removed during explicit revoke.
 
 The WebServer auth endpoint only validates/touches the SQL Console launch
 session. It does not return credentials, SQL content, provider diagnostics,
 or public session JSON.
+
+The WebServer SSO redemption endpoint returns temporary credentials only after
+the Adminer server-side plugin supplies the mounted internal token and the
+browser-sent `HttpOnly` launch cookie. It is intended for server-to-server use
+only and is not linked from the UI.
 
 ## Session Model
 
@@ -202,6 +256,8 @@ Future phases must preserve these boundaries:
   on-demand runtime boundary without host ports or credential exposure.
 - Phase 6 added launch-cookie-authorized admin-domain reverse proxy
   routing and explicit route/container cleanup on revoke.
+- The intermediate SSO phase added server-side Adminer credential handoff,
+  selected-database enforcement, replay rejection, and logout/expiry cleanup.
 - Phase 7 adds Database GUI launch and revoke controls.
 
 The frontend must never receive SQL Console credentials or launch

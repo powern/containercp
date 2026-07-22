@@ -712,6 +712,144 @@ sqlconsole::SqlConsoleProvider& ServiceRegistry::sql_console_provider() {
     return adminer_sql_console_provider_;
 }
 
+core::OperationResult ServiceRegistry::prepare_sql_console_provider_launch(sqlconsole::SqlConsoleProviderLaunchRequest& request) {
+    const auto root = std::filesystem::path(config_.data_root()) / "sqlconsole" / "adminer";
+    std::filesystem::create_directories(root);
+    const auto plugin_path = root / "containercp-sso.php";
+    const auto token_path = root / "internal-token";
+
+    const char* plugin = R"PHP(<?php
+declare(strict_types=1);
+
+function ccp_sql_console_fail(): void {
+    http_response_code(401);
+    exit('SQL Console session unavailable');
+}
+
+function ccp_sql_console_internal_call(string $path, array $payload): ?array {
+    $launchSecret = $_COOKIE['ccp_sql_console_secret'] ?? '';
+    $token = @file_get_contents('/run/containercp/sql-console-token');
+    if ($launchSecret === '' || $token === false) {
+        return null;
+    }
+    $body = json_encode($payload);
+    $headers = "Content-Type: application/json\r\n"
+        . "Cookie: ccp_sql_console_secret=" . $launchSecret . "\r\n"
+        . "X-ContainerCP-SqlConsole-Internal: " . trim($token) . "\r\n";
+    $context = stream_context_create(['http' => [
+        'method' => 'POST',
+        'header' => $headers,
+        'content' => $body,
+        'timeout' => 5,
+        'ignore_errors' => true,
+    ]]);
+    $response = @file_get_contents('http://host.docker.internal:8081' . $path, false, $context);
+    $decoded = is_string($response) ? json_decode($response, true) : null;
+    return is_array($decoded) ? $decoded : null;
+}
+
+function ccp_sql_console_logout(): void {
+    $launchId = $_SERVER['HTTP_X_CONTAINERCP_SQLCONSOLE_LAUNCH_ID'] ?? '';
+    if (preg_match('/^[0-9a-fA-F]{32}$/', $launchId)) {
+        ccp_sql_console_internal_call('/sql-console/internal/logout', ['launch_id' => $launchId]);
+    }
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        $_SESSION = [];
+        session_destroy();
+    }
+    http_response_code(204);
+    exit;
+}
+
+function ccp_sql_console_redeem(): array {
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        session_start();
+    }
+    if (isset($_GET['logout'])) {
+        ccp_sql_console_logout();
+    }
+    if (isset($_SESSION['ccp_sql_console']) && is_array($_SESSION['ccp_sql_console'])) {
+        return $_SESSION['ccp_sql_console'];
+    }
+
+    $launchId = $_SERVER['HTTP_X_CONTAINERCP_SQLCONSOLE_LAUNCH_ID'] ?? '';
+    $databaseId = $_SERVER['HTTP_X_CONTAINERCP_SQLCONSOLE_DATABASE_ID'] ?? '';
+    if (!preg_match('/^[0-9a-fA-F]{32}$/', $launchId) || !preg_match('/^[0-9]+$/', $databaseId)) {
+        ccp_sql_console_fail();
+    }
+
+    $decoded = ccp_sql_console_internal_call('/sql-console/internal/redeem', ['launch_id' => $launchId, 'database_id' => (int)$databaseId]);
+    if (!is_array($decoded) || empty($decoded['success']) || empty($decoded['data']) || !is_array($decoded['data'])) {
+        ccp_sql_console_fail();
+    }
+
+    $data = $decoded['data'];
+    foreach (['database_name', 'database_user', 'database_password'] as $key) {
+        if (!isset($data[$key]) || !is_string($data[$key]) || $data[$key] === '') {
+            ccp_sql_console_fail();
+        }
+    }
+
+    $_SESSION['ccp_sql_console'] = [
+        'server' => 'mariadb',
+        'database' => $data['database_name'],
+        'username' => $data['database_user'],
+        'password' => $data['database_password'],
+    ];
+
+    $_POST['auth'] = [
+        'driver' => 'server',
+        'server' => 'mariadb',
+        'username' => $data['database_user'],
+        'password' => $data['database_password'],
+        'db' => $data['database_name'],
+    ];
+    return $_SESSION['ccp_sql_console'];
+}
+
+ccp_sql_console_redeem();
+
+class AdminerContainerCPSso {
+    public function credentials(): array {
+        $credential = ccp_sql_console_redeem();
+        return [$credential['server'], $credential['username'], $credential['password']];
+    }
+
+    public function database(): string {
+        $credential = ccp_sql_console_redeem();
+        return $credential['database'];
+    }
+
+    public function login($login, $password): bool {
+        return true;
+    }
+
+    public function loginForm(): void {
+        ccp_sql_console_fail();
+    }
+}
+
+return new AdminerContainerCPSso();
+)PHP";
+
+    {
+        std::ofstream out(plugin_path);
+        if (!out.is_open()) return {false, "Failed to write Adminer SQL Console SSO plugin"};
+        out << plugin;
+    }
+    ::chmod(plugin_path.c_str(), 0644);
+    {
+        std::ofstream out(token_path, std::ios::trunc);
+        if (!out.is_open()) return {false, "Failed to write Adminer SQL Console internal token"};
+        out << sql_console_.internal_api_token();
+    }
+    ::chmod(token_path.c_str(), 0600);
+
+    request.adminer_sso_plugin_path = plugin_path.string();
+    request.internal_token_path = token_path.string();
+    return {true, "SQL Console provider launch prepared"};
+}
+
 core::OperationResult ServiceRegistry::enable_sql_console_route(const sqlconsole::SqlConsoleProviderLaunchRequest& request,
                                                                 const std::string& provider_upstream) {
     auto* nginx_proxy = dynamic_cast<proxy::NginxProxyProvider*>(&proxy_provider_);
@@ -723,6 +861,7 @@ core::OperationResult ServiceRegistry::enable_sql_console_route(const sqlconsole
     const auto site_network = adminer_sql_console_provider_.site_network_name(request);
     return nginx_proxy->upsert_sql_console_route(hostname,
                                                 request.launch_id,
+                                                request.database_id,
                                                 provider_upstream,
                                                 admin_proxy->upstream,
                                                 site_network);
@@ -738,6 +877,20 @@ core::OperationResult ServiceRegistry::disable_sql_console_route(const std::stri
     }
     (void)adminer_sql_console_provider_.stop(launch_id);
     return {true, "SQL Console route disabled"};
+}
+
+core::OperationResult ServiceRegistry::cleanup_sql_console_launch_session(const std::string& launch_id) {
+    (void)disable_sql_console_route(launch_id);
+    const auto* session = sql_console_.sessions().find(launch_id);
+    if (session == nullptr) return {true, "SQL Console launch session absent"};
+    auto* site_record = sites_.find_by_id(session->site_id);
+    if (site_record == nullptr) return {false, "SQL Console site unavailable for cleanup"};
+    const auto site_root = std::filesystem::path(config_.sites_dir()) / site_record->domain;
+    const auto cleaned = sql_console_.revoke_site_temporary_launch_session(launch_id, site_root);
+    if (!cleaned.success && cleaned.code != "session_expired" && cleaned.code != "session_revoked") {
+        return {false, cleaned.message};
+    }
+    return {true, "SQL Console launch session cleaned"};
 }
 
 backup::BackupManager& ServiceRegistry::backups() {

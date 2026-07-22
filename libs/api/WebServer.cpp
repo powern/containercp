@@ -1,4 +1,5 @@
 #include "WebServer.h"
+#include "api/JsonFormatter.h"
 #include "api/Response.h"
 
 #include <arpa/inet.h>
@@ -15,6 +16,45 @@
 namespace containercp::api {
 namespace {
 constexpr int kMaxWebRequestBodyBytes = 6 * 1024 * 1024;
+
+std::string json_string_value(const std::string& json, const std::string& key) {
+    const std::string search = "\"" + key + "\":";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) return "";
+    pos += search.size();
+    while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) ++pos;
+    if (pos >= json.size() || json[pos] != '"') return "";
+    ++pos;
+    std::string out;
+    while (pos < json.size()) {
+        char c = json[pos++];
+        if (c == '"') break;
+        if (c == '\\' && pos < json.size()) {
+            out += json[pos++];
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
+uint64_t json_u64_value(const std::string& json, const std::string& key) {
+    const std::string search = "\"" + key + "\":";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) return 0;
+    pos += search.size();
+    while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) ++pos;
+    const auto start = pos;
+    while (pos < json.size() && std::isdigit(static_cast<unsigned char>(json[pos]))) ++pos;
+    if (start == pos) return 0;
+    try { return static_cast<uint64_t>(std::stoull(json.substr(start, pos - start))); } catch (...) { return 0; }
+}
+
+std::string request_body(const std::string& raw_request) {
+    const auto body_start = raw_request.find("\r\n\r\n");
+    if (body_start == std::string::npos) return "";
+    return raw_request.substr(body_start + 4);
+}
 }
 
 WebServer::WebServer(core::ServiceRegistry& services, const std::string& bind_addr, int port, int api_port)
@@ -55,6 +95,23 @@ std::string WebServer::extract_session_token(const std::string& raw_request) con
             if (key == "X-Session-Token") {
                 return val;
             }
+        }
+        if (line.empty()) break;
+    }
+    return "";
+}
+
+std::string WebServer::extract_header(const std::string& raw_request, const std::string& name) const {
+    std::istringstream stream(raw_request);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        auto colon = line.find(':');
+        if (colon != std::string::npos) {
+            std::string key = line.substr(0, colon);
+            std::string val = line.substr(colon + 1);
+            if (!val.empty() && val[0] == ' ') val = val.substr(1);
+            if (key == name) return val;
         }
         if (line.empty()) break;
     }
@@ -235,10 +292,62 @@ void WebServer::handle_sql_console_auth(const Request& req, const std::string& r
     }
     const auto authorized = services_.sql_console().authorize_launch_session(launch_id, launch_secret);
     if (!authorized.success) {
+        if (authorized.code == "session_expired" || authorized.code == "session_revoked") {
+            (void)services_.cleanup_sql_console_launch_session(launch_id);
+        }
         send_unauthorized(client_fd);
         return;
     }
     send_json(client_fd, 200, "{\"success\":true}");
+}
+
+void WebServer::handle_sql_console_logout(const std::string& raw_request, int client_fd) {
+    const std::string supplied_token = extract_header(raw_request, "X-ContainerCP-SqlConsole-Internal");
+    if (supplied_token.empty() || supplied_token != services_.sql_console().internal_api_token()) {
+        send_json(client_fd, 403, "{\"success\":false,\"error\":{\"code\":\"internal_token_invalid\",\"message\":\"SQL Console internal token is invalid\"}}");
+        return;
+    }
+    const auto body = request_body(raw_request);
+    const auto launch_id = json_string_value(body, "launch_id");
+    if (launch_id.empty()) {
+        send_json(client_fd, 400, "{\"success\":false,\"error\":{\"code\":\"launch_id_required\",\"message\":\"SQL Console launch id is required\"}}");
+        return;
+    }
+    const auto cleaned = services_.cleanup_sql_console_launch_session(launch_id);
+    if (!cleaned.success) {
+        send_json(client_fd, 400, "{\"success\":false,\"error\":{\"code\":\"cleanup_failed\",\"message\":\"SQL Console cleanup failed\"}}");
+        return;
+    }
+    send_json(client_fd, 200, "{\"success\":true}");
+}
+
+void WebServer::handle_sql_console_redeem(const std::string& raw_request, int client_fd) {
+    const std::string supplied_token = extract_header(raw_request, "X-ContainerCP-SqlConsole-Internal");
+    if (supplied_token.empty() || supplied_token != services_.sql_console().internal_api_token()) {
+        send_json(client_fd, 403, "{\"success\":false,\"error\":{\"code\":\"internal_token_invalid\",\"message\":\"SQL Console internal token is invalid\"}}");
+        return;
+    }
+
+    const auto body = request_body(raw_request);
+    const auto launch_id = json_string_value(body, "launch_id");
+    const auto database_id = json_u64_value(body, "database_id");
+    const auto launch_secret = extract_cookie(raw_request, "ccp_sql_console_secret");
+    if (launch_id.empty() || database_id == 0 || launch_secret.empty()) {
+        send_json(client_fd, 400, "{\"success\":false,\"error\":{\"code\":\"launch_cookie_required\",\"message\":\"SQL Console launch id, database id, and secret cookie are required\"}}");
+        return;
+    }
+
+    const auto redeemed = services_.sql_console().redeem_internal_launch_session(launch_id, launch_secret, database_id);
+    if (!redeemed.success) {
+        send_json(client_fd, 400, "{\"success\":false,\"error\":{\"code\":\"" + JsonFormatter::escape(redeemed.code) +
+                             "\",\"message\":\"" + JsonFormatter::escape(redeemed.message) + "\"}}");
+        return;
+    }
+
+    send_json(client_fd, 200,
+              "{\"success\":true,\"data\":{\"database_name\":\"" + JsonFormatter::escape(redeemed.temporary_credential.database_name) +
+              "\",\"database_user\":\"" + JsonFormatter::escape(redeemed.temporary_credential.user_name) +
+              "\",\"database_password\":\"" + JsonFormatter::escape(redeemed.temporary_credential.password) + "\"}}");
 }
 
 void WebServer::handle_client(int client_fd, WebServer* server) {
@@ -333,6 +442,16 @@ void WebServer::handle_client(int client_fd, WebServer* server) {
 
     if (req.path.find("/sql-console/internal/auth/") == 0) {
         server->handle_sql_console_auth(req, raw, client_fd);
+        return;
+    }
+
+    if (req.path == "/sql-console/internal/redeem") {
+        server->handle_sql_console_redeem(raw, client_fd);
+        return;
+    }
+
+    if (req.path == "/sql-console/internal/logout") {
+        server->handle_sql_console_logout(raw, client_fd);
         return;
     }
 

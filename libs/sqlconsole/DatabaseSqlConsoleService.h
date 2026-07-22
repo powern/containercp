@@ -70,6 +70,7 @@ public:
     SqlConsoleOperationResult redeem_launch_session(const std::string& launch_id, const std::string& launch_secret);
     SqlConsoleOperationResult authorize_launch_session(const std::string& launch_id, const std::string& launch_secret);
     SqlConsoleInternalRedeemResult redeem_internal_launch_session(const std::string& launch_id, const std::string& launch_secret);
+    SqlConsoleInternalRedeemResult redeem_internal_launch_session(const std::string& launch_id, const std::string& launch_secret, uint64_t database_id);
     SqlConsoleOperationResult touch_launch_session(const std::string& launch_id, const std::string& launch_secret);
     SqlConsoleOperationResult revoke_launch_session(const std::string& launch_id);
     SqlConsoleOperationResult revoke_temporary_launch_session(const SqlConsoleCleanupRequest& request);

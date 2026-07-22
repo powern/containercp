@@ -29,6 +29,8 @@ SqlConsoleProviderLaunchRequest launch_request() {
     request.site_domain = "Example.Test";
     request.site_root = "/srv/containercp/sites/example.test";
     request.provider = "adminer";
+    request.adminer_sso_plugin_path = "/srv/containercp/sqlconsole/adminer/containercp-sso.php";
+    request.internal_token_path = "/srv/containercp/sqlconsole/adminer/internal-token";
     return request;
 }
 
@@ -63,6 +65,9 @@ TEST_CASE("Adminer SQL Console provider builds isolated docker run command") {
     CHECK(args_contain(runner.last_args, "--rm"));
     CHECK(args_contain(runner.last_args, "--network"));
     CHECK(args_contain(runner.last_args, "exampletest_containercp-site-12"));
+    CHECK(args_contain(runner.last_args, "host.docker.internal:host-gateway"));
+    CHECK(args_contain(runner.last_args, "/var/www/html/plugins-enabled/containercp-sso.php:ro"));
+    CHECK(args_contain(runner.last_args, "/run/containercp/sql-console-token:ro"));
     CHECK(args_contain(runner.last_args, "containercp.sql_console.provider=adminer"));
     CHECK(args_contain(runner.last_args, "containercp.sql_console.launch_id=0123456789abcdef0123456789abcdef"));
     CHECK(args_contain(runner.last_args, "containercp.site.id=12"));

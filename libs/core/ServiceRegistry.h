@@ -96,9 +96,11 @@ public:
     database::DatabaseCredentialRotationJobService& database_credential_rotation_jobs();
     sqlconsole::DatabaseSqlConsoleService& sql_console();
     sqlconsole::SqlConsoleProvider& sql_console_provider();
+    core::OperationResult prepare_sql_console_provider_launch(sqlconsole::SqlConsoleProviderLaunchRequest& request);
     core::OperationResult enable_sql_console_route(const sqlconsole::SqlConsoleProviderLaunchRequest& request,
                                                    const std::string& provider_upstream);
     core::OperationResult disable_sql_console_route(const std::string& launch_id);
+    core::OperationResult cleanup_sql_console_launch_session(const std::string& launch_id);
     backup::BackupManager& backups();
     backup::BackupProvider& backup_provider();
     backup::BackupService& backup_service();

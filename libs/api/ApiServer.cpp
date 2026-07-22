@@ -1267,6 +1267,12 @@ bool ApiServer::start() {
             provider_launch.site_domain = site_record->domain;
             provider_launch.site_root = site_root.string();
             provider_launch.provider = "adminer";
+            const auto prepared = s.prepare_sql_console_provider_launch(provider_launch);
+            if (!prepared.success) {
+                (void)s.sql_console().revoke_site_temporary_launch_session(created.launch_id, site_root);
+                sqlconsole::SqlConsoleAuditLogger::log({"launch", "provider_prepare", "failure", "provider_prepare_failed", created.launch_id, database_id, site_record->id, session->username, "adminer", created.session.status, sqlconsole::SqlConsoleAuditEvent::Level::Error});
+                return sql_console_error(500, "provider_prepare_failed", prepared.message);
+            }
             const auto provider_started = s.sql_console_provider().start(provider_launch);
             if (!provider_started.success) {
                 (void)s.sql_console().revoke_site_temporary_launch_session(created.launch_id, site_root);
@@ -1436,11 +1442,18 @@ bool ApiServer::start() {
             return sql_console_error(403, "internal_token_invalid", "SQL Console internal token is invalid");
         }
         const std::string launch_id = json_extract(req.body, "launch_id");
+        uint64_t database_id = 0;
+        const std::string database_id_text = json_extract(req.body, "database_id");
+        if (!database_id_text.empty()) {
+            try { database_id = static_cast<uint64_t>(std::stoull(database_id_text)); } catch (...) { database_id = 0; }
+        }
         const std::string launch_secret = cookie_value(req, "ccp_sql_console_secret");
         if (launch_id.empty() || launch_secret.empty()) {
             return sql_console_error(400, "launch_cookie_required", "SQL Console launch id and secret cookie are required");
         }
-        const auto redeemed = s.sql_console().redeem_internal_launch_session(launch_id, launch_secret);
+        const auto redeemed = database_id == 0
+            ? s.sql_console().redeem_internal_launch_session(launch_id, launch_secret)
+            : s.sql_console().redeem_internal_launch_session(launch_id, launch_secret, database_id);
         if (!redeemed.success) {
             return sql_console_error(400, redeemed.code, redeemed.message);
         }

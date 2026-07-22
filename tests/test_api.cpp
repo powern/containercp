@@ -298,11 +298,67 @@ TEST_CASE("SQL Console internal API requires process token before credential res
 
     const auto route = source.find("/api/sql-console/internal/redeem");
     REQUIRE(route != std::string::npos);
-    const std::string block = source.substr(route, 1600);
+    const std::string block = source.substr(route, 2600);
     CHECK(block.find("X-ContainerCP-SqlConsole-Internal") != std::string::npos);
     CHECK(block.find("internal_api_token()") != std::string::npos);
     CHECK(block.find("cookie_value(req, \"ccp_sql_console_secret\")") != std::string::npos);
     CHECK(block.find("database_password") != std::string::npos);
+}
+
+TEST_CASE("SQL Console Adminer SSO handoff keeps credentials server-side") {
+    std::ifstream registry_in(std::string(TEST_SOURCE_DIR) + "/libs/core/ServiceRegistry.cpp");
+    REQUIRE(registry_in.is_open());
+    std::string registry((std::istreambuf_iterator<char>(registry_in)), std::istreambuf_iterator<char>());
+
+    const auto plugin = registry.find("containercp-sso.php");
+    REQUIRE(plugin != std::string::npos);
+    const auto plugin_block = registry.substr(plugin, 5200);
+    CHECK(plugin_block.find("/run/containercp/sql-console-token") != std::string::npos);
+    CHECK(plugin_block.find("/sql-console/internal/redeem") != std::string::npos);
+    CHECK(plugin_block.find("/sql-console/internal/logout") != std::string::npos);
+    CHECK(plugin_block.find("X-ContainerCP-SqlConsole-Internal") != std::string::npos);
+    CHECK(plugin_block.find("HTTP_X_CONTAINERCP_SQLCONSOLE_LAUNCH_ID") != std::string::npos);
+    CHECK(plugin_block.find("HTTP_X_CONTAINERCP_SQLCONSOLE_DATABASE_ID") != std::string::npos);
+    CHECK(plugin_block.find("hidden") == std::string::npos);
+    CHECK(plugin_block.find("localStorage") == std::string::npos);
+    CHECK(plugin_block.find("sessionStorage") == std::string::npos);
+    CHECK(plugin_block.find("loginForm(): void") != std::string::npos);
+    CHECK(plugin_block.find("ccp_sql_console_fail();") != std::string::npos);
+
+    std::ifstream web_in(std::string(TEST_SOURCE_DIR) + "/libs/api/WebServer.cpp");
+    REQUIRE(web_in.is_open());
+    std::string web((std::istreambuf_iterator<char>(web_in)), std::istreambuf_iterator<char>());
+    const auto redeem = web.find("handle_sql_console_redeem");
+    REQUIRE(redeem != std::string::npos);
+    const auto redeem_block = web.substr(redeem, 2600);
+    CHECK(redeem_block.find("X-ContainerCP-SqlConsole-Internal") != std::string::npos);
+    CHECK(redeem_block.find("internal_api_token()") != std::string::npos);
+    CHECK(redeem_block.find("redeem_internal_launch_session(launch_id, launch_secret, database_id)") != std::string::npos);
+    CHECK(redeem_block.find("database_password") != std::string::npos);
+
+    const auto auth = web.find("handle_sql_console_auth");
+    REQUIRE(auth != std::string::npos);
+    const auto auth_block = web.substr(auth, 1800);
+    CHECK(auth_block.find("authorize_launch_session") != std::string::npos);
+    CHECK(auth_block.find("cleanup_sql_console_launch_session") != std::string::npos);
+}
+
+TEST_CASE("SQL Console launch compensates failed provider and route setup") {
+    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/libs/api/ApiServer.cpp");
+    REQUIRE(in.is_open());
+    std::string source((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    const auto launch_route = source.find("action == \"sql-console/session\"");
+    REQUIRE(launch_route != std::string::npos);
+    const auto revoke_route = source.find("action == \"sql-console/session/revoke\"", launch_route);
+    REQUIRE(revoke_route != std::string::npos);
+    const std::string launch_block = source.substr(launch_route, revoke_route - launch_route);
+    CHECK(launch_block.find("prepare_sql_console_provider_launch") != std::string::npos);
+    CHECK(launch_block.find("provider_prepare_failed") != std::string::npos);
+    CHECK(launch_block.find("provider_started") != std::string::npos);
+    CHECK(launch_block.find("revoke_site_temporary_launch_session(created.launch_id, site_root)") != std::string::npos);
+    CHECK(launch_block.find("disable_sql_console_route(created.launch_id)") != std::string::npos);
+    CHECK(launch_block.find("proxy_route_failed") != std::string::npos);
 }
 
 TEST_CASE("Database dashboard UI implements DB-2 health workflow without secret surfaces") {

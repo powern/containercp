@@ -1,6 +1,7 @@
 #ifndef CONTAINERCP_PROXY_PROXY_CONFIG_BUILDER_H
 #define CONTAINERCP_PROXY_PROXY_CONFIG_BUILDER_H
 
+#include <cstdint>
 #include <string>
 
 namespace containercp::proxy {
@@ -40,6 +41,7 @@ public:
 
     static std::string normalize_upstream(const std::string& raw);
     static std::string sql_console_route_locations(const std::string& launch_id,
+                                                   uint64_t database_id,
                                                    const std::string& adminer_upstream,
                                                    const std::string& auth_upstream);
 };

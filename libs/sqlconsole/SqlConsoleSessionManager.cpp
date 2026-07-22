@@ -152,6 +152,25 @@ SqlConsoleOperationResult SqlConsoleSessionManager::success(const std::string& c
     return result;
 }
 
+SqlConsoleOperationResult SqlConsoleSessionManager::authorize(const std::string& launch_id, const std::string& launch_secret) {
+    auto it = sessions_.find(launch_id);
+    if (it == sessions_.end()) return failure("session_not_found", "SQL Console launch session was not found");
+    auto& session = it->second;
+    const auto now = clock_();
+    expire_if_needed(session, now);
+    if (session.status == SqlConsoleSessionStatus::Expired) return failure("session_expired", "SQL Console launch session is expired", &session);
+    if (session.status == SqlConsoleSessionStatus::Revoked) return failure("session_revoked", "SQL Console launch session is revoked", &session);
+    if (secret_digest(launch_secret) != session.secret_digest) {
+        return failure("invalid_secret", "SQL Console launch secret is invalid", &session);
+    }
+    if (session.status == SqlConsoleSessionStatus::Redeemed) {
+        session.last_seen_at = now;
+        session.idle_expires_at = min_time(now + policy_.idle_ttl, session.expires_at);
+        return success("touched", "SQL Console launch session activity recorded", session);
+    }
+    return success("authorized", "SQL Console launch session authorized", session);
+}
+
 SqlConsoleOperationResult SqlConsoleSessionManager::redeem(const std::string& launch_id, const std::string& launch_secret) {
     auto it = sessions_.find(launch_id);
     if (it == sessions_.end()) return failure("session_not_found", "SQL Console launch session was not found");

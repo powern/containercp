@@ -216,6 +216,7 @@
 | Phase 4: SQL Console public and internal API | ✅ | `libs/api/ApiServer.cpp`, `libs/core/ServiceRegistry.*`, `libs/sqlconsole/DatabaseSqlConsoleService.*`, `tests/test_api.cpp`, `docs/api/API_REFERENCE.md` |
 | Phase 5: Adminer tool provider and runtime | ✅ | `libs/sqlconsole/SqlConsoleProvider.h`, `libs/sqlconsole/AdminerSqlConsoleProvider.*`, `tests/test_sql_console_adminer_provider.cpp` |
 | Phase 6: Reverse proxy and routing | ✅ | `libs/proxy/NginxProxyProvider.*`, `libs/proxy/ProxyConfigBuilder.*`, `libs/api/WebServer.*`, `libs/api/ApiServer.cpp`, `libs/core/ServiceRegistry.*`, `tests/test_proxy.cpp`, `tests/test_sql_console_session.cpp` |
+| Intermediate: Adminer server-side SSO handoff | ✅ | `libs/core/ServiceRegistry.cpp`, `libs/api/WebServer.*`, `libs/sqlconsole/*`, `tests/test_sql_console_session.cpp`, `tests/test_api.cpp` |
 | Phase 7: Database GUI integration | ⬜ | Planned |
 | Phase 8: Security and integration validation | ⬜ | Planned |
 | Phase 9: Final documentation and completion | ⬜ | Planned |

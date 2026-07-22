@@ -557,11 +557,12 @@ void NginxProxyProvider::set_webmail_upstream(const std::string& upstream) {
 
 core::OperationResult NginxProxyProvider::upsert_sql_console_route(const std::string& domain,
                                                                     const std::string& launch_id,
+                                                                    uint64_t database_id,
                                                                     const std::string& adminer_upstream,
                                                                     const std::string& auth_upstream,
                                                                     const std::string& site_network) {
     std::lock_guard<std::mutex> lock(operation_mutex_);
-    const auto block = ProxyConfigBuilder::sql_console_route_locations(launch_id, adminer_upstream, auth_upstream);
+    const auto block = ProxyConfigBuilder::sql_console_route_locations(launch_id, database_id, adminer_upstream, auth_upstream);
     if (block.empty()) return {false, "Invalid SQL Console proxy route"};
 
     if (!site_network.empty()) {

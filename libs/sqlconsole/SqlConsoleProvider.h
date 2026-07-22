@@ -21,6 +21,8 @@ struct SqlConsoleProviderLaunchRequest {
     std::string site_domain;
     std::string site_root;
     std::string provider = "adminer";
+    std::string adminer_sso_plugin_path;
+    std::string internal_token_path;
 };
 
 class SqlConsoleProvider {

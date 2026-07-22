@@ -44,9 +44,12 @@ TEST_CASE("ProxyConfigBuilder SQL Console route uses auth_request and private up
 
     const auto route = ProxyConfigBuilder::sql_console_route_locations(
         "0123456789abcdef0123456789abcdef",
+        34,
         "http://ccp-sqlconsole-0123456789abcdef01234567:8080",
         "172.17.0.1:8081");
 
+    CHECK(route.find("location = /sql-console/internal/redeem") != std::string::npos);
+    CHECK(route.find("return 404") != std::string::npos);
     CHECK(route.find("location = /sql-console/internal/auth/0123456789abcdef0123456789abcdef") != std::string::npos);
     CHECK(route.find("internal;") != std::string::npos);
     CHECK(route.find("auth_request /sql-console/internal/auth/0123456789abcdef0123456789abcdef") != std::string::npos);
@@ -54,6 +57,8 @@ TEST_CASE("ProxyConfigBuilder SQL Console route uses auth_request and private up
     CHECK(route.find("set $sql_console_backend \"http://ccp-sqlconsole-0123456789abcdef01234567:8080\"") != std::string::npos);
     CHECK(route.find("rewrite ^/sql-console/0123456789abcdef0123456789abcdef/?(.*)$ /$1 break") != std::string::npos);
     CHECK(route.find("proxy_pass $sql_console_backend;") != std::string::npos);
+    CHECK(route.find("X-ContainerCP-SqlConsole-Launch-Id 0123456789abcdef0123456789abcdef") != std::string::npos);
+    CHECK(route.find("X-ContainerCP-SqlConsole-Database-Id 34") != std::string::npos);
     CHECK(route.find("password") == std::string::npos);
     CHECK(route.find("secret") == std::string::npos);
 }
@@ -61,7 +66,8 @@ TEST_CASE("ProxyConfigBuilder SQL Console route uses auth_request and private up
 TEST_CASE("ProxyConfigBuilder SQL Console route rejects malformed launch id") {
     using containercp::proxy::ProxyConfigBuilder;
 
-    CHECK(ProxyConfigBuilder::sql_console_route_locations("not-valid", "adminer:8080", "172.17.0.1:8081").empty());
+    CHECK(ProxyConfigBuilder::sql_console_route_locations("not-valid", 34, "adminer:8080", "172.17.0.1:8081").empty());
+    CHECK(ProxyConfigBuilder::sql_console_route_locations("0123456789abcdef0123456789abcdef", 0, "adminer:8080", "172.17.0.1:8081").empty());
 }
 
 TEST_CASE("ReverseProxyManager multiple") {

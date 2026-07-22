@@ -67,11 +67,14 @@ std::string AdminerSqlConsoleProvider::site_network_name(const SqlConsoleProvide
 std::vector<std::string> AdminerSqlConsoleProvider::start_args(const SqlConsoleProviderLaunchRequest& request) const {
     const auto cname = container_name(request.launch_id);
     const auto network = site_network_name(request);
-    if (cname.empty() || network.empty()) return {};
+    if (cname.empty() || network.empty() || request.adminer_sso_plugin_path.empty() || request.internal_token_path.empty()) return {};
     return {
         "docker", "run", "-d", "--rm",
         "--name", cname,
         "--network", network,
+        "--add-host", "host.docker.internal:host-gateway",
+        "-v", request.adminer_sso_plugin_path + ":/var/www/html/plugins-enabled/containercp-sso.php:ro",
+        "-v", request.internal_token_path + ":/run/containercp/sql-console-token:ro",
         "--label", "containercp.sql_console.provider=adminer",
         "--label", "containercp.sql_console.launch_id=" + request.launch_id,
         "--label", "containercp.site.id=" + std::to_string(request.site_id),

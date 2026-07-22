@@ -50,6 +50,7 @@ public:
 
     SqlConsoleCreateResult create(const SqlConsoleCreateRequest& request);
     const SqlConsoleSession* find(const std::string& launch_id);
+    SqlConsoleOperationResult authorize(const std::string& launch_id, const std::string& launch_secret);
     SqlConsoleOperationResult redeem(const std::string& launch_id, const std::string& launch_secret);
     SqlConsoleOperationResult touch(const std::string& launch_id, const std::string& launch_secret);
     SqlConsoleOperationResult revoke(const std::string& launch_id);

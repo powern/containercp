@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | SQL Console - add Adminer server-side SSO handoff
+
+**Summary:** Added the intermediate Adminer SSO handoff required before GUI exposure. ContainerCP now prepares a static Adminer SSO plugin and process-local internal token file, mounts them read-only into the temporary Adminer container, forwards only non-secret launch/database IDs through Nginx, and redeems temporary database credentials through WebServer's internal SSO endpoint. The standard Adminer login form is suppressed, replayed redemption is rejected, database IDs are enforced, and logout/expired sessions trigger route/container/temporary-user cleanup.
+
+**Files changed:** `libs/sqlconsole/SqlConsoleProvider.h`, `libs/sqlconsole/AdminerSqlConsoleProvider.cpp`, `libs/sqlconsole/SqlConsoleSessionManager.{h,cpp}`, `libs/sqlconsole/DatabaseSqlConsoleService.{h,cpp}`, `libs/api/ApiServer.cpp`, `libs/api/WebServer.{h,cpp}`, `libs/core/ServiceRegistry.{h,cpp}`, `libs/proxy/ProxyConfigBuilder.{h,cpp}`, `libs/proxy/NginxProxyProvider.{h,cpp}`, `tests/test_sql_console_session.cpp`, `tests/test_sql_console_adminer_provider.cpp`, `tests/test_proxy.cpp`, `tests/test_api.cpp`, `docs/api/API_REFERENCE.md`, `docs/development/sql-console.md`, `docs/development/single-source-of-truth.md`, `docs/runtime-architecture.md`, `planning/proposals/ARCH-009-SQLConsoleAuthenticationModel.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Adminer SQL Console routes can authenticate directly through server-side SSO without showing a manual Adminer login form. The Database GUI launch button is still hidden until Phase 7.
+
+**Validation:** Local build passed. Focused SQL Console doctests passed (`28` cases, `286` assertions). Focused Adminer provider doctests passed (`4` cases, `33` assertions). Focused SQL Console proxy route doctests passed (`2` cases, `15` assertions). Focused SSO source-security doctest passed (`1` case, `22` assertions). Focused launch compensation doctest passed (`1` case, `9` assertions). Full doctest suite passed (`905` cases, `6684` assertions). `git diff --check` passed.
+
+**Known risks:** The Adminer plugin behavior is deterministic at source level and designed for the official Adminer plugin loader. Browser-based validation remains part of the later integration validation phase because no local browser automation is available.
+
+---
+
 ## 2026-07-22 | `this commit` | SQL Console - add authenticated Adminer proxy routing
 
 **Summary:** Added Phase 6 SQL Console routing. Launch now starts the Adminer provider container, connects the central proxy to the target site's private network, and installs a marked admin-domain Nginx route for `/sql-console/<launch_id>/`. The route uses Nginx `auth_request` against a WebServer internal endpoint that validates the `HttpOnly` SQL Console launch-secret cookie. Revoke removes the route, stops Adminer, and then drops the temporary MariaDB user.

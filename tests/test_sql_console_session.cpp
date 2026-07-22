@@ -117,15 +117,19 @@ TEST_CASE("SQL Console session creation returns only public session plus one-tim
     CHECK(json.find("credential") == std::string::npos);
 }
 
-TEST_CASE("SQL Console launch cookie authorization redeems then touches session") {
+TEST_CASE("SQL Console launch cookie authorization validates before one-time redemption") {
     DatabaseSqlConsoleService service(test_policy());
     const auto created = service.create_launch_session(test_request());
     REQUIRE(created.success);
 
     const auto first = service.authorize_launch_session(created.launch_id, created.launch_secret);
     REQUIRE(first.success);
-    CHECK(first.code == "redeemed");
-    CHECK(first.session.status == "redeemed");
+    CHECK(first.code == "authorized");
+    CHECK(first.session.status == "created");
+
+    const auto redeemed = service.redeem_launch_session(created.launch_id, created.launch_secret);
+    REQUIRE(redeemed.success);
+    CHECK(redeemed.code == "redeemed");
 
     const auto second = service.authorize_launch_session(created.launch_id, created.launch_secret);
     REQUIRE(second.success);
@@ -422,4 +426,49 @@ TEST_CASE("SQL Console internal redemption returns temporary credentials only af
     const auto public_json = sql_console_public_session_json(redeemed.session);
     CHECK(public_json.find(redeemed.temporary_credential.password) == std::string::npos);
     CHECK(public_json.find(redeemed.temporary_credential.user_name) == std::string::npos);
+}
+
+TEST_CASE("SQL Console internal redemption rejects replay and database mismatch") {
+    FakeSqlConsoleProvider provider;
+    DatabaseSqlConsoleService service(provider, test_policy());
+    const auto created = service.create_temporary_launch_session(test_provision_request());
+    REQUIRE(created.success);
+
+    const auto mismatch = service.redeem_internal_launch_session(created.launch_id, created.launch_secret, 999);
+    CHECK_FALSE(mismatch.success);
+    CHECK(mismatch.code == "database_mismatch");
+    CHECK(mismatch.temporary_credential.password.empty());
+
+    const auto redeemed = service.redeem_internal_launch_session(created.launch_id, created.launch_secret, 7);
+    REQUIRE(redeemed.success);
+
+    const auto replayed = service.redeem_internal_launch_session(created.launch_id, created.launch_secret, 7);
+    CHECK_FALSE(replayed.success);
+    CHECK(replayed.code == "session_already_redeemed");
+    CHECK(replayed.temporary_credential.password.empty());
+}
+
+TEST_CASE("SQL Console launch cookie authorization rejects missing invalid expired and revoked sessions") {
+    ClockPoint now{};
+    SqlConsoleSessionPolicy policy = test_policy();
+    DatabaseSqlConsoleService service(policy);
+    service.sessions().set_clock_for_tests([&] { return now; });
+    const auto created = service.create_launch_session(test_request());
+    REQUIRE(created.success);
+
+    CHECK_FALSE(service.authorize_launch_session(created.launch_id, "").success);
+    CHECK(service.authorize_launch_session(created.launch_id, "wrong-secret").code == "invalid_secret");
+
+    now += std::chrono::seconds(61);
+    const auto expired = service.authorize_launch_session(created.launch_id, created.launch_secret);
+    CHECK_FALSE(expired.success);
+    CHECK(expired.code == "session_expired");
+
+    DatabaseSqlConsoleService revoked_service(policy);
+    const auto created2 = revoked_service.create_launch_session(test_request());
+    REQUIRE(created2.success);
+    REQUIRE(revoked_service.revoke_launch_session(created2.launch_id).success);
+    const auto revoked = revoked_service.authorize_launch_session(created2.launch_id, created2.launch_secret);
+    CHECK_FALSE(revoked.success);
+    CHECK(revoked.code == "session_revoked");
 }

@@ -521,6 +521,13 @@ private Adminer container upstream. Adminer still receives credentials only
 through trusted server-side provider code; credentials are never placed in the
 launch URL, Docker environment, command-line arguments, or frontend JSON.
 
+Adminer SSO is server-side. The temporary Adminer container receives a static
+read-only plugin and an internal-token file mount. Nginx forwards only
+non-secret launch/database identifiers as upstream headers. The plugin redeems
+the launch through WebServer's internal SSO endpoint and stores the temporary
+database credential only in Adminer's PHP session. The standard Adminer login
+form is not exposed.
+
 **GET /api/databases/<id>/sql-console/session** — lists public-safe SQL Console
 session metadata for the database. It requires `X-Session-Token` and returns only
 the same public session fields used by launch responses. Secrets and temporary
@@ -549,6 +556,16 @@ server-side provider code only; it must not be called from frontend JavaScript,
 linked in the UI, exposed through generated URLs, or logged. Invalid token,
 missing cookie, expired session, revoked session, or repeated single-use
 redemption fails closed.
+
+The WebServer also exposes server-side SSO endpoints for Adminer:
+
+- `POST /sql-console/internal/redeem`
+- `POST /sql-console/internal/logout`
+
+They require `X-ContainerCP-SqlConsole-Internal` and are intended for the
+mounted Adminer plugin over the host-internal WebServer upstream. Public Nginx
+SQL Console route blocks return `404` for these paths; they are not frontend API
+routes.
 
 **POST /api/databases/<id>/export** — queues a logical SQL export job for the
 selected managed MariaDB application database. Only `ownership_state=managed`,
