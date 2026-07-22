@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | SQL Console - add Database GUI launch controls
+
+**Summary:** Added Phase 7 Database GUI integration for SQL Console. The database detail drawer now shows SQL Console launch/status/revoke controls after the server-side Adminer SSO handoff, calls only the public launch/status/revoke REST endpoints, stores only public launch IDs, launch URLs, and session metadata, and opens only the returned launch URL. The UI does not handle temporary database usernames/passwords, launch secrets, SQL Console cookie values, internal provider tokens, internal SSO endpoints, or Adminer login fields.
+
+**Files changed:** `web/pages/databases.js`, `tests/test_api.cpp`, `docs/development/sql-console.md`, `docs/api/API_REFERENCE.md`, `docs/development/single-source-of-truth.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Administrators can launch an Adminer-backed SQL Console from a managed MariaDB database detail view, reopen an active launch, view public-safe session status, and revoke the launch to clean up server-side runtime/session resources.
+
+**Validation:** `node --check web/pages/databases.js` passed. Incremental local build passed after one 600s tool timeout while compiling (`cmake --build build2 --target containercp_tests -- -j1`). Focused SQL Console doctests passed (`29` cases, `310` assertions). Focused Database GUI SQL Console source-security doctest passed (`1` case, `24` assertions). Full doctest suite passed (`906` cases, `6708` assertions). `git diff --check` passed.
+
+**Known risks:** Browser automation is not available in the local workspace, so validation is deterministic source/security testing plus the doctest suite. Live browser and production-like Adminer behavior remain part of the later integration validation phase.
+
+---
+
 ## 2026-07-22 | `this commit` | SQL Console - add Adminer server-side SSO handoff
 
 **Summary:** Added the intermediate Adminer SSO handoff required before GUI exposure. ContainerCP now prepares a static Adminer SSO plugin and process-local internal token file, mounts them read-only into the temporary Adminer container, forwards only non-secret launch/database IDs through Nginx, and redeems temporary database credentials through WebServer's internal SSO endpoint. The standard Adminer login form is suppressed, replayed redemption is rejected, database IDs are enforced, and logout/expired sessions trigger route/container/temporary-user cleanup.

@@ -14,6 +14,10 @@ const dbDashboardState = {
   selectedDetail: null,
   rotationStatus: null,
   rotationLoading: false,
+  sqlConsoleStatus: [],
+  sqlConsoleLoading: false,
+  sqlConsoleSubmitting: false,
+  sqlConsoleLaunchUrls: {},
   dropSubmitting: false,
   transferSubmitting: false,
   lastExportArtifact: null,
@@ -293,8 +297,11 @@ async function openDatabaseDetail(databaseId) {
     dbDashboardState.selectedDetail = db;
     dbDashboardState.rotationStatus = null;
     dbDashboardState.rotationLoading = true;
+    dbDashboardState.sqlConsoleStatus = [];
+    dbDashboardState.sqlConsoleLoading = true;
+    dbDashboardState.sqlConsoleSubmitting = false;
     renderDatabaseDetail(db);
-    await loadDatabaseRotationStatus(db);
+    await Promise.all([loadDatabaseSqlConsoleStatus(db), loadDatabaseRotationStatus(db)]);
   } catch(e) {
     const msg = e.status === 404 ? 'The selected database no longer exists.' : 'Database detail could not be loaded.';
     showDatabaseDrawer(`<div class="db-drawer-header"><div><h2>Database Detail</h2></div><button class="btn-icon" onclick="closeDatabaseDrawer()" aria-label="Close database detail">&times;</button></div><div class="empty-state">${esc(msg)}<br><button class="btn btn-sm" style="margin-top:12px;" onclick="refreshDatabases();closeDatabaseDrawer();">Retry inventory</button></div>`);
@@ -326,6 +333,9 @@ function closeDatabaseDrawer() {
   dbDashboardState.selectedId = null;
   dbDashboardState.selectedDetail = null;
   dbDashboardState.rotationStatus = null;
+  dbDashboardState.sqlConsoleStatus = [];
+  dbDashboardState.sqlConsoleLoading = false;
+  dbDashboardState.sqlConsoleSubmitting = false;
 }
 
 function destroyDatabaseDrawer() {
@@ -334,6 +344,9 @@ function destroyDatabaseDrawer() {
   dbDashboardState.selectedId = null;
   dbDashboardState.selectedDetail = null;
   dbDashboardState.rotationStatus = null;
+  dbDashboardState.sqlConsoleStatus = [];
+  dbDashboardState.sqlConsoleLoading = false;
+  dbDashboardState.sqlConsoleSubmitting = false;
 }
 
 function renderDatabaseDetail(db) {
@@ -350,10 +363,11 @@ function renderDatabaseDetail(db) {
       ${databaseDetailSection('Metadata', [
         ['Created', esc(db.created_at || 'Unavailable')], ['Updated', esc(db.updated_at || 'Unavailable')], ['Engine version', esc(db.engine_version || db.version || 'Unavailable')], ['Connection verification state', esc(db.connection_status || 'not_checked')], ['Imported state', esc(db.imported_state || 'unknown')]
       ])}
-      <section class="db-detail-section"><h3>Actions</h3><div id="db-lifecycle-action">${renderDatabaseLifecycleActions(db)}</div><div id="db-transfer-action">${renderDatabaseTransferActions(db)}</div><div id="db-rotation-action">${renderDatabaseRotationAction(db)}</div></section>
+      <section class="db-detail-section"><h3>Actions</h3><div id="db-lifecycle-action">${renderDatabaseLifecycleActions(db)}</div><div id="db-transfer-action">${renderDatabaseTransferActions(db)}</div><div id="db-sql-console-action">${renderDatabaseSqlConsoleAction(db)}</div><div id="db-rotation-action">${renderDatabaseRotationAction(db)}</div></section>
     </div>`;
   showDatabaseDrawer(content);
   bindDatabaseTransferActions(db);
+  bindDatabaseSqlConsoleActions(db);
 }
 
 function databaseDetailSection(title, fields) {
@@ -637,6 +651,154 @@ async function revokeDatabaseArtifact(db) {
   }
 }
 
+/* ===== SQL CONSOLE GUI ===== */
+function sqlConsoleCapability(db) {
+  const engine = normalizeDbValue(db.engine, 'mariadb').toLowerCase();
+  if (!db.database_id && !db.id) return {enabled:false, reason:'SQL Console requires a selected database record.'};
+  if (!db.site_id || normalizeDbValue(db.imported_state, '').toLowerCase() === 'site_missing') return {enabled:false, reason:'SQL Console requires an inspectable owning Site.'};
+  if (dbOwnershipState(db) !== 'managed') return {enabled:false, reason:'SQL Console is only available for managed MariaDB databases.'};
+  if (engine !== 'mariadb') return {enabled:false, reason:'SQL Console currently supports MariaDB databases only.'};
+  if (dbRuntimeState(db) !== 'running') return {enabled:false, reason:'SQL Console is unavailable while the MariaDB runtime state is not Running.'};
+  return {enabled:true, reason:'SQL Console launches Adminer through server-side SSO. The browser receives only a launch URL and an HttpOnly route cookie.'};
+}
+
+function activeSqlConsoleSession() {
+  const sessions = Array.isArray(dbDashboardState.sqlConsoleStatus) ? dbDashboardState.sqlConsoleStatus : [];
+  const active = sessions.filter(s => {
+    const status = normalizeDbValue(s.status, '').toLowerCase();
+    return status === 'created' || status === 'redeemed';
+  });
+  active.sort((a, b) => dbDateValue(b.last_seen_at || b.created_at) - dbDateValue(a.last_seen_at || a.created_at));
+  return active[0] || null;
+}
+
+function sqlConsoleLaunchUrl(launchId) {
+  const launch = String(launchId || '');
+  return dbDashboardState.sqlConsoleLaunchUrls[launch] || ('/sql-console/' + encodeURIComponent(launch) + '/');
+}
+
+function updateDatabaseSqlConsoleAction(db) {
+  const el = $('db-sql-console-action');
+  if (!el) return;
+  el.innerHTML = renderDatabaseSqlConsoleAction(db);
+  bindDatabaseSqlConsoleActions(db);
+}
+
+async function loadDatabaseSqlConsoleStatus(db) {
+  dbDashboardState.sqlConsoleLoading = true;
+  updateDatabaseSqlConsoleAction(db);
+  try {
+    const res = await api('/api/databases/' + Number(db.database_id || db.id) + '/sql-console/session');
+    if (activeDatabasesLifecycle && !activeDatabasesLifecycle.isActive()) return;
+    dbDashboardState.sqlConsoleStatus = Array.isArray(res.data) ? res.data : [];
+  } catch(e) {
+    dbDashboardState.sqlConsoleStatus = [];
+  }
+  dbDashboardState.sqlConsoleLoading = false;
+  updateDatabaseSqlConsoleAction(db);
+}
+
+function renderDatabaseSqlConsoleAction(db) {
+  const cap = sqlConsoleCapability(db);
+  const session = activeSqlConsoleSession();
+  const busy = dbDashboardState.sqlConsoleSubmitting;
+  const loading = dbDashboardState.sqlConsoleLoading;
+  const status = session ? normalizeDbValue(session.status, 'active') : '';
+  const message = loading
+    ? 'Checking SQL Console launch status...'
+    : (session ? 'Active SQL Console launch available. Revoke it when finished to clean up the temporary MariaDB user.' : cap.reason);
+  return `<div class="db-action-box">
+    <div><strong>SQL Console</strong><p>Opens Adminer through the SQL Console provider with server-side SSO. Frontend JavaScript never receives database credentials or the route cookie value.</p></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <span class="badge ${session ? 'badge-ok' : (cap.enabled ? 'badge-info' : 'badge-warn')}">${session ? 'Active: ' + esc(status) : (cap.enabled ? 'Ready' : 'Unavailable')}</span>
+      ${session ? `<button id="db-sql-console-open-btn" class="btn btn-sm btn-primary" type="button" ${busy ? 'disabled' : ''}>Open SQL Console</button><button id="db-sql-console-revoke-btn" class="btn btn-sm" type="button" ${busy ? 'disabled' : ''}>Revoke Session</button>` : `<button id="db-sql-console-launch-btn" class="btn btn-sm btn-primary" type="button" ${cap.enabled && !busy && !loading ? '' : 'disabled'}>Launch SQL Console</button>`}
+    </div>
+    <div id="db-sql-console-msg" class="db-action-message">${esc(busy ? 'Updating SQL Console session...' : message)}</div>
+  </div>`;
+}
+
+function bindDatabaseSqlConsoleActions(db) {
+  const launchBtn = $('db-sql-console-launch-btn');
+  const openBtn = $('db-sql-console-open-btn');
+  const revokeBtn = $('db-sql-console-revoke-btn');
+  if (launchBtn) launchBtn.addEventListener('click', () => launchDatabaseSqlConsole(Number(db.database_id || db.id || 0)));
+  if (openBtn) openBtn.addEventListener('click', () => openDatabaseSqlConsole());
+  if (revokeBtn) revokeBtn.addEventListener('click', () => revokeDatabaseSqlConsole(Number(db.database_id || db.id || 0)));
+}
+
+async function launchDatabaseSqlConsole(databaseId) {
+  const db = dbDashboardState.selectedDetail;
+  if (!db || Number(db.database_id || db.id) !== Number(databaseId) || dbDashboardState.sqlConsoleSubmitting) return;
+  const cap = sqlConsoleCapability(db);
+  if (!cap.enabled) return;
+  dbDashboardState.sqlConsoleSubmitting = true;
+  updateDatabaseSqlConsoleAction(db);
+  const msg = $('db-sql-console-msg');
+  if (msg) msg.textContent = 'Creating SQL Console launch session...';
+  let launched = false;
+  let failure = '';
+  try {
+    const res = await apiPost('/api/databases/' + Number(databaseId) + '/sql-console/session', {});
+    const data = res.data || {};
+    const launchId = String(data.launch_id || (data.session && data.session.launch_id) || '');
+    const launchUrl = String(data.launch_url || '');
+    if (!launchId || !launchUrl) throw new Error('SQL Console launch response was incomplete.');
+    dbDashboardState.sqlConsoleLaunchUrls[launchId] = launchUrl;
+    dbDashboardState.sqlConsoleStatus = data.session ? [data.session] : dbDashboardState.sqlConsoleStatus;
+    toast('SQL Console launch created', 'success');
+    launched = true;
+    const opened = window.open(launchUrl, '_blank');
+    if (opened) opened.opener = null;
+    else toast('Open the active SQL Console session from the database detail.', 'info');
+  } catch(e) {
+    const apiErr = e.body && e.body.error && e.body.error.message;
+    failure = apiErr || e.api_message || e.message || 'SQL Console launch failed';
+  }
+  dbDashboardState.sqlConsoleSubmitting = false;
+  if (launched) await loadDatabaseSqlConsoleStatus(db);
+  else {
+    updateDatabaseSqlConsoleAction(db);
+    const currentMsg = $('db-sql-console-msg');
+    if (currentMsg) currentMsg.textContent = failure;
+  }
+}
+
+function openDatabaseSqlConsole() {
+  const session = activeSqlConsoleSession();
+  if (!session || !session.launch_id) return;
+  const opened = window.open(sqlConsoleLaunchUrl(session.launch_id), '_blank');
+  if (opened) opened.opener = null;
+}
+
+async function revokeDatabaseSqlConsole(databaseId) {
+  const db = dbDashboardState.selectedDetail;
+  const session = activeSqlConsoleSession();
+  if (!db || !session || !session.launch_id || dbDashboardState.sqlConsoleSubmitting) return;
+  dbDashboardState.sqlConsoleSubmitting = true;
+  updateDatabaseSqlConsoleAction(db);
+  const msg = $('db-sql-console-msg');
+  if (msg) msg.textContent = 'Revoking SQL Console launch session...';
+  let revoked = false;
+  let failure = '';
+  try {
+    const res = await apiPost('/api/databases/' + Number(databaseId) + '/sql-console/session/revoke', {launch_id:String(session.launch_id)});
+    delete dbDashboardState.sqlConsoleLaunchUrls[String(session.launch_id)];
+    dbDashboardState.sqlConsoleStatus = res.data && res.data.session ? [res.data.session] : [];
+    toast('SQL Console session revoked', 'success');
+    revoked = true;
+  } catch(e) {
+    const apiErr = e.body && e.body.error && e.body.error.message;
+    failure = apiErr || e.api_message || e.message || 'SQL Console revoke failed';
+  }
+  dbDashboardState.sqlConsoleSubmitting = false;
+  if (revoked) await loadDatabaseSqlConsoleStatus(db);
+  else {
+    updateDatabaseSqlConsoleAction(db);
+    const currentMsg = $('db-sql-console-msg');
+    if (currentMsg) currentMsg.textContent = failure;
+  }
+}
+
 function showDatabaseImportModal(databaseId) {
   const db = dbDashboardState.selectedDetail;
   if (!db || Number(db.database_id || db.id) !== Number(databaseId) || db.can_import !== true) return;
@@ -858,4 +1020,4 @@ function renderDatabaseRotationFailure(jobId, job) {
 
 const databasesPage = { mount: loadDatabases, unmount() { hideModal(); destroyDatabaseDrawer(); activeDatabasesLifecycle = null; } };
 export { loadDatabases, databasesPage };
-Object.assign(window, { normalizeDbValue, dbConnectionState, dbCredentialState, dbRuntimeState, dbOwnershipState, computeDatabaseHealthState, dbHealthLabel, dbBadge, dbHealthBadge, dbRuntimeBadge, dbConnectionBadge, dbCredentialBadge, dbOwnershipBadge, dbJsArg, dbDateValue, dbSortRank, getFilteredDatabases, databaseSummaryCards, dbSelect, databaseControlsHtml, toggleDatabaseSortDirection, resetDatabaseFilters, loadDatabases, refreshDatabases, renderDatabaseInventory, renderDatabaseTable, renderDatabaseCards, openDatabaseDetail, showDatabaseDrawer, closeDatabaseDrawer, renderDatabaseDetail, databaseDetailSection, databaseHealthSection, copyableValue, renderDatabaseLifecycleActions, verifyDatabaseLifecycle, showDatabaseDropConfirm, databaseDropConfirmationMatches, bindDatabaseDropConfirm, confirmDatabaseDrop, pollDatabaseLifecycleJob, renderDatabaseTransferActions, bindDatabaseTransferActions, exportDatabaseSql, pollDatabaseTransferJob, downloadDatabaseArtifact, revokeDatabaseArtifact, showDatabaseImportModal, bindDatabaseImportModal, confirmDatabaseImport, showCreateDatabaseModal, confirmCreateDatabase, loadDatabaseRotationStatus, updateDatabaseRotationAction, databaseRotationCapability, renderDatabaseRotationAction, showDatabaseRotationConfirm, confirmDatabasePasswordRotation, renderDatabaseRotationJob, renderDatabaseRotationSuccess, renderDatabaseRotationFailure });
+Object.assign(window, { normalizeDbValue, dbConnectionState, dbCredentialState, dbRuntimeState, dbOwnershipState, computeDatabaseHealthState, dbHealthLabel, dbBadge, dbHealthBadge, dbRuntimeBadge, dbConnectionBadge, dbCredentialBadge, dbOwnershipBadge, dbJsArg, dbDateValue, dbSortRank, getFilteredDatabases, databaseSummaryCards, dbSelect, databaseControlsHtml, toggleDatabaseSortDirection, resetDatabaseFilters, loadDatabases, refreshDatabases, renderDatabaseInventory, renderDatabaseTable, renderDatabaseCards, openDatabaseDetail, showDatabaseDrawer, closeDatabaseDrawer, renderDatabaseDetail, databaseDetailSection, databaseHealthSection, copyableValue, renderDatabaseLifecycleActions, verifyDatabaseLifecycle, showDatabaseDropConfirm, databaseDropConfirmationMatches, bindDatabaseDropConfirm, confirmDatabaseDrop, pollDatabaseLifecycleJob, renderDatabaseTransferActions, bindDatabaseTransferActions, exportDatabaseSql, pollDatabaseTransferJob, downloadDatabaseArtifact, revokeDatabaseArtifact, sqlConsoleCapability, activeSqlConsoleSession, sqlConsoleLaunchUrl, updateDatabaseSqlConsoleAction, loadDatabaseSqlConsoleStatus, renderDatabaseSqlConsoleAction, bindDatabaseSqlConsoleActions, launchDatabaseSqlConsole, openDatabaseSqlConsole, revokeDatabaseSqlConsole, showDatabaseImportModal, bindDatabaseImportModal, confirmDatabaseImport, showCreateDatabaseModal, confirmCreateDatabase, loadDatabaseRotationStatus, updateDatabaseRotationAction, databaseRotationCapability, renderDatabaseRotationAction, showDatabaseRotationConfirm, confirmDatabasePasswordRotation, renderDatabaseRotationJob, renderDatabaseRotationSuccess, renderDatabaseRotationFailure });

@@ -528,6 +528,13 @@ the launch through WebServer's internal SSO endpoint and stores the temporary
 database credential only in Adminer's PHP session. The standard Adminer login
 form is not exposed.
 
+The Database GUI is a thin client for this API. It may call launch, status, and
+revoke endpoints with the existing ContainerCP session token, store only public
+`launch_id`, `launch_url`, and session metadata, and open only the returned
+launch URL. It must not call internal SSO endpoints, read the SQL Console cookie,
+or handle database usernames/passwords, temporary credentials, provider tokens,
+or hidden Adminer login fields.
+
 **GET /api/databases/<id>/sql-console/session** — lists public-safe SQL Console
 session metadata for the database. It requires `X-Session-Token` and returns only
 the same public session fields used by launch responses. Secrets and temporary

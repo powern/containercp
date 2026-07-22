@@ -30,11 +30,11 @@ or duplicate the logic.
 | Proxy configuration | `ReverseProxyManager` + `NginxProxyProvider` | SSL, Sites |
 | Database management | `DatabaseManager` (future) | API, CLI |
 | Jobs / async execution | `JobExecutor` (`libs/jobs/`) | SSL issue/renew, runtime actions |
-| SQL Console launch sessions | `SqlConsoleSessionManager` (`libs/sqlconsole/`) | future API, future Adminer provider, future native SQL editor |
+| SQL Console launch sessions | `SqlConsoleSessionManager` (`libs/sqlconsole/`) | API, Database GUI, Adminer provider, future native SQL editor |
 | SQL Console temporary MariaDB users | `MariaDBProvider` (`libs/database/`) | `DatabaseSqlConsoleService` |
 | SQL Console restart-cleanup metadata | `SqlConsoleSessionStore` (`libs/sqlconsole/`) | `DatabaseSqlConsoleService` |
 | SQL Console tool providers | `SqlConsoleProvider` (`libs/sqlconsole/`) | Adminer, future native SQL editor |
-| Adminer SQL Console runtime | `AdminerSqlConsoleProvider` (`libs/sqlconsole/`) | future proxy route |
+| Adminer SQL Console runtime | `AdminerSqlConsoleProvider` (`libs/sqlconsole/`) | proxy route, Database GUI via API |
 | SQL Console proxy routes | `NginxProxyProvider` (`libs/proxy/`) | `ServiceRegistry`, WebServer auth endpoint |
 | Adminer SQL Console SSO assets | `ServiceRegistry` (`libs/core/`) | `AdminerSqlConsoleProvider` |
 | Adminer SQL Console credential redemption | `WebServer` (`libs/api/`) + `DatabaseSqlConsoleService` | Adminer SSO plugin |

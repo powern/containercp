@@ -59,8 +59,12 @@ temporary credentials only in the Adminer PHP session, and suppresses the
 standard Adminer login form. Adminer logout calls an internal cleanup endpoint
 that removes the route, stops Adminer, and drops the temporary MariaDB user.
 
-The current implementation still does not expose Web UI controls for
-Adminer.
+Phase 7 exposes Database GUI controls for SQL Console launch, status, and
+revoke. The GUI is only a REST API client: it stores public session metadata,
+launch IDs, and launch URLs, then opens the returned `/sql-console/<launch_id>/`
+route. It never reads the SQL Console cookie value, calls internal SSO
+endpoints, renders credential fields, or handles temporary database usernames or
+passwords.
 
 ## Ownership
 
@@ -76,6 +80,7 @@ Adminer.
 | SQL Console launch-cookie route auth | `libs/api/WebServer` |
 | Adminer SSO plugin and internal token asset | `libs/core/ServiceRegistry` |
 | Adminer credential redemption endpoint | `libs/api/WebServer` |
+| Database GUI SQL Console client | `web/pages/databases.js` |
 | Database lifecycle operations | `libs/database/DatabaseLifecycleService` |
 | MariaDB operations | `libs/database/MariaDBProvider` |
 | SQL Console temporary MariaDB users | `libs/database/MariaDBProvider` |
@@ -112,6 +117,23 @@ Runtime rules:
 
 The frontend must not receive credentials, and Adminer must not become
 publicly reachable outside the authenticated admin-panel route.
+
+## Database GUI Client
+
+The Database detail drawer exposes the SQL Console action after the server-side
+SSO handoff is implemented. The controls use only these authenticated REST API
+endpoints:
+
+- `POST /api/databases/<id>/sql-console/session`
+- `GET /api/databases/<id>/sql-console/session`
+- `POST /api/databases/<id>/sql-console/session/revoke`
+
+The launch response is used only for its public `launch_id`, public
+`launch_url`, and public-safe `session` object. The browser is redirected or
+opened to the returned launch URL; direct `/sql-console/<launch_id>/` navigation
+is authorized by the `HttpOnly` cookie set by the API response. Frontend code
+must not reference `ccp_sql_console_secret`, internal redeem/logout endpoints,
+internal provider tokens, database passwords, or hidden login fields.
 
 ## Adminer SSO Handoff
 

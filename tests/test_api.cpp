@@ -361,6 +361,41 @@ TEST_CASE("SQL Console launch compensates failed provider and route setup") {
     CHECK(launch_block.find("proxy_route_failed") != std::string::npos);
 }
 
+TEST_CASE("Database dashboard SQL Console UI uses launch URLs without credential handling") {
+    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/web/pages/databases.js");
+    REQUIRE(in.is_open());
+    std::string js((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    const auto start = js.find("/* ===== SQL CONSOLE GUI ===== */");
+    const auto end = js.find("function showDatabaseImportModal", start);
+    REQUIRE(start != std::string::npos);
+    REQUIRE(end != std::string::npos);
+    const std::string block = js.substr(start, end - start);
+
+    CHECK(block.find("/api/databases/") != std::string::npos);
+    CHECK(block.find("/sql-console/session") != std::string::npos);
+    CHECK(block.find("/sql-console/session/revoke") != std::string::npos);
+    CHECK(block.find("launch_id") != std::string::npos);
+    CHECK(block.find("launch_url") != std::string::npos);
+    CHECK(block.find("window.open(launchUrl") != std::string::npos);
+    CHECK(block.find("sqlConsoleLaunchUrl") != std::string::npos);
+    CHECK(block.find("Revoke Session") != std::string::npos);
+    CHECK(block.find("server-side SSO") != std::string::npos);
+    CHECK(block.find("HttpOnly route cookie") != std::string::npos);
+
+    CHECK(block.find("/sql-console/internal/redeem") == std::string::npos);
+    CHECK(block.find("/sql-console/internal/logout") == std::string::npos);
+    CHECK(block.find("X-ContainerCP-SqlConsole-Internal") == std::string::npos);
+    CHECK(block.find("ccp_sql_console_secret") == std::string::npos);
+    CHECK(block.find("launch_secret") == std::string::npos);
+    CHECK(block.find("database_password") == std::string::npos);
+    CHECK(block.find("db_password") == std::string::npos);
+    CHECK(block.find("MYSQL_ROOT_PASSWORD") == std::string::npos);
+    CHECK(block.find("localStorage") == std::string::npos);
+    CHECK(block.find("sessionStorage") == std::string::npos);
+    CHECK(block.find("hidden") == std::string::npos);
+}
+
 TEST_CASE("Database dashboard UI implements DB-2 health workflow without secret surfaces") {
     std::ifstream in(std::string(TEST_SOURCE_DIR) + "/web/pages/databases.js");
     REQUIRE(in.is_open());
