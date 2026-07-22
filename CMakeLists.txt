@@ -20,6 +20,7 @@ set(CONTAINERCP_SOURCES
     libs/api/Response.cpp
     libs/api/Router.cpp
     libs/auth/AuthService.cpp
+    libs/auth/SessionManager.cpp
     libs/auth/AuthUserManager.cpp
     libs/backup/Backup.cpp
     libs/backup/BackupJobService.cpp
@@ -99,6 +100,8 @@ set(CONTAINERCP_SOURCES
     libs/runtime/SiteRuntimeManager.cpp
     libs/site/Site.cpp
     libs/site/SiteManager.cpp
+    libs/security/PasswordHasher.cpp
+    libs/security/SecureRandom.cpp
     libs/ssl/SslCertificate.cpp
     libs/ssl/SslCertificateManager.cpp
     libs/ssl/LetsEncryptProvider.cpp
@@ -154,6 +157,16 @@ target_compile_options(containercpd PRIVATE
 
 find_package(SQLite3 REQUIRED)
 
+find_path(ARGON2_INCLUDE_DIR argon2.h)
+find_library(ARGON2_LIBRARY argon2)
+if(ARGON2_INCLUDE_DIR AND ARGON2_LIBRARY)
+    message(STATUS "Password hashing backend: Argon2id")
+    target_compile_definitions(containercpd PRIVATE CONTAINERCP_HAS_ARGON2)
+    target_include_directories(containercpd PRIVATE ${ARGON2_INCLUDE_DIR})
+else()
+    message(STATUS "Password hashing backend: PBKDF2-SHA256 (OpenSSL); install libargon2-dev for Argon2id")
+endif()
+
 target_link_libraries(containercpd PRIVATE
     cares
     curl
@@ -162,6 +175,10 @@ target_link_libraries(containercpd PRIVATE
     crypt
     SQLite::SQLite3
 )
+
+if(ARGON2_INCLUDE_DIR AND ARGON2_LIBRARY)
+    target_link_libraries(containercpd PRIVATE ${ARGON2_LIBRARY})
+endif()
 
 # CLI client binary (thin)
 add_executable(containercp

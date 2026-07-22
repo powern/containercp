@@ -4,7 +4,6 @@
 #include "storage/MigrationEngine.h"
 #include "storage/SchemaMigrations.h"
 #include "auth/AuthUser.h"
-#include "auth/sha256.h"
 #include "user/User.h"
 #include "site/Site.h"
 #include "domain/Domain.h"
@@ -746,7 +745,7 @@ TEST_CASE("Auth user survives simulated restart") {
         admin.id = 1;
         admin.name = "admin";
         admin.username = "admin";
-        admin.password_hash = containercp::auth::sha256("temp-password");
+        admin.password_hash = "stored-verifier-temp";
         admin.must_change_password = true;
         admin.enabled = true;
         admin.role = "admin";
@@ -761,7 +760,7 @@ TEST_CASE("Auth user survives simulated restart") {
         CHECK(loaded[0].username == "admin");
         CHECK(loaded[0].must_change_password == true);
 
-        loaded[0].password_hash = containercp::auth::sha256("new-password");
+        loaded[0].password_hash = "stored-verifier-new";
         loaded[0].must_change_password = false;
         s.save_auth_users(loaded);
     }
@@ -772,7 +771,7 @@ TEST_CASE("Auth user survives simulated restart") {
         auto loaded = s.load_auth_users();
         CHECK(loaded.size() == 1);
         CHECK(loaded[0].must_change_password == false);
-        CHECK(loaded[0].password_hash == containercp::auth::sha256("new-password"));
+        CHECK(loaded[0].password_hash == "stored-verifier-new");
     }
 
     std::filesystem::remove_all(tmp);

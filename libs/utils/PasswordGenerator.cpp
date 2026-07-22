@@ -1,25 +1,19 @@
 #include "PasswordGenerator.h"
 
-#include <random>
+#include "security/SecureRandom.h"
 
 namespace containercp::utils {
 
 std::string PasswordGenerator::generate(int length) {
+    if (length <= 0) return "";
+
     static constexpr char chars[] =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         "abcdefghijklmnopqrstuvwxyz"
         "0123456789";
 
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> dist(0, sizeof(chars) - 2);
-
-    std::string password;
-    password.reserve(length);
-    for (int i = 0; i < length; ++i) {
-        password += chars[dist(gen)];
-    }
-    return password;
+    auto password = security::SecureRandom::string(static_cast<std::size_t>(length), chars);
+    return password.value_or("");
 }
 
 } // namespace containercp::utils

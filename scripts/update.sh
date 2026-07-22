@@ -38,7 +38,7 @@ git pull
 echo "[SYSTEM] Ensuring build dependencies..."
 if command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq
-    apt-get install -y -qq git cmake ninja-build g++ curl libsqlite3-dev
+    apt-get install -y -qq git cmake ninja-build g++ curl libsqlite3-dev libargon2-dev
 else
     echo "[WARN] apt-get not found; skipping automatic dependency installation."
 fi

@@ -101,26 +101,14 @@ void WebServer::handle_auth_login(const std::string& raw_request, int client_fd)
     std::string username = body.substr(uname_pos, uname_end - uname_pos);
     std::string password = body.substr(pwd_pos, pwd_end - pwd_pos);
 
-    auto* user = services_.auth_users().find(username);
-    if (user == nullptr) {
-        send_json(client_fd, 401, "{\"success\":false,\"error\":\"Invalid credentials\"}");
-        services_.logger().info("Auth: login failed — unknown user '" + username + "'");
-        return;
-    }
-    if (!user->enabled) {
-        send_json(client_fd, 401, "{\"success\":false,\"error\":\"Invalid credentials\"}");
-        services_.logger().info("Auth: login failed — user '" + username + "' disabled");
-        return;
-    }
-
     std::string token = services_.auth().authenticate(username, password);
     if (token.empty()) {
         send_json(client_fd, 401, "{\"success\":false,\"error\":\"Invalid credentials\"}");
-        services_.logger().info("Auth: login failed — password mismatch for '" + username + "'");
         return;
     }
 
-    bool must_change = user->must_change_password;
+    auto* user = services_.auth_users().find(username);
+    bool must_change = user != nullptr && user->must_change_password;
 
     std::string resp = "{\"success\":true,\"data\":{\"token\":\"" + token
         + "\",\"username\":\"" + username

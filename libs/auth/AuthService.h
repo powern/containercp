@@ -2,20 +2,15 @@
 #define CONTAINERCP_AUTH_AUTH_SERVICE_H
 
 #include "AuthUser.h"
+#include "auth/SessionManager.h"
 
 namespace containercp::core { class ServiceRegistry; }
 
 #include <chrono>
 #include <string>
-#include <unordered_map>
+#include <vector>
 
 namespace containercp::auth {
-
-struct Session {
-    std::string username;
-    std::string role;
-    std::chrono::steady_clock::time_point created;
-};
 
 class AuthService {
 public:
@@ -29,14 +24,15 @@ public:
     Session* validate_session(const std::string& token);
     std::vector<AuthUser> list_users() const;
 
-    static std::string hash_password(const std::string& password);
-
 private:
-    std::string generate_token() const;
-    std::string find_username_by_token(const std::string& token) const;
+    bool auth_store_supported(const std::vector<AuthUser>& users) const;
+    void recreate_admin_account();
+    void remove_temporary_password_file() const;
+    std::string temporary_password_path() const;
+    static std::chrono::seconds session_ttl_from_environment();
 
     core::ServiceRegistry& services_;
-    std::unordered_map<std::string, Session> sessions_;
+    SessionManager sessions_;
 };
 
 } // namespace containercp::auth

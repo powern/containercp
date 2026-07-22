@@ -84,12 +84,12 @@ Validation: ContainerCP can be built and installed on a clean Debian 13 (Trixie)
 | 37 | Port 8081 rejects `/api/*` with 403 | [ ] | |
 | 38 | Port 8081 shows login page when unauthenticated | [ ] | |
 | 39 | Port 8081 `/ui-api/health` is public (no auth required) | [ ] | |
-| 40 | Port 8081 login with admin/temp-password succeeds | [ ] | |
+| 40 | Port 8081 login with admin temporary password from `/srv/containercp/secrets/admin-temporary-password` succeeds | [ ] | |
 | 41 | First login redirects to change-password page | [ ] | |
 | 42 | Password change works and redirects to dashboard | [ ] | |
 | 43 | Logout button ends session and returns to login | [ ] | |
 | 44 | Auth users persisted in `/srv/containercp/database/auth_users.db` | [ ] | |
-| 45 | Password in `/etc/containercp/ui-password` matches stored hash | [ ] | |
+| 45 | Temporary password file is `0600`, not logged, and removed after first successful password change | [ ] | |
 | 46 | After password change, daemon restart does NOT reset password | [ ] | |
 
 

@@ -13,6 +13,7 @@ add_executable(containercp_tests
     test_cert_store.cpp
     test_storage.cpp
     test_api.cpp
+    test_auth_security.cpp
     test_daemon.cpp
     test_dns_service.cpp
     test_dns_api.cpp
@@ -46,6 +47,9 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/utils/StringUtils.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/PasswordGenerator.cpp
     ${CMAKE_SOURCE_DIR}/libs/utils/PathUtils.cpp
+    ${CMAKE_SOURCE_DIR}/libs/security/PasswordHasher.cpp
+    ${CMAKE_SOURCE_DIR}/libs/security/SecureRandom.cpp
+    ${CMAKE_SOURCE_DIR}/libs/auth/SessionManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/user/User.cpp
     ${CMAKE_SOURCE_DIR}/libs/user/UserManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/site/Site.cpp
@@ -165,6 +169,11 @@ target_compile_definitions(containercp_tests PRIVATE
     CMAKE_PROJECT_VERSION_TEXT="${PROJECT_VERSION}"
 )
 
+if(ARGON2_INCLUDE_DIR AND ARGON2_LIBRARY)
+    target_compile_definitions(containercp_tests PRIVATE CONTAINERCP_HAS_ARGON2)
+    target_include_directories(containercp_tests PRIVATE ${ARGON2_INCLUDE_DIR})
+endif()
+
 add_dependencies(containercp_tests containercp containercpd)
 
 target_link_libraries(containercp_tests PRIVATE
@@ -175,5 +184,9 @@ target_link_libraries(containercp_tests PRIVATE
     crypt
     SQLite::SQLite3
 )
+
+if(ARGON2_INCLUDE_DIR AND ARGON2_LIBRARY)
+    target_link_libraries(containercp_tests PRIVATE ${ARGON2_LIBRARY})
+endif()
 
 add_test(NAME containercp_tests COMMAND containercp_tests)

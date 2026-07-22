@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | Auth - secure password hashing, random tokens, and session foundation
+
+**Summary:** Refactored Web UI authentication around reusable security components. Added OS-backed `SecureRandom`, secure `PasswordHasher` with optional Argon2id and OpenSSL PBKDF2-SHA256 fallback, and an independent `SessionManager` with configurable TTL. Removed the SHA-256 auth hasher, mt19937-based admin password/session token generation, password-file hash sync, and plaintext temporary password logging.
+
+**Files changed:** `CMakeLists.txt`, `scripts/update.sh`, `libs/security/*`, `libs/auth/AuthService.{h,cpp}`, `libs/auth/SessionManager.{h,cpp}`, `libs/auth/sha256.h`, `libs/api/WebServer.cpp`, `libs/utils/PasswordGenerator.cpp`, `libs/mail/MailPasswordHasher.cpp`, `libs/mail/SiteMailCredentials.cpp`, `tests/CMakeLists.txt`, `tests/test_auth_security.cpp`, `tests/test_storage.cpp`, `INSTALL.md`, `planning/product-validation.md`, `docs/development/storage-schema.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Existing development auth records using unsupported hashes are intentionally reset. ContainerCP recreates the `admin` account with a secure temporary password stored at `/srv/containercp/secrets/admin-temporary-password` (`0600`) and requires password change on first login. The temporary password is not logged and is removed after a successful password change.
+
+**Validation:** Local configure/build passed with `cmake -S . -B build-db5 -DCMAKE_BUILD_TYPE=Debug && cmake --build build-db5 -j2`. Targeted auth/security doctests passed. Full doctest suite passed (`877` cases, `6398` assertions). Frontend baseline and `git diff --check` passed.
+
+**Known risks:** This intentionally breaks old development Web UI passwords. Builds use Argon2id when `libargon2-dev` is available and otherwise use OpenSSL PBKDF2-SHA256; non-APT systems need equivalent dependencies installed manually.
+
+---
+
 ## 2026-07-22 | `this commit` | Web templates - move canonical storage to /srv and harden Apache real-IP apply
 
 **Summary:** Moved the canonical templates root from `/etc/containercp/templates/` to `/srv/containercp/templates/` so UI-managed templates live with ContainerCP service data. Apache apply-template now ensures `mod_remoteip` is loaded for existing Apache sites before restarting the web container, allowing updated Apache templates with `RemoteIPHeader X-Forwarded-For` to work on migrated sites.

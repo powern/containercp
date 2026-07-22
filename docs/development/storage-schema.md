@@ -414,7 +414,7 @@ Admin panel authentication users.
 |--------|------|----------|---------|-------|
 | `id` | INTEGER | NOT NULL | PK | Auto-increment |
 | `username` | TEXT | NOT NULL | — | Admin login name |
-| `password_hash` | TEXT | NOT NULL | `''` | **Sensitive** — SHA-256 credential verifier |
+| `password_hash` | TEXT | NOT NULL | `''` | **Sensitive** — supported secure password verifier (`$argon2id$...` or `$containercp-pbkdf2-sha256$...`, depending on build backend) |
 | `must_change_password` | INTEGER | NOT NULL | `0` | Force password change on next login |
 | `enabled` | INTEGER | NOT NULL | `1` | Account active |
 | `role` | TEXT | NOT NULL | `'admin'` | Authorization role |
@@ -544,7 +544,7 @@ Application-level validation enforces business integrity.
 | `databases` | `db_password` | Plaintext credential (tech debt) | Never expose via API, Web UI, logs, or audit |
 | `mail_mailboxes` | `password_hash` | Credential verifier (SHA-512-CRYPT) | Never expose; hash, not plaintext |
 | `access_users` | `password_hash` | Credential verifier | Never expose |
-| `auth_users` | `password_hash` | Credential verifier (SHA-256) | Never expose |
+| `auth_users` | `password_hash` | Credential verifier (Argon2id or PBKDF2-SHA256 backend) | Never expose |
 | `mail_config` | value (smarthost) | May contain SMTP credentials | Never expose |
 
 ## Filesystem-managed content

@@ -2,10 +2,10 @@
 #include "mail/MailPasswordHasher.h"
 #include "runtime/CommandExecutor.h"
 #include "config/Config.h"
+#include "security/SecureRandom.h"
 
 #include <filesystem>
 #include <fstream>
-#include <random>
 #include <sstream>
 #include <sys/stat.h>
 
@@ -14,12 +14,8 @@ namespace containercp::mail {
 static std::string generate_password(size_t length = 32) {
     static const char chars[] =
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    std::random_device rd;
-    std::string pw;
-    for (size_t i = 0; i < length; ++i) {
-        pw += chars[rd() % (sizeof(chars) - 1)];
-    }
-    return pw;
+    auto pw = security::SecureRandom::string(length, chars);
+    return pw.value_or("");
 }
 
 SiteMailCredentials::Credential SiteMailCredentials::generate(

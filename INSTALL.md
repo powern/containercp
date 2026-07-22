@@ -107,8 +107,8 @@ After installation:
 | `http://127.0.0.1:8080/` | REST API + Web UI (local only) |
 | `http://<server-ip>:8081/` | Web UI (external, login required) |
 
-**First login:** Username: `admin`, Password: auto-generated (check the
-daemon log with `journalctl -u containercpd`).
+**First login:** Username: `admin`, Password: auto-generated in a root-only
+file at `/srv/containercp/secrets/admin-temporary-password`.
 
 ## File Locations
 
@@ -122,7 +122,8 @@ daemon log with `journalctl -u containercpd`).
 | `/srv/containercp/sites/` | Per-site files and Docker stacks |
 | `/srv/containercp/proxy/sites/` | Reverse proxy configs |
 | `/srv/containercp/backups/` | Backup archives (.tar.gz) |
-| `/etc/containercp/templates/` | Disk-based config templates |
+| `/srv/containercp/templates/` | Disk-based config templates |
+| `/srv/containercp/secrets/` | Root-only bootstrap and security secrets |
 | `/var/log/containercp/` | Log files |
 
 ## Troubleshooting
