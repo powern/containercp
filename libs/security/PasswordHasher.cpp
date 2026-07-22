@@ -31,6 +31,7 @@ constexpr std::size_t kPbkdf2HashBytes = 32;
 const std::string kPbkdf2Prefix = "$containercp-pbkdf2-sha256$v=1$i=";
 #endif
 
+#ifndef CONTAINERCP_HAS_ARGON2
 const std::string kBase64Chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -81,6 +82,7 @@ bool parse_positive_int(std::string_view s, int& out) {
     out = value;
     return true;
 }
+#endif
 
 } // namespace
 

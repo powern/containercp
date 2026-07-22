@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | Install - ensure Argon2 dependency in standard setup
+
+**Summary:** Added `libargon2-dev` to the standard installer dependency list and kept the updater dependency list aligned so Debian/Ubuntu apt-based installs build the Argon2id password hasher automatically. Cleaned up the Argon2-enabled `PasswordHasher.cpp` build by compiling PBKDF2-only helper functions only for the fallback backend.
+
+**Files changed:** `scripts/install.sh`, `scripts/update.sh`, `libs/security/PasswordHasher.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Supported apt-based installations and updates prefer the Argon2id authentication backend automatically when dependencies are installed. Unsupported/non-apt systems still build with the OpenSSL PBKDF2-SHA256 fallback when Argon2 is unavailable.
+
+**Validation:** Local CMake configure selected `Argon2id`. Full build passed with no PBKDF2 helper unused-function warnings. Targeted auth/security doctests passed (`7` cases, `200` assertions). Full doctest suite passed (`877` cases, `6398` assertions). `git diff --check` passed.
+
+**Known risks:** Non-APT platforms still require manual Argon2 development packages if Argon2id is desired; fallback behavior remains intentional.
+
+---
+
 ## 2026-07-22 | `this commit` | Auth - secure password hashing, random tokens, and session foundation
 
 **Summary:** Refactored Web UI authentication around reusable security components. Added OS-backed `SecureRandom`, secure `PasswordHasher` with optional Argon2id and OpenSSL PBKDF2-SHA256 fallback, and an independent `SessionManager` with configurable TTL. Removed the SHA-256 auth hasher, mt19937-based admin password/session token generation, password-file hash sync, and plaintext temporary password logging.

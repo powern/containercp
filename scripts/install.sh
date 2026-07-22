@@ -35,7 +35,8 @@ echo "[SYSTEM] OS: $NAME $VERSION_ID — OK"
 # --- 2. Install system dependencies ---
 echo "[SYSTEM] Installing build dependencies..."
 apt-get update -qq
-apt-get install -y -qq git cmake ninja-build g++ curl libsqlite3-dev
+BUILD_DEPS=(git cmake ninja-build g++ curl libsqlite3-dev libargon2-dev)
+apt-get install -y -qq "${BUILD_DEPS[@]}"
 
 # --- 3. Install Docker if missing ---
 if ! command -v docker &>/dev/null; then
