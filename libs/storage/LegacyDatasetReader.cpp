@@ -226,7 +226,7 @@ DatasetResult<site::Site> LegacyDatasetReader::read_sites() {
         if (lp.empty_line()) continue;
         int pipes = lp.count_pipes(); auto f = lp.split();
         if (pipes >= 5) {
-            if (f.size() != 6) { r.error = "invalid_field_count"; return r; }
+            if (f.size() != 6 && f.size() != 7) { r.error = "invalid_field_count"; return r; }
             site::Site s; int i = 0; std::string err;
             { uint64_t tmp; if (!LineParser::parse_uint64(f[i++], tmp, err)) { r.error = "invalid_integer" + err; return r; } s.id = tmp; }
             if (ids.count(s.id)) { r.error = "duplicate_id"; return r; } ids.insert(s.id);
@@ -236,6 +236,7 @@ DatasetResult<site::Site> LegacyDatasetReader::read_sites() {
             { uint64_t tmp; if (!LineParser::parse_uint64(f[i++], tmp, err)) { r.error = "invalid_integer" + err; return r; } s.node_id = tmp; }
             s.web_server = f[i++].empty() ? "apache" : f[i-1];
             if (!LineParser::parse_bool(f[i++], s.php_mail_enabled, err)) { r.error = "invalid_boolean" + err; return r; }
+            if (i < static_cast<int>(f.size())) s.web_template_profile = f[i++];
             s.php_mail_enabled_present = true; s.name = s.domain;
             r.records.push_back(std::move(s));
         } else {

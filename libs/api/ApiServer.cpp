@@ -3084,6 +3084,8 @@ bool ApiServer::start() {
                 r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
                 return r;
             }
+            site->web_template_profile = prof->profile_name;
+            s.save();
 
             r.body = "{\"success\":true,\"data\":{\"message\":\"" + JsonFormatter::escape(result.message) + "\"}}";
             return r;

@@ -416,11 +416,11 @@ ImportResult LegacyImporter::import_sites() {
             auto f = lp.split();
 
             if (pipes >= 5) {
-                // Current 6-field format
-                if (f.size() != 6) {
+                // Current 6-field format, plus optional 7th web_template_profile field.
+                if (f.size() != 6 && f.size() != 7) {
                     r.error = "invalid_field_count";
                     r.diagnostics = "sites.db:" + std::to_string(lp.line_number)
-                        + ": expected 6 fields, got " + std::to_string(f.size());
+                        + ": expected 6 or 7 fields, got " + std::to_string(f.size());
                     return r;
                 }
                 site::Site s;
@@ -455,6 +455,7 @@ ImportResult LegacyImporter::import_sites() {
                     r.diagnostics = "sites.db:" + std::to_string(lp.line_number) + ": php_mail: " + err;
                     return r;
                 }
+                if (f.size() >= 7) s.web_template_profile = f[6];
                 s.php_mail_enabled_present = true;
                 s.name = s.domain;
                 sites.push_back(std::move(s));

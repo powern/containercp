@@ -1,5 +1,5 @@
 import {
-  api, apiPost, buildTable, card, esc, hideModal, navigate, pageHeader, pollJobProgress, pollRotationJob, renderWordPressRotationDiagnostics, showModal, summaryCards, tb, toast
+  api, apiPost, buildTable, card, esc, hideModal, navigate, pageHeader, pollJobProgress, pollRotationJob, renderWordPressRotationDiagnostics, setModalCleanup, showModal, summaryCards, tb, toast
 } from '../core/context.js';
 
 
@@ -175,6 +175,53 @@ async function startSiteWizard() {
   }
 }
 
+async function showSiteTemplateModal(siteId) {
+  try {
+    const [sitesRes, profilesRes] = await Promise.all([api('/api/sites'), api('/api/profiles')]);
+    const site = (sitesRes.data || []).find(s => Number(s.id) === Number(siteId));
+    if (!site) { toast('Site not found', 'error'); return; }
+    const backend = site.web_server || 'apache';
+    const templates = (profilesRes.data || []).filter(p => p.type === 'web_server' && p.web_server === backend);
+    if (!templates.length) { toast('No compatible templates for this site backend', 'error'); return; }
+    templates.sort((a, b) => (a.default === b.default ? String(a.name).localeCompare(String(b.name)) : (a.default ? -1 : 1)));
+    let submitting = false;
+    showModal('Change Site Template', `<div class="db-confirm-body">
+      <p><strong>${esc(site.domain)}</strong> uses ${backend === 'nginx' ? 'Nginx' : 'Apache2'}.</p>
+      <ul><li>Only templates for the current backend are shown.</li><li>The site config will be regenerated and the web container restarted.</li><li>This does not change site files, database, or SSL.</li></ul>
+      <label class="db-filter"><span>Template</span><select id="site-template-select">
+        ${templates.map(t => `<option value="${Number(t.id)}" ${site.web_template_profile === t.name ? 'selected' : ''}>${esc(t.name)}${t.default ? ' (default)' : ''}</option>`).join('')}
+      </select></label>
+      <div id="site-template-msg" style="font-size:12px;color:var(--text3);margin-top:6px;">Select a compatible template.</div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;"><button class="btn btn-sm" onclick="hideModal()">Cancel</button><button id="site-template-submit" class="btn btn-sm btn-primary">Apply Template</button></div>
+    </div>`, 560);
+    const submit = $('site-template-submit');
+    const select = $('site-template-select');
+    const msg = $('site-template-msg');
+    if (!submit || !select) return;
+    const onSubmit = async () => {
+      if (submitting) return;
+      submitting = true;
+      submit.disabled = true;
+      if (msg) msg.textContent = 'Applying template...';
+      try {
+        await apiPost('/api/sites/' + Number(siteId) + '/apply-template', {template_id:String(select.value)});
+        hideModal();
+        toast('Template applied', 'success');
+        loadSiteDetail($('page'), siteId, activeSitesLifecycle);
+      } catch(e) {
+        const apiErr = e.body && e.body.error;
+        if (msg) msg.textContent = apiErr || e.api_message || e.message || 'Failed to apply template';
+        submitting = false;
+        submit.disabled = false;
+      }
+    };
+    submit.addEventListener('click', onSubmit);
+    setModalCleanup(() => { submit.removeEventListener('click', onSubmit); submitting = false; });
+  } catch(e) {
+    toast('Template options could not be loaded', 'error');
+  }
+}
+
 /* ===== JOB PROGRESS POLLING ===== *//* ===== SITE DETAIL ===== */
 async function loadSiteDetail(p, siteId, lifecycle) {
   activeSitesLifecycle = lifecycle || activeSitesLifecycle;
@@ -199,6 +246,7 @@ async function loadSiteDetail(p, siteId, lifecycle) {
           <div class="details-field"><div class="details-label">Proxy Upstream</div><div class="details-value"><code>${esc(site.proxy_upstream||'—')}</code></div></div>` : `
           <div class="details-field"><div class="details-label">Owner</div><div class="details-value">${esc(site.owner)}</div></div>
           <div class="details-field"><div class="details-label">Web Server</div><div class="details-value">${site.web_server==='nginx'?'Nginx':'Apache2'}</div></div>
+          <div class="details-field"><div class="details-label">Template</div><div class="details-value"><code>${esc(site.web_template_profile || 'unknown')}</code> <button class="btn btn-sm" onclick="showSiteTemplateModal(${Number(site.id)})">Change</button></div></div>
           <div class="details-field"><div class="details-label">Node ID</div><div class="details-value">${site.node_id}</div></div>`}
         </div>
       </div>
@@ -588,4 +636,4 @@ function runRuntimeAction(siteId, domain, action) {
 const sitesPage = { mount: loadSites, unmount() { activeSitesLifecycle = null; } };
 const siteDetailPage = { mount: loadSiteDetail, unmount() { activeSitesLifecycle = null; } };
 export { loadSites, loadSiteDetail, sitesPage, siteDetailPage };
-Object.assign(window, { loadSites, removeSite, showCreateSiteWizard, renderSiteWizardTemplateOptions, startSiteWizard, loadSiteDetail, loadWordPressCredentialCard, renderWordPressCredentialCard, rotateWordPressDatabasePassword, pollWordPressRotationJob, loadPhpMailCard, renderPhpMailCard, enablePhpMail, disablePhpMail, loadRuntimeCard, refreshRuntimeCard, buildRuntimeActions, runRuntimeAction });
+Object.assign(window, { loadSites, removeSite, showCreateSiteWizard, renderSiteWizardTemplateOptions, startSiteWizard, showSiteTemplateModal, loadSiteDetail, loadWordPressCredentialCard, renderWordPressCredentialCard, rotateWordPressDatabasePassword, pollWordPressRotationJob, loadPhpMailCard, renderPhpMailCard, enablePhpMail, disablePhpMail, loadRuntimeCard, refreshRuntimeCard, buildRuntimeActions, runRuntimeAction });

@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | Web templates — persist selected template per site
+
+**Summary:** Added durable Site-to-template metadata so ContainerCP remembers which web template was used for each Site across daemon restarts. Site creation stores the resolved template, apply-template updates the Site record, and Site detail UI shows/changing the current compatible template in the Site context.
+
+**Files changed:** `libs/site/Site.h`, `libs/site/SiteManager.{h,cpp}`, `libs/storage/SQLiteStorage.cpp`, `libs/storage/Storage.cpp`, `libs/storage/SchemaMigrations.cpp`, `libs/storage/LegacyDatasetReader.cpp`, `libs/storage/LegacyImporter.cpp`, `libs/storage/SQLiteSnapshotReader.h`, `libs/storage/StorageCanonicalizer.h`, `libs/storage/Verification.cpp`, `libs/api/JsonFormatter.cpp`, `libs/api/SitesViewService.cpp`, `libs/api/ApiServer.cpp`, `libs/operations/SiteCreateOperation.cpp`, `libs/provider/DockerComposeProvider.cpp`, `web/pages/sites.js`, `docs/api/API_REFERENCE.md`, `CHANGELOG.md`
+
+**User-visible behavior:** `/api/sites` now includes `web_template_profile` for regular Sites. Create Site persists the chosen template; applying a template from Site detail persists the new template and survives service restarts. Existing older Sites may show an empty/unknown template until a template is applied.
+
+**Validation:** Local build passed with `cmake --build build-db5 -j2`. Full doctest suite passed (`868` cases, `6191` assertions). Frontend syntax checks passed for `web/pages/templates.js` and `web/pages/sites.js`; frontend baseline and `git diff --check` passed.
+
+**Known risks:** The SQLite column is added lazily and safely on first Site load/save if an existing database lacks `web_template_profile`. Existing Sites are not auto-guessed/backfilled because their rendered config does not reliably identify the source template.
+
+---
+
 ## 2026-07-22 | `this commit` | Web template system — backend-scoped defaults and site-context selection
 
 **Summary:** Corrected the initial web template implementation after review. Defaults are now independent per backend (Apache and Nginx), template content is parsed safely from JSON strings, Templates page is a catalog-only management UI, and Create Site now selects a template in the site context after choosing the backend.

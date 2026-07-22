@@ -60,7 +60,7 @@ JSON response ← Response struct with status code
 is synthesized as a virtual system site when `server_hostname` is configured.
 Admin site fields: `system_role: "admin-panel"`, `proxy_upstream`, `web_status`,
 `php_status: "N/A"`, `ssl_status`, `can_delete: false`, `can_manage_runtime: false`.
-Normal sites are returned unchanged by `JsonFormatter::site()`.
+Normal sites include `web_server` and persisted `web_template_profile` metadata.
 
 **POST /api/sites/create** — body: `{"owner":"...","domain":"...","profile":"apache:apache-php-default"}`.
 The `profile` value may be `<backend>:<template_name>` where backend is `apache` or `nginx`.
@@ -70,7 +70,8 @@ The `profile` value may be `<backend>:<template_name>` where backend is `apache`
 
 **POST /api/sites/<id>/apply-template** — body: `{"template_id":5}` or
 `{"template_name":"apache-wordpress"}`. The selected template must match the existing
-Site backend; changing backend is a separate lifecycle operation.
+Site backend; changing backend is a separate lifecycle operation. On success the Site's
+persisted `web_template_profile` is updated.
 
 Confirmed Site removal is destructive for resources exclusively owned by the Site. The operation stops the Site stack, removes the Site directory and metadata, and removes the exact owned MariaDB `db-data` named volume only after ownership is verified through ContainerCP/Compose labels or a legacy target-container mount proof. Unknown, mismatched, or shared volumes are refused and reported as operation failures. Recreating a Site with the same domain fails closed if the expected MariaDB volume already exists, rather than silently reusing stale database contents.
 

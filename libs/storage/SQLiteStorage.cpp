@@ -89,6 +89,26 @@ static void require_save(bool saved, const char* resource) {
     }
 }
 
+static bool sqlite_column_exists(ConnectionPool& pool, const std::string& table, const std::string& column) {
+    ReadLease rl(pool);
+    if (!rl.is_valid()) return false;
+    if (!rl->prepare("PRAGMA table_info(" + table + ")")) return false;
+    while (rl->step()) {
+        if (rl->column_text(1) == column) return true;
+    }
+    return false;
+}
+
+static bool ensure_sites_template_column(ConnectionPool& pool) {
+    if (sqlite_column_exists(pool, "sites", "web_template_profile")) return true;
+    TransactionGuard txn(pool);
+    if (!txn.is_active()) return false;
+    if (!txn.db().exec("ALTER TABLE sites ADD COLUMN web_template_profile TEXT NOT NULL DEFAULT ''")) {
+        return false;
+    }
+    return txn.commit();
+}
+
 // --- Nodes ---
 
 bool SQLiteStorage::try_save_nodes(const std::vector<node::Node>& nodes) {
@@ -282,9 +302,10 @@ std::vector<user::User> SQLiteStorage::load_users() {
 
 std::vector<site::Site> SQLiteStorage::load_sites() {
     std::vector<site::Site> sites;
+    ensure_sites_template_column(pool_);
     ReadLease rl(pool_);
     if (!rl.is_valid()) return sites;
-    if (!rl->prepare("SELECT id, domain, owner, node_id, web_server, php_mail_enabled "
+    if (!rl->prepare("SELECT id, domain, owner, node_id, web_server, php_mail_enabled, web_template_profile "
                       "FROM sites ORDER BY id")) return sites;
     while (rl->step()) {
         site::Site s;
@@ -294,6 +315,7 @@ std::vector<site::Site> SQLiteStorage::load_sites() {
         s.node_id = static_cast<uint64_t>(rl->column_int(3));
         s.web_server = rl->column_text(4);
         s.php_mail_enabled = (rl->column_int(5) != 0);
+        s.web_template_profile = rl->column_text(6);
         // SQLite rows have an explicit php_mail_enabled column —
         // mark the field as present (equivalent to current 6-field format).
         s.php_mail_enabled_present = true;
@@ -720,20 +742,22 @@ std::vector<auth::AuthUser> SQLiteStorage::load_auth_users() {
 }
 
 bool SQLiteStorage::try_save_sites(const std::vector<site::Site>& sites) {
+    if (!ensure_sites_template_column(pool_)) return false;
     std::set<uint64_t> supplied_ids;
     for (const auto& s : sites) supplied_ids.insert(s.id);
 
     return sync_parent_rows(pool_, "sites", supplied_ids,
         [&](SQLiteDB& db) -> bool {
             const char* upsert = "INSERT INTO sites "
-                "(id, domain, owner, node_id, web_server, php_mail_enabled, "
-                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, "
+                "(id, domain, owner, node_id, web_server, php_mail_enabled, web_template_profile, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, "
                 "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
                 "strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 "domain=excluded.domain, owner=excluded.owner, "
                 "node_id=excluded.node_id, web_server=excluded.web_server, "
                 "php_mail_enabled=excluded.php_mail_enabled, "
+                "web_template_profile=excluded.web_template_profile, "
                 "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')";
             for (const auto& s : sites) {
                 if (!db.prepare(upsert)) return false;
@@ -743,6 +767,7 @@ bool SQLiteStorage::try_save_sites(const std::vector<site::Site>& sites) {
                 if (!db.bind_int(4, static_cast<int64_t>(s.node_id))) return false;
                 if (!db.bind_text(5, s.web_server)) return false;
                 if (!db.bind_int(6, s.php_mail_enabled ? 1 : 0)) return false;
+                if (!db.bind_text(7, s.web_template_profile)) return false;
                 if (db.step() == false && db.error_code() != 0) return false;
             }
             return true;

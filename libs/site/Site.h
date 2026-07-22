@@ -16,7 +16,8 @@ struct Site : core::Resource {
     std::string db_user;
     std::string db_password;
     std::string web_server = "apache";
-    // Transient provisioning choice. Rendered during create/apply only; not persisted.
+    std::string web_template_profile;
+    // Transient provisioning choice. Rendered during create only; not persisted separately.
     std::string template_profile;
     bool php_mail_enabled = false;
 

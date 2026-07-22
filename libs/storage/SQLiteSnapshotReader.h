@@ -165,6 +165,7 @@ struct SQLiteSnapshotReader {
         if (!read_uint64_col(db, 3, s.node_id)) return false;
         if (!read_string_col(db, 4, s.web_server)) return false;
         if (!read_bool_col(db, 5, s.php_mail_enabled)) return false;
+        if (!read_string_col(db, 6, s.web_template_profile)) return false;
         s.php_mail_enabled_present = true; s.name = s.domain; return true; }
     static bool read_domain_row(SQLiteDB& db, domain::Domain& d) {
         if (!read_uint64_col(db, 0, d.id)) return false;
@@ -276,7 +277,7 @@ struct SQLiteSnapshotReader {
     SNAPSHOT_DEF(php_versions, php::PhpVersion, "SELECT id, version, image, enabled, default_version FROM php_versions ORDER BY id", read_php_row)
     SNAPSHOT_DEF(profiles, profile::Profile, "SELECT id, profile_name, type, web_server, runtime, template_path, description, enabled, default_profile FROM profiles ORDER BY id", read_profile_row)
     SNAPSHOT_DEF(users, user::User, "SELECT id, username, uid, home_directory, shell, enabled FROM users ORDER BY id", read_user_row)
-    SNAPSHOT_DEF(sites, site::Site, "SELECT id, domain, owner, node_id, web_server, php_mail_enabled FROM sites ORDER BY id", read_site_row)
+    SNAPSHOT_DEF(sites, site::Site, "SELECT id, domain, owner, node_id, web_server, php_mail_enabled, web_template_profile FROM sites ORDER BY id", read_site_row)
     SNAPSHOT_DEF(domains, domain::Domain, "SELECT id, fqdn, owner_id, site_id, php_version, ssl_enabled, enabled, type, target FROM domains ORDER BY id", read_domain_row)
     SNAPSHOT_DEF(databases, database::Database, "SELECT id, db_name, db_user, db_password, engine, version, owner_id, site_id, enabled FROM databases ORDER BY id", read_db_row)
     SNAPSHOT_DEF(backups, backup::Backup, "SELECT id, site_id, owner_id, filename, type, size, created_at, status, file_path, compression FROM backups ORDER BY id", read_backup_row)

@@ -81,7 +81,12 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site, core:
         if (requested != nullptr && requested->type == profile::ProfileType::WEB_SERVER
             && requested->web_server == web_server_type) {
             profile = requested;
+        } else {
+            return {false, "Template profile not found or backend mismatch: " + site.template_profile};
         }
+    }
+    if (profile != nullptr) {
+        site.web_template_profile = profile->profile_name;
     }
     std::string web_server_image = "nginx:alpine";
     std::string web_config_dir = "/etc/nginx/conf.d";

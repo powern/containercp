@@ -222,8 +222,9 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner,
     site.node_id = node.id;
     site.web_server = web_server;
     site.template_profile = template_profile;
+    site.web_template_profile = template_profile;
 
-    site.id = sites_.create(domain, owner, node.id, web_server);
+    site.id = sites_.create(domain, owner, node.id, web_server, template_profile);
     st.site_id = site.id;
     st.site_record_created = true;
 
@@ -266,6 +267,10 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner,
                     proxy_provider_, fs_, cfg_);
         update_job_and_progress(jobs, job_id, 0, "Rolled back: " + result.message);
         return {false, result.message + " Created resources have been rolled back."};
+    }
+
+    if (auto* stored_site = sites_.find_by_id(site.id)) {
+        stored_site->web_template_profile = site.web_template_profile;
     }
 
     // Create proxy config pointing to site web container via Docker network

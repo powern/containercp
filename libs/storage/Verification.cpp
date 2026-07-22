@@ -150,6 +150,7 @@ static std::vector<FieldCheck> compare_site(const site::Site& l, const site::Sit
     CHECK_U64("id", l.id, s.id); CHECK_STR("domain", l.domain, s.domain); CHECK_STR("owner", l.owner, s.owner);
     CHECK_U64("node_id", l.node_id, s.node_id); CHECK_STR("web_server", l.web_server, s.web_server);
     CHECK_BOOL("php_mail_enabled", l.php_mail_enabled, s.php_mail_enabled);
+    CHECK_STR("web_template_profile", l.web_template_profile, s.web_template_profile);
     return checks;
 }
 static std::vector<FieldCheck> compare_domain(const domain::Domain& l, const domain::Domain& s, bool) {
@@ -403,7 +404,8 @@ static bool rd_user(SQLiteDB& db, user::User& u) {
 static bool rd_site(SQLiteDB& db, site::Site& s) {
     s.id = static_cast<uint64_t>(db.column_int(0)); s.domain = db.column_text(1); s.owner = db.column_text(2);
     s.node_id = static_cast<uint64_t>(db.column_int(3)); s.web_server = db.column_text(4);
-    s.php_mail_enabled = (db.column_int(5) != 0); s.php_mail_enabled_present = true; s.name = s.domain; return true; }
+    s.php_mail_enabled = (db.column_int(5) != 0); s.web_template_profile = db.column_text(6);
+    s.php_mail_enabled_present = true; s.name = s.domain; return true; }
 static bool rd_domain(SQLiteDB& db, domain::Domain& d) {
     d.id = static_cast<uint64_t>(db.column_int(0)); d.fqdn = db.column_text(1); d.owner_id = static_cast<uint64_t>(db.column_int(2));
     d.site_id = static_cast<uint64_t>(db.column_int(3)); d.php_version = db.column_text(4);
@@ -479,7 +481,7 @@ LOAD_HELPER(nodes, node::Node, "SELECT id, name, type FROM nodes ORDER BY id", r
 LOAD_HELPER(php_versions, php::PhpVersion, "SELECT id, version, image, enabled, default_version FROM php_versions ORDER BY id", rd_php)
 LOAD_HELPER(profiles, profile::Profile, "SELECT id, profile_name, type, web_server, runtime, template_path, description, enabled, default_profile FROM profiles ORDER BY id", rd_profile)
 LOAD_HELPER(users, user::User, "SELECT id, username, uid, home_directory, shell, enabled FROM users ORDER BY id", rd_user)
-LOAD_HELPER(sites, site::Site, "SELECT id, domain, owner, node_id, web_server, php_mail_enabled FROM sites ORDER BY id", rd_site)
+LOAD_HELPER(sites, site::Site, "SELECT id, domain, owner, node_id, web_server, php_mail_enabled, web_template_profile FROM sites ORDER BY id", rd_site)
 LOAD_HELPER(domains, domain::Domain, "SELECT id, fqdn, owner_id, site_id, php_version, ssl_enabled, enabled, type, target FROM domains ORDER BY id", rd_domain)
 LOAD_HELPER(databases, database::Database, "SELECT id, db_name, db_user, db_password, engine, version, owner_id, site_id, enabled FROM databases ORDER BY id", rd_db)
 LOAD_HELPER(backups, backup::Backup, "SELECT id, site_id, owner_id, filename, type, size, created_at, status, file_path, compression FROM backups ORDER BY id", rd_backup)

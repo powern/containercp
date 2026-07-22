@@ -3,7 +3,7 @@
 namespace containercp::site {
 
 uint64_t SiteManager::create(const std::string& domain, const std::string& owner, uint64_t node_id,
-                              const std::string& web_server) {
+                              const std::string& web_server, const std::string& web_template_profile) {
     Site s;
     s.id = next_id_++;
     s.name = domain;
@@ -11,6 +11,7 @@ uint64_t SiteManager::create(const std::string& domain, const std::string& owner
     s.owner = owner;
     s.node_id = node_id;
     s.web_server = web_server.empty() ? "apache" : web_server;
+    s.web_template_profile = web_template_profile;
     sites_.push_back(std::move(s));
     return s.id;
 }

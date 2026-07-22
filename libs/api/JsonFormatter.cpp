@@ -49,6 +49,7 @@ std::string JsonFormatter::sites(const std::vector<site::Site>& sites) {
              << "\",\"owner\":\"" << escape(s.owner)
              << "\",\"node_id\":" << s.node_id
              << ",\"web_server\":\"" << escape(s.web_server)
+             << "\",\"web_template_profile\":\"" << escape(s.web_template_profile)
              << "\"}";
     }
     json << "]";
@@ -62,6 +63,8 @@ std::string JsonFormatter::site(const site::Site& site) {
          << "\",\"domain\":\"" << escape(site.domain)
          << "\",\"owner\":\"" << escape(site.owner)
          << "\",\"node_id\":" << site.node_id
+         << ",\"web_server\":\"" << escape(site.web_server)
+         << "\",\"web_template_profile\":\"" << escape(site.web_template_profile) << "\""
          << "}";
     return json.str();
 }

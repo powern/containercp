@@ -80,7 +80,8 @@ CANON_DEF(users, user::User,
 
 CANON_DEF(sites, site::Site,
     append_field(out, r.id); append_field(out, r.domain); append_field(out, r.owner);
-    append_field(out, r.node_id); append_field(out, r.web_server); append_field(out, r.php_mail_enabled ? "true" : "false");)
+    append_field(out, r.node_id); append_field(out, r.web_server); append_field(out, r.php_mail_enabled ? "true" : "false");
+    append_field(out, r.web_template_profile);)
 
 CANON_DEF(domains, domain::Domain,
     append_field(out, r.id); append_field(out, r.fqdn); append_field(out, r.owner_id); append_field(out, r.site_id);
