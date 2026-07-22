@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | Docs - Record Unity migration workflow analysis
+
+**Summary:** Added a text report for the read-only analysis of the myVestaCP migration workflow stall after Stage 1 for `unity.softico.ua`.
+
+**Files changed:** `planning/migration-workflow-analysis-unity-2026-07-22.txt`, `CHANGELOG.md`
+
+**User-visible behavior:** No runtime behavior changes. The report documents that Stage 2 is available but not automatically triggered, and identifies the frontend/state-machine UX gap.
+
+**Validation:** Documentation-only change. No production state changes were made while preparing this report file.
+
+**Known risks:** The report is an analysis artifact only; implementation fixes remain pending explicit approval.
+
+---
+
 ## 2026-07-21 | `this commit` | Docs — Record DB-5 production validation
 
 **Summary:** Recorded completed DB-5 production validation after the tar manifest detection fix was deployed to the validation host.

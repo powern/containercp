@@ -1,0 +1,566 @@
+ContainerCP Migration Workflow Analysis Report
+Date: 2026-07-22
+Target: unity.softico.ua
+Production host: web2.softico.ua
+Repository: /opt/containercp
+Runtime database: /srv/containercp/database/containercp.db
+
+Scope
+-----
+This report records a read-only investigation of a repeatable myVestaCP migration workflow issue in ContainerCP.
+
+No source code was changed during the analysis.
+No production state was intentionally changed during the analysis.
+No production database edits, Docker mutations, manual file imports, or manual SQL imports were performed.
+
+
+Summary
+-------
+The migration is not failing in Stage 2. Stage 2 has not started at all.
+
+Current backend state says Stage 2 is available: can_import_files=true.
+The GUI message "Run Analyze backup again to continue with Stage 2" is produced by the frontend after Stage 1, and the current implementation requires the operator to run Analyze again so the frontend can re-read the migration marker and render the Import files button.
+
+This is a UX/state-machine orchestration problem, not a Site ID mismatch, not stale marker corruption, and not a hidden backend import failure.
+
+
+1. Current Migration State
+--------------------------
+Production state for unity.softico.ua:
+
+{
+  "domain": "unity.softico.ua",
+  "owner": "admin",
+  "site_id": 1,
+  "stage": 1,
+  "files_pending": true,
+  "files_imported": false,
+  "sql_pending": true
+}
+
+Runtime records:
+
+sites:            id=1, domain=unity.softico.ua
+domains:          id=1, fqdn=unity.softico.ua, site_id=1
+databases:        id=1, db_name=unity_softico_ua_db, site_id=1
+reverse_proxies:  id=6, domain=unity.softico.ua, site_id=1, upstream=site-1-web:80
+ssl_certificates: empty
+backups:          empty
+jobs:             empty
+
+Document root currently contains only placeholder files:
+
+/srv/containercp/sites/unity.softico.ua/public/.gitkeep
+/srv/containercp/sites/unity.softico.ua/public/index.php
+
+Target MariaDB database exists but has no tables:
+
+table_count = 0
+
+
+2. Intended Next State
+----------------------
+The next valid transition is:
+
+Stage 1 -> Stage 2
+
+Expected Stage 2 action:
+
+POST /api/migration/vesta/import-files
+
+Expected request body:
+
+{
+  "backup": "admin.2026-07-21_05-53-06.tar",
+  "domain": "unity.softico.ua",
+  "owner": "admin"
+}
+
+If Stage 2 succeeds, the marker should become:
+
+{
+  "version": 1,
+  "domain": "unity.softico.ua",
+  "owner": "admin",
+  "site_id": 1,
+  "stage": 2,
+  "files_pending": false,
+  "files_imported": true,
+  "sql_pending": true
+}
+
+Then Stage 3 becomes available through:
+
+POST /api/migration/vesta/import-sql
+
+
+3. Exact Reason Stage 2 Has Not Started
+----------------------------------------
+Stage 2 has not started because no import-files request has been made.
+
+The logs contain backup inspection and proxy creation, but no line like:
+
+[MIGRATION] Import files requested
+
+There is also no migration_import_sql job.
+
+Current /api/jobs response:
+
+{"success":true,"data":[]}
+
+So this is not a failed Stage 2 job. Stage 2 was never triggered.
+
+
+4. Intentional Or Defective?
+----------------------------
+Current behavior is partially intentional but defective from UX/orchestration standpoint.
+
+The backend is intentionally staged:
+
+Analyze -> Create Site -> Analyze again -> Import files -> Import SQL
+
+But the frontend after Stage 1 does not automatically re-run Analyze and does not render the Stage 2 button. It only prints:
+
+Run Analyze backup again to continue with Stage 2.
+
+That is confusing because the operator sees Stage 1 completed but no direct Stage 2 action.
+
+
+5. Source Code Path Controlling The Transition
+-----------------------------------------------
+Frontend source:
+
+web/pages/migration.js
+
+Stage 1 message is produced here:
+
+// lines 232-250
+html += '<p style="margin-top:12px;font-size:12px;color:var(--text2);">Run Analyze backup again to continue with Stage 2.</p>';
+
+The frontend only renders the Stage 2 button inside analyzeBackup() after a fresh inspect response:
+
+// lines 164-180
+} else if (d.site_exists && d.migration_marker_found) {
+  ...
+  if (d.can_import_files) {
+    html += `<button ... onclick="importMigrationFiles()">Import files</button>`;
+  }
+}
+
+Stage 2 is triggered only by:
+
+// lines 261-275
+async function importMigrationFiles() {
+  ...
+  const res = await apiPost('/api/migration/vesta/import-files', body);
+}
+
+Backend routes:
+
+libs/api/ApiServer.cpp
+
+Analyze:
+
+POST /api/migration/vesta/inspect
+
+Create site / Stage 1:
+
+POST /api/migration/vesta/create-site
+
+Stage 2:
+
+POST /api/migration/vesta/import-files
+
+Stage 3:
+
+POST /api/migration/vesta/import-sql
+
+State-machine eligibility is in:
+
+libs/migration/VestaSiteImporter.cpp
+
+// lines 668-679
+case 1:
+    if (m.files_pending && !m.files_imported) {
+        m.can_import_files = true;
+    }
+    break;
+case 2:
+    if (m.sql_pending && m.files_imported && !m.files_pending) {
+        m.can_import_sql = true;
+    }
+    break;
+
+
+6. Expected API Endpoint For Stage 2
+------------------------------------
+Exact endpoint:
+
+POST /api/migration/vesta/import-files
+
+Current backend says this endpoint is available because Analyze returned:
+
+{
+  "migration_stage": 1,
+  "files_pending": true,
+  "files_imported": false,
+  "sql_pending": true,
+  "can_import_files": true,
+  "can_import_sql": false,
+  "marker_error": ""
+}
+
+
+7. Actual Frontend Behavior
+---------------------------
+After Stage 1, frontend behavior is:
+
+Shows Stage 1 completed card.
+Shows text: Run Analyze backup again to continue with Stage 2.
+Does not automatically call Analyze again.
+Does not immediately render Import files button.
+Keeps the top Analyze backup button available.
+
+Important issue: the original Stage 0 card is still structurally present after Create site; importMigrationSite() writes the Stage 1 result into #migrate-import-result, but it does not replace the whole analysis area. The old Create/Import button can remain visible and is reset to text Import site.
+
+If clicked again, backend should reject with 409 Site already exists. Import not possible. This should not duplicate the Site, but the UX is misleading.
+
+
+8. Actual Backend Behavior
+--------------------------
+Backend behavior is consistent with the staged design:
+
+POST /inspect analyzes backup and marker.
+POST /create-site creates site/database/docker stack and writes marker stage=1.
+POST /import-files is not auto-called.
+POST /import-sql is not auto-called and is only valid after marker stage=2.
+
+There is no backend job for Stage 2. import-files is synchronous.
+
+Stage 3 does create an async job:
+
+jobs.create("migration_import_sql", ...)
+
+No such job exists currently.
+
+
+9. Migration Marker Contents
+----------------------------
+Current marker:
+
+{
+  "domain": "unity.softico.ua",
+  "owner": "admin",
+  "site_id": 1,
+  "stage": 1,
+  "files_pending": true,
+  "files_imported": false,
+  "sql_pending": true
+}
+
+No secrets are present in the marker.
+
+
+10. Site ID Consistency Result
+------------------------------
+All checked sources agree on site_id=1.
+
+SQLite sites:          id=1
+domains:               site_id=1
+databases:             site_id=1
+reverse_proxies:       site_id=1
+migration marker:      site_id=1
+Docker containers:     site-1-web, site-1-php, site-1-db, site-1-redis
+Docker labels:         containercp.site.id=1
+Compose project:       unitysofticoua
+Proxy upstream:        site-1-web:80
+Mail mappings:         none
+
+No Site ID mismatch found.
+
+
+11. Backup Analysis Result
+--------------------------
+Safe Analyze response for admin.2026-07-21_05-53-06.tar:
+
+{
+  "domain_found": true,
+  "web_archive_path": "web/unity.softico.ua/domain_data.tar.gz",
+  "web_root_type": "public_html",
+  "wp_config_found": true,
+  "wp_config_parsed": true,
+  "wp_db_name": "admin_unity_softico.ua",
+  "wp_db_user": "admin_unity",
+  "wp_db_host": "localhost",
+  "db_dump_found": true,
+  "db_dump_path": "./db/admin_unity_softico.ua/admin_unity_softico.ua.mysql.sql.gz",
+  "db_type": "mysql",
+  "site_exists": true,
+  "migration_marker_found": true,
+  "migration_stage": 1,
+  "can_import_files": true,
+  "can_import_sql": false,
+  "errors": [],
+  "warnings": []
+}
+
+Backup metadata:
+
+filename: admin.2026-07-21_05-53-06.tar
+format: tar
+archive size: 54,631,147,520 bytes
+outer entries: 1,535
+
+
+12. File Payload Detection Result
+---------------------------------
+File payload is present.
+
+web archive path: ./web/unity.softico.ua/domain_data.tar.gz
+web archive size: 278,650,865 bytes
+detected web root: public_html
+inner entries: 25,583
+inner public_html entries: 25,512
+wp-config.php present: yes
+wp-content present: yes
+wp-admin present: yes
+wp-includes present: yes
+
+Stage 2 has enough information to import files.
+
+
+13. SQL Dump Detection Result
+-----------------------------
+SQL dump is present.
+
+SQL dump path: ./db/admin_unity_softico.ua/admin_unity_softico.ua.mysql.sql.gz
+SQL dump size: 15,241,540 bytes
+detected type: mysql
+
+Stage 3 is not yet available because Stage 2 has not imported files and updated the marker.
+
+
+14. Job State Result
+--------------------
+Current jobs:
+
+{"success":true,"data":[]}
+
+No active job.
+No failed migration job.
+No hidden SQL job.
+
+This is expected because Stage 2 is synchronous and has not been requested, and Stage 3 has not been requested.
+
+
+15. Relevant Log Excerpts
+-------------------------
+Recent migration-related logs show Analyze/inspect activity only:
+
+Jul 22 07:53:27 [MIGRATION] tar_safe_list ENTER: /srv/containercp/backups/admin.2026-07-21_05-53-06.tar
+Jul 22 07:53:27 [MIGRATION] tar_safe_list: running tar -tf (may take time for large archives)
+Jul 22 07:53:27 [MIGRATION] tar_safe_list: tar -tf completed, exit_code=0 stdout_size=62296
+Jul 22 07:53:46 [MIGRATION] tar_safe_list ENTER: /srv/containercp/backups/admin.2026-07-21_05-53-06.tar
+Jul 22 07:53:46 [MIGRATION] tar_safe_list: running tar -tf (may take time for large archives)
+Jul 22 07:53:46 [MIGRATION] tar_safe_list: tar -tf completed, exit_code=0 stdout_size=62296
+Jul 22 07:54:31 [PROXY] Created config for unity.softico.ua upstream=site-1-web:80
+Jul 22 08:04:07 [MIGRATION] tar_safe_list ENTER: /srv/containercp/backups/admin.2026-07-21_05-53-06.tar
+Jul 22 08:04:07 [MIGRATION] tar_safe_list: running tar -tf (may take time for large archives)
+Jul 22 08:04:07 [MIGRATION] tar_safe_list: tar -tf completed, exit_code=0 stdout_size=62296
+
+No log lines indicate Stage 2 started:
+
+No "Import files requested"
+No "Marker OK - site_id=1 stage=1"
+No "copy_files_to_public"
+No "Marker updated successfully"
+No "Import SQL requested"
+No "migration_import_sql"
+
+
+16. Should Clicking Analyze Again Safely Continue?
+--------------------------------------------------
+Clicking Analyze again should be safe.
+
+It calls:
+
+POST /api/migration/vesta/inspect
+
+That endpoint is designed as read-only/dry-run:
+
+opts.dry_run = true;
+auto manifest = importer.inspect(opts);
+
+It should not duplicate Site or database creation. It should re-read the marker and return:
+
+"can_import_files": true
+
+Then the GUI should render the Import files button.
+
+
+17. Would Clicking Analyze Again Duplicate Site/Database Creation?
+------------------------------------------------------------------
+No.
+
+Analyze does not create Site/database/Docker resources.
+
+The dangerous duplicate path would be clicking the old Stage 0 Create site / Import site button again. Even then, backend create-site re-runs inspect and rejects if manifest.site_exists is true:
+
+if (manifest.site_exists) {
+    r.status_code = 409;
+    r.body = "{\"success\":false,\"error\":\"Site already exists. Import not possible.\"}";
+    return r;
+}
+
+So duplicate creation should be blocked by backend.
+
+
+18. Risk Of Repeated Analyze
+----------------------------
+Low.
+
+Risks:
+
+Re-runs tar listing on a 51GB archive.
+Creates/removes temporary staging during wp-config/root detection.
+Adds normal journal log entries.
+Does not change marker, SQLite, Docker, document root, or database contents.
+
+The biggest practical risk is operator confusion, not data mutation.
+
+
+19. Recommended Minimal Fix
+---------------------------
+Minimal UX fix:
+
+After successful create-site, the frontend should immediately call Analyze again or render the next action from a backend response that includes Stage 2 eligibility.
+
+Best minimal change:
+
+After importMigrationSite() succeeds, call analyzeBackup() automatically.
+
+This would:
+
+Refresh marker-derived state.
+Replace the stale Stage 0 card.
+Show Import files immediately when can_import_files=true.
+Avoid telling the operator to manually run Analyze again.
+
+Better backend/API improvement:
+
+Make POST /api/migration/vesta/create-site return enough state to render next action:
+
+{
+  "migration_marker_found": true,
+  "migration_stage": 1,
+  "files_pending": true,
+  "files_imported": false,
+  "sql_pending": true,
+  "can_import_files": true,
+  "can_import_sql": false
+}
+
+Then frontend can render Import files directly without a second Analyze.
+
+Important state persistence improvement:
+
+The marker should persist the selected backup filename/path and analysis metadata, because currently .containercp-migration.json stores only:
+
+domain, owner, site_id, stage, files_pending, files_imported, sql_pending
+
+It does not store:
+
+backup filename
+web_archive_path
+web_root_type
+db_type
+detected source DB
+
+Because of that, a page reload loses enough UI state that the operator must manually reselect the backup/domain/owner before continuing.
+
+
+20. Fix Category
+----------------
+This should be primarily:
+
+frontend UX fix
+
+Also recommended:
+
+backend response enrichment
+state-machine/marker persistence improvement
+
+Not required for the immediate stall:
+
+job-system change
+Docker change
+migration import algorithm change
+
+
+21. Files That Would Need Modification
+--------------------------------------
+Do not modify yet, but likely files:
+
+web/pages/migration.js
+libs/api/ApiServer.cpp
+libs/migration/VestaSiteImporter.cpp
+libs/migration/VestaSiteImporter.h
+
+Minimal frontend-only fix:
+
+web/pages/migration.js
+
+Backend enrichment/persistence fix:
+
+libs/api/ApiServer.cpp
+libs/migration/VestaSiteImporter.cpp
+libs/migration/VestaSiteImporter.h
+
+
+22. Confirmation: Production State
+----------------------------------
+No persistent production state was changed during this analysis.
+
+Read-only operations performed:
+
+SQLite SELECT queries
+Docker inspect/ps/volume/network listing
+API GET /api/jobs
+API GET /api/sites
+API GET /api/migration/vesta/backups
+API POST /api/migration/vesta/inspect
+tar listing / metadata inspection
+journal log reads
+document-root listing
+
+The Analyze/inspect call is dry-run and did not change marker, SQLite, Docker, files, or database contents.
+
+
+23. Confirmation: Source Files
+------------------------------
+No source files were changed during the analysis task.
+
+
+24. Git Status At Time Of Analysis
+----------------------------------
+Local repository /opt/containercp:
+
+On branch main
+Your branch is up to date with 'origin/main'.
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	build-db2/
+	build-db3/
+	build-db4/
+
+nothing added to commit but untracked files present (use "git add" to track)
+
+Production repository /opt/containercp was at:
+
+7db13a9cbb349f6c5d82ce342601e835136db0fd
+
+Production working tree had only untracked build directories:
+
+?? build-wp-r7-release/
+?? build-wp-r8-release/
