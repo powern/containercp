@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | SQL Console - add generic launch session foundation
+
+**Summary:** Added the Phase 1 SQL Console domain model with in-memory launch sessions, secure launch ID/secret generation, hashed server-side launch secrets, created/redeemed/expired/revoked states, idle and absolute expiry, explicit revocation, public-safe session serialization, and safe audit event formatting. Added a `DatabaseSqlConsoleService` skeleton without Adminer, API, persistence, proxy, or MariaDB user integration.
+
+**Files changed:** `libs/sqlconsole/*`, `tests/test_sql_console_session.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `docs/development/sql-console.md`, `docs/development/single-source-of-truth.md`, `planning/proposals/ARCH-009-SQLConsoleAuthenticationModel.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No runtime UI/API behavior changed. SQL Console is not exposed yet; this phase only establishes backend session primitives for later phases.
+
+**Validation:** Local build passed. Focused SQL Console doctests passed (`7` cases, `69` assertions). Full doctest suite passed (`884` cases, `6467` assertions). `git diff --check` passed.
+
+**Known risks:** Sessions are in-memory only until Phase 3. No temporary MariaDB users, Adminer runtime, REST API, reverse proxy route, or GUI controls exist yet.
+
+---
+
 ## 2026-07-22 | `this commit` | Planning - approve SQL Console temporary authentication model
 
 **Summary:** Added an approved architecture review addendum comparing temporary per-session MariaDB users with reuse of existing application database users for Adminer / SQL Console authentication. The decision approves temporary MariaDB users for interactive SQL Console sessions and rejects application-user fallback for Adminer.

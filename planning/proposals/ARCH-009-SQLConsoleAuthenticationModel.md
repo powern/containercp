@@ -5,6 +5,12 @@
 **Date:** 2026-07-22
 **Scope:** Design-review addendum for Database GUI + Adminer Integration
 
+**Implementation note:** Phase 1 was implemented as the generic
+SQL Console domain/session foundation only. It adds in-memory launch
+sessions, public-safe serialization, and audit formatting. It does not
+add Adminer, MariaDB temporary users, persistence, API routes, or proxy
+routing.
+
 ---
 
 ## 1. Executive Summary

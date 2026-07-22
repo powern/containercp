@@ -30,6 +30,7 @@ or duplicate the logic.
 | Proxy configuration | `ReverseProxyManager` + `NginxProxyProvider` | SSL, Sites |
 | Database management | `DatabaseManager` (future) | API, CLI |
 | Jobs / async execution | `JobExecutor` (`libs/jobs/`) | SSL issue/renew, runtime actions |
+| SQL Console launch sessions | `SqlConsoleSessionManager` (`libs/sqlconsole/`) | future API, future Adminer provider, future native SQL editor |
 
 ## Examples
 
@@ -50,5 +51,6 @@ only calls the REST API.
 ## Related documents
 
 - `docs/runtime-architecture.md` — runtime subsystem ownership
+- `docs/development/sql-console.md` — SQL Console session ownership and future provider boundary
 - `docs/development/coding-rules.md` — development rules
 - `docs/ADR/` — architecture decisions

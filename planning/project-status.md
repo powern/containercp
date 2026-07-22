@@ -206,6 +206,22 @@
 
 ---
 
+## SQL Console / Adminer Integration
+
+| Phase | Status | Files |
+|------|--------|-------|
+| Phase 1: SQL Console domain and session model | ✅ | `libs/sqlconsole/`, `tests/test_sql_console_session.cpp`, `docs/development/sql-console.md` |
+| Phase 2: Temporary MariaDB user lifecycle | ⬜ | Planned |
+| Phase 3: Persistent session metadata and restart cleanup | ⬜ | Planned |
+| Phase 4: SQL Console public and internal API | ⬜ | Planned |
+| Phase 5: Adminer tool provider and runtime | ⬜ | Planned |
+| Phase 6: Reverse proxy and routing | ⬜ | Planned |
+| Phase 7: Database GUI integration | ⬜ | Planned |
+| Phase 8: Security and integration validation | ⬜ | Planned |
+| Phase 9: Final documentation and completion | ⬜ | Planned |
+
+---
+
 ## DNS Diagnostic Center — ARCH-007
 
 **Status:** COMPLETED (2026-07-16)
