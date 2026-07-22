@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | Web templates - move canonical storage to /srv and harden Apache real-IP apply
+
+**Summary:** Moved the canonical templates root from `/etc/containercp/templates/` to `/srv/containercp/templates/` so UI-managed templates live with ContainerCP service data. Apache apply-template now ensures `mod_remoteip` is loaded for existing Apache sites before restarting the web container, allowing updated Apache templates with `RemoteIPHeader X-Forwarded-For` to work on migrated sites.
+
+**Files changed:** `libs/config/Config.cpp`, `libs/provider/DockerComposeProvider.cpp`, `tests/test_template.cpp`, `docs/TEMPLATES.md`, `docs/ADR/ADR-006-Web-Server-Template-Profiles.md`, `docs/api/API_REFERENCE.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Web templates are managed under `/srv/containercp/templates/web/`. Applying an Apache template to an older site also updates its Apache module-load config with `LoadModule remoteip_module modules/mod_remoteip.so` when missing, so real external client IP logging can be enabled through templates.
+
+**Validation:** Local build passed with `cmake --build build-db5 -j2`. Template/config regression tests passed. Full doctest suite passed (`871` cases, `6203` assertions). Frontend baseline and `git diff --check` passed.
+
+**Known risks:** Existing production profile records and disk templates need one-time data alignment to point at `/srv/containercp/templates/web/`. The daemon intentionally does not overwrite existing user-edited template files on startup.
+
+---
+
 ## 2026-07-22 | `this commit` | API - Accept formatted JSON in template/site actions
 
 **Summary:** Fixed the common API JSON value extractor so routes using primitive values accept standard formatted JSON bodies with whitespace after `:` and quoted string values. This corrects `POST /api/sites/<id>/apply-template` when clients submit `template_id` as a string and prevents `/api/sites/remove` from receiving quote-padded domains from formatted JSON clients.

@@ -7,7 +7,7 @@
 namespace containercp::provider {
 
 static profile::Profile* select_web_profile(profile::ProfileManager& profiles,
-                                            const std::string& web_server_type) {
+                                             const std::string& web_server_type) {
     profile::Profile* fallback = nullptr;
     auto web_profiles = profiles.list_by_type(profile::ProfileType::WEB_SERVER);
     for (auto* candidate : web_profiles) {
@@ -16,6 +16,26 @@ static profile::Profile* select_web_profile(profile::ProfileManager& profiles,
         if (fallback == nullptr) fallback = candidate;
     }
     return fallback;
+}
+
+static void ensure_apache_module_config(filesystem::Filesystem& fs, const std::string& modules_path) {
+    const std::string base_modules =
+        "# Enable proxy, remoteip, and rewrite modules for PHP-FPM + real IP + WordPress permalinks\n"
+        "LoadModule proxy_module modules/mod_proxy.so\n"
+        "LoadModule proxy_fcgi_module modules/mod_proxy_fcgi.so\n"
+        "LoadModule remoteip_module modules/mod_remoteip.so\n"
+        "LoadModule rewrite_module modules/mod_rewrite.so\n";
+
+    if (!fs.exists(modules_path)) {
+        fs.create_file(modules_path, base_modules);
+        return;
+    }
+
+    std::string existing = fs.read_file(modules_path);
+    if (existing.find("remoteip_module") != std::string::npos) return;
+    if (!existing.empty() && existing.back() != '\n') existing += '\n';
+    existing += "LoadModule remoteip_module modules/mod_remoteip.so\n";
+    fs.create_file(modules_path, existing);
 }
 
 DockerComposeProvider::DockerComposeProvider(filesystem::Filesystem& fs, config::Config& cfg,
@@ -175,15 +195,7 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site, core:
     // by writing a module-load config that gets included via IncludeOptional.
     if (web_server_type == "apache") {
         std::string modules_path = site_dir + "config/apache/00-load-modules.conf";
-        if (!fs_.exists(modules_path)) {
-            std::string modules =
-                "# Enable proxy, remoteip, and rewrite modules for PHP-FPM + real IP + WordPress permalinks\n"
-                "LoadModule proxy_module modules/mod_proxy.so\n"
-                "LoadModule proxy_fcgi_module modules/mod_proxy_fcgi.so\n"
-                "LoadModule remoteip_module modules/mod_remoteip.so\n"
-                "LoadModule rewrite_module modules/mod_rewrite.so\n";
-            fs_.create_file(modules_path, modules);
-        }
+        ensure_apache_module_config(fs_, modules_path);
     }
 
     // Validate that the web server config file was actually written
@@ -247,6 +259,10 @@ core::OperationResult DockerComposeProvider::apply_web_template(site::Site& site
 
     std::string rendered = engine.render_web(template_content, site.domain,
         doc_root, "php:9000", log_dir, false);
+
+    if (web_server_type == "apache") {
+        ensure_apache_module_config(fs_, config_dir + "00-load-modules.conf");
+    }
 
     fs_.create_file(config_path, rendered);
 

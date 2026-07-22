@@ -630,7 +630,7 @@ See `docs/development/wordpress-credential-management.md` for supported config f
 | POST | `/api/profiles/<id>` | Update template content, backend, description, or backend default | `ProfileManager` + filesystem |
 | DELETE | `/api/profiles/<id>` | Delete a template profile and disk file | `ProfileManager` + filesystem |
 
-Web server profiles are disk-backed templates under `/etc/containercp/templates/web/`.
+Web server profiles are disk-backed templates under `/srv/containercp/templates/web/`.
 Apache and Nginx defaults are independent: exactly one default is maintained per backend.
 
 ### 2.14 Nodes

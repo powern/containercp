@@ -1,4 +1,5 @@
 #include "profile/ProfileManager.h"
+#include "config/Config.h"
 #include "template/TemplateEngine.h"
 #include "template/web_templates.h"
 
@@ -88,6 +89,22 @@ TEST_CASE("Existing template file is not overwritten") {
     std::string content((std::istreambuf_iterator<char>(f)), {});
     CHECK(content == "CUSTOM_CONTENT");
     std::filesystem::remove_all(tmp_dir);
+}
+
+TEST_CASE("Web templates are stored under ContainerCP data root") {
+    auto& cfg = containercp::config::Config::instance();
+    CHECK(cfg.templates_dir() == "/srv/containercp/templates/");
+    CHECK(cfg.web_templates_dir() == "/srv/containercp/templates/web/");
+}
+
+TEST_CASE("Apache WordPress template preserves authorization and real client IP") {
+    auto templates = containercp::template_engine::default_web_templates();
+    REQUIRE(templates.find("apache-wordpress") != templates.end());
+    const auto& content = templates["apache-wordpress"];
+
+    CHECK(content.find("RemoteIPHeader X-Forwarded-For") != std::string::npos);
+    CHECK(content.find("RemoteIPInternalProxy 172.31.0.0/16") != std::string::npos);
+    CHECK(content.find("HTTP_AUTHORIZATION") != std::string::npos);
 }
 
 TEST_CASE("Default web template produces valid nginx config") {

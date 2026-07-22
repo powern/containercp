@@ -45,7 +45,7 @@ std::string Config::sites_dir() const {
 }
 
 std::string Config::templates_dir() const {
-    return config_root_ + "/templates/";
+    return data_root_ + "/templates/";
 }
 
 std::string Config::users_dir() const {
@@ -57,7 +57,7 @@ std::string Config::proxy_dir() const {
 }
 
 std::string Config::web_templates_dir() const {
-    return config_root_ + "/templates/web/";
+    return templates_dir() + "web/";
 }
 
 std::string Config::server_hostname() const {

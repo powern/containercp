@@ -64,7 +64,7 @@ or `config/apache/default.conf`.
 
 ### Template storage
 
-Templates are stored at `/etc/containercp/templates/web/`.
+Templates are stored at `/srv/containercp/templates/web/`.
 Created automatically if missing.
 
 ## Consequences

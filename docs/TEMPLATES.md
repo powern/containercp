@@ -5,7 +5,7 @@
 Templates are stored on disk at:
 
 ```
-/etc/containercp/templates/web/
+/srv/containercp/templates/web/
 ```
 
 Each template profile has a corresponding file:
@@ -20,7 +20,7 @@ apache-wordpress.conf.template
 
 ## How to edit
 
-1. Find the template file in `/etc/containercp/templates/web/`
+1. Find the template file in `/srv/containercp/templates/web/`
 2. Edit with any text editor
 3. Run `containercp template reload` to apply changes
 4. Run `containercp template validate <name>` to verify
