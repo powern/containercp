@@ -381,3 +381,25 @@ TEST_CASE("SQL Console recovery drops persisted active temporary users and fails
     CHECK(loaded[0].temporary_user_password.empty());
     std::filesystem::remove_all(path.parent_path());
 }
+
+TEST_CASE("SQL Console internal redemption returns temporary credentials only after valid launch secret") {
+    FakeSqlConsoleProvider provider;
+    DatabaseSqlConsoleService service(provider, test_policy());
+    const auto created = service.create_temporary_launch_session(test_provision_request());
+    REQUIRE(created.success);
+
+    const auto invalid = service.redeem_internal_launch_session(created.launch_id, "wrong-secret");
+    CHECK_FALSE(invalid.success);
+    CHECK(invalid.temporary_credential.password.empty());
+
+    const auto redeemed = service.redeem_internal_launch_session(created.launch_id, created.launch_secret);
+    REQUIRE(redeemed.success);
+    CHECK(redeemed.session.status == "redeemed");
+    CHECK(redeemed.temporary_credential.database_name == "app_db");
+    CHECK(redeemed.temporary_credential.user_name == created.temporary_credential.user_name);
+    CHECK(redeemed.temporary_credential.password == created.temporary_credential.password);
+
+    const auto public_json = sql_console_public_session_json(redeemed.session);
+    CHECK(public_json.find(redeemed.temporary_credential.password) == std::string::npos);
+    CHECK(public_json.find(redeemed.temporary_credential.user_name) == std::string::npos);
+}

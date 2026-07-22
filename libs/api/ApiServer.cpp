@@ -5,6 +5,7 @@
 #include "jobs/JobManager.h"
 #include "operations/SiteCreateOperation.h"
 #include "operations/SiteRemoveOperation.h"
+#include "sqlconsole/SqlConsoleAudit.h"
 
 #include "mail/DkimManager.h"
 #include "mail/MailDomain.h"
@@ -166,6 +167,29 @@ static std::string normalize_domain(const std::string& raw) {
     for (auto& c : d) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     while (!d.empty() && d.back() == '.') d.pop_back();
     return d;
+}
+
+static std::string request_header(const Request& req, const std::string& name) {
+    auto it = req.headers.find(name);
+    return it == req.headers.end() ? "" : it->second;
+}
+
+static std::string cookie_value(const Request& req, const std::string& name) {
+    const std::string header = request_header(req, "Cookie");
+    std::istringstream cookies(header);
+    std::string item;
+    while (std::getline(cookies, item, ';')) {
+        item = trim(item);
+        const auto eq = item.find('=');
+        if (eq != std::string::npos && item.substr(0, eq) == name) {
+            return item.substr(eq + 1);
+        }
+    }
+    return {};
+}
+
+static std::string sql_console_cookie(const std::string& secret, int max_age_seconds) {
+    return "ccp_sql_console_secret=" + secret + "; Path=/sql-console; Max-Age=" + std::to_string(max_age_seconds) + "; HttpOnly; Secure; SameSite=Strict";
 }
 
 ApiServer::ApiServer(core::ServiceRegistry& services, int port)
@@ -1090,6 +1114,39 @@ bool ApiServer::start() {
         return r;
     };
 
+    auto sql_console_error = [](int status, const std::string& code, const std::string& message) -> Response {
+        Response r;
+        r.status_code = status;
+        r.body = "{\"success\":false,\"error\":{\"code\":\"" + JsonFormatter::escape(code) +
+                 "\",\"message\":\"" + JsonFormatter::escape(message) + "\"}}";
+        return r;
+    };
+
+    auto sql_console_context = [&s, &sql_console_error](const Request& req,
+                                                        uint64_t database_id,
+                                                        database::Database*& db,
+                                                        site::Site*& site_record,
+                                                        std::filesystem::path& site_root,
+                                                        const auth::Session*& session) -> std::optional<Response> {
+        session = s.auth().validate_session(request_header(req, "X-Session-Token"));
+        if (session == nullptr) {
+            return sql_console_error(401, "unauthorized", "ContainerCP session is required");
+        }
+        db = s.databases().find(database_id);
+        if (db == nullptr) {
+            return sql_console_error(404, "database_not_found", "Database was not found");
+        }
+        site_record = s.sites().find_by_id(db->site_id);
+        if (site_record == nullptr) {
+            return sql_console_error(404, "site_not_found", "Owning site was not found");
+        }
+        if (!db->enabled || db->engine != "mariadb") {
+            return sql_console_error(400, "database_not_eligible", "Database is not eligible for SQL Console");
+        }
+        site_root = std::filesystem::path(s.config().sites_dir()) / site_record->domain;
+        return std::nullopt;
+    };
+
     router_.add("POST", "/api/databases", [&s, &lifecycle_job_response](const Request& req) {
         const auto site_id_text = json_extract(req.body, "site_id");
         uint64_t site_id = 0;
@@ -1107,7 +1164,7 @@ bool ApiServer::start() {
         return lifecycle_job_response(result);
     });
 
-    router_.add_prefix("POST", "/api/databases/", [&s, &lifecycle_job_response, &dump_job_response](const Request& req) {
+    router_.add_prefix("POST", "/api/databases/", [&s, &lifecycle_job_response, &dump_job_response, &sql_console_context, &sql_console_error](const Request& req) {
         Response r;
         const std::string rest = req.path.substr(std::string("/api/databases/").size());
         if (rest == "remove") {
@@ -1182,6 +1239,51 @@ bool ApiServer::start() {
         if (action == "import") {
             return dump_job_response(s.database_dump_jobs().enqueue_import(database_id, json_extract(req.body, "artifact_id"), json_extract(req.body, "confirmation")));
         }
+        if (action == "sql-console/session") {
+            database::Database* db = nullptr;
+            site::Site* site_record = nullptr;
+            std::filesystem::path site_root;
+            const auth::Session* session = nullptr;
+            if (auto error = sql_console_context(req, database_id, db, site_record, site_root, session)) return *error;
+
+            sqlconsole::SqlConsoleSiteProvisionRequest launch;
+            launch.launch.database_id = db->id;
+            launch.launch.site_id = site_record->id;
+            launch.launch.admin_username = session->username;
+            launch.launch.admin_role = session->role;
+            launch.launch.provider = "adminer";
+            launch.site_root = site_root;
+            launch.database_name = db->db_name;
+            const auto created = s.sql_console().create_site_temporary_launch_session(launch);
+            if (!created.success) {
+                sqlconsole::SqlConsoleAuditLogger::log({"launch", "create", "failure", created.code, created.launch_id, database_id, site_record->id, session->username, "adminer", created.session.status, sqlconsole::SqlConsoleAuditEvent::Level::Error});
+                return sql_console_error(400, created.code, created.message);
+            }
+            sqlconsole::SqlConsoleAuditLogger::log({"launch", "create", "success", "", created.launch_id, database_id, site_record->id, session->username, "adminer", created.session.status, sqlconsole::SqlConsoleAuditEvent::Level::Info});
+            Response out;
+            out.status_code = 201;
+            out.headers["Set-Cookie"] = sql_console_cookie(created.launch_secret, 1800);
+            out.body = "{\"success\":true,\"data\":{\"launch_id\":\"" + JsonFormatter::escape(created.launch_id) +
+                       "\",\"launch_url\":\"/sql-console/" + JsonFormatter::escape(created.launch_id) +
+                       "/\",\"session\":" + sqlconsole::sql_console_public_session_json(created.session) + "}}";
+            return out;
+        }
+        if (action == "sql-console/session/revoke") {
+            database::Database* db = nullptr;
+            site::Site* site_record = nullptr;
+            std::filesystem::path site_root;
+            const auth::Session* session = nullptr;
+            if (auto error = sql_console_context(req, database_id, db, site_record, site_root, session)) return *error;
+            const std::string launch_id = json_extract(req.body, "launch_id");
+            if (launch_id.empty()) return sql_console_error(400, "launch_id_required", "SQL Console launch_id is required");
+            const auto revoked = s.sql_console().revoke_site_temporary_launch_session(launch_id, site_root);
+            if (!revoked.success) return sql_console_error(400, revoked.code, revoked.message);
+            sqlconsole::SqlConsoleAuditLogger::log({"launch", "revoke", "success", "", launch_id, database_id, site_record->id, session->username, "adminer", revoked.session.status, sqlconsole::SqlConsoleAuditEvent::Level::Info});
+            Response out;
+            out.headers["Set-Cookie"] = sql_console_cookie("", 0);
+            out.body = "{\"success\":true,\"data\":{\"session\":" + sqlconsole::sql_console_public_session_json(revoked.session) + "}}";
+            return out;
+        }
         if (action == "drop") {
             return lifecycle_job_response(s.database_lifecycle_jobs().enqueue_drop(database_id, json_extract(req.body, "confirmation")));
         }
@@ -1193,8 +1295,29 @@ bool ApiServer::start() {
         return r;
     });
 
-    router_.add_prefix("GET", "/api/databases/", [&s](const Request& req) {
+    router_.add_prefix("GET", "/api/databases/", [&s, &sql_console_context](const Request& req) {
         const std::string rest = req.path.substr(std::string("/api/databases/").size());
+        const auto sql_console_marker = rest.find("/sql-console/session");
+        if (sql_console_marker != std::string::npos && sql_console_marker + std::string("/sql-console/session").size() == rest.size()) {
+            Response r;
+            uint64_t database_id = 0;
+            try { database_id = std::stoull(rest.substr(0, sql_console_marker)); } catch (...) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Database id must be numeric\"}";
+                return r;
+            }
+            database::Database* db = nullptr;
+            site::Site* site_record = nullptr;
+            std::filesystem::path site_root;
+            const auth::Session* session = nullptr;
+            if (auto error = sql_console_context(req, database_id, db, site_record, site_root, session)) return *error;
+            (void)db;
+            (void)site_record;
+            (void)site_root;
+            (void)session;
+            r.body = JsonFormatter::success(sqlconsole::sql_console_public_sessions_json(s.sql_console().list_sessions(database_id)));
+            return r;
+        }
         const auto marker = rest.find("/exports/");
         if (marker == std::string::npos) {
             Response r;
@@ -1282,6 +1405,28 @@ bool ApiServer::start() {
         r.body = std::move(content);
         r.headers["Content-Disposition"] = "attachment; filename=\"" + meta->sanitized_filename + "\"";
         r.headers["X-Content-Type-Options"] = "nosniff";
+        return r;
+    });
+
+    router_.add("POST", "/api/sql-console/internal/redeem", [&s, &sql_console_error](const Request& req) {
+        const std::string supplied_token = request_header(req, "X-ContainerCP-SqlConsole-Internal");
+        if (supplied_token.empty() || supplied_token != s.sql_console().internal_api_token()) {
+            return sql_console_error(403, "internal_token_invalid", "SQL Console internal token is invalid");
+        }
+        const std::string launch_id = json_extract(req.body, "launch_id");
+        const std::string launch_secret = cookie_value(req, "ccp_sql_console_secret");
+        if (launch_id.empty() || launch_secret.empty()) {
+            return sql_console_error(400, "launch_cookie_required", "SQL Console launch id and secret cookie are required");
+        }
+        const auto redeemed = s.sql_console().redeem_internal_launch_session(launch_id, launch_secret);
+        if (!redeemed.success) {
+            return sql_console_error(400, redeemed.code, redeemed.message);
+        }
+        Response r;
+        r.body = "{\"success\":true,\"data\":{\"session\":" + sqlconsole::sql_console_public_session_json(redeemed.session) +
+                 ",\"database_name\":\"" + JsonFormatter::escape(redeemed.temporary_credential.database_name) +
+                 "\",\"database_user\":\"" + JsonFormatter::escape(redeemed.temporary_credential.user_name) +
+                 "\",\"database_password\":\"" + JsonFormatter::escape(redeemed.temporary_credential.password) + "\"}}";
         return r;
     });
 

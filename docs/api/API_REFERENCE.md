@@ -346,6 +346,9 @@ subsystems.
 | POST | `/api/databases/<id>/verify` | Queue non-destructive physical/metadata verification | `DatabaseLifecycleJobService` |
 | POST | `/api/databases/<id>/drop` | Queue destructive physical drop with exact typed confirmation | `DatabaseLifecycleJobService` |
 | POST | `/api/databases/<id>/forget-metadata` | Explicit metadata-only recovery removal | `DatabaseLifecycleJobService` |
+| POST | `/api/databases/<id>/sql-console/session` | Create a short-lived SQL Console launch session | `DatabaseSqlConsoleService` |
+| GET | `/api/databases/<id>/sql-console/session` | List public-safe SQL Console sessions for a database | `DatabaseSqlConsoleService` |
+| POST | `/api/databases/<id>/sql-console/session/revoke` | Revoke a SQL Console launch session and cleanup temporary DB user | `DatabaseSqlConsoleService` |
 | POST | `/api/databases/remove` | Deprecated metadata-only removal by name; never drops physical MariaDB objects | `DatabaseManager` |
 
 **GET /api/databases** — returns DB-1 read-only `DatabaseView` objects. This
@@ -477,6 +480,65 @@ This endpoint requires the same exact typed confirmation as drop, removes only
 the ContainerCP metadata record, emits an audit warning, and never drops physical
 MariaDB database/user/grant objects. It is intended for stale metadata recovery,
 not normal delete.
+
+**POST /api/databases/<id>/sql-console/session** — creates a short-lived SQL
+Console launch session for the selected managed MariaDB database. The request
+must include a valid ContainerCP `X-Session-Token`; requests reaching the public
+WebServer path are already session-gated before proxying to the internal API.
+
+Returns HTTP `201 Created` with public-safe launch metadata only:
+
+```json
+{
+  "success": true,
+  "data": {
+    "launch_id": "0123456789abcdef0123456789abcdef",
+    "launch_url": "/sql-console/0123456789abcdef0123456789abcdef/",
+    "session": {
+      "launch_id": "0123456789abcdef0123456789abcdef",
+      "database_id": 7,
+      "site_id": 3,
+      "provider": "adminer",
+      "status": "created"
+    }
+  }
+}
+```
+
+The launch secret is not returned in JSON. It is sent only as an HTTP response
+cookie named `ccp_sql_console_secret` with `HttpOnly`, `Secure`,
+`SameSite=Strict`, `Path=/sql-console`, and bounded `Max-Age` attributes. The
+API response must not include temporary MariaDB usernames, temporary passwords,
+service-account credentials, database passwords, SQL contents, command output,
+or provider diagnostics.
+
+**GET /api/databases/<id>/sql-console/session** — lists public-safe SQL Console
+session metadata for the database. It requires `X-Session-Token` and returns only
+the same public session fields used by launch responses. Secrets and temporary
+credentials are excluded.
+
+**POST /api/databases/<id>/sql-console/session/revoke** — revokes a SQL Console
+launch session and asks the SQL Console service to drop its temporary MariaDB
+user. Body:
+
+```json
+{
+  "launch_id": "0123456789abcdef0123456789abcdef"
+}
+```
+
+The response clears `ccp_sql_console_secret` with `Max-Age=0` and returns the
+public-safe revoked session. Cleanup failures fail closed and return a bounded
+error code/message without credentials.
+
+**POST /api/sql-console/internal/redeem** — internal provider-only endpoint for
+future SQL Console providers such as Adminer. It requires the process-local
+`X-ContainerCP-SqlConsole-Internal` token and the `HttpOnly` launch-secret
+cookie. This endpoint may return temporary MariaDB credentials to trusted
+server-side provider code only; it must not be called from frontend JavaScript,
+linked in the UI, exposed through generated URLs, or logged. Invalid token,
+missing cookie, expired session, revoked session, or repeated single-use
+redemption fails closed.
 
 **POST /api/databases/<id>/export** — queues a logical SQL export job for the
 selected managed MariaDB application database. Only `ownership_state=managed`,

@@ -54,6 +54,8 @@
 #include "ssl/HTTP01ChallengeProvider.h"
 #include "ssl/RenewalScheduler.h"
 #include "ssl/SslCertificateManager.h"
+#include "sqlconsole/DatabaseSqlConsoleService.h"
+#include "sqlconsole/SqlConsoleSessionStore.h"
 
 #include <memory>
 #include "profile/ProfileManager.h"
@@ -91,6 +93,7 @@ public:
     database::DatabaseDumpService& database_dump();
     database::DatabaseDumpJobService& database_dump_jobs();
     database::DatabaseCredentialRotationJobService& database_credential_rotation_jobs();
+    sqlconsole::DatabaseSqlConsoleService& sql_console();
     backup::BackupManager& backups();
     backup::BackupProvider& backup_provider();
     backup::BackupService& backup_service();
@@ -189,6 +192,7 @@ private:
     database::MariaDBCommandExecutorRunner mariadb_command_runner_;
     database::MariaDBCredentialProvider mariadb_credential_provider_;
     database::MariaDBProvider mariadb_lifecycle_provider_;
+    sqlconsole::SqlConsoleSessionStore sql_console_sessions_;
     wordpress::WordPressConfigUpdater wordpress_config_updater_;
     wordpress::WordPressRuntimeCommandExecutorRunner wordpress_runtime_runner_;
     wordpress::WordPressRuntimeVerifier wordpress_runtime_verifier_;
@@ -208,6 +212,7 @@ private:
     database::DatabaseLifecycleJobService database_lifecycle_jobs_;
     database::DatabaseDumpService database_dump_;
     database::DatabaseDumpJobService database_dump_jobs_;
+    sqlconsole::DatabaseSqlConsoleService sql_console_;
     backup::BackupService backup_service_;
     backup::BackupJobService backup_jobs_;
     database::DatabaseViewService database_view_;

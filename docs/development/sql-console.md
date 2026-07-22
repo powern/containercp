@@ -28,6 +28,12 @@ IDs, status, timestamps, database name, and temporary username only. It
 does not persist launch secrets, secret digests, temporary passwords,
 service-account credentials, SQL content, or provider diagnostics.
 
+Phase 4 added thin REST API endpoints for SQL Console launch/status/revoke
+and a token-guarded internal redeem endpoint for future providers. Public
+launch responses contain only `launch_id`, `launch_url`, and public-safe
+session metadata. The launch secret is delivered only as an `HttpOnly`,
+`Secure`, `SameSite=Strict` cookie scoped to `/sql-console`.
+
 The current implementation still does not expose REST APIs, Adminer
 runtime, reverse proxy routes, or Web UI controls.
 
@@ -125,7 +131,7 @@ Future phases must preserve these boundaries:
 - Phase 2 added temporary MariaDB user lifecycle in the MariaDB provider
   layer.
 - Phase 3 added non-secret persisted metadata and restart cleanup.
-- Phase 4 adds thin REST API handlers.
+- Phase 4 added thin REST API handlers and internal provider redemption.
 - Phase 5 adds Adminer as the first `SqlConsoleProvider`.
 - Phase 6 adds admin-domain reverse proxy routing.
 - Phase 7 adds Database GUI launch and revoke controls.

@@ -42,6 +42,7 @@ ServiceRegistry::ServiceRegistry()
     , mariadb_command_runner_(credential_command_executor_)
     , mariadb_credential_provider_(mariadb_command_runner_)
     , mariadb_lifecycle_provider_(mariadb_command_runner_)
+    , sql_console_sessions_(std::filesystem::path(config_.data_root()) / "sqlconsole" / "sessions.db")
     , wordpress_runtime_runner_(credential_command_executor_)
     , wordpress_runtime_verifier_(wordpress_runtime_runner_)
     , database_credential_rotation_adapter_(
@@ -94,6 +95,7 @@ ServiceRegistry::ServiceRegistry()
     })
     , database_dump_(sites_, databases_, site_runtime_, mariadb_lifecycle_provider_, config_.sites_dir(), std::filesystem::path(config_.data_root()) / "database-artifacts")
     , database_dump_jobs_(databases_, jobs_, job_executor_, database_dump_)
+    , sql_console_(mariadb_lifecycle_provider_, sql_console_sessions_)
     , backup_service_(sites_, databases_, backups_, backup_provider_, database_dump_, runtime_action_executor_, config_.data_root(), config_.sites_dir())
     , backup_jobs_(jobs_, job_executor_, backup_service_, [this]() {
         storage_.save_backups(backups_.list());
@@ -698,6 +700,10 @@ database::DatabaseDumpJobService& ServiceRegistry::database_dump_jobs() {
 
 database::DatabaseCredentialRotationJobService& ServiceRegistry::database_credential_rotation_jobs() {
     return database_credential_rotation_jobs_;
+}
+
+sqlconsole::DatabaseSqlConsoleService& ServiceRegistry::sql_console() {
+    return sql_console_;
 }
 
 backup::BackupManager& ServiceRegistry::backups() {

@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | SQL Console - add launch and internal redeem API
+
+**Summary:** Added Phase 4 SQL Console API integration. The API now exposes authenticated database-scoped launch, status, and revoke endpoints, stores the launch secret only in a `HttpOnly`, `Secure`, `SameSite=Strict` cookie, and adds a token-guarded internal redeem endpoint for future server-side providers. `ServiceRegistry` now owns the SQL Console service and non-secret metadata store.
+
+**Files changed:** `libs/api/ApiServer.cpp`, `libs/core/ServiceRegistry.{h,cpp}`, `libs/sqlconsole/DatabaseSqlConsoleService.{h,cpp}`, `tests/test_api.cpp`, `tests/test_sql_console_session.cpp`, `docs/api/API_REFERENCE.md`, `docs/development/sql-console.md`, `planning/proposals/ARCH-009-SQLConsoleAuthenticationModel.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** API clients with a valid ContainerCP session can create and revoke SQL Console launch sessions, but no Adminer runtime, proxy route, or Web UI launch control exists yet.
+
+**Validation:** Local build passed. Focused SQL Console doctests passed (`15` cases, `144` assertions). Focused SQL Console API doctests passed. Full doctest suite passed (`894` cases, `6577` assertions). `git diff --check` passed.
+
+**Known risks:** The internal redeem endpoint is implemented for future provider integration and is guarded by a process-local token, but Adminer/runtime/proxy integration is still pending. Direct internal API auth remains constrained by the existing ContainerCP API/WebServer auth architecture.
+
+---
+
 ## 2026-07-22 | `this commit` | SQL Console - persist non-secret restart cleanup metadata
 
 **Summary:** Added Phase 3 SQL Console non-secret session metadata persistence and restart cleanup primitives. `SqlConsoleSessionStore` writes launch/session identifiers, status, timestamps, selected database identifiers, database name, and temporary username only. `DatabaseSqlConsoleService` now persists session metadata after lifecycle changes and can recover persisted active sessions by dropping temporary MariaDB users and marking metadata revoked.

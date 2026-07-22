@@ -268,6 +268,43 @@ TEST_CASE("WordPress credential UI uses public endpoints without raw password fi
     CHECK(jobs_js.find("manual_recovery_required") != std::string::npos);
 }
 
+TEST_CASE("SQL Console API launch uses HttpOnly cookie and public-safe response") {
+    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/libs/api/ApiServer.cpp");
+    REQUIRE(in.is_open());
+    std::string source((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    CHECK(source.find("/api/databases/") != std::string::npos);
+    CHECK(source.find("sql-console/session") != std::string::npos);
+    CHECK(source.find("ccp_sql_console_secret") != std::string::npos);
+    CHECK(source.find("HttpOnly; Secure; SameSite=Strict") != std::string::npos);
+    const auto launch_route = source.find("action == \"sql-console/session\"");
+    REQUIRE(launch_route != std::string::npos);
+    const auto revoke_route = source.find("action == \"sql-console/session/revoke\"", launch_route);
+    REQUIRE(revoke_route != std::string::npos);
+    const std::string launch_block = source.substr(launch_route, revoke_route - launch_route);
+    CHECK(launch_block.find("Set-Cookie") != std::string::npos);
+    CHECK(launch_block.find("launch_url") != std::string::npos);
+    const auto body_start = launch_block.find("out.body =");
+    REQUIRE(body_start != std::string::npos);
+    const std::string body_block = launch_block.substr(body_start);
+    CHECK(body_block.find("launch_secret") == std::string::npos);
+    CHECK(body_block.find("database_password") == std::string::npos);
+}
+
+TEST_CASE("SQL Console internal API requires process token before credential response") {
+    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/libs/api/ApiServer.cpp");
+    REQUIRE(in.is_open());
+    std::string source((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    const auto route = source.find("/api/sql-console/internal/redeem");
+    REQUIRE(route != std::string::npos);
+    const std::string block = source.substr(route, 1600);
+    CHECK(block.find("X-ContainerCP-SqlConsole-Internal") != std::string::npos);
+    CHECK(block.find("internal_api_token()") != std::string::npos);
+    CHECK(block.find("cookie_value(req, \"ccp_sql_console_secret\")") != std::string::npos);
+    CHECK(block.find("database_password") != std::string::npos);
+}
+
 TEST_CASE("Database dashboard UI implements DB-2 health workflow without secret surfaces") {
     std::ifstream in(std::string(TEST_SOURCE_DIR) + "/web/pages/databases.js");
     REQUIRE(in.is_open());

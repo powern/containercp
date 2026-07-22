@@ -2,15 +2,32 @@
 
 #include "security/SecureRandom.h"
 
+#include <fstream>
+
 namespace containercp::sqlconsole {
+namespace {
+
+std::string sql_console_env_value(const std::filesystem::path& path, const std::string& key) {
+    std::ifstream in(path);
+    std::string line;
+    while (std::getline(in, line)) {
+        const std::string prefix = key + "=";
+        if (line.rfind(prefix, 0) == 0) return line.substr(prefix.size());
+    }
+    return {};
+}
+
+} // namespace
 
 DatabaseSqlConsoleService::DatabaseSqlConsoleService(SqlConsoleSessionPolicy policy)
-    : sessions_(policy)
+    : internal_api_token_(security::SecureRandom::hex(32).value_or(""))
+    , sessions_(policy)
 {
 }
 
 DatabaseSqlConsoleService::DatabaseSqlConsoleService(const database::DatabaseProvider& provider, SqlConsoleSessionPolicy policy)
     : provider_(&provider)
+    , internal_api_token_(security::SecureRandom::hex(32).value_or(""))
     , sessions_(policy)
 {
 }
@@ -20,6 +37,7 @@ DatabaseSqlConsoleService::DatabaseSqlConsoleService(const database::DatabasePro
                                                      SqlConsoleSessionPolicy policy)
     : provider_(&provider)
     , store_(&store)
+    , internal_api_token_(security::SecureRandom::hex(32).value_or(""))
     , sessions_(policy)
 {
 }
@@ -33,6 +51,17 @@ void DatabaseSqlConsoleService::persist_sessions() const {
     if (store_ != nullptr) {
         (void)store_->save(sessions_.list_internal());
     }
+}
+
+SqlConsoleProvisionRequest DatabaseSqlConsoleService::resolve_site_request(const SqlConsoleSiteProvisionRequest& request) const {
+    SqlConsoleProvisionRequest resolved;
+    resolved.launch = request.launch;
+    resolved.database_name = request.database_name;
+    resolved.target = {(request.site_root / "docker-compose.yml").string(), "mariadb"};
+    resolved.service_account.user = sql_console_env_value(request.site_root / ".env", "CONTAINERCP_DB_SERVICE_USER");
+    resolved.service_account.password = sql_console_env_value(request.site_root / ".env", "CONTAINERCP_DB_SERVICE_PASSWORD");
+    resolved.service_account.host = "localhost";
+    return resolved;
 }
 
 SqlConsoleCreateResult DatabaseSqlConsoleService::create_launch_session(const SqlConsoleCreateRequest& request) {
@@ -108,8 +137,41 @@ SqlConsoleProvisionResult DatabaseSqlConsoleService::create_temporary_launch_ses
     return result;
 }
 
+SqlConsoleProvisionResult DatabaseSqlConsoleService::create_site_temporary_launch_session(const SqlConsoleSiteProvisionRequest& request) {
+    auto resolved = resolve_site_request(request);
+    if (resolved.service_account.user.empty() || resolved.service_account.password.empty()) {
+        SqlConsoleProvisionResult result;
+        result.code = "service_account_unavailable";
+        result.message = "ContainerCP MariaDB service account is unavailable for this site";
+        return result;
+    }
+    return create_temporary_launch_session(resolved);
+}
+
 SqlConsoleOperationResult DatabaseSqlConsoleService::redeem_launch_session(const std::string& launch_id, const std::string& launch_secret) {
-    return sessions_.redeem(launch_id, launch_secret);
+    auto result = sessions_.redeem(launch_id, launch_secret);
+    persist_sessions();
+    return result;
+}
+
+SqlConsoleInternalRedeemResult DatabaseSqlConsoleService::redeem_internal_launch_session(const std::string& launch_id, const std::string& launch_secret) {
+    SqlConsoleInternalRedeemResult result;
+    const auto redeemed = sessions_.redeem(launch_id, launch_secret);
+    persist_sessions();
+    result.success = redeemed.success;
+    result.code = redeemed.code;
+    result.message = redeemed.message;
+    result.session = redeemed.session;
+    if (!redeemed.success) return result;
+    const auto* session = sessions_.find(launch_id);
+    if (session == nullptr || session->temporary_user_name.empty() || session->temporary_user_password.empty()) {
+        result.success = false;
+        result.code = "temporary_credential_unavailable";
+        result.message = "SQL Console temporary database credential is unavailable";
+        return result;
+    }
+    result.temporary_credential = {session->database_name, session->temporary_user_name, session->temporary_user_password};
+    return result;
 }
 
 SqlConsoleOperationResult DatabaseSqlConsoleService::touch_launch_session(const std::string& launch_id, const std::string& launch_secret) {
@@ -147,6 +209,23 @@ SqlConsoleOperationResult DatabaseSqlConsoleService::revoke_temporary_launch_ses
     auto result = sessions_.revoke(request.launch_id);
     persist_sessions();
     return result;
+}
+
+SqlConsoleOperationResult DatabaseSqlConsoleService::revoke_site_temporary_launch_session(const std::string& launch_id, const std::filesystem::path& site_root) {
+    SqlConsoleCleanupRequest cleanup;
+    cleanup.launch_id = launch_id;
+    cleanup.target = {(site_root / "docker-compose.yml").string(), "mariadb"};
+    cleanup.service_account.user = sql_console_env_value(site_root / ".env", "CONTAINERCP_DB_SERVICE_USER");
+    cleanup.service_account.password = sql_console_env_value(site_root / ".env", "CONTAINERCP_DB_SERVICE_PASSWORD");
+    cleanup.service_account.host = "localhost";
+    if (cleanup.service_account.user.empty() || cleanup.service_account.password.empty()) {
+        SqlConsoleOperationResult result;
+        result.success = false;
+        result.code = "service_account_unavailable";
+        result.message = "ContainerCP MariaDB service account is unavailable for this site";
+        return result;
+    }
+    return revoke_temporary_launch_session(cleanup);
 }
 
 std::size_t DatabaseSqlConsoleService::sweep_expired_sessions() {
@@ -202,6 +281,10 @@ SqlConsoleRecoveryResult DatabaseSqlConsoleService::recover_persisted_sessions(c
 
 std::vector<SqlConsolePublicSession> DatabaseSqlConsoleService::list_sessions(uint64_t database_id) {
     return sessions_.list_public(database_id);
+}
+
+const std::string& DatabaseSqlConsoleService::internal_api_token() const {
+    return internal_api_token_;
 }
 
 SqlConsoleSessionManager& DatabaseSqlConsoleService::sessions() {

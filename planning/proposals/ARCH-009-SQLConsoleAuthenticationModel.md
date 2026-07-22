@@ -25,6 +25,13 @@ sessions fail closed: recovery drops known temporary users through the
 MariaDB provider and marks the metadata revoked instead of restoring a
 browser-usable launch session.
 
+**Phase 4 implementation note:** SQL Console launch/status/revoke REST
+endpoints have been added under the database API. Launch responses expose
+only public-safe metadata; the launch secret is delivered through a
+server-only `HttpOnly`, `Secure`, `SameSite=Strict` cookie. Internal
+provider redemption is guarded by a process-local token and the launch
+secret cookie, and is reserved for trusted server-side provider code.
+
 ---
 
 ## 1. Executive Summary
