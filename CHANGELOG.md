@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | Planning - approve SQL Console temporary authentication model
+
+**Summary:** Added an approved architecture review addendum comparing temporary per-session MariaDB users with reuse of existing application database users for Adminer / SQL Console authentication. The decision approves temporary MariaDB users for interactive SQL Console sessions and rejects application-user fallback for Adminer.
+
+**Files changed:** `planning/proposals/ARCH-009-SQLConsoleAuthenticationModel.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No runtime behavior changed. The document defines the approved implementation direction for future SQL Console work.
+
+**Validation:** Documentation review only. Checked proposal placement and current proposal numbering; no code was changed or built.
+
+**Known risks:** Implementation is not started. Future work must still validate temporary user cleanup, proxy routing, credential redaction, and production launch/revoke behavior.
+
+---
+
 ## 2026-07-22 | `this commit` | Install - ensure Argon2 dependency in standard setup
 
 **Summary:** Added `libargon2-dev` to the standard installer dependency list and kept the updater dependency list aligned so Debian/Ubuntu apt-based installs build the Argon2id password hasher automatically. Cleaned up the Argon2-enabled `PasswordHasher.cpp` build by compiling PBKDF2-only helper functions only for the fallback backend.
