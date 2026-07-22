@@ -53,6 +53,11 @@ public:
     SqlConsoleOperationResult redeem(const std::string& launch_id, const std::string& launch_secret);
     SqlConsoleOperationResult touch(const std::string& launch_id, const std::string& launch_secret);
     SqlConsoleOperationResult revoke(const std::string& launch_id);
+    SqlConsoleOperationResult attach_temporary_database_user(const std::string& launch_id,
+                                                             const std::string& database_name,
+                                                             const std::string& user_name,
+                                                             const std::string& password);
+    SqlConsoleOperationResult clear_temporary_database_user(const std::string& launch_id);
     std::size_t sweep_expired();
     std::vector<SqlConsolePublicSession> list_public(uint64_t database_id = 0);
     void set_clock_for_tests(Clock clock);

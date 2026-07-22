@@ -368,7 +368,54 @@ DatabaseProviderResult MariaDBProvider::grant_database_privileges(const MariaDBC
                        credential,
                        "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES ON " +
                             DatabaseIdentifierValidator::quote_identifier(database_name) + ".* TO " + quote_user(user_name) + ";\n",
-                       "privileges_granted");
+                        "privileges_granted");
+}
+
+DatabaseProviderResult MariaDBProvider::create_temporary_sql_console_user(const MariaDBConnectionTarget& target,
+                                                                          const DatabaseProviderCredential& credential,
+                                                                          const std::string& database_name,
+                                                                          const std::string& user_name,
+                                                                          const std::string& password) const {
+    const auto db_validation = DatabaseIdentifierValidator::validate_database_name(database_name);
+    const auto user_validation = DatabaseIdentifierValidator::validate_user_name(user_name);
+    if (!db_validation.valid) return provider_failure(db_validation.code, db_validation.message);
+    if (!user_validation.valid) return provider_failure(user_validation.code, user_validation.message);
+    if (!password_supported(password)) return provider_failure("password_invalid", "Generated SQL Console password is unsupported");
+
+    const std::string identity = quote_user(user_name);
+    const auto create_result = execute_sql(target,
+                                           credential,
+                                           "CREATE USER " + identity + " IDENTIFIED BY " + mariadb_quote_sql_string(password) + ";\n",
+                                           "temporary_sql_console_user_created");
+    if (!create_result.success) {
+        return create_result;
+    }
+
+    const auto grant_result = execute_sql(target,
+                                          credential,
+                                          "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES, REFERENCES, CREATE VIEW, SHOW VIEW, TRIGGER, EVENT ON " +
+                                              DatabaseIdentifierValidator::quote_identifier(database_name) + ".* TO " + identity + ";\n",
+                                          "temporary_sql_console_privileges_granted");
+    if (!grant_result.success) {
+        (void)drop_temporary_sql_console_user(target, credential, database_name, user_name);
+        return grant_result;
+    }
+    return provider_success("temporary_sql_console_user_ready", "Temporary SQL Console user created");
+}
+
+DatabaseProviderResult MariaDBProvider::drop_temporary_sql_console_user(const MariaDBConnectionTarget& target,
+                                                                        const DatabaseProviderCredential& credential,
+                                                                        const std::string& database_name,
+                                                                        const std::string& user_name) const {
+    const auto db_validation = DatabaseIdentifierValidator::validate_database_name(database_name);
+    const auto user_validation = DatabaseIdentifierValidator::validate_user_name(user_name);
+    if (!db_validation.valid) return provider_failure(db_validation.code, db_validation.message);
+    if (!user_validation.valid) return provider_failure(user_validation.code, user_validation.message);
+
+    return execute_sql(target,
+                       credential,
+                       "DROP USER IF EXISTS " + quote_user(user_name) + ";\n",
+                       "temporary_sql_console_user_dropped");
 }
 
 DatabaseProviderResult MariaDBProvider::revoke_database_privileges(const MariaDBConnectionTarget& target,

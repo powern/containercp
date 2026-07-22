@@ -7,9 +7,9 @@ sessions. It is intentionally named around SQL Console, not Adminer,
 because Adminer is only the first planned provider and must remain
 replaceable by a future native SQL editor.
 
-## Phase 1 Status
+## Current Status
 
-Phase 1 implements only the generic in-memory session foundation:
+Phase 1 implemented the generic in-memory session foundation:
 
 - `SqlConsoleSession`
 - `SqlConsoleSessionManager`
@@ -17,8 +17,14 @@ Phase 1 implements only the generic in-memory session foundation:
 - `SqlConsoleAuditEvent`
 - `SqlConsoleAuditLogger`
 
-Phase 1 does not implement REST APIs, Adminer runtime, reverse proxy
-routes, persistent session metadata, or temporary MariaDB users.
+Phase 2 added temporary MariaDB user lifecycle support for SQL Console
+launch sessions. The database provider owns the MariaDB user/grant/drop
+operations, while `DatabaseSqlConsoleService` coordinates session
+creation, temporary user provisioning, and explicit revoke cleanup.
+
+The current implementation still does not expose REST APIs, Adminer
+runtime, reverse proxy routes, persistent session metadata, or Web UI
+controls.
 
 ## Ownership
 
@@ -29,6 +35,7 @@ routes, persistent session metadata, or temporary MariaDB users.
 | SQL Console audit event formatting | `libs/sqlconsole/SqlConsoleAuditLogger` |
 | Database lifecycle operations | `libs/database/DatabaseLifecycleService` |
 | MariaDB operations | `libs/database/MariaDBProvider` |
+| SQL Console temporary MariaDB users | `libs/database/MariaDBProvider` |
 | ContainerCP admin authentication | `libs/auth/AuthService` |
 
 SQL Console must not duplicate database lifecycle, dump/import,
@@ -52,6 +59,12 @@ Each launch session has:
 The launch secret is returned only at creation time for future
 server-only cookie transport. Public serialization never includes the
 secret or its digest.
+
+Temporary MariaDB usernames are generated as `ccp_sql_<launch-prefix>`
+and are scoped to the selected database. Temporary passwords are
+generated with `SecureRandom`, stored only in the in-memory server-side
+session, and cleared from the session after successful explicit cleanup.
+They must never be serialized to frontend JSON or logs.
 
 ## Expiry Rules
 
@@ -78,7 +91,7 @@ diagnostics.
 
 Future phases must preserve these boundaries:
 
-- Phase 2 adds temporary MariaDB user lifecycle in the MariaDB provider
+- Phase 2 added temporary MariaDB user lifecycle in the MariaDB provider
   layer.
 - Phase 3 persists only non-secret session metadata.
 - Phase 4 adds thin REST API handlers.

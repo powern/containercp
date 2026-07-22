@@ -31,6 +31,7 @@ or duplicate the logic.
 | Database management | `DatabaseManager` (future) | API, CLI |
 | Jobs / async execution | `JobExecutor` (`libs/jobs/`) | SSL issue/renew, runtime actions |
 | SQL Console launch sessions | `SqlConsoleSessionManager` (`libs/sqlconsole/`) | future API, future Adminer provider, future native SQL editor |
+| SQL Console temporary MariaDB users | `MariaDBProvider` (`libs/database/`) | `DatabaseSqlConsoleService` |
 
 ## Examples
 

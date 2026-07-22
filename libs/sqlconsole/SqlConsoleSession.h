@@ -23,6 +23,9 @@ struct SqlConsoleSession {
     std::string admin_username;
     std::string admin_role;
     std::string provider = "adminer";
+    std::string database_name;
+    std::string temporary_user_name;
+    std::string temporary_user_password;
     SqlConsoleSessionStatus status = SqlConsoleSessionStatus::Created;
     std::chrono::system_clock::time_point created_at{};
     std::chrono::system_clock::time_point expires_at{};

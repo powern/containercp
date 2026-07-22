@@ -43,13 +43,22 @@ public:
                                                          const std::string& user_name,
                                                          const std::string& password) const = 0;
     virtual DatabaseProviderResult grant_database_privileges(const MariaDBConnectionTarget& target,
-                                                             const DatabaseProviderCredential& credential,
-                                                             const std::string& database_name,
-                                                             const std::string& user_name) const = 0;
-    virtual DatabaseProviderResult revoke_database_privileges(const MariaDBConnectionTarget& target,
                                                               const DatabaseProviderCredential& credential,
                                                               const std::string& database_name,
                                                               const std::string& user_name) const = 0;
+    virtual DatabaseProviderResult create_temporary_sql_console_user(const MariaDBConnectionTarget& target,
+                                                                     const DatabaseProviderCredential& credential,
+                                                                     const std::string& database_name,
+                                                                     const std::string& user_name,
+                                                                     const std::string& password) const = 0;
+    virtual DatabaseProviderResult drop_temporary_sql_console_user(const MariaDBConnectionTarget& target,
+                                                                   const DatabaseProviderCredential& credential,
+                                                                   const std::string& database_name,
+                                                                   const std::string& user_name) const = 0;
+    virtual DatabaseProviderResult revoke_database_privileges(const MariaDBConnectionTarget& target,
+                                                               const DatabaseProviderCredential& credential,
+                                                               const std::string& database_name,
+                                                               const std::string& user_name) const = 0;
     virtual DatabaseProviderResult drop_database(const MariaDBConnectionTarget& target,
                                                  const DatabaseProviderCredential& credential,
                                                  const std::string& database_name) const = 0;

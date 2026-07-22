@@ -203,6 +203,36 @@ SqlConsoleOperationResult SqlConsoleSessionManager::revoke(const std::string& la
     return success("revoked", "SQL Console launch session revoked", session);
 }
 
+SqlConsoleOperationResult SqlConsoleSessionManager::attach_temporary_database_user(const std::string& launch_id,
+                                                                                   const std::string& database_name,
+                                                                                   const std::string& user_name,
+                                                                                   const std::string& password) {
+    auto it = sessions_.find(launch_id);
+    if (it == sessions_.end()) return failure("session_not_found", "SQL Console launch session was not found");
+    auto& session = it->second;
+    expire_if_needed(session, clock_());
+    if (session.status != SqlConsoleSessionStatus::Created) {
+        return failure("session_not_attachable", "SQL Console launch session cannot accept database credentials", &session);
+    }
+    if (database_name.empty() || user_name.empty() || password.empty()) {
+        return failure("temporary_user_invalid", "SQL Console temporary database credential is incomplete", &session);
+    }
+    session.database_name = database_name;
+    session.temporary_user_name = user_name;
+    session.temporary_user_password = password;
+    return success("temporary_user_attached", "SQL Console temporary database credential attached", session);
+}
+
+SqlConsoleOperationResult SqlConsoleSessionManager::clear_temporary_database_user(const std::string& launch_id) {
+    auto it = sessions_.find(launch_id);
+    if (it == sessions_.end()) return failure("session_not_found", "SQL Console launch session was not found");
+    auto& session = it->second;
+    session.database_name.clear();
+    session.temporary_user_name.clear();
+    session.temporary_user_password.clear();
+    return success("temporary_user_cleared", "SQL Console temporary database credential cleared", session);
+}
+
 std::size_t SqlConsoleSessionManager::sweep_expired() {
     const auto now = clock_();
     std::size_t count = 0;

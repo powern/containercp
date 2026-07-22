@@ -30,13 +30,22 @@ public:
                                                  const std::string& user_name,
                                                  const std::string& password) const override;
     DatabaseProviderResult grant_database_privileges(const MariaDBConnectionTarget& target,
-                                                     const DatabaseProviderCredential& credential,
-                                                     const std::string& database_name,
-                                                     const std::string& user_name) const override;
-    DatabaseProviderResult revoke_database_privileges(const MariaDBConnectionTarget& target,
                                                       const DatabaseProviderCredential& credential,
                                                       const std::string& database_name,
                                                       const std::string& user_name) const override;
+    DatabaseProviderResult create_temporary_sql_console_user(const MariaDBConnectionTarget& target,
+                                                             const DatabaseProviderCredential& credential,
+                                                             const std::string& database_name,
+                                                             const std::string& user_name,
+                                                             const std::string& password) const override;
+    DatabaseProviderResult drop_temporary_sql_console_user(const MariaDBConnectionTarget& target,
+                                                           const DatabaseProviderCredential& credential,
+                                                           const std::string& database_name,
+                                                           const std::string& user_name) const override;
+    DatabaseProviderResult revoke_database_privileges(const MariaDBConnectionTarget& target,
+                                                       const DatabaseProviderCredential& credential,
+                                                       const std::string& database_name,
+                                                       const std::string& user_name) const override;
     DatabaseProviderResult drop_database(const MariaDBConnectionTarget& target,
                                          const DatabaseProviderCredential& credential,
                                          const std::string& database_name) const override;

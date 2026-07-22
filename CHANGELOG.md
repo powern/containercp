@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | SQL Console - add temporary MariaDB user lifecycle
+
+**Summary:** Added Phase 2 SQL Console temporary MariaDB user support. `DatabaseProvider` and `MariaDBProvider` now expose provider-owned methods to create and drop per-session SQL Console users with selected-database grants. `DatabaseSqlConsoleService` can provision launch sessions with server-side temporary credentials and drop/clear them during explicit revoke cleanup.
+
+**Files changed:** `libs/database/DatabaseProvider.h`, `libs/database/MariaDBProvider.{h,cpp}`, `libs/sqlconsole/*`, `tests/test_sql_console_session.cpp`, `tests/test_database_lifecycle.cpp`, `tests/test_database_dump_service.cpp`, `docs/development/sql-console.md`, `docs/development/single-source-of-truth.md`, `planning/proposals/ARCH-009-SQLConsoleAuthenticationModel.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No runtime UI/API behavior changed. SQL Console is still not exposed; this phase only enables backend-owned temporary database credentials for later Adminer/API phases.
+
+**Validation:** Local build passed. Focused SQL Console doctests passed (`10` cases, `94` assertions). Deterministic temporary MariaDB provider doctests passed. Full doctest suite passed (`889` cases, `6527` assertions). `git diff --check` passed.
+
+**Known risks:** Session metadata remains in-memory until Phase 3. Expired-session temporary user cleanup still requires the later persistent cleanup/reconciliation phase; explicit revoke cleanup is implemented.
+
+---
+
 ## 2026-07-22 | `this commit` | SQL Console - add generic launch session foundation
 
 **Summary:** Added the Phase 1 SQL Console domain model with in-memory launch sessions, secure launch ID/secret generation, hashed server-side launch secrets, created/redeemed/expired/revoked states, idle and absolute expiry, explicit revocation, public-safe session serialization, and safe audit event formatting. Added a `DatabaseSqlConsoleService` skeleton without Adminer, API, persistence, proxy, or MariaDB user integration.

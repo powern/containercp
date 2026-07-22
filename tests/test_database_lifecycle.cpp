@@ -73,6 +73,8 @@ public:
     mutable bool create_database_called = false;
     mutable bool create_user_called = false;
     mutable bool grant_called = false;
+    mutable bool temporary_user_created = false;
+    mutable bool temporary_user_dropped = false;
     mutable bool drop_database_called = false;
     mutable bool drop_user_called = false;
 
@@ -90,6 +92,8 @@ public:
     database::DatabaseProviderResult create_database(const database::MariaDBConnectionTarget&, const database::DatabaseProviderCredential&, const std::string&) const override { create_database_called = true; return ok("database_created"); }
     database::DatabaseProviderResult create_or_update_user(const database::MariaDBConnectionTarget&, const database::DatabaseProviderCredential&, const std::string&, const std::string&) const override { create_user_called = true; return fail_create_user ? no("user_create_failed") : ok("user_created_or_updated"); }
     database::DatabaseProviderResult grant_database_privileges(const database::MariaDBConnectionTarget&, const database::DatabaseProviderCredential&, const std::string&, const std::string&) const override { grant_called = true; return fail_grant ? no("grant_failed") : ok("privileges_granted"); }
+    database::DatabaseProviderResult create_temporary_sql_console_user(const database::MariaDBConnectionTarget&, const database::DatabaseProviderCredential&, const std::string&, const std::string&, const std::string&) const override { temporary_user_created = true; return ok("temporary_sql_console_user_ready"); }
+    database::DatabaseProviderResult drop_temporary_sql_console_user(const database::MariaDBConnectionTarget&, const database::DatabaseProviderCredential&, const std::string&, const std::string&) const override { temporary_user_dropped = true; return ok("temporary_sql_console_user_dropped"); }
     database::DatabaseProviderResult revoke_database_privileges(const database::MariaDBConnectionTarget&, const database::DatabaseProviderCredential&, const std::string&, const std::string&) const override { return fail_revoke ? no("revoke_failed") : ok("privileges_revoked"); }
     database::DatabaseProviderResult drop_database(const database::MariaDBConnectionTarget&, const database::DatabaseProviderCredential&, const std::string&) const override { drop_database_called = true; return fail_drop_database ? no("drop_database_failed") : ok("database_dropped"); }
     database::DatabaseProviderResult drop_user(const database::MariaDBConnectionTarget&, const database::DatabaseProviderCredential&, const std::string&) const override { drop_user_called = true; return fail_drop_user ? no("drop_user_failed") : ok("user_dropped"); }
@@ -184,6 +188,44 @@ TEST_CASE("MariaDB provider uses argument vectors without password or shell exec
     }
     CHECK(argv_contains(runner.commands[1].args, "mariadb"));
     CHECK_FALSE(runner.commands[1].stdin_file.empty());
+}
+
+TEST_CASE("MariaDB provider provisions temporary SQL Console user with scoped grants and no argv secrets") {
+    CapturingRunner runner;
+    database::MariaDBProvider provider(runner);
+    const auto result = provider.create_temporary_sql_console_user({"/srv/sites/example/docker-compose.yml", "mariadb"},
+                                                                   {"containercp_service", "admin_secret", "localhost"},
+                                                                   "app_db",
+                                                                   "ccp_sql_0123456789abcdef01234567",
+                                                                   "generated_console_secret");
+
+    CHECK(result.success);
+    REQUIRE(runner.commands.size() == 6);
+    for (const auto& command : runner.commands) {
+        CHECK_FALSE(argv_contains(command.args, "admin_secret"));
+        CHECK_FALSE(argv_contains(command.args, "generated_console_secret"));
+        CHECK_FALSE(argv_contains(command.args, "sh"));
+        CHECK_FALSE(argv_contains(command.args, "bash"));
+    }
+    CHECK(runner.commands[1].stdin_content.find("CREATE USER 'ccp_sql_0123456789abcdef01234567'@'%'") != std::string::npos);
+    CHECK(runner.commands[1].stdin_content.find("IDENTIFIED BY 'generated_console_secret'") != std::string::npos);
+    CHECK(runner.commands[4].stdin_content.find("GRANT SELECT, INSERT, UPDATE, DELETE") != std::string::npos);
+    CHECK(runner.commands[4].stdin_content.find(" ON `app_db`.* TO 'ccp_sql_0123456789abcdef01234567'@'%'") != std::string::npos);
+    CHECK(runner.commands[4].stdin_content.find("GRANT OPTION") == std::string::npos);
+}
+
+TEST_CASE("MariaDB provider drops temporary SQL Console user by generated identity") {
+    CapturingRunner runner;
+    database::MariaDBProvider provider(runner);
+    const auto result = provider.drop_temporary_sql_console_user({"/srv/sites/example/docker-compose.yml", "mariadb"},
+                                                                 {"containercp_service", "admin_secret", "localhost"},
+                                                                 "app_db",
+                                                                 "ccp_sql_0123456789abcdef01234567");
+
+    CHECK(result.success);
+    REQUIRE(runner.commands.size() == 3);
+    CHECK(runner.commands[1].stdin_content.find("DROP USER IF EXISTS 'ccp_sql_0123456789abcdef01234567'@'%'") != std::string::npos);
+    CHECK_FALSE(argv_contains(runner.commands[1].args, "admin_secret"));
 }
 
 TEST_CASE("MariaDB service-account option file escapes option syntax characters") {

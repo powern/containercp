@@ -30,6 +30,56 @@ SqlConsoleCreateRequest test_request() {
     return request;
 }
 
+class FakeSqlConsoleProvider : public containercp::database::DatabaseProvider {
+public:
+    bool fail_create_temporary = false;
+    bool fail_drop_temporary = false;
+    mutable bool temporary_created = false;
+    mutable bool temporary_dropped = false;
+    mutable std::string created_database;
+    mutable std::string created_user;
+    mutable std::string created_password;
+    mutable std::string dropped_user;
+
+    containercp::database::DatabaseProviderResult ok(std::string code = "ok") const { return {true, code, "ok", {}}; }
+    containercp::database::DatabaseProviderResult no(std::string code = "failed") const { return {false, code, "safe failure", {}}; }
+
+    containercp::database::DatabaseProviderResult verify_service_account(const containercp::database::MariaDBConnectionTarget&, const containercp::database::DatabaseProviderCredential&) const override { return ok(); }
+    containercp::database::DatabaseProviderResult database_exists(const containercp::database::MariaDBConnectionTarget&, const containercp::database::DatabaseProviderCredential&, const std::string&) const override { return ok(); }
+    containercp::database::DatabaseProviderResult user_exists(const containercp::database::MariaDBConnectionTarget&, const containercp::database::DatabaseProviderCredential&, const std::string&) const override { return ok(); }
+    containercp::database::DatabaseProviderResult user_schema_grant_count(const containercp::database::MariaDBConnectionTarget&, const containercp::database::DatabaseProviderCredential&, const std::string&) const override { return ok(); }
+    containercp::database::DatabaseProviderResult create_database(const containercp::database::MariaDBConnectionTarget&, const containercp::database::DatabaseProviderCredential&, const std::string&) const override { return ok(); }
+    containercp::database::DatabaseProviderResult create_or_update_user(const containercp::database::MariaDBConnectionTarget&, const containercp::database::DatabaseProviderCredential&, const std::string&, const std::string&) const override { return ok(); }
+    containercp::database::DatabaseProviderResult grant_database_privileges(const containercp::database::MariaDBConnectionTarget&, const containercp::database::DatabaseProviderCredential&, const std::string&, const std::string&) const override { return ok(); }
+    containercp::database::DatabaseProviderResult create_temporary_sql_console_user(const containercp::database::MariaDBConnectionTarget&, const containercp::database::DatabaseProviderCredential&, const std::string& database_name, const std::string& user_name, const std::string& password) const override {
+        temporary_created = true;
+        created_database = database_name;
+        created_user = user_name;
+        created_password = password;
+        return fail_create_temporary ? no("temporary_create_failed") : ok("temporary_sql_console_user_ready");
+    }
+    containercp::database::DatabaseProviderResult drop_temporary_sql_console_user(const containercp::database::MariaDBConnectionTarget&, const containercp::database::DatabaseProviderCredential&, const std::string&, const std::string& user_name) const override {
+        temporary_dropped = true;
+        dropped_user = user_name;
+        return fail_drop_temporary ? no("temporary_drop_failed") : ok("temporary_sql_console_user_dropped");
+    }
+    containercp::database::DatabaseProviderResult revoke_database_privileges(const containercp::database::MariaDBConnectionTarget&, const containercp::database::DatabaseProviderCredential&, const std::string&, const std::string&) const override { return ok(); }
+    containercp::database::DatabaseProviderResult drop_database(const containercp::database::MariaDBConnectionTarget&, const containercp::database::DatabaseProviderCredential&, const std::string&) const override { return ok(); }
+    containercp::database::DatabaseProviderResult drop_user(const containercp::database::MariaDBConnectionTarget&, const containercp::database::DatabaseProviderCredential&, const std::string&) const override { return ok(); }
+    containercp::database::DatabaseProviderResult verify_login(const containercp::database::MariaDBConnectionTarget&, const std::string&, const std::string&, const std::string&) const override { return ok(); }
+    containercp::database::DatabaseProviderResult export_database(const containercp::database::MariaDBConnectionTarget&, const std::string&, const std::string&, const std::string&, const std::string&) const override { return ok(); }
+    containercp::database::DatabaseProviderResult import_sql_file(const containercp::database::MariaDBConnectionTarget&, const std::string&, const std::string&, const std::string&, const std::string&) const override { return ok(); }
+};
+
+SqlConsoleProvisionRequest test_provision_request() {
+    SqlConsoleProvisionRequest request;
+    request.launch = test_request();
+    request.target = {"/srv/containercp/sites/example.test/docker-compose.yml", "mariadb"};
+    request.service_account = {"containercp_service", "service-secret", "localhost"};
+    request.database_name = "app_db";
+    return request;
+}
+
 } // namespace
 
 TEST_CASE("SQL Console session creation returns only public session plus one-time secret") {
@@ -206,4 +256,63 @@ TEST_CASE("SQL Console audit format redacts sensitive fragments") {
     CHECK(formatted.find("credential=<redacted>") != std::string::npos);
     CHECK(formatted.find("<redacted>") != std::string::npos);
     CHECK(formatted.find("\n") == std::string::npos);
+}
+
+TEST_CASE("SQL Console provisioned launch creates temporary database user without public leakage") {
+    FakeSqlConsoleProvider provider;
+    DatabaseSqlConsoleService service(provider, test_policy());
+
+    const auto created = service.create_temporary_launch_session(test_provision_request());
+
+    REQUIRE(created.success);
+    CHECK(provider.temporary_created);
+    CHECK(provider.created_database == "app_db");
+    CHECK(provider.created_user == created.temporary_credential.user_name);
+    CHECK(provider.created_user.rfind("ccp_sql_", 0) == 0);
+    CHECK(provider.created_user.size() == 32);
+    CHECK(provider.created_password == created.temporary_credential.password);
+    CHECK(created.temporary_credential.password.size() == 64);
+
+    const auto json = sql_console_public_session_json(created.session);
+    CHECK(json.find(created.temporary_credential.user_name) == std::string::npos);
+    CHECK(json.find(created.temporary_credential.password) == std::string::npos);
+    CHECK(json.find("temporary") == std::string::npos);
+    CHECK(json.find("password") == std::string::npos);
+}
+
+TEST_CASE("SQL Console provisioned revoke drops temporary database user before revoking") {
+    FakeSqlConsoleProvider provider;
+    DatabaseSqlConsoleService service(provider, test_policy());
+    const auto created = service.create_temporary_launch_session(test_provision_request());
+    REQUIRE(created.success);
+
+    SqlConsoleCleanupRequest cleanup;
+    cleanup.launch_id = created.launch_id;
+    cleanup.target = test_provision_request().target;
+    cleanup.service_account = test_provision_request().service_account;
+    const auto revoked = service.revoke_temporary_launch_session(cleanup);
+
+    REQUIRE(revoked.success);
+    CHECK(revoked.session.status == "revoked");
+    CHECK(provider.temporary_dropped);
+    CHECK(provider.dropped_user == created.temporary_credential.user_name);
+    const auto* internal = service.sessions().find(created.launch_id);
+    REQUIRE(internal != nullptr);
+    CHECK(internal->temporary_user_name.empty());
+    CHECK(internal->temporary_user_password.empty());
+}
+
+TEST_CASE("SQL Console temporary user creation failure fails closed") {
+    FakeSqlConsoleProvider provider;
+    provider.fail_create_temporary = true;
+    DatabaseSqlConsoleService service(provider, test_policy());
+
+    const auto created = service.create_temporary_launch_session(test_provision_request());
+
+    CHECK_FALSE(created.success);
+    CHECK(created.code == "temporary_create_failed");
+    CHECK(created.launch_secret.empty());
+    const auto* internal = service.sessions().find(created.launch_id);
+    REQUIRE(internal != nullptr);
+    CHECK(internal->status == SqlConsoleSessionStatus::Revoked);
 }

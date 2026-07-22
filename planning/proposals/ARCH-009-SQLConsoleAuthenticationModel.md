@@ -11,6 +11,12 @@ sessions, public-safe serialization, and audit formatting. It does not
 add Adminer, MariaDB temporary users, persistence, API routes, or proxy
 routing.
 
+**Phase 2 implementation note:** Temporary MariaDB user lifecycle has
+been added in the MariaDB provider layer. SQL Console launch sessions can
+now provision a per-session MariaDB user with database-scoped grants and
+drop it during explicit revoke cleanup. Temporary credentials remain
+server-side and are excluded from public serialization.
+
 ---
 
 ## 1. Executive Summary
