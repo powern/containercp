@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | Migration - Preserve WordPress URLs during Vesta import
+
+**Summary:** Removed automatic WordPress `siteurl`/`home` URL normalization from Vesta SQL import so migrated Sites preserve source URLs and can remain portable back to myVestaCP. The importer now only updates database credentials and inserts the trusted proxy HTTPS detection block before WordPress bootstrap.
+
+**Files changed:** `libs/migration/VestaSiteImporter.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Vesta migrations no longer rewrite WordPress canonical URLs in SQL. HTTPS behind ContainerCP is handled by reverse-proxy headers and an early `wp-config.php` trusted proxy block instead of changing Site content.
+
+**Validation:** Local build passed with `cmake --build build-db5 -j2`. Migration-focused doctests passed (`39` cases, `254` assertions). SSL-focused doctests passed (`19` cases, `100` assertions). Proxy-focused doctests passed (`6` cases, `48` assertions). Frontend syntax passed for `web/pages/migration.js`; `git diff --check` and frontend baseline check passed.
+
+**Known risks:** Sites with hard-coded HTTP asset URLs in content remain unchanged by design. Operators can choose whether to rewrite content separately, outside the migration importer.
+
+---
+
 ## 2026-07-22 | `this commit` | Migration - Fix completed state display
 
 **Summary:** Updated the migration GUI to refresh and display completed marker state after one-click jobs, and removed the misleading `Configure Mail` migration job step because mail domains/mailboxes are not migrated automatically.
