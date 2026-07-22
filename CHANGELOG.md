@@ -14,7 +14,7 @@ Format: date | commit | summary
 
 **User-visible behavior:** Migrated WordPress Sites without SSL now stay on `http://<domain>` instead of preserving imported HTTPS URLs that redirect users to an HTTPS vhost ContainerCP has not generated yet.
 
-**Validation:** Local build passed with `cmake --build build-db5 -j2`. Migration-focused doctests passed (`39` cases, `254` assertions). Frontend syntax passed for `web/pages/migration.js`; `git diff --check` and frontend baseline check passed. Production revalidation is pending deployment.
+**Validation:** Local build passed with `cmake --build build-db5 -j2`. Migration-focused doctests passed (`39` cases, `254` assertions). Frontend syntax passed for `web/pages/migration.js`; `git diff --check` and frontend baseline check passed. Production revalidation passed on `web2.softico.ua` with `admin.2026-07-21_05-53-06.tar`: the one-click migration completed, imported `61` tables, normalized `wpoe_options.siteurl` and `wpoe_options.home` to `http://unity.softico.ua`, and HTTP `/`, `/wp-login.php`, and `/readme.html` returned `200` without HTTPS redirects.
 
 **Known risks:** URL normalization only updates standard WordPress `siteurl` and `home` options in the first imported `*_options` table; serialized plugin/theme content is not rewritten.
 
