@@ -327,6 +327,48 @@ bool ApiServer::start() {
         return json.str();
     };
 
+    auto issue_ssl_certificate = [&s](const std::string& domain,
+                                      uint64_t site_id,
+                                      const std::string& provider_id) -> containercp::core::OperationResult {
+        auto providers = s.certificate_providers();
+        auto provider_it = providers.find(provider_id);
+        if (provider_it == providers.end() || !provider_it->second) {
+            return {false, "Unknown provider: " + provider_id};
+        }
+
+        containercp::ssl::CertificateStore::Metadata meta;
+        meta.site_id = site_id;
+        meta.provider_id = provider_id;
+        meta.status = "issuing";
+        meta.domains = {domain};
+        meta.auto_renew = true;
+        meta.challenge_type = "http-01";
+        meta.created_at = containercp::ssl::CertificateStore::timestamp_utc();
+        meta.updated_at = meta.created_at;
+        s.cert_store().save_metadata(site_id, meta);
+
+        auto result = provider_it->second->request(domain);
+        if (!result.success) {
+            return result;
+        }
+
+        std::string cert_path = s.cert_store().fullchain_path(site_id);
+        std::string key_path = s.cert_store().privkey_path(site_id);
+        auto proxy_result = s.proxy_provider().attach_certificate(domain, cert_path, key_path);
+        if (!proxy_result.success) {
+            auto load_result = s.cert_store().load_metadata(site_id);
+            if (load_result.success) {
+                auto failed_meta = load_result.metadata;
+                failed_meta.https_enabled = false;
+                failed_meta.updated_at = containercp::ssl::CertificateStore::timestamp_utc();
+                s.cert_store().save_metadata(site_id, failed_meta);
+            }
+            return {false, "Certificate issued but HTTPS enable failed: " + proxy_result.message};
+        }
+
+        return {true, "Certificate issued"};
+    };
+
     // GET endpoints
     router_.add("GET", "/api/version", [](const Request&) {
         Response r;
@@ -1646,7 +1688,7 @@ bool ApiServer::start() {
     });
 
     // POST /api/ssl/<domain>/<action> — SSL mutations
-    router_.add_prefix("POST", "/api/ssl/", [&s, &ssl_domain_from_path, &json_error](const Request& req) {
+    router_.add_prefix("POST", "/api/ssl/", [&s, &ssl_domain_from_path, &json_error, &issue_ssl_certificate](const Request& req) {
         Response r;
         std::string domain = ssl_domain_from_path(req.path);
         if (domain.empty()) {
@@ -1689,18 +1731,6 @@ bool ApiServer::start() {
                 return r;
             }
 
-            // Save placeholder metadata so the provider can resolve site_id
-            containercp::ssl::CertificateStore::Metadata meta;
-            meta.site_id = site_id;
-            meta.provider_id = provider_id;
-            meta.status = "issuing";
-            meta.domains = {domain};
-            meta.auto_renew = true;
-            meta.challenge_type = "http-01";
-            meta.created_at = containercp::ssl::CertificateStore::timestamp_utc();
-            meta.updated_at = meta.created_at;
-            s.cert_store().save_metadata(site_id, meta);
-
             std::vector<std::string> steps = {"Validating domain...", "Requesting certificate...",
                                                "Waiting for ACME validation...", "Finalizing..."};
             uint64_t job_id = s.jobs().create("ssl-issue", steps);
@@ -1708,26 +1738,10 @@ bool ApiServer::start() {
 
             // Enqueue async job execution via JobExecutor
             bool submitted = s.job_executor().submit(job_id,
-                [&s, provider_id, domain, site_id](jobs::JobManager& jm, uint64_t jid) {
-                    auto& provider = *s.certificate_providers()[provider_id];
+                [&issue_ssl_certificate, provider_id, domain, site_id](jobs::JobManager& jm, uint64_t jid) {
                     jm.update(jid, "running", 10, "Requesting certificate...");
-                    auto result = provider.request(domain);
+                    auto result = issue_ssl_certificate(domain, site_id, provider_id);
                     if (result.success) {
-                        jm.update(jid, "running", 95, "Enabling HTTPS...");
-                        std::string cert_path = s.cert_store().fullchain_path(site_id);
-                        std::string key_path = s.cert_store().privkey_path(site_id);
-                        auto proxy_result = s.proxy_provider().attach_certificate(domain, cert_path, key_path);
-                        if (!proxy_result.success) {
-                            auto load_result = s.cert_store().load_metadata(site_id);
-                            if (load_result.success) {
-                                auto meta = load_result.metadata;
-                                meta.https_enabled = false;
-                                meta.updated_at = containercp::ssl::CertificateStore::timestamp_utc();
-                                s.cert_store().save_metadata(site_id, meta);
-                            }
-                            jm.update(jid, "failed", 100, "Certificate issued but HTTPS enable failed: " + proxy_result.message);
-                            return;
-                        }
                         jm.update(jid, "completed", 100, "Certificate issued");
                     } else {
                         jm.update(jid, "failed", 100, result.message);
@@ -3969,7 +3983,7 @@ bool ApiServer::start() {
         return r;
     });
 
-    router_.add("POST", "/api/migration/vesta/migrate", [&s, &resolve_allowed_backup](const Request& req) {
+    router_.add("POST", "/api/migration/vesta/migrate", [&s, &resolve_allowed_backup, &issue_ssl_certificate](const Request& req) {
         Response r;
 
         auto extract = [&](const std::string& name) -> std::string {
@@ -4017,7 +4031,7 @@ bool ApiServer::start() {
         uint64_t job_id = jobs.create("migration-vesta", {
             "Analyze backup", "Create Site", "Create Database", "Deploy Containers",
             "Import Files", "Import SQL", "Configure WordPress", "Configure Proxy",
-            "Health Checks", "Migration Complete"
+            "Issue SSL", "Health Checks", "Migration Complete"
         });
         jobs.update(job_id, "pending", 0, "Migration queued");
 
@@ -4029,7 +4043,7 @@ bool ApiServer::start() {
         opts_ptr->skip_db = skip_db;
         opts_ptr->keep_staging = keep_staging;
 
-        bool queued = s.job_executor().submit(job_id, [&s, opts_ptr](jobs::JobManager& jobs, uint64_t queued_job_id) {
+        bool queued = s.job_executor().submit(job_id, [&s, opts_ptr, &issue_ssl_certificate](jobs::JobManager& jobs, uint64_t queued_job_id) {
             auto mark_steps = [&](int current, bool complete = false) {
                 auto* job = jobs.find(queued_job_id);
                 if (!job) return;
@@ -4127,12 +4141,6 @@ bool ApiServer::start() {
                 return;
             }
 
-            if (manifest.migration_completed || manifest.migration_stage == 3) {
-                mark_steps(9, true);
-                jobs.update(queued_job_id, "completed", 100, "Migration already completed");
-                return;
-            }
-
             if (manifest.can_import_files) {
                 jobs.update(queued_job_id, "running", 45, "Importing files");
                 mark_steps(4);
@@ -4172,6 +4180,29 @@ bool ApiServer::start() {
                 return;
             }
 
+            jobs.update(queued_job_id, "running", 85, "Issuing SSL certificate");
+            mark_steps(8);
+            auto* site = s.sites().find(opts_ptr->domain);
+            if (!site) {
+                fail(85, 8, "Site record not found before SSL issuance");
+                return;
+            }
+            auto existing_ssl = s.cert_store().load_metadata(site->id);
+            bool ssl_already_active = false;
+            if (existing_ssl.success && existing_ssl.metadata.status == "active" && existing_ssl.metadata.https_enabled) {
+                auto validation = s.cert_store().validate(site->id);
+                ssl_already_active = validation.valid;
+            }
+            if (ssl_already_active) {
+                jobs.update(queued_job_id, "running", 90, "SSL already active");
+            } else {
+                auto ssl_result = issue_ssl_certificate(opts_ptr->domain, site->id, "letsencrypt");
+                if (!ssl_result.success) {
+                    fail(85, 8, "SSL issuance failed: " + ssl_result.message);
+                    return;
+                }
+            }
+
             jobs.update(queued_job_id, "running", 95, "Finalizing migration");
             mark_steps(9);
             manifest = importer.inspect(*opts_ptr);
@@ -4184,7 +4215,7 @@ bool ApiServer::start() {
                 return;
             }
 
-            mark_steps(9, true);
+            mark_steps(10, true);
             jobs.update(queued_job_id, "completed", 100, "Migration completed");
         });
 

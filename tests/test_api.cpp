@@ -196,6 +196,20 @@ TEST_CASE("SSL job response format") {
     CHECK(json.find("\"status\":\"completed\"") != std::string::npos);
 }
 
+TEST_CASE("Vesta migration job includes automatic SSL issuance step") {
+    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/libs/api/ApiServer.cpp");
+    REQUIRE(in.is_open());
+    std::string source((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    const auto migration_route = source.find("/api/migration/vesta/migrate");
+    REQUIRE(migration_route != std::string::npos);
+    const auto migration_block = source.substr(migration_route);
+
+    CHECK(migration_block.find("Issue SSL") != std::string::npos);
+    CHECK(migration_block.find("issue_ssl_certificate(opts_ptr->domain") != std::string::npos);
+    CHECK(migration_block.find("SSL issuance failed") != std::string::npos);
+}
+
 TEST_CASE("WordPress credential rotation API returns job id only") {
     std::string json = "{\"success\":true,\"data\":{"
         "\"job_id\":42,"

@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | Migration - Issue SSL during Vesta import
+
+**Summary:** Updated the one-click Vesta migration job to issue a Let's Encrypt certificate and attach it to the migrated Site proxy before reporting migration completion.
+
+**Files changed:** `libs/api/ApiServer.cpp`, `tests/test_api.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Vesta migrations now preserve imported WordPress URLs and still make HTTPS available automatically for migrated Sites whose source WordPress installation already redirects to HTTPS. The migration job fails with a clear SSL error if ACME issuance or proxy HTTPS attachment fails.
+
+**Validation:** Local build passed with `cmake --build build-db5 -j2`. API doctests passed (`20` cases, `101` assertions). Migration-focused doctests passed (`40` cases, `259` assertions). SSL-focused doctests passed (`20` cases, `105` assertions). Proxy-focused doctests passed (`6` cases, `48` assertions). Frontend syntax check passed for `web/pages/migration.js`; `git diff --check` and frontend baseline check passed.
+
+**Known risks:** Automatic issuance depends on public DNS and HTTP-01 reachability for the migrated domain. Operators must ensure the domain resolves to the ContainerCP host before starting migration.
+
+---
+
 ## 2026-07-22 | `this commit` | Migration - Preserve WordPress URLs during Vesta import
 
 **Summary:** Removed automatic WordPress `siteurl`/`home` URL normalization from Vesta SQL import so migrated Sites preserve source URLs and can remain portable back to myVestaCP. The importer now only updates database credentials and inserts the trusted proxy HTTPS detection block before WordPress bootstrap.
