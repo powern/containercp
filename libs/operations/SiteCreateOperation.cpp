@@ -186,11 +186,17 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner,
     }
 
     std::string web_server = "apache";
+    std::string template_profile = profile;
     if (!profile.empty()) {
-        if (profile.find("nginx") != std::string::npos) {
+        auto sep = profile.find(':');
+        if (sep != std::string::npos) {
+            web_server = profile.substr(0, sep);
+            template_profile = profile.substr(sep + 1);
+        } else if (profile.find("nginx") != std::string::npos) {
             web_server = "nginx";
         }
     }
+    if (web_server != "apache" && web_server != "nginx") web_server = "apache";
 
     if (dry_run) {
         std::cout << "[Dry Run] Would create site: " << domain << "\n";
@@ -215,6 +221,7 @@ core::OperationResult SiteCreateOperation::execute(const std::string& owner,
     site.owner = owner;
     site.node_id = node.id;
     site.web_server = web_server;
+    site.template_profile = template_profile;
 
     site.id = sites_.create(domain, owner, node.id, web_server);
     st.site_id = site.id;

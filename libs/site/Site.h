@@ -16,6 +16,8 @@ struct Site : core::Resource {
     std::string db_user;
     std::string db_password;
     std::string web_server = "apache";
+    // Transient provisioning choice. Rendered during create/apply only; not persisted.
+    std::string template_profile;
     bool php_mail_enabled = false;
 
     // Transient: set by Storage::load_sites() when the 6th field was present.

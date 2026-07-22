@@ -240,7 +240,7 @@ ServiceRegistry::ServiceRegistry()
                 auto tmpl = template_engine::default_web_templates();
                 filesystem_.create_directory(config_.web_templates_dir());
                 for (auto& [name, content] : tmpl) {
-                    bool is_default = (name == "apache-php-default");
+                    bool is_default = (name == "apache-php-default" || name == "nginx-php-default");
                     std::string path = config_.web_templates_dir() + name + ".conf.template";
                     // Write default template to disk only if file does not exist.
                     // This preserves user edits made through the web UI.
@@ -266,15 +266,41 @@ ServiceRegistry::ServiceRegistry()
             }
         }
 
-        // Enforce apache-php-default as the only default WEB_SERVER profile.
-        // This ensures existing installs that upgraded from old profiles.db
-        // (which had nginx-php-default as default) are corrected.
+        // Ensure one default WEB_SERVER profile per backend without overwriting user choices.
         {
             auto profiles = profiles_.list();
+            auto ensure_backend_default = [&](const std::string& backend, const std::string& canonical_name) {
+                bool found = false;
+                for (auto& p : profiles) {
+                    if (p.type != profile::ProfileType::WEB_SERVER || p.web_server != backend || !p.default_profile) continue;
+                    if (!found) {
+                        found = true;
+                    } else {
+                        p.default_profile = false;
+                    }
+                }
+                if (found) return;
+                for (auto& p : profiles) {
+                    if (p.type == profile::ProfileType::WEB_SERVER && p.web_server == backend
+                        && p.profile_name == canonical_name) {
+                        p.default_profile = true;
+                        return;
+                    }
+                }
+                for (auto& p : profiles) {
+                    if (p.type == profile::ProfileType::WEB_SERVER && p.web_server == backend) {
+                        p.default_profile = true;
+                        return;
+                    }
+                }
+            };
+            ensure_backend_default("apache", "apache-php-default");
+            ensure_backend_default("nginx", "nginx-php-default");
             for (auto& p : profiles) {
-                bool should_be_default = (p.profile_name == "apache-php-default"
-                                          && p.type == profile::ProfileType::WEB_SERVER);
-                p.default_profile = should_be_default;
+                if (p.type == profile::ProfileType::WEB_SERVER
+                    && p.web_server != "apache" && p.web_server != "nginx") {
+                    p.default_profile = false;
+                }
             }
             profiles_.set_profiles(profiles);
         }

@@ -73,34 +73,54 @@ async function removeSite(domain) {
 }
 
 /* ===== SITE CREATION WIZARD ===== */
-function showCreateSiteWizard() {
+let siteWizardTemplates = [];
+
+async function showCreateSiteWizard() {
+  try {
+    const res = await api('/api/profiles');
+    siteWizardTemplates = (res.data || []).filter(p => p.type === 'web_server');
+  } catch(e) {
+    siteWizardTemplates = [];
+  }
   showModal('Create Site', `
     <div style="display:grid;gap:14px;">
       <div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Owner</label><input id="wiz-owner" value="admin" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" oninput="document.getElementById('wiz-owner-err').textContent=''"><div id="wiz-owner-err" style="color:var(--red);font-size:11px;margin-top:2px;"></div></div>
       <div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Domain</label><input id="wiz-domain" placeholder="example.com" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;" oninput="document.getElementById('wiz-domain-err').textContent=''"><div id="wiz-domain-err" style="color:var(--red);font-size:11px;margin-top:2px;"></div></div>
       <div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Backend Web Server</label>
         <select id="wiz-backend" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;">
-          <option value="apache-php-default">Apache2 (default)</option>
-          <option value="nginx-php-default">Nginx</option>
+          <option value="apache">Apache2</option>
+          <option value="nginx">Nginx</option>
         </select>
       </div>
-      <div id="wiz-summary" style="font-size:12px;color:var(--text3);background:var(--bg2);padding:8px 12px;border-radius:6px;margin-top:4px;">Backend: Apache2 with PHP-FPM</div>
+      <div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Template</label>
+        <select id="wiz-template" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;outline:none;"></select>
+      </div>
+      <div id="wiz-summary" style="font-size:12px;color:var(--text3);background:var(--bg2);padding:8px 12px;border-radius:6px;margin-top:4px;">Backend: Apache2 with selected template</div>
       <button class="btn btn-primary" onclick="startSiteWizard()">Create Site</button>
     </div>`, 420);
-  document.getElementById('wiz-backend').addEventListener('change', function() {
-    var summary = document.getElementById('wiz-summary');
-    if (this.value === 'nginx-php-default') {
-      summary.textContent = 'Backend: Nginx with PHP-FPM';
-    } else {
-      summary.textContent = 'Backend: Apache2 with PHP-FPM';
-    }
-  });
+  renderSiteWizardTemplateOptions();
+  document.getElementById('wiz-backend').addEventListener('change', renderSiteWizardTemplateOptions);
+}
+
+function renderSiteWizardTemplateOptions() {
+  const backend = document.getElementById('wiz-backend')?.value || 'apache';
+  const select = document.getElementById('wiz-template');
+  const summary = document.getElementById('wiz-summary');
+  if (!select) return;
+  const items = siteWizardTemplates.filter(t => t.web_server === backend);
+  if (items.length) {
+    items.sort((a, b) => (a.default === b.default ? String(a.name).localeCompare(String(b.name)) : (a.default ? -1 : 1)));
+    select.innerHTML = items.map(t => `<option value="${backend}:${esc(t.name)}">${esc(t.name)}${t.default ? ' (default)' : ''}</option>`).join('');
+  } else {
+    select.innerHTML = `<option value="${backend}:">Use backend default</option>`;
+  }
+  if (summary) summary.textContent = `Backend: ${backend === 'nginx' ? 'Nginx' : 'Apache2'} with ${items.length ? 'selected template' : 'backend default template'}`;
 }
 
 async function startSiteWizard() {
   const owner = $('wiz-owner').value.trim();
   const domain = $('wiz-domain').value.trim();
-  const profile = $('wiz-backend') ? $('wiz-backend').value : '';
+  const profile = $('wiz-template') ? $('wiz-template').value : (($('wiz-backend') ? $('wiz-backend').value : 'apache') + ':');
   let valid = true;
   if (!owner) { $('wiz-owner-err').textContent = 'Owner is required'; valid = false; }
   if (!domain) { $('wiz-domain-err').textContent = 'Domain is required'; valid = false; }
@@ -568,4 +588,4 @@ function runRuntimeAction(siteId, domain, action) {
 const sitesPage = { mount: loadSites, unmount() { activeSitesLifecycle = null; } };
 const siteDetailPage = { mount: loadSiteDetail, unmount() { activeSitesLifecycle = null; } };
 export { loadSites, loadSiteDetail, sitesPage, siteDetailPage };
-Object.assign(window, { loadSites, removeSite, showCreateSiteWizard, startSiteWizard, loadSiteDetail, loadWordPressCredentialCard, renderWordPressCredentialCard, rotateWordPressDatabasePassword, pollWordPressRotationJob, loadPhpMailCard, renderPhpMailCard, enablePhpMail, disablePhpMail, loadRuntimeCard, refreshRuntimeCard, buildRuntimeActions, runRuntimeAction });
+Object.assign(window, { loadSites, removeSite, showCreateSiteWizard, renderSiteWizardTemplateOptions, startSiteWizard, loadSiteDetail, loadWordPressCredentialCard, renderWordPressCredentialCard, rotateWordPressDatabasePassword, pollWordPressRotationJob, loadPhpMailCard, renderPhpMailCard, enablePhpMail, disablePhpMail, loadRuntimeCard, refreshRuntimeCard, buildRuntimeActions, runRuntimeAction });

@@ -54,6 +54,7 @@ JSON response ← Response struct with status code
 | GET | `/api/sites` | List all sites | `SiteManager` |
 | POST | `/api/sites/create` | Create a new site | `SiteCreateOperation` (via HostingProvider) |
 | POST | `/api/sites/remove` | Remove a site by domain | `SiteRemoveOperation` |
+| POST | `/api/sites/<id>/apply-template` | Apply a same-backend web template to an existing site | `DockerComposeProvider` |
 
 **GET /api/sites** — returns enriched site list. The admin-panel (site_id=0)
 is synthesized as a virtual system site when `server_hostname` is configured.
@@ -61,10 +62,15 @@ Admin site fields: `system_role: "admin-panel"`, `proxy_upstream`, `web_status`,
 `php_status: "N/A"`, `ssl_status`, `can_delete: false`, `can_manage_runtime: false`.
 Normal sites are returned unchanged by `JsonFormatter::site()`.
 
-**POST /api/sites/create** — body: `{"owner":"...","domain":"...","profile":"..."}`
+**POST /api/sites/create** — body: `{"owner":"...","domain":"...","profile":"apache:apache-php-default"}`.
+The `profile` value may be `<backend>:<template_name>` where backend is `apache` or `nginx`.
 
 **POST /api/sites/remove** — body: `{"domain":"..."}`. Returns 403 if domain equals
 `server_hostname` (admin-panel system site cannot be removed).
+
+**POST /api/sites/<id>/apply-template** — body: `{"template_id":5}` or
+`{"template_name":"apache-wordpress"}`. The selected template must match the existing
+Site backend; changing backend is a separate lifecycle operation.
 
 Confirmed Site removal is destructive for resources exclusively owned by the Site. The operation stops the Site stack, removes the Site directory and metadata, and removes the exact owned MariaDB `db-data` named volume only after ownership is verified through ContainerCP/Compose labels or a legacy target-container mount proof. Unknown, mismatched, or shared volumes are refused and reported as operation failures. Recreating a Site with the same domain fails closed if the expected MariaDB volume already exists, rather than silently reusing stale database contents.
 
@@ -619,6 +625,12 @@ See `docs/development/wordpress-credential-management.md` for supported config f
 | Method | Path | Purpose | Owner |
 |--------|------|---------|-------|
 | GET | `/api/profiles` | List hosting profiles | `ProfileManager` |
+| POST | `/api/profiles` | Create a web server template profile and disk file | `ProfileManager` + filesystem |
+| POST | `/api/profiles/<id>` | Update template content, backend, description, or backend default | `ProfileManager` + filesystem |
+| DELETE | `/api/profiles/<id>` | Delete a template profile and disk file | `ProfileManager` + filesystem |
+
+Web server profiles are disk-backed templates under `/etc/containercp/templates/web/`.
+Apache and Nginx defaults are independent: exactly one default is maintained per backend.
 
 ### 2.14 Nodes
 

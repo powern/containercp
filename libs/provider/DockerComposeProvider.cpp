@@ -1,9 +1,22 @@
 #include "DockerComposeProvider.h"
 #include "docker/EnvGenerator.h"
 #include "filesystem/SiteLayout.h"
+#include "runtime/CommandExecutor.h"
 #include "template/TemplateEngine.h"
 
 namespace containercp::provider {
+
+static profile::Profile* select_web_profile(profile::ProfileManager& profiles,
+                                            const std::string& web_server_type) {
+    profile::Profile* fallback = nullptr;
+    auto web_profiles = profiles.list_by_type(profile::ProfileType::WEB_SERVER);
+    for (auto* candidate : web_profiles) {
+        if (candidate == nullptr || candidate->web_server != web_server_type) continue;
+        if (candidate->default_profile) return candidate;
+        if (fallback == nullptr) fallback = candidate;
+    }
+    return fallback;
+}
 
 DockerComposeProvider::DockerComposeProvider(filesystem::Filesystem& fs, config::Config& cfg,
                                              php::PhpVersionManager& php, runtime::Runtime& rt,
@@ -61,16 +74,13 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site, core:
     std::string site_id = std::to_string(site.id);
 
     progress(25, "Determining web server configuration...");
-    std::string web_server_type = site.web_server.empty() ? "nginx" : site.web_server;
-    auto* profile = prof_.get_default(profile::ProfileType::WEB_SERVER);
-    // If site specifies a web server, find a matching profile
-    if (web_server_type == "apache" || web_server_type == "nginx") {
-        auto web_profiles = prof_.list_by_type(profile::ProfileType::WEB_SERVER);
-        for (auto* wp : web_profiles) {
-            if (wp != nullptr && wp->web_server == web_server_type) {
-                profile = wp;
-                break;
-            }
+    std::string web_server_type = site.web_server.empty() ? "apache" : site.web_server;
+    auto* profile = select_web_profile(prof_, web_server_type);
+    if (!site.template_profile.empty()) {
+        auto* requested = prof_.find(site.template_profile);
+        if (requested != nullptr && requested->type == profile::ProfileType::WEB_SERVER
+            && requested->web_server == web_server_type) {
+            profile = requested;
         }
     }
     std::string web_server_image = "nginx:alpine";
@@ -235,10 +245,10 @@ core::OperationResult DockerComposeProvider::apply_web_template(site::Site& site
 
     fs_.create_file(config_path, rendered);
 
-    std::string restart_cmd = "cd " + site_dir + " && docker compose restart web 2>&1";
-    int rc = std::system(restart_cmd.c_str());
-    if (rc != 0) {
-        return {false, "Template applied but web container restart failed with exit code " + std::to_string(rc)};
+    runtime::CommandExecutor exec;
+    auto restart = exec.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "restart", "web"});
+    if (restart.exit_code != 0) {
+        return {false, "Template applied but web container restart failed: " + restart.err};
     }
 
     return {true, "Template applied and web container restarted for " + site.domain};

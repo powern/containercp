@@ -67,6 +67,39 @@ static std::string json_extract(const std::string& json, const std::string& key)
     return json.substr(pos, end - pos);
 }
 
+static std::string json_extract_string_value(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\":";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) return "";
+    pos += search.size();
+    while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) ++pos;
+    if (pos >= json.size() || json[pos] != '"') return "";
+    ++pos;
+
+    std::string out;
+    while (pos < json.size()) {
+        char c = json[pos++];
+        if (c == '"') break;
+        if (c != '\\' || pos >= json.size()) {
+            out += c;
+            continue;
+        }
+        char esc = json[pos++];
+        switch (esc) {
+            case '"': out += '"'; break;
+            case '\\': out += '\\'; break;
+            case '/': out += '/'; break;
+            case 'b': out += '\b'; break;
+            case 'f': out += '\f'; break;
+            case 'n': out += '\n'; break;
+            case 'r': out += '\r'; break;
+            case 't': out += '\t'; break;
+            default: out += esc; break;
+        }
+    }
+    return out;
+}
+
 // Check if a key exists in JSON (for PATCH field presence detection).
 // Works with any value type: string, number, boolean, null, object, array.
 static bool json_has_key(const std::string& json, const std::string& key) {
@@ -1287,6 +1320,25 @@ bool ApiServer::start() {
         return r;
     });
 
+    auto is_valid_template_name = [](const std::string& name) {
+        if (name.empty() || name.size() > 80) return false;
+        for (unsigned char c : name) {
+            if (!std::isalnum(c) && c != '-' && c != '_') return false;
+        }
+        return true;
+    };
+
+    auto profile_default_count = [&s](const std::string& web_server, uint64_t except_id = 0) {
+        int count = 0;
+        for (const auto& p : s.profiles().list()) {
+            if (p.id != except_id && p.type == profile::ProfileType::WEB_SERVER
+                && p.web_server == web_server && p.default_profile) {
+                ++count;
+            }
+        }
+        return count;
+    };
+
     router_.add("GET", "/api/profiles", [&s](const Request&) {
         Response r;
         auto& profiles = s.profiles().list();
@@ -1316,17 +1368,22 @@ bool ApiServer::start() {
     });
 
     // POST /api/profiles — create a new web server template
-    router_.add("POST", "/api/profiles", [&s](const Request& req) {
+    router_.add("POST", "/api/profiles", [&s, &is_valid_template_name](const Request& req) {
         Response r;
-        std::string name = json_extract(req.body, "name");
-        std::string web_server = json_extract(req.body, "web_server");
-        std::string description = json_extract(req.body, "description");
-        std::string content = json_extract(req.body, "content");
+        std::string name = json_extract_string_value(req.body, "name");
+        std::string web_server = json_extract_string_value(req.body, "web_server");
+        std::string description = json_extract_string_value(req.body, "description");
+        std::string content = json_extract_string_value(req.body, "content");
         std::string default_str = json_extract(req.body, "default");
 
         if (name.empty() || content.empty()) {
             r.status_code = 400;
             r.body = "{\"success\":false,\"error\":\"name and content are required\"}";
+            return r;
+        }
+        if (!is_valid_template_name(name)) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Profile name may contain only ASCII letters, numbers, dash, and underscore\"}";
             return r;
         }
         if (web_server != "apache" && web_server != "nginx") {
@@ -1349,12 +1406,12 @@ bool ApiServer::start() {
 
         bool is_default = (default_str == "true");
         if (is_default) {
-            // Unset any existing default
+            // Unset the existing default only for the selected backend.
             auto all = s.profiles().list();
             for (auto& p : all) {
-                if (p.default_profile && p.type == profile::ProfileType::WEB_SERVER) {
+                if (p.default_profile && p.type == profile::ProfileType::WEB_SERVER
+                    && p.web_server == web_server) {
                     p.default_profile = false;
-                    break;
                 }
             }
             s.profiles().set_profiles(all);
@@ -1370,7 +1427,7 @@ bool ApiServer::start() {
     });
 
     // POST /api/profiles/<id> — update an existing template
-    router_.add_prefix("POST", "/api/profiles/", [&s](const Request& req) {
+    router_.add_prefix("POST", "/api/profiles/", [&s, &is_valid_template_name, &profile_default_count](const Request& req) {
         Response r;
         std::string rest = req.path.substr(std::string("/api/profiles/").size());
         if (rest.empty() || rest.find_first_not_of("0123456789") != std::string::npos) {
@@ -1379,17 +1436,17 @@ bool ApiServer::start() {
             return r;
         }
         uint64_t id = std::stoull(rest);
-        auto* profile = s.profiles().find(id);
-        if (profile == nullptr) {
+        auto* prof = s.profiles().find(id);
+        if (prof == nullptr) {
             r.status_code = 404;
             r.body = "{\"success\":false,\"error\":\"Profile not found\"}";
             return r;
         }
 
-        std::string name = json_extract(req.body, "name");
-        std::string web_server = json_extract(req.body, "web_server");
-        std::string description = json_extract(req.body, "description");
-        std::string content = json_extract(req.body, "content");
+        std::string name = json_extract_string_value(req.body, "name");
+        std::string web_server = json_extract_string_value(req.body, "web_server");
+        std::string description = json_extract_string_value(req.body, "description");
+        std::string content = json_extract_string_value(req.body, "content");
         std::string default_str = json_extract(req.body, "default");
         bool has_content = json_has_key(req.body, "content");
         bool has_name = json_has_key(req.body, "name");
@@ -1400,6 +1457,27 @@ bool ApiServer::start() {
         if (has_web_server && web_server != "apache" && web_server != "nginx") {
             r.status_code = 400;
             r.body = "{\"success\":false,\"error\":\"web_server must be 'apache' or 'nginx'\"}";
+            return r;
+        }
+        if (has_name && !name.empty() && name != prof->profile_name) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Profile name cannot be changed; clone the template instead\"}";
+            return r;
+        }
+        if (has_name && !name.empty() && !is_valid_template_name(name)) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Profile name may contain only ASCII letters, numbers, dash, and underscore\"}";
+            return r;
+        }
+        if (has_web_server && prof->default_profile && profile_default_count(prof->web_server, id) == 0) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Cannot move the last default template for its backend\"}";
+            return r;
+        }
+        if (has_default && default_str != "true" && prof->default_profile
+            && profile_default_count(prof->web_server, id) == 0) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Cannot unset the last default template for its backend\"}";
             return r;
         }
 
@@ -1422,9 +1500,10 @@ bool ApiServer::start() {
             }
 
             if (has_default && default_str == "true") {
-                // Unset other defaults of same type
+                // Unset other defaults for the selected backend only.
                 for (auto& other : all) {
-                    if (other.id != id && other.type == profile::ProfileType::WEB_SERVER) {
+                    if (other.id != id && other.type == profile::ProfileType::WEB_SERVER
+                        && other.web_server == p.web_server) {
                         other.default_profile = false;
                     }
                 }
@@ -1443,7 +1522,7 @@ bool ApiServer::start() {
     });
 
     // DELETE /api/profiles/<id> — delete a template
-    router_.add_prefix("DELETE", "/api/profiles/", [&s](const Request& req) {
+    router_.add_prefix("DELETE", "/api/profiles/", [&s, &profile_default_count](const Request& req) {
         Response r;
         std::string rest = req.path.substr(std::string("/api/profiles/").size());
         if (rest.empty() || rest.find_first_not_of("0123456789") != std::string::npos) {
@@ -1452,31 +1531,24 @@ bool ApiServer::start() {
             return r;
         }
         uint64_t id = std::stoull(rest);
-        auto* profile = s.profiles().find(id);
-        if (profile == nullptr) {
+        auto* prof = s.profiles().find(id);
+        if (prof == nullptr) {
             r.status_code = 404;
             r.body = "{\"success\":false,\"error\":\"Profile not found\"}";
             return r;
         }
 
-        // Prevent deleting the last default WEB_SERVER profile
-        if (profile->default_profile && profile->type == profile::ProfileType::WEB_SERVER) {
-            int default_count = 0;
-            for (const auto& p : s.profiles().list()) {
-                if (p.default_profile && p.type == profile::ProfileType::WEB_SERVER) {
-                    ++default_count;
-                }
-            }
-            if (default_count <= 1) {
-                r.status_code = 400;
-                r.body = "{\"success\":false,\"error\":\"Cannot delete the last default web server profile\"}";
-                return r;
-            }
+        // Prevent deleting the last default for this backend.
+        if (prof->default_profile && prof->type == profile::ProfileType::WEB_SERVER
+            && profile_default_count(prof->web_server, id) == 0) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Cannot delete the last default template for this backend\"}";
+            return r;
         }
 
         // Remove disk file
-        if (!profile->template_path.empty() && s.filesystem().exists(profile->template_path)) {
-            std::filesystem::remove(profile->template_path);
+        if (!prof->template_path.empty() && s.filesystem().exists(prof->template_path)) {
+            std::filesystem::remove(prof->template_path);
         }
 
         s.profiles().remove(id);
@@ -1581,9 +1653,9 @@ bool ApiServer::start() {
     // POST endpoints
     router_.add("POST", "/api/sites/create", [&s](const Request& req) {
         Response r;
-        std::string owner = json_extract(req.body, "owner");
-        std::string domain = json_extract(req.body, "domain");
-        std::string profile = json_extract(req.body, "profile");
+        std::string owner = json_extract_string_value(req.body, "owner");
+        std::string domain = json_extract_string_value(req.body, "domain");
+        std::string profile = json_extract_string_value(req.body, "profile");
         if (owner.empty() || domain.empty()) {
             r.status_code = 400;
             r.body = "{\"success\":false,\"error\":\"owner and domain required\"}";
@@ -2904,7 +2976,7 @@ bool ApiServer::start() {
         // Helper: regenerate docker-compose.yml from internal model (canonical compose generator)
         auto regenerate_compose = [&](bool mail_active) -> core::OperationResult {
             std::string site_dir = s.config().sites_dir() + site->domain + "/";
-            std::string web_server_type = site->web_server.empty() ? "nginx" : site->web_server;
+            std::string web_server_type = site->web_server.empty() ? "apache" : site->web_server;
             std::string php_image = "ghcr.io/powern/containercp-php:8.4";
             auto* pv = s.php_versions().get_default();
             if (pv) php_image = pv->image;
@@ -2964,24 +3036,37 @@ bool ApiServer::start() {
         };
 
         if (action == "apply-template") {
-            std::string template_name = json_extract(req.body, "template_name");
+            std::string template_name = json_extract_string_value(req.body, "template_name");
             std::string template_id_str = json_extract(req.body, "template_id");
 
-            auto* profile = s.profiles().get_default(profile::ProfileType::WEB_SERVER);
+            std::string site_backend = site->web_server.empty() ? "apache" : site->web_server;
+            profile::Profile* prof = nullptr;
             if (!template_id_str.empty()) {
                 try {
                     uint64_t tid = std::stoull(template_id_str);
                     auto* tp = s.profiles().find(tid);
-                    if (tp && tp->type == profile::ProfileType::WEB_SERVER) profile = tp;
+                    if (tp && tp->type == profile::ProfileType::WEB_SERVER) prof = tp;
                 } catch (...) {}
             } else if (!template_name.empty()) {
                 auto* tp = s.profiles().find(template_name);
-                if (tp && tp->type == profile::ProfileType::WEB_SERVER) profile = tp;
+                if (tp && tp->type == profile::ProfileType::WEB_SERVER) prof = tp;
+            } else {
+                for (auto* tp : s.profiles().list_by_type(profile::ProfileType::WEB_SERVER)) {
+                    if (tp != nullptr && tp->web_server == site_backend && tp->default_profile) {
+                        prof = tp;
+                        break;
+                    }
+                }
             }
 
-            if (!profile || profile->template_path.empty()) {
+            if (!prof || prof->template_path.empty()) {
                 r.status_code = 404;
                 r.body = "{\"success\":false,\"error\":\"Template profile not found\"}";
+                return r;
+            }
+            if (prof->web_server != site_backend) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Template backend does not match site backend\"}";
                 return r;
             }
 
@@ -2993,7 +3078,7 @@ bool ApiServer::start() {
                 return r;
             }
 
-            auto result = dcp->apply_web_template(*site, profile->template_path);
+            auto result = dcp->apply_web_template(*site, prof->template_path);
             if (!result.success) {
                 r.status_code = 500;
                 r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";

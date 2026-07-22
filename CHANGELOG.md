@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | Web template system — backend-scoped defaults and site-context selection
+
+**Summary:** Corrected the initial web template implementation after review. Defaults are now independent per backend (Apache and Nginx), template content is parsed safely from JSON strings, Templates page is a catalog-only management UI, and Create Site now selects a template in the site context after choosing the backend.
+
+**Files changed:** `libs/api/ApiServer.cpp`, `libs/core/ServiceRegistry.cpp`, `libs/operations/SiteCreateOperation.cpp`, `libs/provider/DockerComposeProvider.cpp`, `libs/site/Site.h`, `web/pages/templates.js`, `web/pages/sites.js`, `docs/api/API_REFERENCE.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Templates page no longer contains the confusing per-row "Apply to Site" action. It manages template catalog entries only. Create Site now loads real templates from `/api/profiles`, filters them by Apache/Nginx, and sends the selected backend/template to the backend. Existing site apply-template API remains available for site-context UI work and rejects cross-backend template application.
+
+**Validation:** Local build passed with `cmake --build build-db5 -j2`. Full doctest suite passed (`868` cases, `6191` assertions). Frontend syntax checks passed for `web/pages/templates.js` and `web/pages/sites.js`; frontend baseline and `git diff --check` passed.
+
+**Known risks:** Migration UI does not yet expose backend/template selection; it continues using the existing Site create backend flow. Existing rendered Site configs are not changed unless an apply-template operation is called from a site context.
+
+---
+
 ## 2026-07-22 | `this commit` | Web template system — customizable templates with real-IP fix, CRUD API, apply to existing sites
 
 **Summary:** Made web server templates (Apache/Nginx) fully customizable: stored on disk and not overwritten at daemon restart, editable through the web UI with Create/Edit/Clone/Delete, and applicable to existing sites. Default templates include `mod_remoteip` (Apache) and `set_real_ip_from` (Nginx) for correct external visitor IP logging behind the ContainerCP proxy.
