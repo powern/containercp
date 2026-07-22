@@ -210,6 +210,22 @@ TEST_CASE("Vesta migration job includes automatic SSL issuance step") {
     CHECK(migration_block.find("SSL issuance failed") != std::string::npos);
 }
 
+TEST_CASE("API primitive JSON extractor accepts formatted string values") {
+    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/libs/api/ApiServer.cpp");
+    REQUIRE(in.is_open());
+    std::string source((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    const auto extractor = source.find("static std::string json_extract");
+    REQUIRE(extractor != std::string::npos);
+    const auto next_extractor = source.find("static std::string json_extract_string_value", extractor);
+    REQUIRE(next_extractor != std::string::npos);
+    const std::string block = source.substr(extractor, next_extractor - extractor);
+
+    CHECK(block.find("std::isspace") != std::string::npos);
+    CHECK(block.find("json[pos] == '\"'") != std::string::npos);
+    CHECK(block.find("case 'n': out += '\\n'; break;") != std::string::npos);
+}
+
 TEST_CASE("WordPress credential rotation API returns job id only") {
     std::string json = "{\"success\":true,\"data\":{"
         "\"job_id\":42,"

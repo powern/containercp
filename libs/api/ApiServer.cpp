@@ -50,20 +50,42 @@ static constexpr int kMaxApiRequestBodyBytes = 6 * 1024 * 1024;
 
 // Simple JSON value extraction
 static std::string json_extract(const std::string& json, const std::string& key) {
-    std::string search = "\"" + key + "\":\"";
+    std::string search = "\"" + key + "\":";
     auto pos = json.find(search);
-    if (pos == std::string::npos) {
-        search = "\"" + key + "\":";
-        pos = json.find(search);
-        if (pos == std::string::npos) return "";
-        pos += search.size();
-        auto end = json.find_first_of(",}", pos);
-        if (end == std::string::npos) return "";
-        return json.substr(pos, end - pos);
-    }
+    if (pos == std::string::npos) return "";
     pos += search.size();
-    auto end = json.find("\"", pos);
-    if (end == std::string::npos) return "";
+    while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) ++pos;
+    if (pos >= json.size()) return "";
+
+    if (json[pos] == '"') {
+        ++pos;
+        std::string out;
+        while (pos < json.size()) {
+            char c = json[pos++];
+            if (c == '"') break;
+            if (c != '\\' || pos >= json.size()) {
+                out += c;
+                continue;
+            }
+            char esc = json[pos++];
+            switch (esc) {
+                case '"': out += '"'; break;
+                case '\\': out += '\\'; break;
+                case '/': out += '/'; break;
+                case 'b': out += '\b'; break;
+                case 'f': out += '\f'; break;
+                case 'n': out += '\n'; break;
+                case 'r': out += '\r'; break;
+                case 't': out += '\t'; break;
+                default: out += esc; break;
+            }
+        }
+        return out;
+    }
+
+    auto end = json.find_first_of(",}", pos);
+    if (end == std::string::npos) end = json.size();
+    while (end > pos && std::isspace(static_cast<unsigned char>(json[end - 1]))) --end;
     return json.substr(pos, end - pos);
 }
 

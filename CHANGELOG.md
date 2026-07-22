@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | API - Accept formatted JSON in template/site actions
+
+**Summary:** Fixed the common API JSON value extractor so routes using primitive values accept standard formatted JSON bodies with whitespace after `:` and quoted string values. This corrects `POST /api/sites/<id>/apply-template` when clients submit `template_id` as a string and prevents `/api/sites/remove` from receiving quote-padded domains from formatted JSON clients.
+
+**Files changed:** `libs/api/ApiServer.cpp`, `tests/test_api.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** API clients can send normal pretty/formatted JSON to Site/template actions. Applying a compatible web template by `template_id` no longer returns a false `Template profile not found` error just because the request body contains whitespace.
+
+**Validation:** Local build passed with `cmake --build build-db5 -j2`. Targeted JSON extractor regression passed. Full doctest suite passed (`869` cases, `6197` assertions). Frontend baseline and `git diff --check` passed.
+
+**Known risks:** The API still uses lightweight in-process JSON extraction instead of a full JSON parser; this patch only hardens the existing extractor for the current route patterns.
+
+---
+
 ## 2026-07-22 | `this commit` | Web templates — persist selected template per site
 
 **Summary:** Added durable Site-to-template metadata so ContainerCP remembers which web template was used for each Site across daemon restarts. Site creation stores the resolved template, apply-template updates the Site record, and Site detail UI shows/changing the current compatible template in the Site context.
