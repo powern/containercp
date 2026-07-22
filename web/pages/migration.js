@@ -6,6 +6,35 @@ import {
 /* ===== MIGRATION (myVestaCP Import) ===== */
 let activeMigrationLifecycle = null;
 
+function migrationRequestBody() {
+  const backup = document.getElementById('migrate-backup').value;
+  const domain = document.getElementById('migrate-domain').value.trim();
+  const owner = document.getElementById('migrate-owner').value.trim();
+  const database = document.getElementById('migrate-database').value.trim();
+  const skipDb = document.getElementById('migrate-skip-db').checked;
+  const keepStaging = document.getElementById('migrate-keep-staging').checked;
+
+  const body = { backup, domain, owner };
+  if (database) body.database = database;
+  if (skipDb) body.skip_db = true;
+  if (keepStaging) body.keep_staging = true;
+  return body;
+}
+
+function migrationStateTable(d) {
+  const stage = d.migration_completed ? 3 : (d.migration_marker_found ? (d.migration_stage || 0) : 0);
+  const filesImported = d.migration_completed || d.files_imported || d.files_status === 'imported';
+  const sqlImported = d.migration_completed || d.sql_status === 'imported' || stage >= 3;
+  const filesStatus = filesImported ? '<span class="badge badge-ok">Imported</span>' : '<span class="badge badge-info">' + esc(d.files_status || 'Pending') + '</span>';
+  const sqlStatus = sqlImported ? '<span class="badge badge-ok">Imported</span>' : '<span class="badge badge-info">' + esc(d.sql_status || 'Pending') + '</span>';
+  return `<table style="width:100%;border-collapse:collapse;">
+      <tr><td style="padding:4px 8px;color:var(--text2);">Current stage</td><td>${stage}</td></tr>
+      <tr><td style="padding:4px 8px;color:var(--text2);">Site ID</td><td>${d.migration_site_id || '?'}</td></tr>
+      <tr><td style="padding:4px 8px;color:var(--text2);">Files</td><td>${filesStatus}</td></tr>
+      <tr><td style="padding:4px 8px;color:var(--text2);">SQL</td><td>${sqlStatus}</td></tr>
+    </table>`;
+}
+
 async function loadMigration(p, params, lifecycle) {
   activeMigrationLifecycle = lifecycle || activeMigrationLifecycle;
   try {
@@ -74,23 +103,14 @@ async function analyzeBackup() {
   resultDiv.innerHTML = '';
 
   try {
-    const backup = document.getElementById('migrate-backup').value;
-    const domain = document.getElementById('migrate-domain').value.trim();
-    const owner = document.getElementById('migrate-owner').value.trim();
-    const database = document.getElementById('migrate-database').value.trim();
-    const skipDb = document.getElementById('migrate-skip-db').checked;
-    const keepStaging = document.getElementById('migrate-keep-staging').checked;
+    const body = migrationRequestBody();
+    const { backup, domain, owner } = body;
 
     if (!backup || !domain || !owner) {
       resultDiv.innerHTML = '<div class="alert alert-error">Backup, domain and owner are required.</div>';
       btn.disabled = false; btn.textContent = 'Analyze backup';
       return;
     }
-
-    const body = { backup, domain, owner };
-    if (database) body.database = database;
-    if (skipDb) body.skip_db = true;
-    if (keepStaging) body.keep_staging = true;
 
     const res = await apiPost('/api/migration/vesta/inspect', body);
     const d = res.data;
@@ -149,6 +169,7 @@ async function analyzeBackup() {
           <div class="card-header"><h3 style="color:var(--green);">Migration Completed</h3></div>
           <div style="padding:12px;font-size:13px;">
             <p>All migration stages completed.</p>
+            ${migrationStateTable(d)}
           </div></div>`;
 
       } else if (d.site_exists && d.migration_marker_found && d.marker_error) {
@@ -157,17 +178,11 @@ async function analyzeBackup() {
         // One-click migration entrypoint. The backend resumes from the marker if a staged migration already exists.
         const title = !d.site_exists ? 'Migration Ready' : 'Migration In Progress';
         const action = !d.site_exists ? 'Migrate' : 'Resume migration';
-        const stage = d.migration_marker_found ? (d.migration_stage || 0) : 0;
         html += `<div class="card" style="margin-top:12px;border-color:var(--blue);">
           <div class="card-header"><h3>${title}</h3></div>
           <div style="padding:12px;font-size:13px;">
             <p style="margin-bottom:12px;">ContainerCP will analyze, create or resume the Site, import files, import SQL, configure WordPress, and run health checks automatically.</p>
-            <table style="width:100%;border-collapse:collapse;">
-              <tr><td style="padding:4px 8px;color:var(--text2);">Current stage</td><td>${stage}</td></tr>
-              <tr><td style="padding:4px 8px;color:var(--text2);">Site ID</td><td>${d.migration_site_id || '?'}</td></tr>
-              <tr><td style="padding:4px 8px;color:var(--text2);">Files</td><td>${d.files_status === 'imported' ? '<span class="badge badge-ok">Imported</span>' : '<span class="badge badge-info">' + esc(d.files_status || 'Pending') + '</span>'}</td></tr>
-              <tr><td style="padding:4px 8px;color:var(--text2);">SQL</td><td>${d.sql_status === 'imported' ? '<span class="badge badge-ok">Imported</span>' : '<span class="badge badge-info">' + esc(d.sql_status || 'Pending') + '</span>'}</td></tr>
-            </table>
+            ${migrationStateTable(d)}
             <button class="btn btn-primary" style="margin-top:12px;" onclick="startMigration()" id="migrate-run-btn">${action}</button>
             <div id="migrate-run-result" style="margin-top:12px;"></div>
           </div></div>`;
@@ -214,17 +229,7 @@ async function startMigration() {
   resultDiv.innerHTML = '';
 
   try {
-    const backup = document.getElementById('migrate-backup').value;
-    const domain = document.getElementById('migrate-domain').value.trim();
-    const owner = document.getElementById('migrate-owner').value.trim();
-    const database = document.getElementById('migrate-database').value.trim();
-    const skipDb = document.getElementById('migrate-skip-db').checked;
-    const keepStaging = document.getElementById('migrate-keep-staging').checked;
-
-    const body = { backup, domain, owner };
-    if (database) body.database = database;
-    if (skipDb) body.skip_db = true;
-    if (keepStaging) body.keep_staging = true;
+    const body = migrationRequestBody();
 
     const res = await apiPost('/api/migration/vesta/migrate', body);
     const d = res.data;
@@ -244,7 +249,14 @@ async function startMigration() {
         if (progressDiv && jobData) progressDiv.innerHTML = renderMigrationJob(jobData);
         if (jobData && jobData.status === 'completed') {
           clearInterval(poll);
-          resultDiv.innerHTML = '<div class="card" style="margin-top:12px;border-color:var(--green);"><div class="card-header"><h3 style="color:var(--green);">Migration Complete</h3></div><div style="padding:12px;font-size:13px;">' + renderMigrationJob(jobData) + '</div></div>';
+          let stateHtml = '';
+          try {
+            const inspectRes = await apiPost('/api/migration/vesta/inspect', body);
+            if (inspectRes && inspectRes.data) stateHtml = '<div style="margin-top:12px;">' + migrationStateTable(inspectRes.data) + '</div>';
+          } catch(e) {
+            stateHtml = '<div class="alert alert-warning" style="margin-top:12px;">Migration completed, but final state refresh failed: ' + esc(e.message || 'Unknown') + '</div>';
+          }
+          resultDiv.innerHTML = '<div class="card" style="margin-top:12px;border-color:var(--green);"><div class="card-header"><h3 style="color:var(--green);">Migration Complete</h3></div><div style="padding:12px;font-size:13px;">' + renderMigrationJob(jobData) + stateHtml + '</div></div>';
         } else if (jobData && jobData.status === 'failed') {
           clearInterval(poll);
           resultDiv.innerHTML = '<div class="alert alert-error">Migration failed: ' + esc(jobData.message || 'Unknown error') + '</div>';

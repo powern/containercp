@@ -1708,14 +1708,26 @@ bool ApiServer::start() {
 
             // Enqueue async job execution via JobExecutor
             bool submitted = s.job_executor().submit(job_id,
-                [&s, provider_id, domain](jobs::JobManager& jm, uint64_t jid) {
+                [&s, provider_id, domain, site_id](jobs::JobManager& jm, uint64_t jid) {
                     auto& provider = *s.certificate_providers()[provider_id];
                     jm.update(jid, "running", 10, "Requesting certificate...");
                     auto result = provider.request(domain);
                     if (result.success) {
-                        // Reload nginx so it picks up the new certificate via current symlink
-                        jm.update(jid, "running", 95, "Reloading nginx...");
-                        s.proxy_provider().reload();
+                        jm.update(jid, "running", 95, "Enabling HTTPS...");
+                        std::string cert_path = s.cert_store().fullchain_path(site_id);
+                        std::string key_path = s.cert_store().privkey_path(site_id);
+                        auto proxy_result = s.proxy_provider().attach_certificate(domain, cert_path, key_path);
+                        if (!proxy_result.success) {
+                            auto load_result = s.cert_store().load_metadata(site_id);
+                            if (load_result.success) {
+                                auto meta = load_result.metadata;
+                                meta.https_enabled = false;
+                                meta.updated_at = containercp::ssl::CertificateStore::timestamp_utc();
+                                s.cert_store().save_metadata(site_id, meta);
+                            }
+                            jm.update(jid, "failed", 100, "Certificate issued but HTTPS enable failed: " + proxy_result.message);
+                            return;
+                        }
                         jm.update(jid, "completed", 100, "Certificate issued");
                     } else {
                         jm.update(jid, "failed", 100, result.message);
@@ -4005,7 +4017,7 @@ bool ApiServer::start() {
         uint64_t job_id = jobs.create("migration-vesta", {
             "Analyze backup", "Create Site", "Create Database", "Deploy Containers",
             "Import Files", "Import SQL", "Configure WordPress", "Configure Proxy",
-            "Configure Mail", "Health Checks", "Migration Complete"
+            "Health Checks", "Migration Complete"
         });
         jobs.update(job_id, "pending", 0, "Migration queued");
 
@@ -4116,7 +4128,7 @@ bool ApiServer::start() {
             }
 
             if (manifest.migration_completed || manifest.migration_stage == 3) {
-                mark_steps(10, true);
+                mark_steps(9, true);
                 jobs.update(queued_job_id, "completed", 100, "Migration already completed");
                 return;
             }
@@ -4153,7 +4165,7 @@ bool ApiServer::start() {
                     fail(72, 5, err);
                     return;
                 }
-                mark_steps(9);
+                mark_steps(8);
             } else if (manifest.migration_stage != 3) {
                 std::string reason = manifest.marker_error.empty() ? "SQL import is not available" : manifest.marker_error;
                 fail(72, 5, reason);
@@ -4161,18 +4173,18 @@ bool ApiServer::start() {
             }
 
             jobs.update(queued_job_id, "running", 95, "Finalizing migration");
-            mark_steps(10);
+            mark_steps(9);
             manifest = importer.inspect(*opts_ptr);
             if (!manifest.errors.empty()) {
-                fail(95, 10, "Final analysis failed: " + manifest.errors.front());
+                fail(95, 9, "Final analysis failed: " + manifest.errors.front());
                 return;
             }
             if (!manifest.migration_completed && manifest.migration_stage != 3) {
-                fail(95, 10, "Migration did not reach completed state");
+                fail(95, 9, "Migration did not reach completed state");
                 return;
             }
 
-            mark_steps(10, true);
+            mark_steps(9, true);
             jobs.update(queued_job_id, "completed", 100, "Migration completed");
         });
 
