@@ -22,9 +22,14 @@ launch sessions. The database provider owns the MariaDB user/grant/drop
 operations, while `DatabaseSqlConsoleService` coordinates session
 creation, temporary user provisioning, and explicit revoke cleanup.
 
+Phase 3 added a SQL Console-owned non-secret metadata store for restart
+cleanup. The store records launch/session identifiers, selected database
+IDs, status, timestamps, database name, and temporary username only. It
+does not persist launch secrets, secret digests, temporary passwords,
+service-account credentials, SQL content, or provider diagnostics.
+
 The current implementation still does not expose REST APIs, Adminer
-runtime, reverse proxy routes, persistent session metadata, or Web UI
-controls.
+runtime, reverse proxy routes, or Web UI controls.
 
 ## Ownership
 
@@ -33,6 +38,7 @@ controls.
 | SQL Console launch session lifecycle | `libs/sqlconsole/SqlConsoleSessionManager` |
 | SQL Console service boundary | `libs/sqlconsole/DatabaseSqlConsoleService` |
 | SQL Console audit event formatting | `libs/sqlconsole/SqlConsoleAuditLogger` |
+| SQL Console non-secret metadata | `libs/sqlconsole/SqlConsoleSessionStore` |
 | Database lifecycle operations | `libs/database/DatabaseLifecycleService` |
 | MariaDB operations | `libs/database/MariaDBProvider` |
 | SQL Console temporary MariaDB users | `libs/database/MariaDBProvider` |
@@ -66,6 +72,31 @@ generated with `SecureRandom`, stored only in the in-memory server-side
 session, and cleared from the session after successful explicit cleanup.
 They must never be serialized to frontend JSON or logs.
 
+## Persistent Metadata
+
+`SqlConsoleSessionStore` persists restart-cleanup metadata in a
+SQL Console-owned file format. This is intentionally separate from the
+current SQLite business schema so the active storage migration gate and
+schema version remain unchanged. The store exists only to support fail-
+closed restart behavior and orphan cleanup of temporary MariaDB users.
+
+Persisted fields are non-secret:
+
+- `launch_id`, `database_id`, and `site_id`,
+- administrator username and role,
+- provider and status,
+- database name and temporary username,
+- creation, redemption, idle-expiry, absolute-expiry, last-seen, and
+  revocation timestamps.
+
+On daemon restart, active persisted sessions must not be restored as
+usable browser sessions because launch secrets are not persisted. Recovery
+loads the non-secret metadata, asks the caller to resolve the current
+MariaDB target/service account from canonical site state, drops the
+temporary MariaDB user, marks the session revoked, and clears temporary
+user metadata from the store. If cleanup cannot complete, recovery fails
+closed and reports `recovery_incomplete`.
+
 ## Expiry Rules
 
 Phase 1 supports two expiry policies:
@@ -93,7 +124,7 @@ Future phases must preserve these boundaries:
 
 - Phase 2 added temporary MariaDB user lifecycle in the MariaDB provider
   layer.
-- Phase 3 persists only non-secret session metadata.
+- Phase 3 added non-secret persisted metadata and restart cleanup.
 - Phase 4 adds thin REST API handlers.
 - Phase 5 adds Adminer as the first `SqlConsoleProvider`.
 - Phase 6 adds admin-domain reverse proxy routing.

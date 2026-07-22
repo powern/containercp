@@ -60,6 +60,11 @@ in three categories:
 - **No `jobs` table.** Job persistence is owned by ARCH-010.
 - **No PEM or private-key content columns.** All cryptographic material
   remains filesystem-managed.
+- **No `sql_console_sessions` SQLite table.** SQL Console restart-cleanup
+  metadata is owned by `SqlConsoleSessionStore` in `libs/sqlconsole/` and
+  persists only non-secret launch metadata outside the SQLite business
+  schema. Launch secrets, secret digests, temporary passwords, service
+  account credentials, and SQL contents are not persisted.
 
 ---
 

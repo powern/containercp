@@ -2,9 +2,13 @@
 
 #include "sqlconsole/DatabaseSqlConsoleService.h"
 #include "sqlconsole/SqlConsoleAudit.h"
+#include "sqlconsole/SqlConsoleSessionStore.h"
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <unistd.h>
 
 using namespace containercp::sqlconsole;
 
@@ -78,6 +82,12 @@ SqlConsoleProvisionRequest test_provision_request() {
     request.service_account = {"containercp_service", "service-secret", "localhost"};
     request.database_name = "app_db";
     return request;
+}
+
+std::filesystem::path test_store_path(const std::string& name) {
+    const auto root = std::filesystem::temp_directory_path() / ("containercp-sql-console-store-" + std::to_string(::getpid()) + "-" + name);
+    std::filesystem::create_directories(root);
+    return root / "sessions.db";
 }
 
 } // namespace
@@ -315,4 +325,59 @@ TEST_CASE("SQL Console temporary user creation failure fails closed") {
     const auto* internal = service.sessions().find(created.launch_id);
     REQUIRE(internal != nullptr);
     CHECK(internal->status == SqlConsoleSessionStatus::Revoked);
+}
+
+TEST_CASE("SQL Console session store persists non-secret metadata only") {
+    const auto path = test_store_path("safe");
+    SqlConsoleSessionStore store(path);
+    FakeSqlConsoleProvider provider;
+    DatabaseSqlConsoleService service(provider, store, test_policy());
+
+    const auto created = service.create_temporary_launch_session(test_provision_request());
+    REQUIRE(created.success);
+
+    std::ifstream in(path);
+    REQUIRE(in.is_open());
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(content.find(created.launch_id) != std::string::npos);
+    CHECK(content.find(created.temporary_credential.user_name) != std::string::npos);
+    CHECK(content.find(created.launch_secret) == std::string::npos);
+    CHECK(content.find(created.temporary_credential.password) == std::string::npos);
+    CHECK(content.find("secret_digest") == std::string::npos);
+    CHECK(content.find("service-secret") == std::string::npos);
+
+    const auto loaded = store.load();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].launch_id == created.launch_id);
+    CHECK(loaded[0].temporary_user_name == created.temporary_credential.user_name);
+    CHECK(loaded[0].temporary_user_password.empty());
+    CHECK(loaded[0].secret_digest.empty());
+    std::filesystem::remove_all(path.parent_path());
+}
+
+TEST_CASE("SQL Console recovery drops persisted active temporary users and fails closed") {
+    const auto path = test_store_path("recovery");
+    SqlConsoleSessionStore store(path);
+    FakeSqlConsoleProvider provider;
+    {
+        DatabaseSqlConsoleService service(provider, store, test_policy());
+        const auto created = service.create_temporary_launch_session(test_provision_request());
+        REQUIRE(created.success);
+    }
+
+    DatabaseSqlConsoleService restarted(provider, store, test_policy());
+    const auto recovered = restarted.recover_persisted_sessions([](const SqlConsoleSession&) {
+        return SqlConsoleRecoveryTarget{{"/srv/containercp/sites/example.test/docker-compose.yml", "mariadb"}, {"containercp_service", "service-secret", "localhost"}};
+    });
+
+    REQUIRE(recovered.success);
+    CHECK(recovered.inspected == 1);
+    CHECK(recovered.cleaned == 1);
+    CHECK(provider.temporary_dropped);
+    const auto loaded = store.load();
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].status == SqlConsoleSessionStatus::Revoked);
+    CHECK(loaded[0].temporary_user_name.empty());
+    CHECK(loaded[0].temporary_user_password.empty());
+    std::filesystem::remove_all(path.parent_path());
 }

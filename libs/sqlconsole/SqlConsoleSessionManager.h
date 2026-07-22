@@ -60,6 +60,7 @@ public:
     SqlConsoleOperationResult clear_temporary_database_user(const std::string& launch_id);
     std::size_t sweep_expired();
     std::vector<SqlConsolePublicSession> list_public(uint64_t database_id = 0);
+    std::vector<SqlConsoleSession> list_internal() const;
     void set_clock_for_tests(Clock clock);
 
 private:

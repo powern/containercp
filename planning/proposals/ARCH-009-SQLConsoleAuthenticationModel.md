@@ -17,6 +17,14 @@ now provision a per-session MariaDB user with database-scoped grants and
 drop it during explicit revoke cleanup. Temporary credentials remain
 server-side and are excluded from public serialization.
 
+**Phase 3 implementation note:** Non-secret SQL Console session metadata
+is persisted for restart cleanup. Launch secrets, secret digests,
+temporary passwords, service-account credentials, SQL contents, and
+provider diagnostics are not persisted. After restart, persisted active
+sessions fail closed: recovery drops known temporary users through the
+MariaDB provider and marks the metadata revoked instead of restoring a
+browser-usable launch session.
+
 ---
 
 ## 1. Executive Summary

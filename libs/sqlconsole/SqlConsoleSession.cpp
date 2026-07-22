@@ -22,6 +22,13 @@ std::string sql_console_session_status_to_string(SqlConsoleSessionStatus status)
     return "unknown";
 }
 
+SqlConsoleSessionStatus sql_console_session_status_from_string(const std::string& value) {
+    if (value == "redeemed") return SqlConsoleSessionStatus::Redeemed;
+    if (value == "expired") return SqlConsoleSessionStatus::Expired;
+    if (value == "revoked") return SqlConsoleSessionStatus::Revoked;
+    return SqlConsoleSessionStatus::Created;
+}
+
 std::string sql_console_time_to_iso(std::chrono::system_clock::time_point value) {
     const std::time_t tt = std::chrono::system_clock::to_time_t(value);
     std::tm tm{};

@@ -51,6 +51,7 @@ struct SqlConsolePublicSession {
 };
 
 std::string sql_console_session_status_to_string(SqlConsoleSessionStatus status);
+SqlConsoleSessionStatus sql_console_session_status_from_string(const std::string& value);
 std::string sql_console_time_to_iso(std::chrono::system_clock::time_point value);
 SqlConsolePublicSession sql_console_public_session(const SqlConsoleSession& session);
 std::string sql_console_public_session_json(const SqlConsolePublicSession& session);

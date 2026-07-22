@@ -15,13 +15,30 @@ DatabaseSqlConsoleService::DatabaseSqlConsoleService(const database::DatabasePro
 {
 }
 
+DatabaseSqlConsoleService::DatabaseSqlConsoleService(const database::DatabaseProvider& provider,
+                                                     SqlConsoleSessionStore& store,
+                                                     SqlConsoleSessionPolicy policy)
+    : provider_(&provider)
+    , store_(&store)
+    , sessions_(policy)
+{
+}
+
 std::string DatabaseSqlConsoleService::temporary_user_name(const std::string& launch_id) const {
     if (launch_id.size() < 24) return {};
     return "ccp_sql_" + launch_id.substr(0, 24);
 }
 
+void DatabaseSqlConsoleService::persist_sessions() const {
+    if (store_ != nullptr) {
+        (void)store_->save(sessions_.list_internal());
+    }
+}
+
 SqlConsoleCreateResult DatabaseSqlConsoleService::create_launch_session(const SqlConsoleCreateRequest& request) {
-    return sessions_.create(request);
+    auto result = sessions_.create(request);
+    persist_sessions();
+    return result;
 }
 
 SqlConsoleProvisionResult DatabaseSqlConsoleService::create_temporary_launch_session(const SqlConsoleProvisionRequest& request) {
@@ -50,6 +67,7 @@ SqlConsoleProvisionResult DatabaseSqlConsoleService::create_temporary_launch_ses
     const auto password = security::SecureRandom::hex(32);
     if (user_name.empty() || !password) {
         (void)sessions_.revoke(created.launch_id);
+        persist_sessions();
         result.success = false;
         result.code = "temporary_credential_failed";
         result.message = "SQL Console temporary database credential could not be generated";
@@ -64,6 +82,7 @@ SqlConsoleProvisionResult DatabaseSqlConsoleService::create_temporary_launch_ses
                                                                          *password);
     if (!provisioned.success) {
         (void)sessions_.revoke(created.launch_id);
+        persist_sessions();
         result.success = false;
         result.code = provisioned.code;
         result.message = provisioned.message;
@@ -75,6 +94,7 @@ SqlConsoleProvisionResult DatabaseSqlConsoleService::create_temporary_launch_ses
     if (!attached.success) {
         (void)provider_->drop_temporary_sql_console_user(request.target, request.service_account, request.database_name, user_name);
         (void)sessions_.revoke(created.launch_id);
+        persist_sessions();
         result.success = false;
         result.code = attached.code;
         result.message = attached.message;
@@ -84,6 +104,7 @@ SqlConsoleProvisionResult DatabaseSqlConsoleService::create_temporary_launch_ses
 
     result.session = attached.session;
     result.temporary_credential = {request.database_name, user_name, *password};
+    persist_sessions();
     return result;
 }
 
@@ -92,11 +113,15 @@ SqlConsoleOperationResult DatabaseSqlConsoleService::redeem_launch_session(const
 }
 
 SqlConsoleOperationResult DatabaseSqlConsoleService::touch_launch_session(const std::string& launch_id, const std::string& launch_secret) {
-    return sessions_.touch(launch_id, launch_secret);
+    auto result = sessions_.touch(launch_id, launch_secret);
+    persist_sessions();
+    return result;
 }
 
 SqlConsoleOperationResult DatabaseSqlConsoleService::revoke_launch_session(const std::string& launch_id) {
-    return sessions_.revoke(launch_id);
+    auto result = sessions_.revoke(launch_id);
+    persist_sessions();
+    return result;
 }
 
 SqlConsoleOperationResult DatabaseSqlConsoleService::revoke_temporary_launch_session(const SqlConsoleCleanupRequest& request) {
@@ -119,11 +144,60 @@ SqlConsoleOperationResult DatabaseSqlConsoleService::revoke_temporary_launch_ses
         }
         (void)sessions_.clear_temporary_database_user(request.launch_id);
     }
-    return sessions_.revoke(request.launch_id);
+    auto result = sessions_.revoke(request.launch_id);
+    persist_sessions();
+    return result;
 }
 
 std::size_t DatabaseSqlConsoleService::sweep_expired_sessions() {
-    return sessions_.sweep_expired();
+    const auto count = sessions_.sweep_expired();
+    persist_sessions();
+    return count;
+}
+
+SqlConsoleRecoveryResult DatabaseSqlConsoleService::recover_persisted_sessions(const std::function<std::optional<SqlConsoleRecoveryTarget>(const SqlConsoleSession&)>& resolver) {
+    SqlConsoleRecoveryResult result;
+    if (store_ == nullptr) return result;
+    if (provider_ == nullptr) {
+        result.success = false;
+        result.code = "provider_unavailable";
+        result.message = "SQL Console database provider is unavailable for recovery";
+        return result;
+    }
+
+    auto persisted = store_->load();
+    result.inspected = persisted.size();
+    for (auto& session : persisted) {
+        if (session.temporary_user_name.empty() || session.database_name.empty()) continue;
+        if (session.status == SqlConsoleSessionStatus::Revoked || session.status == SqlConsoleSessionStatus::Expired) continue;
+        const auto target = resolver ? resolver(session) : std::nullopt;
+        if (!target) {
+            ++result.failed;
+            continue;
+        }
+        const auto dropped = provider_->drop_temporary_sql_console_user(target->target,
+                                                                       target->service_account,
+                                                                       session.database_name,
+                                                                       session.temporary_user_name);
+        if (!dropped.success) {
+            ++result.failed;
+            continue;
+        }
+        ++result.cleaned;
+        session.status = SqlConsoleSessionStatus::Revoked;
+        session.revoked_at = std::chrono::system_clock::now();
+        session.database_name.clear();
+        session.temporary_user_name.clear();
+        session.temporary_user_password.clear();
+        session.secret_digest.clear();
+    }
+    if (result.failed > 0) {
+        result.success = false;
+        result.code = "recovery_incomplete";
+        result.message = "SQL Console recovery could not clean every persisted session";
+    }
+    (void)store_->save(persisted);
+    return result;
 }
 
 std::vector<SqlConsolePublicSession> DatabaseSqlConsoleService::list_sessions(uint64_t database_id) {

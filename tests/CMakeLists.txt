@@ -54,6 +54,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/sqlconsole/SqlConsoleAudit.cpp
     ${CMAKE_SOURCE_DIR}/libs/sqlconsole/SqlConsoleSession.cpp
     ${CMAKE_SOURCE_DIR}/libs/sqlconsole/SqlConsoleSessionManager.cpp
+    ${CMAKE_SOURCE_DIR}/libs/sqlconsole/SqlConsoleSessionStore.cpp
     ${CMAKE_SOURCE_DIR}/libs/auth/SessionManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/user/User.cpp
     ${CMAKE_SOURCE_DIR}/libs/user/UserManager.cpp

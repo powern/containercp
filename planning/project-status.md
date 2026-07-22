@@ -212,7 +212,7 @@
 |------|--------|-------|
 | Phase 1: SQL Console domain and session model | ✅ | `libs/sqlconsole/`, `tests/test_sql_console_session.cpp`, `docs/development/sql-console.md` |
 | Phase 2: Temporary MariaDB user lifecycle | ✅ | `libs/database/MariaDBProvider.cpp`, `libs/database/DatabaseProvider.h`, `libs/sqlconsole/DatabaseSqlConsoleService.cpp`, `tests/test_sql_console_session.cpp`, `tests/test_database_lifecycle.cpp` |
-| Phase 3: Persistent session metadata and restart cleanup | ⬜ | Planned |
+| Phase 3: Persistent session metadata and restart cleanup | ✅ | `libs/sqlconsole/SqlConsoleSessionStore.{h,cpp}`, `libs/sqlconsole/DatabaseSqlConsoleService.cpp`, `tests/test_sql_console_session.cpp`, `docs/development/storage-schema.md` |
 | Phase 4: SQL Console public and internal API | ⬜ | Planned |
 | Phase 5: Adminer tool provider and runtime | ⬜ | Planned |
 | Phase 6: Reverse proxy and routing | ⬜ | Planned |

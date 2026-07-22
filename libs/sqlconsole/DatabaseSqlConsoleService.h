@@ -3,6 +3,10 @@
 
 #include "database/DatabaseProvider.h"
 #include "sqlconsole/SqlConsoleSessionManager.h"
+#include "sqlconsole/SqlConsoleSessionStore.h"
+
+#include <functional>
+#include <optional>
 
 namespace containercp::sqlconsole {
 
@@ -29,10 +33,25 @@ struct SqlConsoleCleanupRequest {
     database::DatabaseProviderCredential service_account;
 };
 
+struct SqlConsoleRecoveryTarget {
+    database::MariaDBConnectionTarget target;
+    database::DatabaseProviderCredential service_account;
+};
+
+struct SqlConsoleRecoveryResult {
+    bool success = true;
+    std::string code = "recovered";
+    std::string message = "SQL Console persisted sessions recovered";
+    std::size_t inspected = 0;
+    std::size_t cleaned = 0;
+    std::size_t failed = 0;
+};
+
 class DatabaseSqlConsoleService {
 public:
     explicit DatabaseSqlConsoleService(SqlConsoleSessionPolicy policy = {});
     DatabaseSqlConsoleService(const database::DatabaseProvider& provider, SqlConsoleSessionPolicy policy = {});
+    DatabaseSqlConsoleService(const database::DatabaseProvider& provider, SqlConsoleSessionStore& store, SqlConsoleSessionPolicy policy = {});
 
     SqlConsoleCreateResult create_launch_session(const SqlConsoleCreateRequest& request);
     SqlConsoleProvisionResult create_temporary_launch_session(const SqlConsoleProvisionRequest& request);
@@ -41,14 +60,17 @@ public:
     SqlConsoleOperationResult revoke_launch_session(const std::string& launch_id);
     SqlConsoleOperationResult revoke_temporary_launch_session(const SqlConsoleCleanupRequest& request);
     std::size_t sweep_expired_sessions();
+    SqlConsoleRecoveryResult recover_persisted_sessions(const std::function<std::optional<SqlConsoleRecoveryTarget>(const SqlConsoleSession&)>& resolver);
     std::vector<SqlConsolePublicSession> list_sessions(uint64_t database_id = 0);
     SqlConsoleSessionManager& sessions();
     const SqlConsoleSessionManager& sessions() const;
 
 private:
     std::string temporary_user_name(const std::string& launch_id) const;
+    void persist_sessions() const;
 
     const database::DatabaseProvider* provider_ = nullptr;
+    SqlConsoleSessionStore* store_ = nullptr;
     SqlConsoleSessionManager sessions_;
 };
 

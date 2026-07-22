@@ -255,6 +255,14 @@ std::vector<SqlConsolePublicSession> SqlConsoleSessionManager::list_public(uint6
     return result;
 }
 
+std::vector<SqlConsoleSession> SqlConsoleSessionManager::list_internal() const {
+    std::vector<SqlConsoleSession> result;
+    for (const auto& item : sessions_) {
+        result.push_back(item.second);
+    }
+    return result;
+}
+
 void SqlConsoleSessionManager::set_clock_for_tests(Clock clock) {
     if (clock) clock_ = std::move(clock);
 }

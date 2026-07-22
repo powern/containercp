@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | SQL Console - persist non-secret restart cleanup metadata
+
+**Summary:** Added Phase 3 SQL Console non-secret session metadata persistence and restart cleanup primitives. `SqlConsoleSessionStore` writes launch/session identifiers, status, timestamps, selected database identifiers, database name, and temporary username only. `DatabaseSqlConsoleService` now persists session metadata after lifecycle changes and can recover persisted active sessions by dropping temporary MariaDB users and marking metadata revoked.
+
+**Files changed:** `libs/sqlconsole/*`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/test_sql_console_session.cpp`, `docs/development/sql-console.md`, `docs/development/single-source-of-truth.md`, `docs/development/storage-schema.md`, `planning/proposals/ARCH-009-SQLConsoleAuthenticationModel.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No runtime UI/API behavior changed. SQL Console remains unavailable to users; this phase only adds fail-closed restart metadata and cleanup support for later API/Adminer phases.
+
+**Validation:** Local build passed. Focused SQL Console doctests passed (`12` cases, `116` assertions). Full doctest suite passed (`891` cases, `6549` assertions). `git diff --check` passed.
+
+**Known risks:** Recovery requires later daemon/API integration to supply site-derived MariaDB cleanup contexts at startup. Active sessions are intentionally not restored as usable sessions after restart because launch secrets are not persisted.
+
+---
+
 ## 2026-07-22 | `this commit` | SQL Console - add temporary MariaDB user lifecycle
 
 **Summary:** Added Phase 2 SQL Console temporary MariaDB user support. `DatabaseProvider` and `MariaDBProvider` now expose provider-owned methods to create and drop per-session SQL Console users with selected-database grants. `DatabaseSqlConsoleService` can provision launch sessions with server-side temporary credentials and drop/clear them during explicit revoke cleanup.
