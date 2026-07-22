@@ -46,3 +46,7 @@ containercp_tests
 *~
 .github/
 *.demo.html
+build-db2/
+build-db3/
+build-db4/
+build-db5/
