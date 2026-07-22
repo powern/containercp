@@ -3,6 +3,7 @@
 
 #include <arpa/inet.h>
 #include <cstring>
+#include <cctype>
 #include <fstream>
 #include <iostream>
 #include <netinet/in.h>
@@ -56,6 +57,35 @@ std::string WebServer::extract_session_token(const std::string& raw_request) con
             }
         }
         if (line.empty()) break;
+    }
+    return "";
+}
+
+std::string WebServer::extract_cookie(const std::string& raw_request, const std::string& name) const {
+    std::istringstream stream(raw_request);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        auto colon = line.find(':');
+        if (colon == std::string::npos) {
+            if (line.empty()) break;
+            continue;
+        }
+        std::string key = line.substr(0, colon);
+        if (key != "Cookie") continue;
+        std::string value = line.substr(colon + 1);
+        std::size_t pos = 0;
+        while (pos < value.size()) {
+            while (pos < value.size() && (value[pos] == ' ' || value[pos] == ';')) ++pos;
+            const auto eq = value.find('=', pos);
+            if (eq == std::string::npos) break;
+            std::string cookie_name = value.substr(pos, eq - pos);
+            auto end = value.find(';', eq + 1);
+            std::string cookie_value = value.substr(eq + 1, end == std::string::npos ? std::string::npos : end - eq - 1);
+            if (cookie_name == name) return cookie_value;
+            if (end == std::string::npos) break;
+            pos = end + 1;
+        }
     }
     return "";
 }
@@ -184,6 +214,33 @@ void WebServer::handle_auth_me(const std::string& raw_request, int client_fd) {
     send_json(client_fd, 200, resp);
 }
 
+void WebServer::handle_sql_console_auth(const Request& req, const std::string& raw_request, int client_fd) {
+    const std::string prefix = "/sql-console/internal/auth/";
+    std::string launch_id = req.path.substr(prefix.size());
+    if (launch_id.size() != 32) {
+        send_unauthorized(client_fd);
+        return;
+    }
+    for (unsigned char c : launch_id) {
+        if (std::isxdigit(c) == 0) {
+            send_unauthorized(client_fd);
+            return;
+        }
+    }
+
+    const std::string launch_secret = extract_cookie(raw_request, "ccp_sql_console_secret");
+    if (launch_secret.empty()) {
+        send_unauthorized(client_fd);
+        return;
+    }
+    const auto authorized = services_.sql_console().authorize_launch_session(launch_id, launch_secret);
+    if (!authorized.success) {
+        send_unauthorized(client_fd);
+        return;
+    }
+    send_json(client_fd, 200, "{\"success\":true}");
+}
+
 void WebServer::handle_client(int client_fd, WebServer* server) {
     char buf[65536];
     ssize_t n = ::read(client_fd, buf, sizeof(buf) - 1);
@@ -271,6 +328,11 @@ void WebServer::handle_client(int client_fd, WebServer* server) {
     }
     if (req.path == "/ui-api/auth/me") {
         server->handle_auth_me(raw, client_fd);
+        return;
+    }
+
+    if (req.path.find("/sql-console/internal/auth/") == 0) {
+        server->handle_sql_console_auth(req, raw, client_fd);
         return;
     }
 

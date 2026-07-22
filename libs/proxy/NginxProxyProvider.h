@@ -42,6 +42,13 @@ public:
     core::OperationResult last_test_result() const;
 
     void set_webmail_upstream(const std::string& upstream);
+    core::OperationResult upsert_sql_console_route(const std::string& domain,
+                                                   const std::string& launch_id,
+                                                   const std::string& adminer_upstream,
+                                                   const std::string& auth_upstream,
+                                                   const std::string& site_network);
+    core::OperationResult remove_sql_console_route(const std::string& domain,
+                                                   const std::string& launch_id);
 
 private:
     std::string config_path(const std::string& domain) const;

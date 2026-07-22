@@ -40,6 +40,15 @@ credentials, launch secrets, service-account credentials, or SQL content
 through Docker environment variables or command-line arguments. Reverse
 proxy routing and credential handoff remain later phases.
 
+**Phase 6 implementation note:** Admin-domain SQL Console proxy routing
+has been added. Browser routing to `/sql-console/<launch_id>/` is
+authorized by the server-only SQL Console launch-secret cookie because
+top-level browser navigation does not carry the Web UI's `X-Session-Token`
+header. Nginx uses `auth_request` to a WebServer internal endpoint that
+validates/touches the SQL Console session without returning credentials.
+Launch starts Adminer and installs the route; revoke removes the route,
+stops Adminer, and drops the temporary MariaDB user.
+
 ---
 
 ## 1. Executive Summary

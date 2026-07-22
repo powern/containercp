@@ -154,6 +154,18 @@ SqlConsoleOperationResult DatabaseSqlConsoleService::redeem_launch_session(const
     return result;
 }
 
+SqlConsoleOperationResult DatabaseSqlConsoleService::authorize_launch_session(const std::string& launch_id, const std::string& launch_secret) {
+    const auto* session = sessions_.find(launch_id);
+    if (session != nullptr && session->status == SqlConsoleSessionStatus::Redeemed) {
+        auto result = sessions_.touch(launch_id, launch_secret);
+        persist_sessions();
+        return result;
+    }
+    auto result = sessions_.redeem(launch_id, launch_secret);
+    persist_sessions();
+    return result;
+}
+
 SqlConsoleInternalRedeemResult DatabaseSqlConsoleService::redeem_internal_launch_session(const std::string& launch_id, const std::string& launch_secret) {
     SqlConsoleInternalRedeemResult result;
     const auto redeemed = sessions_.redeem(launch_id, launch_secret);

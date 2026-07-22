@@ -54,6 +54,7 @@
 #include "ssl/HTTP01ChallengeProvider.h"
 #include "ssl/RenewalScheduler.h"
 #include "ssl/SslCertificateManager.h"
+#include "sqlconsole/AdminerSqlConsoleProvider.h"
 #include "sqlconsole/DatabaseSqlConsoleService.h"
 #include "sqlconsole/SqlConsoleSessionStore.h"
 
@@ -94,6 +95,10 @@ public:
     database::DatabaseDumpJobService& database_dump_jobs();
     database::DatabaseCredentialRotationJobService& database_credential_rotation_jobs();
     sqlconsole::DatabaseSqlConsoleService& sql_console();
+    sqlconsole::SqlConsoleProvider& sql_console_provider();
+    core::OperationResult enable_sql_console_route(const sqlconsole::SqlConsoleProviderLaunchRequest& request,
+                                                   const std::string& provider_upstream);
+    core::OperationResult disable_sql_console_route(const std::string& launch_id);
     backup::BackupManager& backups();
     backup::BackupProvider& backup_provider();
     backup::BackupService& backup_service();
@@ -189,6 +194,7 @@ private:
     mail::SiteMailCredentials mail_credentials_;
     storage::Storage storage_;
     runtime::CommandExecutor credential_command_executor_;
+    sqlconsole::CommandExecutorSqlConsoleRuntimeRunner sql_console_runtime_runner_;
     database::MariaDBCommandExecutorRunner mariadb_command_runner_;
     database::MariaDBCredentialProvider mariadb_credential_provider_;
     database::MariaDBProvider mariadb_lifecycle_provider_;
@@ -213,6 +219,7 @@ private:
     database::DatabaseDumpService database_dump_;
     database::DatabaseDumpJobService database_dump_jobs_;
     sqlconsole::DatabaseSqlConsoleService sql_console_;
+    sqlconsole::AdminerSqlConsoleProvider adminer_sql_console_provider_;
     backup::BackupService backup_service_;
     backup::BackupJobService backup_jobs_;
     database::DatabaseViewService database_view_;

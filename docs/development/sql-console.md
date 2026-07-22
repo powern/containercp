@@ -41,8 +41,16 @@ private Compose network only, does not publish host ports, and does not
 place database credentials in Docker environment variables or command-line
 arguments.
 
-The current implementation still does not expose reverse proxy routes or
-Web UI controls for Adminer.
+Phase 6 added admin-domain proxy route orchestration. API launch now starts
+the Adminer provider container and installs a marked Nginx route for
+`/sql-console/<launch_id>/`. The route uses Nginx `auth_request` against a
+WebServer internal endpoint that validates the `HttpOnly` SQL Console launch
+cookie. Direct browser navigation does not rely on the frontend
+`X-Session-Token` header. Revoke removes the route and stops Adminer before
+dropping the temporary MariaDB user.
+
+The current implementation still does not expose Web UI controls for
+Adminer.
 
 ## Ownership
 
@@ -54,6 +62,8 @@ Web UI controls for Adminer.
 | SQL Console non-secret metadata | `libs/sqlconsole/SqlConsoleSessionStore` |
 | SQL Console tool provider boundary | `libs/sqlconsole/SqlConsoleProvider` |
 | Adminer temporary runtime lifecycle | `libs/sqlconsole/AdminerSqlConsoleProvider` |
+| SQL Console admin-domain route config | `libs/proxy/NginxProxyProvider` |
+| SQL Console launch-cookie route auth | `libs/api/WebServer` |
 | Database lifecycle operations | `libs/database/DatabaseLifecycleService` |
 | MariaDB operations | `libs/database/MariaDBProvider` |
 | SQL Console temporary MariaDB users | `libs/database/MariaDBProvider` |
@@ -89,6 +99,27 @@ Runtime rules:
 Credential handoff remains a later server-side proxy/internal-SSO phase.
 The frontend must not receive credentials, and Adminer must not become
 publicly reachable outside the authenticated admin-panel route.
+
+## Proxy Route Authorization
+
+SQL Console browser routing is authorized by the `ccp_sql_console_secret`
+cookie that is set only after an authenticated launch API call. This is
+intentional because top-level browser navigation to `/sql-console/<id>/`
+does not carry the Web UI's `X-Session-Token` header.
+
+The central Nginx proxy route:
+
+- is installed under the configured admin-panel domain only,
+- uses `auth_request` to call `/sql-console/internal/auth/<launch_id>` on
+  the WebServer upstream,
+- forwards only the SQL Console cookie to the auth endpoint,
+- proxies the approved launch path to the private Adminer container
+  upstream after auth succeeds,
+- is removed during explicit revoke.
+
+The WebServer auth endpoint only validates/touches the SQL Console launch
+session. It does not return credentials, SQL content, provider diagnostics,
+or public session JSON.
 
 ## Session Model
 
@@ -169,7 +200,8 @@ Future phases must preserve these boundaries:
 - Phase 4 added thin REST API handlers and internal provider redemption.
 - Phase 5 added Adminer as the first `SqlConsoleProvider` and a private
   on-demand runtime boundary without host ports or credential exposure.
-- Phase 6 adds admin-domain reverse proxy routing.
+- Phase 6 added launch-cookie-authorized admin-domain reverse proxy
+  routing and explicit route/container cleanup on revoke.
 - Phase 7 adds Database GUI launch and revoke controls.
 
 The frontend must never receive SQL Console credentials or launch

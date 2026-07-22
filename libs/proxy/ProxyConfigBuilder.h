@@ -20,6 +20,7 @@ public:
         std::string key_path;
         std::string acme_challenge_root;
         std::string webmail_upstream;
+        std::string sql_console_locations;
     };
 
     std::string build(const Params& params) const;
@@ -38,6 +39,9 @@ public:
     static std::string acme_challenge_location(const std::string& challenge_root);
 
     static std::string normalize_upstream(const std::string& raw);
+    static std::string sql_console_route_locations(const std::string& launch_id,
+                                                   const std::string& adminer_upstream,
+                                                   const std::string& auth_upstream);
 };
 
 } // namespace containercp::proxy

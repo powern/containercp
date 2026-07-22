@@ -39,6 +39,31 @@ TEST_CASE("ProxyConfigBuilder normalize_upstream") {
     CHECK(ProxyConfigBuilder::normalize_upstream("") == "");
 }
 
+TEST_CASE("ProxyConfigBuilder SQL Console route uses auth_request and private upstream") {
+    using containercp::proxy::ProxyConfigBuilder;
+
+    const auto route = ProxyConfigBuilder::sql_console_route_locations(
+        "0123456789abcdef0123456789abcdef",
+        "http://ccp-sqlconsole-0123456789abcdef01234567:8080",
+        "172.17.0.1:8081");
+
+    CHECK(route.find("location = /sql-console/internal/auth/0123456789abcdef0123456789abcdef") != std::string::npos);
+    CHECK(route.find("internal;") != std::string::npos);
+    CHECK(route.find("auth_request /sql-console/internal/auth/0123456789abcdef0123456789abcdef") != std::string::npos);
+    CHECK(route.find("proxy_pass http://172.17.0.1:8081/sql-console/internal/auth/0123456789abcdef0123456789abcdef") != std::string::npos);
+    CHECK(route.find("set $sql_console_backend \"http://ccp-sqlconsole-0123456789abcdef01234567:8080\"") != std::string::npos);
+    CHECK(route.find("rewrite ^/sql-console/0123456789abcdef0123456789abcdef/?(.*)$ /$1 break") != std::string::npos);
+    CHECK(route.find("proxy_pass $sql_console_backend;") != std::string::npos);
+    CHECK(route.find("password") == std::string::npos);
+    CHECK(route.find("secret") == std::string::npos);
+}
+
+TEST_CASE("ProxyConfigBuilder SQL Console route rejects malformed launch id") {
+    using containercp::proxy::ProxyConfigBuilder;
+
+    CHECK(ProxyConfigBuilder::sql_console_route_locations("not-valid", "adminer:8080", "172.17.0.1:8081").empty());
+}
+
 TEST_CASE("ReverseProxyManager multiple") {
     containercp::proxy::ReverseProxyManager mgr;
     mgr.create("a.com", 1, "", "");

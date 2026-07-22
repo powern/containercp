@@ -482,9 +482,11 @@ MariaDB database/user/grant objects. It is intended for stale metadata recovery,
 not normal delete.
 
 **POST /api/databases/<id>/sql-console/session** — creates a short-lived SQL
-Console launch session for the selected managed MariaDB database. The request
-must include a valid ContainerCP `X-Session-Token`; requests reaching the public
-WebServer path are already session-gated before proxying to the internal API.
+Console launch session for the selected managed MariaDB database, provisions a
+temporary MariaDB user, starts the Adminer provider container, and installs an
+admin-domain proxy route for the returned launch URL. The request must include a
+valid ContainerCP `X-Session-Token`; requests reaching the public WebServer path
+are already session-gated before proxying to the internal API.
 
 Returns HTTP `201 Created` with public-safe launch metadata only:
 
@@ -512,14 +514,22 @@ API response must not include temporary MariaDB usernames, temporary passwords,
 service-account credentials, database passwords, SQL contents, command output,
 or provider diagnostics.
 
+The browser-facing `/sql-console/<launch_id>/` route is authorized by the
+server-only `ccp_sql_console_secret` cookie, not by frontend JavaScript headers.
+The route is installed under the admin-panel domain and is proxied only to the
+private Adminer container upstream. Adminer still receives credentials only
+through trusted server-side provider code; credentials are never placed in the
+launch URL, Docker environment, command-line arguments, or frontend JSON.
+
 **GET /api/databases/<id>/sql-console/session** — lists public-safe SQL Console
 session metadata for the database. It requires `X-Session-Token` and returns only
 the same public session fields used by launch responses. Secrets and temporary
 credentials are excluded.
 
-**POST /api/databases/<id>/sql-console/session/revoke** — revokes a SQL Console
-launch session and asks the SQL Console service to drop its temporary MariaDB
-user. Body:
+**POST /api/databases/<id>/sql-console/session/revoke** — removes the
+admin-domain SQL Console proxy route, stops the Adminer provider container,
+revokes the SQL Console launch session, and asks the SQL Console service to drop
+its temporary MariaDB user. Body:
 
 ```json
 {

@@ -1,6 +1,8 @@
 #include "ProxyConfigBuilder.h"
 #include "ssl/CertificateProvider.h"
 
+#include <algorithm>
+#include <cctype>
 #include <sstream>
 
 namespace containercp::proxy {
@@ -27,12 +29,12 @@ std::string ProxyConfigBuilder::build(const Params& params) const {
     if (params.https && params.redirect) {
         return build_redirect_block(params.domain)
              + build_https_block(params.domain, params.upstream,
-                                  params.cert_path, params.key_path, webmail_loc);
+                                  params.cert_path, params.key_path, webmail_loc + params.sql_console_locations);
     }
     if (params.https) {
         return build_http_block(params.domain, params.upstream)
              + build_https_block(params.domain, params.upstream,
-                                  params.cert_path, params.key_path, webmail_loc);
+                                  params.cert_path, params.key_path, webmail_loc + params.sql_console_locations);
     }
     // HTTP only — build server block with optional ACME location INSIDE
     std::ostringstream conf;
@@ -55,6 +57,7 @@ std::string ProxyConfigBuilder::build(const Params& params) const {
          << "        proxy_set_header X-Forwarded-Proto $scheme;\n"
          << "    }\n"
          << webmail_loc
+         << params.sql_console_locations
          << "}\n";
     return conf.str();
 }
@@ -144,6 +147,42 @@ std::string ProxyConfigBuilder::normalize_upstream(const std::string& raw) {
         result.pop_back();
     }
     return result;
+}
+
+std::string ProxyConfigBuilder::sql_console_route_locations(const std::string& launch_id,
+                                                            const std::string& adminer_upstream,
+                                                            const std::string& auth_upstream) {
+    const bool valid_launch_id = launch_id.size() == 32 &&
+        std::all_of(launch_id.begin(), launch_id.end(), [](unsigned char c) { return std::isxdigit(c) != 0; });
+    if (!valid_launch_id) return {};
+    const auto adminer = normalize_upstream(adminer_upstream);
+    const auto auth = normalize_upstream(auth_upstream);
+    if (adminer.empty() || auth.empty()) return {};
+
+    std::ostringstream conf;
+    conf << "    # containercp-sql-console-route " << launch_id << " begin\n"
+         << "    location = /sql-console/internal/auth/" << launch_id << " {\n"
+         << "        internal;\n"
+         << "        proxy_pass http://" << auth << "/sql-console/internal/auth/" << launch_id << ";\n"
+         << "        proxy_pass_request_body off;\n"
+         << "        proxy_set_header Content-Length \"\";\n"
+         << "        proxy_set_header Cookie $http_cookie;\n"
+         << "        proxy_set_header X-Real-IP $remote_addr;\n"
+         << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+         << "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+         << "    }\n"
+         << "    location ^~ /sql-console/" << launch_id << "/ {\n"
+         << "        auth_request /sql-console/internal/auth/" << launch_id << ";\n"
+         << "        set $sql_console_backend \"http://" << adminer << "\";\n"
+         << "        rewrite ^/sql-console/" << launch_id << "/?(.*)$ /$1 break;\n"
+         << "        proxy_pass $sql_console_backend;\n"
+         << "        proxy_set_header Host $host;\n"
+         << "        proxy_set_header X-Real-IP $remote_addr;\n"
+         << "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+         << "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+         << "    }\n"
+         << "    # containercp-sql-console-route " << launch_id << " end\n";
+    return conf.str();
 }
 
 } // namespace containercp::proxy

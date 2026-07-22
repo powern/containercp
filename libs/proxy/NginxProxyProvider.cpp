@@ -10,6 +10,43 @@
 #include <thread>
 
 namespace containercp::proxy {
+namespace {
+
+std::string read_text_file(const std::string& path) {
+    std::ifstream in(path);
+    if (!in.is_open()) return {};
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+std::string route_begin_marker(const std::string& launch_id) {
+    return "    # containercp-sql-console-route " + launch_id + " begin\n";
+}
+
+std::string route_end_marker(const std::string& launch_id) {
+    return "    # containercp-sql-console-route " + launch_id + " end\n";
+}
+
+bool erase_sql_console_route(std::string& config, const std::string& launch_id) {
+    const auto begin = route_begin_marker(launch_id);
+    const auto end = route_end_marker(launch_id);
+    const auto start = config.find(begin);
+    if (start == std::string::npos) return false;
+    const auto stop = config.find(end, start);
+    if (stop == std::string::npos) return false;
+    config.erase(start, stop + end.size() - start);
+    return true;
+}
+
+bool insert_before_final_server_close(std::string& config, const std::string& block) {
+    const auto pos = config.rfind("\n}");
+    if (pos == std::string::npos) return false;
+    config.insert(pos + 1, block);
+    return true;
+}
+
+} // namespace
 
 NginxProxyProvider::NginxProxyProvider(filesystem::Filesystem& fs, config::Config& cfg,
                                        logger::Logger& logger, ssl::SslCertificateManager& ssl_mgr,
@@ -516,6 +553,70 @@ core::OperationResult NginxProxyProvider::sync_all_proxies(
 
 void NginxProxyProvider::set_webmail_upstream(const std::string& upstream) {
     webmail_upstream_ = upstream;
+}
+
+core::OperationResult NginxProxyProvider::upsert_sql_console_route(const std::string& domain,
+                                                                    const std::string& launch_id,
+                                                                    const std::string& adminer_upstream,
+                                                                    const std::string& auth_upstream,
+                                                                    const std::string& site_network) {
+    std::lock_guard<std::mutex> lock(operation_mutex_);
+    const auto block = ProxyConfigBuilder::sql_console_route_locations(launch_id, adminer_upstream, auth_upstream);
+    if (block.empty()) return {false, "Invalid SQL Console proxy route"};
+
+    if (!site_network.empty()) {
+        auto connected = executor_.run({"docker", "network", "connect", site_network, proxy_name()});
+        if (connected.exit_code != 0 && connected.err.find("already") == std::string::npos) {
+            return {false, "Failed to connect central proxy to SQL Console site network"};
+        }
+    }
+
+    const auto path = config_path(domain);
+    auto config = read_text_file(path);
+    if (config.empty()) return {false, "Admin proxy config not found"};
+    const auto original = config;
+    (void)erase_sql_console_route(config, launch_id);
+    if (!insert_before_final_server_close(config, block)) {
+        return {false, "Admin proxy config cannot accept SQL Console route"};
+    }
+
+    fs_.create_file(path, config);
+    if (!validate_nginx_config(path)) {
+        fs_.create_file(path, original);
+        return {false, "SQL Console proxy route failed nginx validation"};
+    }
+    auto reloaded = reload();
+    if (!reloaded.success) {
+        fs_.create_file(path, original);
+        (void)reload();
+        return {false, "SQL Console proxy route reload failed"};
+    }
+    logger_.info("PROXY", "Installed SQL Console route for launch_id=" + launch_id);
+    return {true, "SQL Console proxy route installed"};
+}
+
+core::OperationResult NginxProxyProvider::remove_sql_console_route(const std::string& domain,
+                                                                   const std::string& launch_id) {
+    std::lock_guard<std::mutex> lock(operation_mutex_);
+    const auto path = config_path(domain);
+    auto config = read_text_file(path);
+    if (config.empty()) return {true, "SQL Console proxy route absent"};
+    const auto original = config;
+    if (!erase_sql_console_route(config, launch_id)) return {true, "SQL Console proxy route absent"};
+
+    fs_.create_file(path, config);
+    if (!validate_nginx_config(path)) {
+        fs_.create_file(path, original);
+        return {false, "SQL Console proxy route removal failed nginx validation"};
+    }
+    auto reloaded = reload();
+    if (!reloaded.success) {
+        fs_.create_file(path, original);
+        (void)reload();
+        return {false, "SQL Console proxy route removal reload failed"};
+    }
+    logger_.info("PROXY", "Removed SQL Console route for launch_id=" + launch_id);
+    return {true, "SQL Console proxy route removed"};
 }
 
 core::OperationResult NginxProxyProvider::test_config() {

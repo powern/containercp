@@ -35,6 +35,7 @@ or duplicate the logic.
 | SQL Console restart-cleanup metadata | `SqlConsoleSessionStore` (`libs/sqlconsole/`) | `DatabaseSqlConsoleService` |
 | SQL Console tool providers | `SqlConsoleProvider` (`libs/sqlconsole/`) | Adminer, future native SQL editor |
 | Adminer SQL Console runtime | `AdminerSqlConsoleProvider` (`libs/sqlconsole/`) | future proxy route |
+| SQL Console proxy routes | `NginxProxyProvider` (`libs/proxy/`) | `ServiceRegistry`, WebServer auth endpoint |
 
 ## Examples
 

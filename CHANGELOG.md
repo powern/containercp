@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | SQL Console - add authenticated Adminer proxy routing
+
+**Summary:** Added Phase 6 SQL Console routing. Launch now starts the Adminer provider container, connects the central proxy to the target site's private network, and installs a marked admin-domain Nginx route for `/sql-console/<launch_id>/`. The route uses Nginx `auth_request` against a WebServer internal endpoint that validates the `HttpOnly` SQL Console launch-secret cookie. Revoke removes the route, stops Adminer, and then drops the temporary MariaDB user.
+
+**Files changed:** `libs/api/ApiServer.cpp`, `libs/api/WebServer.{h,cpp}`, `libs/core/ServiceRegistry.{h,cpp}`, `libs/proxy/NginxProxyProvider.{h,cpp}`, `libs/proxy/ProxyConfigBuilder.{h,cpp}`, `libs/sqlconsole/DatabaseSqlConsoleService.{h,cpp}`, `tests/test_proxy.cpp`, `tests/test_sql_console_session.cpp`, `docs/api/API_REFERENCE.md`, `docs/development/sql-console.md`, `docs/development/single-source-of-truth.md`, `planning/proposals/ARCH-009-SQLConsoleAuthenticationModel.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** The SQL Console launch URL is now backed by an Adminer route under the admin-panel domain after a successful launch API call. No Web UI button is exposed yet.
+
+**Validation:** Local build passed. Focused SQL Console doctests passed (`24` cases, `228` assertions). Focused SQL Console proxy route doctests passed (`2` cases, `10` assertions). Focused SQL Console API doctests passed (`1` case, `12` assertions). Full doctest suite passed (`901` cases, `6626` assertions). `git diff --check` passed.
+
+**Known risks:** Adminer credential handoff remains server-side/internal-provider work; this phase authorizes and routes the browser path but does not expose credentials to frontend JavaScript. The route uses the SQL Console launch-secret cookie because direct navigation cannot carry the existing frontend `X-Session-Token` header.
+
+---
+
 ## 2026-07-22 | `this commit` | SQL Console - add Adminer provider runtime
 
 **Summary:** Added Phase 5 SQL Console provider/runtime integration. `SqlConsoleProvider` now defines the replaceable SQL Console tool boundary and `AdminerSqlConsoleProvider` implements on-demand Adminer container start/status/stop commands through vector-argv runtime execution. Adminer containers attach only to the target site's private Compose network, publish no host ports, and receive no database credentials through Docker environment variables or command-line arguments.

@@ -39,6 +39,7 @@ ServiceRegistry::ServiceRegistry()
     , pem_cert_provider_(std::make_shared<ssl::PemCertificateProvider>(logger_))
     , dkim_(logger_)
     , storage_(config_.database_dir(), storage_backend_options(config_))
+    , sql_console_runtime_runner_(credential_command_executor_)
     , mariadb_command_runner_(credential_command_executor_)
     , mariadb_credential_provider_(mariadb_command_runner_)
     , mariadb_lifecycle_provider_(mariadb_command_runner_)
@@ -96,6 +97,7 @@ ServiceRegistry::ServiceRegistry()
     , database_dump_(sites_, databases_, site_runtime_, mariadb_lifecycle_provider_, config_.sites_dir(), std::filesystem::path(config_.data_root()) / "database-artifacts")
     , database_dump_jobs_(databases_, jobs_, job_executor_, database_dump_)
     , sql_console_(mariadb_lifecycle_provider_, sql_console_sessions_)
+    , adminer_sql_console_provider_(sql_console_runtime_runner_)
     , backup_service_(sites_, databases_, backups_, backup_provider_, database_dump_, runtime_action_executor_, config_.data_root(), config_.sites_dir())
     , backup_jobs_(jobs_, job_executor_, backup_service_, [this]() {
         storage_.save_backups(backups_.list());
@@ -704,6 +706,38 @@ database::DatabaseCredentialRotationJobService& ServiceRegistry::database_creden
 
 sqlconsole::DatabaseSqlConsoleService& ServiceRegistry::sql_console() {
     return sql_console_;
+}
+
+sqlconsole::SqlConsoleProvider& ServiceRegistry::sql_console_provider() {
+    return adminer_sql_console_provider_;
+}
+
+core::OperationResult ServiceRegistry::enable_sql_console_route(const sqlconsole::SqlConsoleProviderLaunchRequest& request,
+                                                                const std::string& provider_upstream) {
+    auto* nginx_proxy = dynamic_cast<proxy::NginxProxyProvider*>(&proxy_provider_);
+    if (nginx_proxy == nullptr) return {false, "SQL Console proxy provider unavailable"};
+    const auto hostname = config_.server_hostname();
+    if (hostname.empty()) return {false, "server_hostname not configured"};
+    const auto* admin_proxy = reverse_proxies_.find_by_domain(hostname);
+    if (admin_proxy == nullptr || admin_proxy->upstream.empty()) return {false, "Admin proxy upstream unavailable"};
+    const auto site_network = adminer_sql_console_provider_.site_network_name(request);
+    return nginx_proxy->upsert_sql_console_route(hostname,
+                                                request.launch_id,
+                                                provider_upstream,
+                                                admin_proxy->upstream,
+                                                site_network);
+}
+
+core::OperationResult ServiceRegistry::disable_sql_console_route(const std::string& launch_id) {
+    const auto hostname = config_.server_hostname();
+    if (!hostname.empty()) {
+        auto* nginx_proxy = dynamic_cast<proxy::NginxProxyProvider*>(&proxy_provider_);
+        if (nginx_proxy != nullptr) {
+            (void)nginx_proxy->remove_sql_console_route(hostname, launch_id);
+        }
+    }
+    (void)adminer_sql_console_provider_.stop(launch_id);
+    return {true, "SQL Console route disabled"};
 }
 
 backup::BackupManager& ServiceRegistry::backups() {

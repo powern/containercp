@@ -25,8 +25,10 @@ private:
     void handle_auth_change_password(const std::string& raw_request, int client_fd);
     void handle_auth_logout(const std::string& raw_request, int client_fd);
     void handle_auth_me(const std::string& raw_request, int client_fd);
+    void handle_sql_console_auth(const Request& req, const std::string& raw_request, int client_fd);
     bool require_session(const std::string& raw_request, int client_fd);
     std::string extract_session_token(const std::string& raw_request) const;
+    std::string extract_cookie(const std::string& raw_request, const std::string& name) const;
     void send_json(int client_fd, int status, const std::string& body);
     void send_unauthorized(int client_fd);
 

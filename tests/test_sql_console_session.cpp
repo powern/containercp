@@ -117,6 +117,26 @@ TEST_CASE("SQL Console session creation returns only public session plus one-tim
     CHECK(json.find("credential") == std::string::npos);
 }
 
+TEST_CASE("SQL Console launch cookie authorization redeems then touches session") {
+    DatabaseSqlConsoleService service(test_policy());
+    const auto created = service.create_launch_session(test_request());
+    REQUIRE(created.success);
+
+    const auto first = service.authorize_launch_session(created.launch_id, created.launch_secret);
+    REQUIRE(first.success);
+    CHECK(first.code == "redeemed");
+    CHECK(first.session.status == "redeemed");
+
+    const auto second = service.authorize_launch_session(created.launch_id, created.launch_secret);
+    REQUIRE(second.success);
+    CHECK(second.code == "touched");
+    CHECK(second.session.status == "redeemed");
+
+    const auto invalid = service.authorize_launch_session(created.launch_id, "wrong-secret");
+    CHECK_FALSE(invalid.success);
+    CHECK(invalid.code == "invalid_secret");
+}
+
 TEST_CASE("SQL Console session lookup marks expired sessions") {
     ClockPoint now{};
     SqlConsoleSessionManager sessions(test_policy());

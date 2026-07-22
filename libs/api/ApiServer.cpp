@@ -6,6 +6,7 @@
 #include "operations/SiteCreateOperation.h"
 #include "operations/SiteRemoveOperation.h"
 #include "sqlconsole/SqlConsoleAudit.h"
+#include "sqlconsole/SqlConsoleProvider.h"
 
 #include "mail/DkimManager.h"
 #include "mail/MailDomain.h"
@@ -1259,6 +1260,26 @@ bool ApiServer::start() {
                 sqlconsole::SqlConsoleAuditLogger::log({"launch", "create", "failure", created.code, created.launch_id, database_id, site_record->id, session->username, "adminer", created.session.status, sqlconsole::SqlConsoleAuditEvent::Level::Error});
                 return sql_console_error(400, created.code, created.message);
             }
+            sqlconsole::SqlConsoleProviderLaunchRequest provider_launch;
+            provider_launch.launch_id = created.launch_id;
+            provider_launch.site_id = site_record->id;
+            provider_launch.database_id = db->id;
+            provider_launch.site_domain = site_record->domain;
+            provider_launch.site_root = site_root.string();
+            provider_launch.provider = "adminer";
+            const auto provider_started = s.sql_console_provider().start(provider_launch);
+            if (!provider_started.success) {
+                (void)s.sql_console().revoke_site_temporary_launch_session(created.launch_id, site_root);
+                sqlconsole::SqlConsoleAuditLogger::log({"launch", "provider_start", "failure", provider_started.code, created.launch_id, database_id, site_record->id, session->username, "adminer", created.session.status, sqlconsole::SqlConsoleAuditEvent::Level::Error});
+                return sql_console_error(500, provider_started.code, provider_started.message);
+            }
+            const auto route_enabled = s.enable_sql_console_route(provider_launch, provider_started.upstream);
+            if (!route_enabled.success) {
+                (void)s.disable_sql_console_route(created.launch_id);
+                (void)s.sql_console().revoke_site_temporary_launch_session(created.launch_id, site_root);
+                sqlconsole::SqlConsoleAuditLogger::log({"launch", "proxy_route", "failure", "proxy_route_failed", created.launch_id, database_id, site_record->id, session->username, "adminer", created.session.status, sqlconsole::SqlConsoleAuditEvent::Level::Error});
+                return sql_console_error(500, "proxy_route_failed", route_enabled.message);
+            }
             sqlconsole::SqlConsoleAuditLogger::log({"launch", "create", "success", "", created.launch_id, database_id, site_record->id, session->username, "adminer", created.session.status, sqlconsole::SqlConsoleAuditEvent::Level::Info});
             Response out;
             out.status_code = 201;
@@ -1276,6 +1297,7 @@ bool ApiServer::start() {
             if (auto error = sql_console_context(req, database_id, db, site_record, site_root, session)) return *error;
             const std::string launch_id = json_extract(req.body, "launch_id");
             if (launch_id.empty()) return sql_console_error(400, "launch_id_required", "SQL Console launch_id is required");
+            (void)s.disable_sql_console_route(launch_id);
             const auto revoked = s.sql_console().revoke_site_temporary_launch_session(launch_id, site_root);
             if (!revoked.success) return sql_console_error(400, revoked.code, revoked.message);
             sqlconsole::SqlConsoleAuditLogger::log({"launch", "revoke", "success", "", launch_id, database_id, site_record->id, session->username, "adminer", revoked.session.status, sqlconsole::SqlConsoleAuditEvent::Level::Info});
