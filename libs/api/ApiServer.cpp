@@ -3957,6 +3957,197 @@ bool ApiServer::start() {
         return r;
     });
 
+    router_.add("POST", "/api/migration/vesta/migrate", [&s, &resolve_allowed_backup](const Request& req) {
+        Response r;
+
+        auto extract = [&](const std::string& name) -> std::string {
+            auto pos = req.body.find("\"" + name + "\":\"");
+            if (pos == std::string::npos) {
+                pos = req.body.find("\"" + name + "\": \"");
+                if (pos == std::string::npos) return "";
+            }
+            auto start = req.body.find('"', pos + name.size() + 3);
+            if (start == std::string::npos) return "";
+            auto end = req.body.find('"', start + 1);
+            if (end == std::string::npos) return "";
+            return req.body.substr(start + 1, end - start - 1);
+        };
+        auto extract_bool = [&](const std::string& name) -> bool {
+            auto pos = req.body.find("\"" + name + "\":true");
+            if (pos != std::string::npos) return true;
+            pos = req.body.find("\"" + name + "\": true");
+            return pos != std::string::npos;
+        };
+
+        std::string backup = extract("backup");
+        std::string domain = extract("domain");
+        std::string owner = extract("owner");
+        std::string database = extract("database");
+        bool skip_db = extract_bool("skip_db");
+        bool keep_staging = extract_bool("keep_staging");
+
+        if (backup.empty() || domain.empty() || owner.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"backup, domain and owner are required\"}";
+            return r;
+        }
+
+        std::vector<std::string> allowed_dirs = {"/backup", s.config().data_root() + "/backups"};
+        std::string resolve_error;
+        std::string resolved_path = resolve_allowed_backup(backup, allowed_dirs, resolve_error);
+        if (resolved_path.empty()) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(resolve_error) + "\"}";
+            return r;
+        }
+
+        auto& jobs = s.jobs();
+        uint64_t job_id = jobs.create("migration-vesta", {
+            "Analyze backup", "Create Site", "Create Database", "Deploy Containers",
+            "Import Files", "Import SQL", "Configure WordPress", "Configure Proxy",
+            "Configure Mail", "Health Checks", "Migration Complete"
+        });
+        jobs.update(job_id, "pending", 0, "Migration queued");
+
+        auto opts_ptr = std::make_shared<migration::Options>();
+        opts_ptr->backup_path = resolved_path;
+        opts_ptr->domain = domain;
+        opts_ptr->owner = owner;
+        opts_ptr->database = database;
+        opts_ptr->skip_db = skip_db;
+        opts_ptr->keep_staging = keep_staging;
+
+        bool queued = s.job_executor().submit(job_id, [&s, opts_ptr](jobs::JobManager& jobs, uint64_t queued_job_id) {
+            auto fail = [&](int progress, const std::string& message) {
+                jobs.update(queued_job_id, "failed", progress, message);
+            };
+
+            runtime::CommandExecutor exec;
+            migration::VestaSiteImporter importer(exec, s.filesystem(), s.config(), s.logger(),
+                                                  &s.sites(), &s.domains());
+
+            jobs.update(queued_job_id, "running", 5, "Analyzing backup");
+            auto manifest = importer.inspect(*opts_ptr);
+            if (!manifest.errors.empty()) {
+                fail(5, "Analyze failed: " + manifest.errors.front());
+                return;
+            }
+
+            if (!manifest.site_exists) {
+                jobs.update(queued_job_id, "running", 12, "Creating Site");
+                auto* node = s.nodes().find("local");
+                if (!node) {
+                    fail(12, "No node available");
+                    return;
+                }
+
+                operations::SiteCreateOperation site_op(s.sites(), s.domains(),
+                    s.databases(), s.reverse_proxies(),
+                    s.proxy_provider(),
+                    s.filesystem(), s.config(), s.hosting_provider());
+
+                auto result = site_op.execute(opts_ptr->owner, opts_ptr->domain, *node, false, "", nullptr, 0);
+                s.save();
+                if (!result.success) {
+                    fail(20, "Site creation failed: " + result.message);
+                    return;
+                }
+
+                auto* created_site = s.sites().find(opts_ptr->domain);
+                if (!created_site) {
+                    fail(20, "Site record not found after create");
+                    return;
+                }
+
+                std::string marker_path = s.config().sites_dir() + opts_ptr->domain + "/.containercp-migration.json";
+                std::string marker = "{\"domain\":\"" + opts_ptr->domain
+                    + "\",\"owner\":\"" + opts_ptr->owner
+                    + "\",\"site_id\":" + std::to_string(created_site->id)
+                    + ",\"stage\":1,\"files_pending\":true,\"files_imported\":false,\"sql_pending\":true}";
+                if (!s.filesystem().create_file(marker_path, marker)) {
+                    fail(25, "Site created but migration marker could not be written");
+                    return;
+                }
+            } else if (!manifest.migration_marker_found) {
+                fail(12, "Existing site is not an active myVesta migration");
+                return;
+            }
+
+            jobs.update(queued_job_id, "running", 35, "Resolving migration state");
+            manifest = importer.inspect(*opts_ptr);
+            if (!manifest.errors.empty()) {
+                fail(35, "Analyze failed after Site create: " + manifest.errors.front());
+                return;
+            }
+
+            if (manifest.migration_completed || manifest.migration_stage == 3) {
+                jobs.update(queued_job_id, "completed", 100, "Migration already completed");
+                return;
+            }
+
+            if (manifest.can_import_files) {
+                jobs.update(queued_job_id, "running", 45, "Importing files");
+                auto files = importer.import_files(*opts_ptr);
+                if (!files.success) {
+                    std::string err = files.errors.empty() ? "File import failed" : files.errors.front();
+                    fail(45, err);
+                    return;
+                }
+            } else if (manifest.migration_stage == 1) {
+                std::string reason = manifest.marker_error.empty() ? "File import is not available" : manifest.marker_error;
+                fail(45, reason);
+                return;
+            }
+
+            jobs.update(queued_job_id, "running", 65, "Resolving SQL import state");
+            manifest = importer.inspect(*opts_ptr);
+            if (!manifest.errors.empty()) {
+                fail(65, "Analyze failed before SQL import: " + manifest.errors.front());
+                return;
+            }
+
+            if (manifest.can_import_sql) {
+                jobs.update(queued_job_id, "running", 72, "Importing SQL and configuring WordPress");
+                auto sql = importer.import_sql(*opts_ptr);
+                if (!sql.success) {
+                    std::string err = sql.errors.empty() ? "SQL import failed" : sql.errors.front();
+                    fail(72, err);
+                    return;
+                }
+            } else if (manifest.migration_stage != 3) {
+                std::string reason = manifest.marker_error.empty() ? "SQL import is not available" : manifest.marker_error;
+                fail(72, reason);
+                return;
+            }
+
+            jobs.update(queued_job_id, "running", 95, "Finalizing migration");
+            manifest = importer.inspect(*opts_ptr);
+            if (!manifest.errors.empty()) {
+                fail(95, "Final analysis failed: " + manifest.errors.front());
+                return;
+            }
+            if (!manifest.migration_completed && manifest.migration_stage != 3) {
+                fail(95, "Migration did not reach completed state");
+                return;
+            }
+
+            jobs.update(queued_job_id, "completed", 100, "Migration completed");
+        });
+
+        if (!queued) {
+            jobs.update(job_id, "failed", 0, "Task queue full");
+            r.status_code = 503;
+            r.body = "{\"success\":false,\"error\":\"Task queue full\"}";
+            return r;
+        }
+
+        r.status_code = 202;
+        r.body = "{\"success\":true,\"data\":{\"job_id\":" + std::to_string(job_id)
+            + ",\"status\":\"pending\",\"status_url\":\"/api/jobs?id=" + std::to_string(job_id)
+            + "\",\"message\":\"Migration queued\"}}";
+        return r;
+    });
+
     // Accept loop
     while (running_) {
         struct sockaddr_in client_addr{};

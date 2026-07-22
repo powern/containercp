@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | Migration - Add one-click Vesta migration workflow
+
+**Summary:** Reworked the myVestaCP migration workflow so the operator analyzes a backup and then starts one migration job. The backend keeps the staged migration state machine and resumes from the marker, while the Web UI no longer requires manual Import Files or Import SQL clicks.
+
+**Files changed:** `libs/api/ApiServer.cpp`, `web/pages/migration.js`, `docs/api/API_REFERENCE.md`, `CHANGELOG.md`
+
+**User-visible behavior:** The Migration page now exposes a single Migrate/Resume migration action after analysis. The migration job progresses through analyze, Site/database/container creation, file import, SQL import, WordPress configuration, proxy/runtime checks, and completion.
+
+**Validation:** Local build passed with `cmake --build build-db5 -j2`. Migration-focused doctests passed (`39` cases, `254` assertions). Frontend syntax passed for `web/pages/migration.js`; frontend baseline check passed. Production validation with `admin.2026-07-21_05-53-06.tar` is pending.
+
+**Known risks:** The one-click endpoint orchestrates existing synchronous Stage 2 file import and Stage 3 SQL import in a job; long-running work depends on current migration importer behavior and marker state.
+
+---
+
 ## 2026-07-22 | `this commit` | Docs - Record Unity migration workflow analysis
 
 **Summary:** Added a text report for the read-only analysis of the myVestaCP migration workflow stall after Stage 1 for `unity.softico.ua`.

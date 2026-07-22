@@ -143,53 +143,34 @@ async function analyzeBackup() {
     const hasErrors = d.errors && d.errors.length > 0;
 
     if (!hasErrors) {
-      if (!d.site_exists) {
-        // Stage 0: Create site
-        html += `<div class="card" style="margin-top:12px;border-color:var(--blue);">
-          <div class="card-header"><h3>Migration Stage 0 — Backup Analyzed</h3></div>
-          <div style="padding:12px;font-size:13px;">
-            <p style="margin-bottom:12px;">Backup analyzed. Site not yet created.</p>
-            <button class="btn btn-primary" onclick="importMigrationSite()" id="migrate-import-btn">Create site</button>
-            <div id="migrate-import-result" style="margin-top:12px;"></div>
-          </div></div>`;
-
-      } else if (d.migration_completed) {
-        // Stage 3: Completed
+      if (d.migration_completed) {
+        // Completed
         html += `<div class="card" style="margin-top:12px;border-color:var(--green);">
           <div class="card-header"><h3 style="color:var(--green);">Migration Completed</h3></div>
           <div style="padding:12px;font-size:13px;">
             <p>All migration stages completed.</p>
           </div></div>`;
 
-      } else if (d.site_exists && d.migration_marker_found) {
-        // Migration in progress — show current stage
-        const stageLabels = {1: 'Site created', 2: 'Files imported'};
-        const stageDesc = stageLabels[d.migration_stage] || ('Stage ' + d.migration_stage);
+      } else if (d.site_exists && d.migration_marker_found && d.marker_error) {
+        html += `<div class="alert alert-warning" style="margin-top:12px;">Marker error: ${esc(d.marker_error)}</div>`;
+      } else if (!d.site_exists || (d.site_exists && d.migration_marker_found)) {
+        // One-click migration entrypoint. The backend resumes from the marker if a staged migration already exists.
+        const title = !d.site_exists ? 'Migration Ready' : 'Migration In Progress';
+        const action = !d.site_exists ? 'Migrate' : 'Resume migration';
+        const stage = d.migration_marker_found ? (d.migration_stage || 0) : 0;
         html += `<div class="card" style="margin-top:12px;border-color:var(--blue);">
-          <div class="card-header"><h3 style="color:var(--blue);">Migration: ${esc(stageDesc)}</h3></div>
+          <div class="card-header"><h3>${title}</h3></div>
           <div style="padding:12px;font-size:13px;">
+            <p style="margin-bottom:12px;">ContainerCP will analyze, create or resume the Site, import files, import SQL, configure WordPress, and run health checks automatically.</p>
             <table style="width:100%;border-collapse:collapse;">
+              <tr><td style="padding:4px 8px;color:var(--text2);">Current stage</td><td>${stage}</td></tr>
               <tr><td style="padding:4px 8px;color:var(--text2);">Site ID</td><td>${d.migration_site_id || '?'}</td></tr>
               <tr><td style="padding:4px 8px;color:var(--text2);">Files</td><td>${d.files_status === 'imported' ? '<span class="badge badge-ok">Imported</span>' : '<span class="badge badge-info">' + esc(d.files_status || 'Pending') + '</span>'}</td></tr>
               <tr><td style="padding:4px 8px;color:var(--text2);">SQL</td><td>${d.sql_status === 'imported' ? '<span class="badge badge-ok">Imported</span>' : '<span class="badge badge-info">' + esc(d.sql_status || 'Pending') + '</span>'}</td></tr>
-            </table>`;
-
-        // Import files button (stage 1 → 2)
-        if (d.can_import_files) {
-          html += `<button class="btn btn-primary" style="margin-top:12px;" onclick="importMigrationFiles()">Import files</button>
-            <div id="migrate-files-result" style="margin-top:12px;"></div>`;
-        }
-
-        // Import SQL button (stage 2 → 3)
-        if (d.can_import_sql) {
-          html += `<button class="btn btn-primary" style="margin-top:12px;" onclick="importMigrationSql()">Import SQL</button>
-            <div id="migrate-sql-result" style="margin-top:12px;"></div>`;
-        }
-
-        html += `</div></div>`;
-
-      } else if (d.site_exists && d.migration_marker_found && d.marker_error) {
-        html += `<div class="alert alert-warning" style="margin-top:12px;">Marker error: ${esc(d.marker_error)}</div>`;
+            </table>
+            <button class="btn btn-primary" style="margin-top:12px;" onclick="startMigration()" id="migrate-run-btn">${action}</button>
+            <div id="migrate-run-result" style="margin-top:12px;"></div>
+          </div></div>`;
       } else if (d.site_exists) {
         html += `<div class="alert alert-info" style="margin-top:12px;">Existing site is not an active myVesta migration.</div>`;
       }
@@ -204,13 +185,32 @@ async function analyzeBackup() {
   btn.textContent = 'Analyze backup';
 }
 
-async function importMigrationSite() {
-  const btn = document.getElementById('migrate-import-btn');
-  const resultDiv = document.getElementById('migrate-import-result');
+function renderMigrationJob(jobData) {
+  const steps = Array.isArray(jobData.steps) ? jobData.steps : [];
+  const current = typeof jobData.current_step === 'number' ? jobData.current_step : 0;
+  let html = '<div style="margin-bottom:8px;"><strong>Status:</strong> ' + esc(jobData.status || 'unknown') + '</div>';
+  html += '<div style="margin-bottom:8px;"><strong>Progress:</strong> ' + (typeof jobData.progress === 'number' ? jobData.progress : 0) + '%</div>';
+  if (jobData.message) html += '<div style="margin-bottom:8px;"><strong>Message:</strong> ' + esc(jobData.message) + '</div>';
+  if (steps.length > 0) {
+    html += '<ol style="margin:8px 0 0 20px;">';
+    steps.forEach((step, idx) => {
+      const done = jobData.status === 'completed' || idx < current;
+      const active = jobData.status === 'running' && idx === current;
+      const mark = done ? '✔' : active ? '…' : '○';
+      html += '<li>' + mark + ' ' + esc(step.name || step.id || ('Step ' + (idx + 1))) + '</li>';
+    });
+    html += '</ol>';
+  }
+  return html;
+}
+
+async function startMigration() {
+  const btn = document.getElementById('migrate-run-btn');
+  const resultDiv = document.getElementById('migrate-run-result');
   if (!btn || !resultDiv) return;
 
   btn.disabled = true;
-  btn.textContent = 'Importing...';
+  btn.textContent = 'Migrating...';
   resultDiv.innerHTML = '';
 
   try {
@@ -226,36 +226,39 @@ async function importMigrationSite() {
     if (skipDb) body.skip_db = true;
     if (keepStaging) body.keep_staging = true;
 
-    const res = await apiPost('/api/migration/vesta/create-site', body);
+    const res = await apiPost('/api/migration/vesta/migrate', body);
     const d = res.data;
+    const jobId = d.job_id;
 
-    let html = '<div class="card" style="margin-top:12px;border-color:var(--green);"><div class="card-header"><h3 style="color:var(--green);">Stage 1 Completed</h3></div><div style="padding:12px;font-size:13px;">';
-    html += '<p style="margin-bottom:12px;">' + esc(d.message) + '</p>';
-    html += '<table style="width:100%;border-collapse:collapse;">';
-    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Site ID</td><td><strong>' + d.site_id + '</strong></td></tr>';
-    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Domain</td><td>' + esc(d.domain) + '</td></tr>';
-    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Database</td><td>' + esc(d.database_name) + ' / ' + esc(d.database_user) + '</td></tr>';
-    html += '<tr><td style="padding:4px 8px;color:var(--text2);">Document root</td><td>' + esc(d.document_root) + '</td></tr>';
-    html += '</table>';
+    resultDiv.innerHTML = '<div class="card" style="margin-top:12px;"><div class="card-header"><h3>Migration Running</h3></div><div style="padding:12px;font-size:13px;"><p>Job #' + jobId + ' queued.</p><div id="migrate-run-progress"></div></div></div>';
 
-    html += '<div style="margin-top:12px;"><strong>Status:</strong><ul style="margin-top:4px;">';
-    if (d.status) {
-      for (const [key, val] of Object.entries(d.status)) {
-        const icon = val === 'created' ? '✅' : '⏳';
-        html += '<li>' + icon + ' ' + esc(key) + ': ' + esc(val) + '</li>';
+    const ctx = activeMigrationLifecycle;
+    const schedule = ctx && ctx.setInterval ? ctx.setInterval.bind(ctx) : setInterval;
+    const poll = schedule(async () => {
+      if (ctx && !ctx.isActive()) return;
+      try {
+        const statusRes = await api('/api/jobs?id=' + jobId);
+        if (ctx && !ctx.isActive()) return;
+        const jobData = statusRes && statusRes.data;
+        const progressDiv = document.getElementById('migrate-run-progress');
+        if (progressDiv && jobData) progressDiv.innerHTML = renderMigrationJob(jobData);
+        if (jobData && jobData.status === 'completed') {
+          clearInterval(poll);
+          resultDiv.innerHTML = '<div class="card" style="margin-top:12px;border-color:var(--green);"><div class="card-header"><h3 style="color:var(--green);">Migration Complete</h3></div><div style="padding:12px;font-size:13px;">' + renderMigrationJob(jobData) + '</div></div>';
+        } else if (jobData && jobData.status === 'failed') {
+          clearInterval(poll);
+          resultDiv.innerHTML = '<div class="alert alert-error">Migration failed: ' + esc(jobData.message || 'Unknown error') + '</div>';
+        }
+      } catch(e) {
+        clearInterval(poll);
+        resultDiv.innerHTML = '<div class="alert alert-error">Failed to poll migration job: ' + esc(e.message || 'Unknown') + '</div>';
       }
-    }
-    html += '</ul></div>';
-
-    html += '<p style="margin-top:12px;font-size:12px;color:var(--text2);">Run Analyze backup again to continue with Stage 2.</p>';
-    html += '</div></div>';
-    resultDiv.innerHTML = html;
+    }, 2000);
   } catch(e) {
-    resultDiv.innerHTML = '<div class="alert alert-error">Import failed: ' + esc(e.message || 'Unknown error') + '</div>';
+    resultDiv.innerHTML = '<div class="alert alert-error">Migration failed: ' + esc(e.message || 'Unknown error') + '</div>';
+    btn.disabled = false;
+    btn.textContent = 'Migrate';
   }
-
-  btn.disabled = false;
-  btn.textContent = 'Import site';
 }
 
 async function importMigrationFiles() {
@@ -370,4 +373,4 @@ async function importMigrationSql() {
 
 const migrationPage = { mount: loadMigration, unmount() { activeMigrationLifecycle = null; } };
 export { loadMigration, migrationPage };
-Object.assign(window, { loadMigration, analyzeBackup, importMigrationSite, importMigrationFiles, importMigrationSql });
+Object.assign(window, { loadMigration, analyzeBackup, startMigration, importMigrationFiles, importMigrationSql });

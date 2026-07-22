@@ -1386,6 +1386,7 @@ API handlers must never:
 |--------|------|---------|-------|
 | GET | `/api/migration/vesta/backups` | List available backup files from allowed directories | `VestaSiteImporter` |
 | POST | `/api/migration/vesta/inspect` | Read-only analysis of a backup for a specific domain | `VestaSiteImporter` |
+| POST | `/api/migration/vesta/migrate` | One-click async migration orchestration with staged resume | `VestaSiteImporter` + `SiteCreateOperation` |
 | POST | `/api/migration/vesta/create-site` | Stage 1: create site + Docker stack from backup metadata | `SiteCreateOperation` |
 | POST | `/api/migration/vesta/import-files` | Stage 2: import web files from backup into site document root | `VestaSiteImporter` |
 | POST | `/api/migration/vesta/import-sql` | Stage 3: import SQL dump, update wp-config.php, complete migration | `VestaSiteImporter` |
@@ -1494,6 +1495,32 @@ Stage 2 (`import-files`) validates:
 - `stage` is 1 and `files_pending` is true
 - `DomainRecord.site_id` matches `SiteRecord.id`
 - If any check fails, `migration_ready_for_files` is `false` and `marker_error` explains why
+
+**POST /api/migration/vesta/migrate** — one-click migration orchestration:
+
+Request: same as inspect.
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "job_id": 42,
+    "status": "pending",
+    "status_url": "/api/jobs?id=42",
+    "message": "Migration queued"
+  }
+}
+```
+
+Flow:
+1. Analyze backup and current migration marker.
+2. If the Site does not exist, create Site/database/Docker/proxy and write a stage=1 marker.
+3. If marker is stage=1, import files and update marker to stage=2.
+4. If marker is stage=2, import SQL, update `wp-config.php`, run health checks, and update marker to stage=3.
+5. If marker is already stage=3, complete without repeating prior stages.
+
+The endpoint preserves the internal staged state machine and is safe to resume after a failure. Completed stages are detected from `.containercp-migration.json` and are not repeated.
 
 **POST /api/migration/vesta/create-site** — Stage 1: create empty site:
 
