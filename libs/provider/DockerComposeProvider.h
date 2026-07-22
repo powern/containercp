@@ -23,6 +23,7 @@ public:
     core::OperationResult start_site(site::Site& site) override;
     core::OperationResult stop_site(site::Site& site) override;
     core::OperationResult status(site::Site& site) override;
+    core::OperationResult apply_web_template(site::Site& site, const std::string& template_path);
 
 private:
     filesystem::Filesystem& fs_;

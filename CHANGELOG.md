@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | Web template system — customizable templates with real-IP fix, CRUD API, apply to existing sites
+
+**Summary:** Made web server templates (Apache/Nginx) fully customizable: stored on disk and not overwritten at daemon restart, editable through the web UI with Create/Edit/Clone/Delete, and applicable to existing sites. Default templates include `mod_remoteip` (Apache) and `set_real_ip_from` (Nginx) for correct external visitor IP logging behind the ContainerCP proxy.
+
+**Files changed:** `libs/template/web_templates.h`, `libs/provider/DockerComposeProvider.{h,cpp}`, `libs/core/ServiceRegistry.cpp`, `libs/api/ApiServer.cpp`, `web/pages/templates.js`, `CHANGELOG.md`, `planning/web-template-system.md`
+
+**User-visible behavior:** The Templates page is now a full management UI (not read-only). Users can create, edit, clone, and delete Apache/Nginx templates. Existing sites can have a new template applied (regenerates `default.conf` + restarts web container). New default templates include `RemoteIPHeader` + `RemoteIPInternalProxy` for Apache and `set_real_ip_from` + `real_ip_header` for Nginx, fixing real visitor IP logging behind the reverse proxy.
+
+**Validation:** Full test suite: 868 test cases, 6191 assertions, 0 failures. Zero compiler warnings. Frontend syntax and baseline check passed.
+
+**Known risks:** Sites with existing custom `default.conf` edits will lose them when "Apply Template" is used. Template overwrite protection only applies on daemon restart — existing files are preserved.
+
+---
+
 ## 2026-07-22 | `this commit` | Migration - Issue SSL during Vesta import
 
 **Summary:** Updated the one-click Vesta migration job to issue a Let's Encrypt certificate and attach it to the migrated Site proxy before reporting migration completion.

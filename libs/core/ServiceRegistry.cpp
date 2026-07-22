@@ -238,14 +238,15 @@ ServiceRegistry::ServiceRegistry()
                 std::filesystem::remove(config_.database_dir() + "template_profiles.db");
             } else {
                 auto tmpl = template_engine::default_web_templates();
+                filesystem_.create_directory(config_.web_templates_dir());
                 for (auto& [name, content] : tmpl) {
                     bool is_default = (name == "apache-php-default");
                     std::string path = config_.web_templates_dir() + name + ".conf.template";
-                    filesystem_.create_directory(config_.web_templates_dir());
-                    // Always overwrite template files to stay in sync with binary.
-                    // This ensures template fixes in web_templates.h take effect
-                    // even when the disk files already exist from a previous version.
-                    filesystem_.create_file(path, content);
+                    // Write default template to disk only if file does not exist.
+                    // This preserves user edits made through the web UI.
+                    if (!filesystem_.exists(path)) {
+                        filesystem_.create_file(path, content);
+                    }
                     profiles_.create(name, profile::ProfileType::WEB_SERVER,
                                      name.find("apache") != std::string::npos ? "apache" : "nginx",
                                      path, name, is_default);
@@ -253,13 +254,15 @@ ServiceRegistry::ServiceRegistry()
             }
         } else {
             profiles_.set_profiles(loaded_profiles);
-            // Even when profiles are loaded from disk, refresh the template files
-            // on disk to ensure they match the current binary version.
+            // Do NOT overwrite template files on disk — users may have edited them
+            // through the web UI. Only seed new files that don't exist yet.
             auto tmpl = template_engine::default_web_templates();
             filesystem_.create_directory(config_.web_templates_dir());
             for (auto& [name, content] : tmpl) {
                 std::string path = config_.web_templates_dir() + name + ".conf.template";
-                filesystem_.create_file(path, content);
+                if (!filesystem_.exists(path)) {
+                    filesystem_.create_file(path, content);
+                }
             }
         }
 

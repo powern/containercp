@@ -14,6 +14,9 @@ inline std::unordered_map<std::string, std::string> default_web_templates() {
     root {{PUBLIC_ROOT}};
     index index.php index.html;
 
+    set_real_ip_from 172.31.0.0/16;
+    real_ip_header X-Forwarded-For;
+
     location / {
         try_files $uri $uri/ /index.php?$query_string;
     }
@@ -34,6 +37,9 @@ inline std::unordered_map<std::string, std::string> default_web_templates() {
     server_name {{DOMAIN}};
     root {{PUBLIC_ROOT}};
     index index.php index.html;
+
+    set_real_ip_from 172.31.0.0/16;
+    real_ip_header X-Forwarded-For;
 
     location / {
         try_files $uri $uri/ /index.php?$args;
@@ -71,6 +77,9 @@ inline std::unordered_map<std::string, std::string> default_web_templates() {
     root {{PUBLIC_ROOT}};
     index index.php index.html;
 
+    set_real_ip_from 172.31.0.0/16;
+    real_ip_header X-Forwarded-For;
+
     location / {
         try_files $uri $uri/ /index.php?$query_string;
     }
@@ -95,6 +104,9 @@ inline std::unordered_map<std::string, std::string> default_web_templates() {
     DocumentRoot {{PUBLIC_ROOT}}
     DirectoryIndex index.php index.html
 
+    RemoteIPHeader X-Forwarded-For
+    RemoteIPInternalProxy 172.31.0.0/16
+
     <Directory {{PUBLIC_ROOT}}>
         Options FollowSymLinks
         AllowOverride All
@@ -112,6 +124,9 @@ inline std::unordered_map<std::string, std::string> default_web_templates() {
     ServerName {{DOMAIN}}
     DocumentRoot {{PUBLIC_ROOT}}
     DirectoryIndex index.php index.html
+
+    RemoteIPHeader X-Forwarded-For
+    RemoteIPInternalProxy 172.31.0.0/16
 
     <Directory {{PUBLIC_ROOT}}>
         Options FollowSymLinks

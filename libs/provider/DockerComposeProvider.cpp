@@ -162,9 +162,10 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site, core:
         std::string modules_path = site_dir + "config/apache/00-load-modules.conf";
         if (!fs_.exists(modules_path)) {
             std::string modules =
-                "# Enable proxy and rewrite modules for PHP-FPM support + WordPress permalinks\n"
+                "# Enable proxy, remoteip, and rewrite modules for PHP-FPM + real IP + WordPress permalinks\n"
                 "LoadModule proxy_module modules/mod_proxy.so\n"
                 "LoadModule proxy_fcgi_module modules/mod_proxy_fcgi.so\n"
+                "LoadModule remoteip_module modules/mod_remoteip.so\n"
                 "LoadModule rewrite_module modules/mod_rewrite.so\n";
             fs_.create_file(modules_path, modules);
         }
@@ -204,6 +205,43 @@ core::OperationResult DockerComposeProvider::stop_site(site::Site& site) {
 
 core::OperationResult DockerComposeProvider::status(site::Site& site) {
     return rt_.status(site.domain);
+}
+
+core::OperationResult DockerComposeProvider::apply_web_template(site::Site& site, const std::string& template_path) {
+    std::string site_dir = cfg_.sites_dir() + site.domain + "/";
+    std::string web_server_type = site.web_server.empty() ? "apache" : site.web_server;
+    std::string config_dir = site_dir + "config/" + web_server_type + "/";
+    std::string config_path = config_dir + "default.conf";
+
+    if (!fs_.exists(template_path)) {
+        return {false, "Template file not found: " + template_path};
+    }
+    if (!fs_.exists(config_dir)) {
+        return {false, "Web server config directory not found for " + site.domain};
+    }
+
+    std::string template_content = fs_.read_file(template_path);
+    template_engine::TemplateEngine engine;
+
+    std::string doc_root = (web_server_type == "apache")
+        ? "/usr/local/apache2/htdocs"
+        : "/var/www/html";
+    std::string log_dir = (web_server_type == "apache")
+        ? "/usr/local/apache2/logs"
+        : "/var/log/nginx";
+
+    std::string rendered = engine.render_web(template_content, site.domain,
+        doc_root, "php:9000", log_dir, false);
+
+    fs_.create_file(config_path, rendered);
+
+    std::string restart_cmd = "cd " + site_dir + " && docker compose restart web 2>&1";
+    int rc = std::system(restart_cmd.c_str());
+    if (rc != 0) {
+        return {false, "Template applied but web container restart failed with exit code " + std::to_string(rc)};
+    }
+
+    return {true, "Template applied and web container restarted for " + site.domain};
 }
 
 } // namespace containercp::provider

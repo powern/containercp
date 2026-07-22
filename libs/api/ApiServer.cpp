@@ -18,6 +18,7 @@
 #include "dns/DnsCheckService.h"
 #include "dns/SpfAnalyzer.h"
 #include "migration/VestaSiteImporter.h"
+#include "provider/DockerComposeProvider.h"
 #include "utils/Validator.h"
 
 #include <arpa/inet.h>
@@ -1295,6 +1296,10 @@ bool ApiServer::start() {
         for (const auto& p : profiles) {
             if (!first) json << ",";
             first = false;
+            std::string content;
+            if (!p.template_path.empty() && s.filesystem().exists(p.template_path)) {
+                content = s.filesystem().read_file(p.template_path);
+            }
             json << "{\"id\":" << p.id
                  << ",\"name\":\"" << JsonFormatter::escape(p.profile_name)
                  << "\",\"type\":\"" << profile::profile_type_to_string(p.type)
@@ -1302,10 +1307,182 @@ bool ApiServer::start() {
                  << "\",\"description\":\"" << JsonFormatter::escape(p.description)
                  << "\",\"enabled\":" << (p.enabled ? "true" : "false")
                  << ",\"default\":" << (p.default_profile ? "true" : "false")
-                 << "}";
+                 << ",\"content\":\"" << JsonFormatter::escape(content)
+                 << "\"}";
         }
         json << "]}";
         r.body = json.str();
+        return r;
+    });
+
+    // POST /api/profiles — create a new web server template
+    router_.add("POST", "/api/profiles", [&s](const Request& req) {
+        Response r;
+        std::string name = json_extract(req.body, "name");
+        std::string web_server = json_extract(req.body, "web_server");
+        std::string description = json_extract(req.body, "description");
+        std::string content = json_extract(req.body, "content");
+        std::string default_str = json_extract(req.body, "default");
+
+        if (name.empty() || content.empty()) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"name and content are required\"}";
+            return r;
+        }
+        if (web_server != "apache" && web_server != "nginx") {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"web_server must be 'apache' or 'nginx'\"}";
+            return r;
+        }
+
+        // Check for duplicate name
+        if (s.profiles().find(name) != nullptr) {
+            r.status_code = 409;
+            r.body = "{\"success\":false,\"error\":\"Profile name already exists: " + JsonFormatter::escape(name) + "\"}";
+            return r;
+        }
+
+        // Write template file to disk
+        std::string path = s.config().web_templates_dir() + name + ".conf.template";
+        s.filesystem().create_directory(s.config().web_templates_dir());
+        s.filesystem().create_file(path, content);
+
+        bool is_default = (default_str == "true");
+        if (is_default) {
+            // Unset any existing default
+            auto all = s.profiles().list();
+            for (auto& p : all) {
+                if (p.default_profile && p.type == profile::ProfileType::WEB_SERVER) {
+                    p.default_profile = false;
+                    break;
+                }
+            }
+            s.profiles().set_profiles(all);
+        }
+
+        uint64_t id = s.profiles().create(name, profile::ProfileType::WEB_SERVER,
+                                          web_server, path, description, is_default);
+        s.save();
+
+        r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(id)
+                 + ",\"name\":\"" + JsonFormatter::escape(name) + "\"}}";
+        return r;
+    });
+
+    // POST /api/profiles/<id> — update an existing template
+    router_.add_prefix("POST", "/api/profiles/", [&s](const Request& req) {
+        Response r;
+        std::string rest = req.path.substr(std::string("/api/profiles/").size());
+        if (rest.empty() || rest.find_first_not_of("0123456789") != std::string::npos) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Profile id must be numeric\"}";
+            return r;
+        }
+        uint64_t id = std::stoull(rest);
+        auto* profile = s.profiles().find(id);
+        if (profile == nullptr) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Profile not found\"}";
+            return r;
+        }
+
+        std::string name = json_extract(req.body, "name");
+        std::string web_server = json_extract(req.body, "web_server");
+        std::string description = json_extract(req.body, "description");
+        std::string content = json_extract(req.body, "content");
+        std::string default_str = json_extract(req.body, "default");
+        bool has_content = json_has_key(req.body, "content");
+        bool has_name = json_has_key(req.body, "name");
+        bool has_web_server = json_has_key(req.body, "web_server");
+        bool has_description = json_has_key(req.body, "description");
+        bool has_default = json_has_key(req.body, "default");
+
+        if (has_web_server && web_server != "apache" && web_server != "nginx") {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"web_server must be 'apache' or 'nginx'\"}";
+            return r;
+        }
+
+        // Build updated profile — create a new list entry since we can't modify in-place through the manager
+        auto all = s.profiles().list();
+        for (auto& p : all) {
+            if (p.id != id) continue;
+
+            if (has_name && !name.empty()) {
+                p.profile_name = name;
+                p.name = name;
+            }
+            if (has_web_server) p.web_server = web_server;
+            if (has_description) p.description = description;
+
+            if (has_content) {
+                p.template_path = s.config().web_templates_dir() + p.profile_name + ".conf.template";
+                s.filesystem().create_directory(s.config().web_templates_dir());
+                s.filesystem().create_file(p.template_path, content);
+            }
+
+            if (has_default && default_str == "true") {
+                // Unset other defaults of same type
+                for (auto& other : all) {
+                    if (other.id != id && other.type == profile::ProfileType::WEB_SERVER) {
+                        other.default_profile = false;
+                    }
+                }
+                p.default_profile = true;
+            } else if (has_default && default_str != "true") {
+                p.default_profile = false;
+            }
+            break;
+        }
+        s.profiles().set_profiles(all);
+        s.save();
+
+        r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(id)
+                 + ",\"message\":\"Profile updated\"}}";
+        return r;
+    });
+
+    // DELETE /api/profiles/<id> — delete a template
+    router_.add_prefix("DELETE", "/api/profiles/", [&s](const Request& req) {
+        Response r;
+        std::string rest = req.path.substr(std::string("/api/profiles/").size());
+        if (rest.empty() || rest.find_first_not_of("0123456789") != std::string::npos) {
+            r.status_code = 400;
+            r.body = "{\"success\":false,\"error\":\"Profile id must be numeric\"}";
+            return r;
+        }
+        uint64_t id = std::stoull(rest);
+        auto* profile = s.profiles().find(id);
+        if (profile == nullptr) {
+            r.status_code = 404;
+            r.body = "{\"success\":false,\"error\":\"Profile not found\"}";
+            return r;
+        }
+
+        // Prevent deleting the last default WEB_SERVER profile
+        if (profile->default_profile && profile->type == profile::ProfileType::WEB_SERVER) {
+            int default_count = 0;
+            for (const auto& p : s.profiles().list()) {
+                if (p.default_profile && p.type == profile::ProfileType::WEB_SERVER) {
+                    ++default_count;
+                }
+            }
+            if (default_count <= 1) {
+                r.status_code = 400;
+                r.body = "{\"success\":false,\"error\":\"Cannot delete the last default web server profile\"}";
+                return r;
+            }
+        }
+
+        // Remove disk file
+        if (!profile->template_path.empty() && s.filesystem().exists(profile->template_path)) {
+            std::filesystem::remove(profile->template_path);
+        }
+
+        s.profiles().remove(id);
+        s.save();
+
+        r.body = "{\"success\":true,\"data\":{\"message\":\"Profile deleted\"}}";
         return r;
     });
 
@@ -2785,6 +2962,47 @@ bool ApiServer::start() {
             }
             s.save();
         };
+
+        if (action == "apply-template") {
+            std::string template_name = json_extract(req.body, "template_name");
+            std::string template_id_str = json_extract(req.body, "template_id");
+
+            auto* profile = s.profiles().get_default(profile::ProfileType::WEB_SERVER);
+            if (!template_id_str.empty()) {
+                try {
+                    uint64_t tid = std::stoull(template_id_str);
+                    auto* tp = s.profiles().find(tid);
+                    if (tp && tp->type == profile::ProfileType::WEB_SERVER) profile = tp;
+                } catch (...) {}
+            } else if (!template_name.empty()) {
+                auto* tp = s.profiles().find(template_name);
+                if (tp && tp->type == profile::ProfileType::WEB_SERVER) profile = tp;
+            }
+
+            if (!profile || profile->template_path.empty()) {
+                r.status_code = 404;
+                r.body = "{\"success\":false,\"error\":\"Template profile not found\"}";
+                return r;
+            }
+
+            containercp::provider::DockerComposeProvider* dcp =
+                dynamic_cast<containercp::provider::DockerComposeProvider*>(&s.hosting_provider());
+            if (!dcp) {
+                r.status_code = 500;
+                r.body = "{\"success\":false,\"error\":\"Provider does not support apply-template\"}";
+                return r;
+            }
+
+            auto result = dcp->apply_web_template(*site, profile->template_path);
+            if (!result.success) {
+                r.status_code = 500;
+                r.body = "{\"success\":false,\"error\":\"" + JsonFormatter::escape(result.message) + "\"}";
+                return r;
+            }
+
+            r.body = "{\"success\":true,\"data\":{\"message\":\"" + JsonFormatter::escape(result.message) + "\"}}";
+            return r;
+        }
 
         if (action == "mail-domain") {
             // Create a MailDomain for this site, linked to its canonical Domain
