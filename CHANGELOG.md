@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-22 | `this commit` | SQL Console - add Adminer provider runtime
+
+**Summary:** Added Phase 5 SQL Console provider/runtime integration. `SqlConsoleProvider` now defines the replaceable SQL Console tool boundary and `AdminerSqlConsoleProvider` implements on-demand Adminer container start/status/stop commands through vector-argv runtime execution. Adminer containers attach only to the target site's private Compose network, publish no host ports, and receive no database credentials through Docker environment variables or command-line arguments.
+
+**Files changed:** `libs/sqlconsole/SqlConsoleProvider.h`, `libs/sqlconsole/AdminerSqlConsoleProvider.{h,cpp}`, `tests/test_sql_console_adminer_provider.cpp`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `docs/development/sql-console.md`, `docs/development/single-source-of-truth.md`, `planning/proposals/ARCH-009-SQLConsoleAuthenticationModel.md`, `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No Web UI route or launch control is exposed yet. This phase adds the backend Adminer runtime boundary for later authenticated proxy routing.
+
+**Validation:** Local build passed. Focused Adminer SQL Console provider doctests passed (`4` cases, `30` assertions). Focused SQL Console doctests passed (`21` cases, `209` assertions). Full doctest suite passed (`898` cases, `6607` assertions). `git diff --check` passed.
+
+**Known risks:** Adminer credential handoff and admin-domain reverse proxy routing are intentionally still pending. Runtime cleanup is available through provider stop commands, but expiry-driven orchestration is not wired until the proxy/session integration phase.
+
+---
+
 ## 2026-07-22 | `this commit` | SQL Console - add launch and internal redeem API
 
 **Summary:** Added Phase 4 SQL Console API integration. The API now exposes authenticated database-scoped launch, status, and revoke endpoints, stores the launch secret only in a `HttpOnly`, `Secure`, `SameSite=Strict` cookie, and adds a token-guarded internal redeem endpoint for future server-side providers. `ServiceRegistry` now owns the SQL Console service and non-secret metadata store.

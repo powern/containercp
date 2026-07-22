@@ -102,6 +102,7 @@ set(CONTAINERCP_SOURCES
     libs/site/SiteManager.cpp
     libs/security/PasswordHasher.cpp
     libs/security/SecureRandom.cpp
+    libs/sqlconsole/AdminerSqlConsoleProvider.cpp
     libs/sqlconsole/DatabaseSqlConsoleService.cpp
     libs/sqlconsole/SqlConsoleAudit.cpp
     libs/sqlconsole/SqlConsoleSession.cpp

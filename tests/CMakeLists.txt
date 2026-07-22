@@ -32,6 +32,7 @@ add_executable(containercp_tests
     test_site_database_volume_guard.cpp
     test_database_view_service.cpp
     test_mariadb_credential_provider.cpp
+    test_sql_console_adminer_provider.cpp
     test_sql_console_session.cpp
     test_migrate_sqlite.cpp
     test_version.cpp
@@ -50,6 +51,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/utils/PathUtils.cpp
     ${CMAKE_SOURCE_DIR}/libs/security/PasswordHasher.cpp
     ${CMAKE_SOURCE_DIR}/libs/security/SecureRandom.cpp
+    ${CMAKE_SOURCE_DIR}/libs/sqlconsole/AdminerSqlConsoleProvider.cpp
     ${CMAKE_SOURCE_DIR}/libs/sqlconsole/DatabaseSqlConsoleService.cpp
     ${CMAKE_SOURCE_DIR}/libs/sqlconsole/SqlConsoleAudit.cpp
     ${CMAKE_SOURCE_DIR}/libs/sqlconsole/SqlConsoleSession.cpp

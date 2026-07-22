@@ -214,7 +214,7 @@
 | Phase 2: Temporary MariaDB user lifecycle | ✅ | `libs/database/MariaDBProvider.cpp`, `libs/database/DatabaseProvider.h`, `libs/sqlconsole/DatabaseSqlConsoleService.cpp`, `tests/test_sql_console_session.cpp`, `tests/test_database_lifecycle.cpp` |
 | Phase 3: Persistent session metadata and restart cleanup | ✅ | `libs/sqlconsole/SqlConsoleSessionStore.{h,cpp}`, `libs/sqlconsole/DatabaseSqlConsoleService.cpp`, `tests/test_sql_console_session.cpp`, `docs/development/storage-schema.md` |
 | Phase 4: SQL Console public and internal API | ✅ | `libs/api/ApiServer.cpp`, `libs/core/ServiceRegistry.*`, `libs/sqlconsole/DatabaseSqlConsoleService.*`, `tests/test_api.cpp`, `docs/api/API_REFERENCE.md` |
-| Phase 5: Adminer tool provider and runtime | ⬜ | Planned |
+| Phase 5: Adminer tool provider and runtime | ✅ | `libs/sqlconsole/SqlConsoleProvider.h`, `libs/sqlconsole/AdminerSqlConsoleProvider.*`, `tests/test_sql_console_adminer_provider.cpp` |
 | Phase 6: Reverse proxy and routing | ⬜ | Planned |
 | Phase 7: Database GUI integration | ⬜ | Planned |
 | Phase 8: Security and integration validation | ⬜ | Planned |

@@ -32,6 +32,14 @@ server-only `HttpOnly`, `Secure`, `SameSite=Strict` cookie. Internal
 provider redemption is guarded by a process-local token and the launch
 secret cookie, and is reserved for trusted server-side provider code.
 
+**Phase 5 implementation note:** Adminer has been added as the first
+replaceable `SqlConsoleProvider`. The provider controls only temporary
+container lifecycle: it starts Adminer on the selected site's private
+Compose network, publishes no host ports, and passes no database
+credentials, launch secrets, service-account credentials, or SQL content
+through Docker environment variables or command-line arguments. Reverse
+proxy routing and credential handoff remain later phases.
+
 ---
 
 ## 1. Executive Summary

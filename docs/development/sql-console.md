@@ -34,8 +34,15 @@ launch responses contain only `launch_id`, `launch_url`, and public-safe
 session metadata. The launch secret is delivered only as an `HttpOnly`,
 `Secure`, `SameSite=Strict` cookie scoped to `/sql-console`.
 
-The current implementation still does not expose REST APIs, Adminer
-runtime, reverse proxy routes, or Web UI controls.
+Phase 5 added Adminer as the first replaceable `SqlConsoleProvider` and
+introduced an on-demand Docker runtime boundary for temporary Adminer
+containers. The Adminer provider starts containers on the selected site's
+private Compose network only, does not publish host ports, and does not
+place database credentials in Docker environment variables or command-line
+arguments.
+
+The current implementation still does not expose reverse proxy routes or
+Web UI controls for Adminer.
 
 ## Ownership
 
@@ -45,6 +52,8 @@ runtime, reverse proxy routes, or Web UI controls.
 | SQL Console service boundary | `libs/sqlconsole/DatabaseSqlConsoleService` |
 | SQL Console audit event formatting | `libs/sqlconsole/SqlConsoleAuditLogger` |
 | SQL Console non-secret metadata | `libs/sqlconsole/SqlConsoleSessionStore` |
+| SQL Console tool provider boundary | `libs/sqlconsole/SqlConsoleProvider` |
+| Adminer temporary runtime lifecycle | `libs/sqlconsole/AdminerSqlConsoleProvider` |
 | Database lifecycle operations | `libs/database/DatabaseLifecycleService` |
 | MariaDB operations | `libs/database/MariaDBProvider` |
 | SQL Console temporary MariaDB users | `libs/database/MariaDBProvider` |
@@ -54,6 +63,32 @@ SQL Console must not duplicate database lifecycle, dump/import,
 credential rotation, core authentication, or runtime/proxy logic. Future
 phases must extend the owning subsystem or provider instead of adding
 logic to API handlers or Web UI code.
+
+## Adminer Provider Runtime
+
+`AdminerSqlConsoleProvider` is the first concrete `SqlConsoleProvider`.
+It controls only the Adminer container lifecycle and does not own SQL
+Console session state, MariaDB temporary users, reverse proxy routing, or
+credential delivery.
+
+Runtime rules:
+
+- container names are derived from non-secret launch IDs as
+  `ccp-sqlconsole-<launch-prefix>`,
+- Adminer is started with vector-argv Docker execution,
+- Adminer is attached to the target site private network
+  `<compose-project>_containercp-site-<site_id>`,
+- no `-p` or `--publish` host-port mapping is allowed,
+- no database user, password, launch secret, service-account credential,
+  or SQL content is passed through Docker environment variables,
+  command-line arguments, or labels,
+- the provider returns only a private upstream such as
+  `http://ccp-sqlconsole-<launch-prefix>:8080` for future server-side
+  proxy routing.
+
+Credential handoff remains a later server-side proxy/internal-SSO phase.
+The frontend must not receive credentials, and Adminer must not become
+publicly reachable outside the authenticated admin-panel route.
 
 ## Session Model
 
@@ -132,7 +167,8 @@ Future phases must preserve these boundaries:
   layer.
 - Phase 3 added non-secret persisted metadata and restart cleanup.
 - Phase 4 added thin REST API handlers and internal provider redemption.
-- Phase 5 adds Adminer as the first `SqlConsoleProvider`.
+- Phase 5 added Adminer as the first `SqlConsoleProvider` and a private
+  on-demand runtime boundary without host ports or credential exposure.
 - Phase 6 adds admin-domain reverse proxy routing.
 - Phase 7 adds Database GUI launch and revoke controls.
 

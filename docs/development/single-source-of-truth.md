@@ -33,6 +33,8 @@ or duplicate the logic.
 | SQL Console launch sessions | `SqlConsoleSessionManager` (`libs/sqlconsole/`) | future API, future Adminer provider, future native SQL editor |
 | SQL Console temporary MariaDB users | `MariaDBProvider` (`libs/database/`) | `DatabaseSqlConsoleService` |
 | SQL Console restart-cleanup metadata | `SqlConsoleSessionStore` (`libs/sqlconsole/`) | `DatabaseSqlConsoleService` |
+| SQL Console tool providers | `SqlConsoleProvider` (`libs/sqlconsole/`) | Adminer, future native SQL editor |
+| Adminer SQL Console runtime | `AdminerSqlConsoleProvider` (`libs/sqlconsole/`) | future proxy route |
 
 ## Examples
 
