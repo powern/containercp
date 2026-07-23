@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <set>
 #include <sys/stat.h>
+#include <system_error>
 
 namespace containercp::access {
 namespace {
@@ -30,7 +31,8 @@ bool managed_path_safe(const std::string& path, const std::string& managed_root)
     if (path_str.rfind(root_str, 0) != 0) return false;
 
     // Reject symlinks: the canonical path must not be a symlink
-    if (std::filesystem::is_symlink(canonical, ec) || ec) return false;
+    if (std::filesystem::is_symlink(canonical, ec)) return false;
+    if (ec && ec != std::errc::no_such_file_or_directory) return false;
 
     return true;
 }
@@ -296,6 +298,10 @@ core::OperationResult LocalSftpProvider::remove_user(const AccessUser& user) {
         if (ec) {
             out.success = false; out.message = "home cleanup failed: " + mapping->username; return out;
         }
+    } else {
+        // Path is unsafe (symlink, outside root) — fail closed, preserve mapping
+        out.success = false;
+        out.message = "home path unsafe for cleanup: " + mapping->username; return out;
     }
 
     // Delete mapping — only if all cleanup succeeded
