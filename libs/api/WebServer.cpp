@@ -323,6 +323,9 @@ void WebServer::handle_sql_console_logout(const std::string& raw_request, int cl
 
 void WebServer::handle_sql_console_redeem(const std::string& raw_request, int client_fd) {
     const std::string supplied_token = extract_header(raw_request, "X-ContainerCP-SqlConsole-Internal");
+    const bool token_valid = !supplied_token.empty() && supplied_token == services_.sql_console().internal_api_token();
+    services_.logger().info("DEBUG", "sql_console_redeem_ws: token_valid=" + std::string(token_valid ? "yes" : "no"));
+
     if (supplied_token.empty() || supplied_token != services_.sql_console().internal_api_token()) {
         send_json(client_fd, 403, "{\"success\":false,\"error\":{\"code\":\"internal_token_invalid\",\"message\":\"SQL Console internal token is invalid\"}}");
         return;
@@ -332,18 +335,23 @@ void WebServer::handle_sql_console_redeem(const std::string& raw_request, int cl
     const auto launch_id = json_string_value(body, "launch_id");
     const auto database_id = json_u64_value(body, "database_id");
     const auto launch_secret = extract_cookie(raw_request, "ccp_sql_console_secret");
+    services_.logger().info("DEBUG", "sql_console_redeem_ws: launch_id=" + launch_id + " database_id=" + std::to_string(database_id) + " cookie_present=" + std::string(launch_secret.empty() ? "no" : "yes"));
+
     if (launch_id.empty() || database_id == 0 || launch_secret.empty()) {
         send_json(client_fd, 400, "{\"success\":false,\"error\":{\"code\":\"launch_cookie_required\",\"message\":\"SQL Console launch id, database id, and secret cookie are required\"}}");
         return;
     }
 
     const auto redeemed = services_.sql_console().redeem_internal_launch_session(launch_id, launch_secret, database_id);
+    services_.logger().info("DEBUG", "sql_console_redeem_ws: redeem_success=" + std::string(redeemed.success ? "yes" : "no") + " code=" + redeemed.code);
+
     if (!redeemed.success) {
         send_json(client_fd, 400, "{\"success\":false,\"error\":{\"code\":\"" + JsonFormatter::escape(redeemed.code) +
                              "\",\"message\":\"" + JsonFormatter::escape(redeemed.message) + "\"}}");
         return;
     }
 
+    services_.logger().info("DEBUG", "sql_console_redeem_ws: returning credentials database_name=<redacted>");
     send_json(client_fd, 200,
               "{\"success\":true,\"data\":{\"database_name\":\"" + JsonFormatter::escape(redeemed.temporary_credential.database_name) +
               "\",\"database_user\":\"" + JsonFormatter::escape(redeemed.temporary_credential.user_name) +

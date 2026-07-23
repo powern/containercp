@@ -312,7 +312,7 @@ TEST_CASE("SQL Console Adminer SSO handoff keeps credentials server-side") {
 
     const auto plugin = registry.find("containercp-sso.php");
     REQUIRE(plugin != std::string::npos);
-    const auto plugin_block = registry.substr(plugin, 5200);
+    const auto plugin_block = registry.substr(plugin, 7200);
     CHECK(plugin_block.find("/run/containercp/sql-console-token") != std::string::npos);
     CHECK(plugin_block.find("/sql-console/internal/redeem") != std::string::npos);
     CHECK(plugin_block.find("/sql-console/internal/logout") != std::string::npos);

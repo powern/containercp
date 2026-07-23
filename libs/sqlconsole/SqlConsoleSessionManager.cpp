@@ -1,5 +1,6 @@
 #include "sqlconsole/SqlConsoleSessionManager.h"
 
+#include "logger/Logger.h"
 #include "security/SecureRandom.h"
 
 #include <openssl/evp.h>
@@ -173,16 +174,31 @@ SqlConsoleOperationResult SqlConsoleSessionManager::authorize(const std::string&
 
 SqlConsoleOperationResult SqlConsoleSessionManager::redeem(const std::string& launch_id, const std::string& launch_secret) {
     auto it = sessions_.find(launch_id);
-    if (it == sessions_.end()) return failure("session_not_found", "SQL Console launch session was not found");
+    if (it == sessions_.end()) {
+        logger::Logger::instance().info("DEBUG", "sql_console_redeem_sm: launch_id=" + launch_id + " result=session_not_found");
+        return failure("session_not_found", "SQL Console launch session was not found");
+    }
     auto& session = it->second;
+    const auto status_before = static_cast<int>(session.status);
     const auto now = clock_();
+
+    logger::Logger::instance().info("DEBUG", "sql_console_redeem_sm: launch_id=" + launch_id + " status_before=" + std::to_string(status_before) + " (0=Created 1=Redeemed 2=Expired 3=Revoked)");
+
     expire_if_needed(session, now);
-    if (session.status == SqlConsoleSessionStatus::Expired) return failure("session_expired", "SQL Console launch session is expired", &session);
-    if (session.status == SqlConsoleSessionStatus::Revoked) return failure("session_revoked", "SQL Console launch session is revoked", &session);
+    if (session.status == SqlConsoleSessionStatus::Expired) {
+        logger::Logger::instance().info("DEBUG", "sql_console_redeem_sm: launch_id=" + launch_id + " result=session_expired");
+        return failure("session_expired", "SQL Console launch session is expired", &session);
+    }
+    if (session.status == SqlConsoleSessionStatus::Revoked) {
+        logger::Logger::instance().info("DEBUG", "sql_console_redeem_sm: launch_id=" + launch_id + " result=session_revoked");
+        return failure("session_revoked", "SQL Console launch session is revoked", &session);
+    }
     if (policy_.single_use_redemption && session.status == SqlConsoleSessionStatus::Redeemed) {
+        logger::Logger::instance().info("DEBUG", "sql_console_redeem_sm: launch_id=" + launch_id + " result=session_already_redeemed");
         return failure("session_already_redeemed", "SQL Console launch session was already redeemed", &session);
     }
     if (secret_digest(launch_secret) != session.secret_digest) {
+        logger::Logger::instance().info("DEBUG", "sql_console_redeem_sm: launch_id=" + launch_id + " result=invalid_secret");
         return failure("invalid_secret", "SQL Console launch secret is invalid", &session);
     }
 
@@ -190,6 +206,7 @@ SqlConsoleOperationResult SqlConsoleSessionManager::redeem(const std::string& la
     session.redeemed_at = now;
     session.last_seen_at = now;
     session.idle_expires_at = min_time(now + policy_.idle_ttl, session.expires_at);
+    logger::Logger::instance().info("DEBUG", "sql_console_redeem_sm: launch_id=" + launch_id + " result=redeemed");
     return success("redeemed", "SQL Console launch session redeemed", session);
 }
 

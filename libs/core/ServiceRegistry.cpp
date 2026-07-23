@@ -721,7 +721,13 @@ core::OperationResult ServiceRegistry::prepare_sql_console_provider_launch(sqlco
     const char* plugin = R"PHP(<?php
 declare(strict_types=1);
 
+function ccp_sql_console_diag(string $msg): void {
+    $ts = date('Y-m-d\TH:i:s');
+    error_log("[CCP-SSO] [$ts] $msg");
+}
+
 function ccp_sql_console_fail(): void {
+    ccp_sql_console_diag("FAIL terminating with 401 SQL Console session unavailable");
     http_response_code(401);
     exit('SQL Console session unavailable');
 }
@@ -729,7 +735,10 @@ function ccp_sql_console_fail(): void {
 function ccp_sql_console_internal_call(string $path, array $payload): ?array {
     $launchSecret = $_COOKIE['ccp_sql_console_secret'] ?? '';
     $token = @file_get_contents('/run/containercp/sql-console-token');
+    $launchId = $payload['launch_id'] ?? 'MISSING';
+    ccp_sql_console_diag("internal_call cookie_present=" . ($launchSecret === '' ? 'no' : 'yes') . " token_read=" . ($token === false ? 'no' : 'yes') . " target=" . $path);
     if ($launchSecret === '' || $token === false) {
+        ccp_sql_console_diag("internal_call ABORT cookie_missing=" . ($launchSecret === '' ? 'yes' : 'no') . " token_missing=" . ($token === false ? 'yes' : 'no'));
         return null;
     }
     $body = json_encode($payload);
@@ -744,8 +753,23 @@ function ccp_sql_console_internal_call(string $path, array $payload): ?array {
         'ignore_errors' => true,
     ]]);
     $response = @file_get_contents('http://host.docker.internal:8081' . $path, false, $context);
+    $http_status = 'unknown';
+    if (isset($http_response_header) && is_array($http_response_header)) {
+        foreach ($http_response_header as $h) {
+            if (preg_match('#^HTTP/\d+\.\d+\s+(\d+)#', $h, $m)) { $http_status = $m[1]; break; }
+        }
+    }
+    $response_len = is_string($response) ? strlen($response) : 0;
+    ccp_sql_console_diag("internal_call http_status=" . $http_status . " response_bytes=" . $response_len);
     $decoded = is_string($response) ? json_decode($response, true) : null;
-    return is_array($decoded) ? $decoded : null;
+    if (!is_array($decoded)) {
+        ccp_sql_console_diag("internal_call json_parse=failed response_ok=" . (is_string($response) ? 'yes' : 'no'));
+        return null;
+    }
+    $success = empty($decoded['success']) ? 'false' : 'true';
+    $error_code = $decoded['error']['code'] ?? ($decoded['error_code'] ?? 'none');
+    ccp_sql_console_diag("internal_call success=" . $success . " error_code=" . $error_code);
+    return $decoded;
 }
 
 function ccp_sql_console_logout(): void {
@@ -762,33 +786,51 @@ function ccp_sql_console_logout(): void {
 }
 
 function ccp_sql_console_redeem(): array {
+    ccp_sql_console_diag("redeem START");
+
     if (session_status() !== PHP_SESSION_ACTIVE) {
         session_start();
     }
+    $sessionId = session_id();
+    ccp_sql_console_diag("redeem php_session_id_present=" . ($sessionId ? 'yes' : 'no'));
+
     if (isset($_GET['logout'])) {
         ccp_sql_console_logout();
     }
-    if (isset($_SESSION['ccp_sql_console']) && is_array($_SESSION['ccp_sql_console'])) {
+
+    $cached = isset($_SESSION['ccp_sql_console']) && is_array($_SESSION['ccp_sql_console']);
+    ccp_sql_console_diag("redeem session_cached=" . ($cached ? 'yes' : 'no'));
+
+    if ($cached) {
+        ccp_sql_console_diag("redeem RETURN_CACHED");
         return $_SESSION['ccp_sql_console'];
     }
 
     $launchId = $_SERVER['HTTP_X_CONTAINERCP_SQLCONSOLE_LAUNCH_ID'] ?? '';
     $databaseId = $_SERVER['HTTP_X_CONTAINERCP_SQLCONSOLE_DATABASE_ID'] ?? '';
+    $cookiePresent = ($_COOKIE['ccp_sql_console_secret'] ?? '') !== '';
+    ccp_sql_console_diag("redeem launch_id=" . ($launchId ? 'present' : 'MISSING') . " database_id=" . ($databaseId ? 'present' : 'MISSING') . " cookie_secret=" . ($cookiePresent ? 'present' : 'MISSING'));
+
     if (!preg_match('/^[0-9a-fA-F]{32}$/', $launchId) || !preg_match('/^[0-9]+$/', $databaseId)) {
+        ccp_sql_console_diag("redeem INVALID_HEADERS launch_id_invalid=" . (!preg_match('/^[0-9a-fA-F]{32}$/', $launchId) ? 'yes' : 'no') . " database_id_invalid=" . (!preg_match('/^[0-9]+$/', $databaseId) ? 'yes' : 'no'));
         ccp_sql_console_fail();
     }
 
     $decoded = ccp_sql_console_internal_call('/sql-console/internal/redeem', ['launch_id' => $launchId, 'database_id' => (int)$databaseId]);
     if (!is_array($decoded) || empty($decoded['success']) || empty($decoded['data']) || !is_array($decoded['data'])) {
+        ccp_sql_console_diag("redeem FAIL internal_response_invalid");
         ccp_sql_console_fail();
     }
 
     $data = $decoded['data'];
     foreach (['database_name', 'database_user', 'database_password'] as $key) {
         if (!isset($data[$key]) || !is_string($data[$key]) || $data[$key] === '') {
+            ccp_sql_console_diag("redeem FAIL missing_data_key=" . $key);
             ccp_sql_console_fail();
         }
     }
+
+    ccp_sql_console_diag("redeem SUCCESS storing credentials in session");
 
     $_SESSION['ccp_sql_console'] = [
         'server' => 'mariadb',
@@ -809,13 +851,19 @@ function ccp_sql_console_redeem(): array {
 
 ccp_sql_console_redeem();
 
+$ccp_diag_redeem_count = 0;
+
 class AdminerContainerCPSso {
     public function credentials(): array {
+        global $ccp_diag_redeem_count;
+        $ccp_diag_redeem_count++;
+        ccp_sql_console_diag("AdminerContainerCPSso.credentials CALL_COUNT=" . $ccp_diag_redeem_count);
         $credential = ccp_sql_console_redeem();
         return [$credential['server'], $credential['username'], $credential['password']];
     }
 
     public function database(): string {
+        ccp_sql_console_diag("AdminerContainerCPSso.database CALLED");
         $credential = ccp_sql_console_redeem();
         return $credential['database'];
     }
@@ -843,7 +891,7 @@ return new AdminerContainerCPSso();
         if (!out.is_open()) return {false, "Failed to write Adminer SQL Console internal token"};
         out << sql_console_.internal_api_token();
     }
-    ::chmod(token_path.c_str(), 0600);
+    ::chmod(token_path.c_str(), 0644);
 
     request.adminer_sso_plugin_path = plugin_path.string();
     request.internal_token_path = token_path.string();
