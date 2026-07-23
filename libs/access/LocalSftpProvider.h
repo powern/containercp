@@ -50,6 +50,8 @@ private:
     bool verify_ownership(const SystemAccountMapping& mapping,
                           const ObservedUser& observed) const;
     bool ensure_global_sftp_group();
+    void rollback_create(const std::string& username, const std::string& groupname,
+                         uint64_t access_user_id);
 
     logger::Logger& logger_;
     std::shared_ptr<SystemIdentityInspector> inspector_;
