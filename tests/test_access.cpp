@@ -3,10 +3,17 @@
 #include "access/AccessKeyManager.h"
 #include "access/SshKeyValidator.h"
 #include "access/SystemAccountAllocator.h"
+#include "access/SystemAccountCommandRunner.h"
 #include "access/SystemAccountMapping.h"
+#include "access/SystemIdentityInspector.h"
+#include "access/LocalSftpProvider.h"
 #include "access/UsernameMapper.h"
+#include "core/OperationResult.h"
+#include "logger/Logger.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -395,4 +402,236 @@ TEST_CASE("SystemAccountAllocator rejects invalid range") {
     containercp::access::SystemAccountAllocator alloc(r, r);
     auto result = alloc.allocate([](int) { return false; }, [](int) { return false; }, {});
     CHECK_FALSE(result.success);
+}
+
+/* ===== PROVIDER LIFECYCLE (Phase 2 regression) ===== */
+
+namespace {
+
+class FakeInspector : public containercp::access::SystemIdentityInspector {
+public:
+    containercp::access::ObservedUser lookup_user(const std::string& name) const override {
+        auto it = users_.find(name);
+        if (it != users_.end()) return it->second;
+        return {};
+    }
+    containercp::access::ObservedUser lookup_uid(int uid) const override {
+        for (const auto& p : users_) if (p.second.uid == uid) return p.second;
+        return {};
+    }
+    containercp::access::ObservedGroup lookup_group(const std::string& name) const override {
+        auto it = groups_.find(name);
+        if (it != groups_.end()) return it->second;
+        return {};
+    }
+    bool user_exists(const std::string& name) const override {
+        return users_.count(name) > 0;
+    }
+    bool group_exists(const std::string& name) const override {
+        return groups_.count(name) > 0;
+    }
+    bool uid_occupied(int uid) const override {
+        for (const auto& p : users_) if (p.second.uid == uid) return true;
+        return false;
+    }
+    bool gid_occupied(int gid) const override {
+        for (const auto& p : groups_) if (p.second.gid == gid) return true;
+        return false;
+    }
+
+    std::map<std::string, containercp::access::ObservedUser> users_;
+    std::map<std::string, containercp::access::ObservedGroup> groups_;
+};
+
+class FakeCommandRunner {
+public:
+    containercp::core::OperationResult run(const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+        cmds_.push_back(cmd);
+        if (fail_next_) { fail_next_ = false; return {false, "injected failure"}; }
+        return {true, "ok"};
+    }
+    std::vector<containercp::access::SystemAccountCommandRunner::Command> cmds_;
+    bool fail_next_ = false;
+};
+
+containercp::access::SystemAccountCommandRunner
+make_test_runner(FakeCommandRunner* fake) {
+    return containercp::access::SystemAccountCommandRunner(
+        [fake](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake->run(cmd);
+        });
+}
+
+} // namespace
+
+TEST_CASE("Provider find_mapping via show_user returns value for existing entry") {
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping m;
+    m.entity_type = "access_user"; m.entity_id = 1;
+    m.username = "au-test"; m.groupname = "au-test";
+    m.uid = 10001; m.gid = 20001; m.state = "active";
+    stored.push_back(m);
+
+    auto inspector = std::make_shared<FakeInspector>();
+    inspector->users_["au-test"] = {true, "au-test", 10001, 20001, "/srv/containercp/users/au-test",
+                                    "/usr/sbin/nologin", true};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    containercp::access::AccessUser user;
+    user.id = 1; user.username = "test";
+    auto show = provider.show_user(user);
+    CHECK(show.success);
+    CHECK(show.message.find("au-test") != std::string::npos);
+
+    containercp::access::AccessUser missing;
+    missing.id = 999; missing.username = "nobody";
+    auto show2 = provider.show_user(missing);
+    CHECK_FALSE(show2.success);
+}
+
+TEST_CASE("Provider create_user lifecycle") {
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands;
+
+    // Pre-populate: mapping exists, OS state matches
+    containercp::access::SystemAccountMapping m;
+    m.entity_type = "access_user"; m.entity_id = 1;
+    m.username = "au-testdev"; m.groupname = "au-testdev";
+    m.uid = 10000; m.gid = 20000; m.state = "active";
+    stored.push_back(m);
+    inspector->users_["au-testdev"] = {true, "au-testdev", 10000, 20000,
+                                        "/srv/containercp/users/au-testdev",
+                                        "/usr/sbin/nologin", true};
+    inspector->groups_["au-testdev"] = {true, "au-testdev", 20000};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) {
+                if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; }
+            }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string& t, uint64_t id) {
+            stored.erase(std::remove_if(stored.begin(), stored.end(),
+                [&](const auto& s) { return s.entity_type == t && s.entity_id == id; }), stored.end());
+            return true;
+        });
+
+    containercp::access::AccessUser user;
+    user.id = 1; user.username = "testdev";
+
+    // Show
+    auto show = provider.show_user(user);
+    CHECK(show.success);
+    CHECK(show.message.find("au-testdev") != std::string::npos);
+
+    // Disable
+    auto dis = provider.disable_user(user);
+    CHECK(dis.success);
+
+    // Enable
+    auto en = provider.enable_user(user);
+    CHECK(en.success);
+
+    // Remove
+    auto rem = provider.remove_user(user);
+    CHECK(rem.success);
+    CHECK(stored.empty());
+}
+
+TEST_CASE("Provider create_user rejects on unmanaged conflict") {
+    auto inspector = std::make_shared<FakeInspector>();
+    inspector->users_["au-conflict"] = {true, "au-conflict", 50000, 50000, "/home/conflict", "/bin/bash", false};
+    FakeCommandRunner fake_commands;
+    std::vector<containercp::access::SystemAccountMapping> stored;
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string& t, uint64_t id) { return true; });
+
+    containercp::access::AccessUser user;
+    user.id = 1; user.username = "conflict"; user.enabled = true;
+    auto result = provider.create_user(user);
+    CHECK_FALSE(result.success);
+    CHECK(result.message.find("unmanaged_account_conflict") != std::string::npos);
+    CHECK(stored.empty());
+}
+
+TEST_CASE("Provider create_user rollback on partial failure") {
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    auto inspector = std::make_shared<FakeInspector>();
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    FakeCommandRunner fake_commands;
+    fake_commands.fail_next_ = true; // groupadd for private group succeeds, useradd fails
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+
+    bool deleted_ok = false;
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) { stored.push_back(m); return true; },
+        [&deleted_ok](const std::string&, uint64_t) { deleted_ok = true; return true; });
+
+    containercp::access::AccessUser user;
+    user.id = 1; user.username = "rollback"; user.enabled = true;
+    auto result = provider.create_user(user);
+    CHECK_FALSE(result.success);
+    // Mapping should be cleaned up
+    CHECK(deleted_ok);
+}
+
+TEST_CASE("Provider disabled returns error for all operations") {
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    containercp::access::AccessUser user;
+    user.id = 1; user.username = "test";
+
+    CHECK_FALSE(provider.create_user(user).success);
+    CHECK_FALSE(provider.remove_user(user).success);
+    CHECK_FALSE(provider.enable_user(user).success);
+    CHECK_FALSE(provider.disable_user(user).success);
+    CHECK_FALSE(provider.list_users().success);
+    CHECK_FALSE(provider.show_user(user).success);
 }

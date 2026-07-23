@@ -5,7 +5,8 @@
 namespace containercp::access {
 
 core::OperationResult SystemAccountCommandRunner::groupadd(const std::string& groupname, int gid) {
-    return run_({{"groupadd", "-g", std::to_string(gid), groupname}});
+    if (gid > 0) return run_({{"groupadd", "-g", std::to_string(gid), groupname}});
+    return run_({{"groupadd", groupname}});
 }
 
 core::OperationResult SystemAccountCommandRunner::useradd(const std::string& username,

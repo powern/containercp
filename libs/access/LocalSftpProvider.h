@@ -10,6 +10,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -19,7 +20,6 @@ class LocalSftpProvider : public AccessProvider {
 public:
     explicit LocalSftpProvider(logger::Logger& logger);
 
-    // Inject system dependencies. Provider stays disabled-safe until called.
     void set_identity_inspector(std::shared_ptr<SystemIdentityInspector> inspector);
     void set_command_runner(std::unique_ptr<SystemAccountCommandRunner> runner);
     void set_allocator(std::unique_ptr<SystemAccountAllocator> allocator);
@@ -28,7 +28,6 @@ public:
     void set_managed_shell(const std::string& shell);
     void set_global_sftp_group(const std::string& groupname);
 
-    // Callback to read persisted mappings from storage.
     using LoadMappingsFn = std::function<std::vector<SystemAccountMapping>()>;
     using SaveMappingFn = std::function<bool(const SystemAccountMapping&)>;
     using DeleteMappingFn = std::function<bool(const std::string& entity_type, uint64_t entity_id)>;
@@ -44,10 +43,13 @@ public:
 
 private:
     bool disabled_result(core::OperationResult& out, const char* op) const;
-    const SystemAccountMapping* find_mapping(const std::string& entity_type,
-                                             uint64_t entity_id) const;
+
+    // Returns a value copy — no pointers, no static caches.
+    std::optional<SystemAccountMapping> find_mapping(const std::string& entity_type,
+                                                     uint64_t entity_id) const;
     bool verify_ownership(const SystemAccountMapping& mapping,
                           const ObservedUser& observed) const;
+    bool ensure_global_sftp_group();
 
     logger::Logger& logger_;
     std::shared_ptr<SystemIdentityInspector> inspector_;

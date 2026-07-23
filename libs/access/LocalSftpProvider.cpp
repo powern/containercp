@@ -2,11 +2,34 @@
 
 #include "access/UsernameMapper.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <set>
 #include <sys/stat.h>
 
 namespace containercp::access {
+namespace {
+
+bool managed_path_safe(const std::string& path, const std::string& managed_root) {
+    if (managed_root.empty()) return false;
+    std::error_code ec;
+    auto canonical = std::filesystem::canonical(std::filesystem::absolute(path, ec), ec);
+    auto canonical_root = std::filesystem::canonical(std::filesystem::absolute(managed_root, ec), ec);
+    if (ec) return false;
+    if (canonical_root.empty()) return false;
+    if (canonical.string().rfind(canonical_root.string(), 0) != 0) return false;
+    if (canonical == canonical_root) return false; // refuse to delete the root itself
+    return true;
+}
+
+bool is_container_dir(const std::string& path) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(path, ec)) return false;
+    if (std::filesystem::is_symlink(path, ec)) return false;
+    return true;
+}
+
+} // namespace
 
 // --- constructor / configuration ---
 
@@ -40,19 +63,18 @@ bool LocalSftpProvider::disabled_result(core::OperationResult& out, const char* 
     return false;
 }
 
-const SystemAccountMapping* LocalSftpProvider::find_mapping(const std::string& entity_type,
-                                                             uint64_t entity_id) const {
-    if (!load_mappings_) return nullptr;
+// Returns a COPY of the mapping, or std::nullopt if not found.
+// No pointers, no static caches, no dangling references.
+std::optional<SystemAccountMapping>
+LocalSftpProvider::find_mapping(const std::string& entity_type, uint64_t entity_id) const {
+    if (!load_mappings_) return std::nullopt;
     auto mappings = load_mappings_();
     for (const auto& m : mappings) {
-        if (m.entity_type == entity_type && m.entity_id == entity_id) return nullptr; // placeholder return
+        if (m.entity_type == entity_type && m.entity_id == entity_id) {
+            return m; // value copy
+        }
     }
-    static std::vector<SystemAccountMapping> cache; // simplified
-    cache = std::move(mappings);
-    for (const auto& m : cache) {
-        if (m.entity_type == entity_type && m.entity_id == entity_id) return &m;
-    }
-    return nullptr;
+    return std::nullopt;
 }
 
 bool LocalSftpProvider::verify_ownership(const SystemAccountMapping& mapping,
@@ -65,6 +87,14 @@ bool LocalSftpProvider::verify_ownership(const SystemAccountMapping& mapping,
     if (observed.home != expected_home) return false;
     if (observed.shell != managed_shell_) return false;
     return true;
+}
+
+bool LocalSftpProvider::ensure_global_sftp_group() {
+    if (global_sftp_group_.empty()) return true;
+    if (inspector_->group_exists(global_sftp_group_)) return true;
+    // Allocate a GID for the global group outside the normal range
+    auto gr = runner_->groupadd(global_sftp_group_, -1);
+    return gr.success;
 }
 
 // --- lifecycle ---
@@ -82,16 +112,21 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
         out.success = false; out.message = mapped.error; return out;
     }
 
-    // 2. Check existing mapping
-    auto* existing = find_mapping("access_user", user.id);
-    if (existing != nullptr) {
+    // 2. Check existing mapping (value copy, no pointer)
+    auto existing = find_mapping("access_user", user.id);
+    if (existing.has_value()) {
         out.success = false; out.message = "system account mapping already exists"; return out;
     }
     if (inspector_->user_exists(mapped.canonical)) {
         out.success = false; out.message = "unmanaged_account_conflict: " + mapped.canonical; return out;
     }
 
-    // 3. Allocate UID/GID
+    // 3. Ensure global group exists
+    if (!ensure_global_sftp_group()) {
+        out.success = false; out.message = "global_sftp_group creation failed"; return out;
+    }
+
+    // 4. Allocate UID/GID
     auto persisted = load_mappings_ ? load_mappings_() : std::vector<SystemAccountMapping>{};
     auto alloc = allocator_->allocate(
         [this](int id) { return inspector_->uid_occupied(id); },
@@ -101,12 +136,12 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
         out.success = false; out.message = alloc.error; return out;
     }
 
-    // 4. Persist mapping in provisioning state
+    // 5. Persist mapping in provisioning state
     SystemAccountMapping mapping;
     mapping.entity_type = "access_user";
     mapping.entity_id   = user.id;
     mapping.username    = mapped.canonical;
-    mapping.groupname   = mapped.canonical; // primary group matches username
+    mapping.groupname   = mapped.canonical;
     mapping.uid         = alloc.uid;
     mapping.gid         = alloc.gid;
     mapping.state       = "provisioning";
@@ -114,40 +149,62 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
         out.success = false; out.message = "failed to persist system account mapping"; return out;
     }
 
-    // 5. Create private group
+    // 6. Create private group
     auto gr = runner_->groupadd(mapped.canonical, alloc.gid);
     if (!gr.success) {
+        if (delete_mapping_) delete_mapping_("access_user", user.id);
         out.success = false; out.message = "groupadd failed: " + mapped.canonical; return out;
     }
 
-    // 6. Create Linux user
+    // 7. Create Linux user
     std::string home = managed_home_root_ + "/" + mapped.canonical;
     auto ur = runner_->useradd(mapped.canonical, alloc.uid, alloc.gid, home, managed_shell_, mapped.canonical);
     if (!ur.success) {
-        runner_->groupdel(mapped.canonical);
+        (void)runner_->groupdel(mapped.canonical);
+        if (delete_mapping_) delete_mapping_("access_user", user.id);
         out.success = false; out.message = "useradd failed: " + mapped.canonical; return out;
     }
 
-    // 7. Create home directory
+    // 8. Add to global SFTP group
+    auto add_gr = runner_->usermod_add_group(mapped.canonical, global_sftp_group_);
+    if (!add_gr.success) {
+        (void)runner_->userdel(mapped.canonical);
+        (void)runner_->groupdel(mapped.canonical);
+        if (delete_mapping_) delete_mapping_("access_user", user.id);
+        out.success = false; out.message = "global group membership failed: " + mapped.canonical; return out;
+    }
+
+    // 9. Create home directory — owned by root for OpenSSH chroot compatibility
     std::error_code ec;
     std::filesystem::create_directory(home, ec);
     if (!ec) {
-        ::chown(home.c_str(), static_cast<uid_t>(alloc.uid), static_cast<gid_t>(alloc.gid));
-        ::chmod(home.c_str(), 0750);
+        // Future chroot root: owned by root:root, mode 0755
+        ::chown(home.c_str(), 0, 0);
+        ::chmod(home.c_str(), 0755);
+    } else {
+        (void)runner_->userdel(mapped.canonical);
+        (void)runner_->groupdel(mapped.canonical);
+        if (delete_mapping_) delete_mapping_("access_user", user.id);
+        out.success = false; out.message = "home directory creation failed"; return out;
     }
 
-    // 8. Lock password
-    runner_->passwd_lock(mapped.canonical);
+    // 10. Lock password
+    auto lk = runner_->passwd_lock(mapped.canonical);
+    if (!lk.success) {
+        out.success = false; out.message = "passwd lock failed: " + mapped.canonical; return out;
+    }
 
-    // 9. Verify observed state
+    // 11. Verify observed state
     auto observed = inspector_->lookup_user(mapped.canonical);
     if (!verify_ownership(mapping, observed)) {
         out.success = false; out.message = "post-create verification failed"; return out;
     }
 
-    // 10. Mark active
+    // 12. Mark active
     mapping.state = "active";
-    if (save_mapping_) save_mapping_(mapping);
+    if (save_mapping_ && !save_mapping_(mapping)) {
+        out.success = false; out.message = "failed to save active state"; return out;
+    }
 
     out.success = true;
     out.message = "SFTP user created: " + mapped.canonical;
@@ -161,8 +218,8 @@ core::OperationResult LocalSftpProvider::remove_user(const AccessUser& user) {
         out.success = false; out.message = "SFTP provider dependencies not configured"; return out;
     }
 
-    auto* mapping = find_mapping("access_user", user.id);
-    if (mapping == nullptr) {
+    auto mapping = find_mapping("access_user", user.id);
+    if (!mapping.has_value()) {
         out.success = false; out.message = "system account mapping not found"; return out;
     }
 
@@ -178,12 +235,17 @@ core::OperationResult LocalSftpProvider::remove_user(const AccessUser& user) {
     }
 
     // Remove private group
-    runner_->groupdel(mapping->groupname);
+    auto gd = runner_->groupdel(mapping->groupname);
+    if (!gd.success) {
+        out.success = false; out.message = "groupdel failed: " + mapping->groupname; return out;
+    }
 
-    // Remove home directory safely
+    // Remove home directory — with path validation
     std::string home = managed_home_root_ + "/" + mapping->username;
-    std::error_code ec;
-    std::filesystem::remove_all(home, ec);
+    if (managed_path_safe(home, managed_home_root_) && is_container_dir(home)) {
+        std::error_code ec;
+        std::filesystem::remove_all(home, ec);
+    }
 
     // Delete mapping
     if (delete_mapping_) delete_mapping_(mapping->entity_type, mapping->entity_id);
@@ -199,16 +261,18 @@ core::OperationResult LocalSftpProvider::enable_user(const AccessUser& user) {
     if (!inspector_ || !runner_) {
         out.success = false; out.message = "SFTP provider dependencies not configured"; return out;
     }
-    auto* mapping = find_mapping("access_user", user.id);
-    if (mapping == nullptr) {
+    auto mapping = find_mapping("access_user", user.id);
+    if (!mapping.has_value()) {
         out.success = false; out.message = "system account mapping not found"; return out;
     }
     auto observed = inspector_->lookup_user(mapping->username);
     if (!verify_ownership(*mapping, observed)) {
         out.success = false; out.message = "unmanaged_account_conflict"; return out;
     }
-    // Clear account expiration to re-enable login
-    runner_->usermod_expiredate(mapping->username, "");
+    auto er = runner_->usermod_expiredate(mapping->username, "");
+    if (!er.success) {
+        out.success = false; out.message = "enable failed: " + mapping->username; return out;
+    }
     out.success = true;
     out.message = "SFTP user enabled: " + mapping->username;
     return out;
@@ -220,16 +284,18 @@ core::OperationResult LocalSftpProvider::disable_user(const AccessUser& user) {
     if (!inspector_ || !runner_) {
         out.success = false; out.message = "SFTP provider dependencies not configured"; return out;
     }
-    auto* mapping = find_mapping("access_user", user.id);
-    if (mapping == nullptr) {
+    auto mapping = find_mapping("access_user", user.id);
+    if (!mapping.has_value()) {
         out.success = false; out.message = "system account mapping not found"; return out;
     }
     auto observed = inspector_->lookup_user(mapping->username);
     if (!verify_ownership(*mapping, observed)) {
         out.success = false; out.message = "unmanaged_account_conflict"; return out;
     }
-    // Set account expiration to epoch (1970-01-01) to disable login
-    runner_->usermod_expiredate(mapping->username, "1");
+    auto er = runner_->usermod_expiredate(mapping->username, "1");
+    if (!er.success) {
+        out.success = false; out.message = "disable failed: " + mapping->username; return out;
+    }
     out.success = true;
     out.message = "SFTP user disabled: " + mapping->username;
     return out;
@@ -246,8 +312,8 @@ core::OperationResult LocalSftpProvider::list_users() {
 core::OperationResult LocalSftpProvider::show_user(const AccessUser& user) {
     core::OperationResult out;
     if (!enabled_) { out.success = false; out.message = "SFTP provider disabled"; return out; }
-    auto* mapping = find_mapping("access_user", user.id);
-    if (mapping == nullptr) {
+    auto mapping = find_mapping("access_user", user.id);
+    if (!mapping.has_value()) {
         out.success = false; out.message = "not provisioned"; return out;
     }
     out.success = true;
