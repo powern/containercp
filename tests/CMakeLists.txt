@@ -93,6 +93,10 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/access/AccessKey.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/AccessKeyManager.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/SshKeyValidator.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/SystemAccountAllocator.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/SystemAccountCommandRunner.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/SystemIdentityInspector.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/UsernameMapper.cpp
     ${CMAKE_SOURCE_DIR}/libs/proxy/ProxyConfigBuilder.cpp
     ${CMAKE_SOURCE_DIR}/libs/proxy/ReverseProxy.cpp
     ${CMAKE_SOURCE_DIR}/libs/proxy/ReverseProxyManager.cpp

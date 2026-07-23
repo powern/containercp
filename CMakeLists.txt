@@ -13,6 +13,10 @@ set(CONTAINERCP_SOURCES
     libs/access/AccessKey.cpp
     libs/access/AccessKeyManager.cpp
     libs/access/SshKeyValidator.cpp
+    libs/access/SystemAccountAllocator.cpp
+    libs/access/SystemAccountCommandRunner.cpp
+    libs/access/SystemIdentityInspector.cpp
+    libs/access/UsernameMapper.cpp
     libs/access/AccessUser.cpp
     libs/access/AccessUserManager.cpp
     libs/access/LocalSftpProvider.cpp

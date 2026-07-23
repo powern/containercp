@@ -743,6 +743,56 @@ std::vector<access::AccessKey> SQLiteStorage::load_access_keys() {
     return keys;
 }
 
+// --- System account mappings ---
+
+bool SQLiteStorage::try_save_system_accounts(const std::vector<access::SystemAccountMapping>& mappings) {
+    return replace_all(pool_, "DELETE FROM system_accounts",
+        [&](SQLiteDB& db) -> bool {
+            const char* sql = "INSERT INTO system_accounts "
+                "(entity_type, entity_id, uid, gid, username, groupname, state, "
+                "created_at, updated_at) VALUES ("
+                "?, ?, ?, ?, ?, ?, ?, "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
+            for (const auto& m : mappings) {
+                if (!db.prepare(sql)) return false;
+                if (!db.bind_text(1, m.entity_type)) return false;
+                if (!db.bind_int(2, static_cast<int64_t>(m.entity_id))) return false;
+                if (!db.bind_int(3, m.uid)) return false;
+                if (!db.bind_int(4, m.gid)) return false;
+                if (!db.bind_text(5, m.username)) return false;
+                if (!db.bind_text(6, m.groupname)) return false;
+                if (!db.bind_text(7, m.state)) return false;
+                if (db.step() == false && db.error_code() != 0) return false;
+            }
+            return true;
+        });
+}
+
+void SQLiteStorage::save_system_accounts(const std::vector<access::SystemAccountMapping>& mappings) {
+    require_save(try_save_system_accounts(mappings), "system_accounts");
+}
+
+std::vector<access::SystemAccountMapping> SQLiteStorage::load_system_accounts() {
+    std::vector<access::SystemAccountMapping> mappings;
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return mappings;
+    if (!rl->prepare("SELECT entity_type, entity_id, uid, gid, username, groupname, state "
+                      "FROM system_accounts ORDER BY entity_type, entity_id")) return mappings;
+    while (rl->step()) {
+        access::SystemAccountMapping m;
+        m.entity_type = rl->column_text(0);
+        m.entity_id   = static_cast<uint64_t>(rl->column_int(1));
+        m.uid         = static_cast<int>(rl->column_int(2));
+        m.gid         = static_cast<int>(rl->column_int(3));
+        m.username    = rl->column_text(4);
+        m.groupname   = rl->column_text(5);
+        m.state       = rl->column_text(6);
+        mappings.push_back(std::move(m));
+    }
+    return mappings;
+}
+
 // --- Auth users ---
 
 bool SQLiteStorage::try_save_auth_users(const std::vector<auth::AuthUser>& users) {

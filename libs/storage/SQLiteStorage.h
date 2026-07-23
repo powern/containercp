@@ -4,6 +4,7 @@
 #include "access/AccessGrant.h"
 #include "access/AccessKey.h"
 #include "access/AccessUser.h"
+#include "access/SystemAccountMapping.h"
 #include "auth/AuthUser.h"
 #include "backup/Backup.h"
 #include "ConnectionPool.h"
@@ -115,6 +116,11 @@ public:
     void save_access_keys(const std::vector<access::AccessKey>& keys);
     std::vector<access::AccessKey> load_access_keys();
     bool try_save_access_keys(const std::vector<access::AccessKey>& keys);
+
+    // System account mappings (managed Linux identities)
+    void save_system_accounts(const std::vector<access::SystemAccountMapping>& mappings);
+    std::vector<access::SystemAccountMapping> load_system_accounts();
+    bool try_save_system_accounts(const std::vector<access::SystemAccountMapping>& mappings);
 
     // Auth users
     void save_auth_users(const std::vector<auth::AuthUser>& users);

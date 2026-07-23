@@ -2504,7 +2504,7 @@ static std::string valid_state_json(const std::string& backend,
                                     const std::string& db_path,
                                     const std::string& archive_path = "/srv/containercp/migrations/archive/11111111-2222-4333-8444-555555555555",
                                     const std::string& migration_id = kActivationTestMigrationId,
-                                    int schema_version = 2) {
+                                    int schema_version = 3) {
     std::ostringstream json;
     json << "{\n";
     json << "  \"state_version\": 1,\n";
@@ -2855,9 +2855,9 @@ TEST_CASE("P11-R2 strict activation state parser rejects wrong value types") {
     init_storage_schema(dir);
 
     std::string json = valid_state_json("sqlite", dir + "containercp.db");
-    auto pos = json.find("\"schema_version\": 2");
+    auto pos = json.find("\"schema_version\": 3");
     REQUIRE(pos != std::string::npos);
-    json.replace(pos, std::string("\"schema_version\": 2").size(), "\"schema_version\": \"2\"");
+    json.replace(pos, std::string("\"schema_version\": 3").size(), "\"schema_version\": \"3\"");
     expect_p11r2_state_rejected(dir, json);
     tclean(dir);
 }

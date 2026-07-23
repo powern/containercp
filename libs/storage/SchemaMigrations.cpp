@@ -254,6 +254,24 @@ CREATE TABLE IF NOT EXISTS access_keys (
 CREATE INDEX IF NOT EXISTS idx_keys_user_id ON access_keys(access_user_id);
 )SQL";
 
+const char* kSchemaV3DDL = R"SQL(
+CREATE TABLE IF NOT EXISTS system_accounts (
+    entity_type     TEXT NOT NULL,
+    entity_id       INTEGER NOT NULL,
+    uid             INTEGER,
+    gid             INTEGER NOT NULL,
+    username        TEXT NOT NULL,
+    groupname       TEXT NOT NULL,
+    state           TEXT NOT NULL DEFAULT 'active',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    PRIMARY KEY (entity_type, entity_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sysacct_username ON system_accounts(username);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sysacct_uid ON system_accounts(uid);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sysacct_groupname ON system_accounts(groupname);
+)SQL";
+
 // Storage metadata values set by this migration.
 // These describe the schema state, NOT the active backend.
 // TXT remains the active Storage backend until Phase 11.
@@ -315,6 +333,25 @@ void register_all_schema_migrations(MigrationEngine& engine) {
     };
 
     engine.register_migration(std::move(v2));
+
+    Migration v3;
+    v3.version = 3;
+    v3.name = "system_account_mappings";
+    v3.descriptor = kSchemaV3DDL;
+    v3.up = [](SQLiteDB& db, std::string& diagnostics) -> bool {
+        if (!db.exec(kSchemaV3DDL)) {
+            diagnostics = "system_accounts table creation failed: " + db.error_message();
+            return false;
+        }
+        std::string set_version = "INSERT OR REPLACE INTO storage_meta (key, value) VALUES ('schema_version', '3')";
+        if (!db.exec(set_version)) {
+            diagnostics = "Failed to update schema_version: " + db.error_message();
+            return false;
+        }
+        return true;
+    };
+
+    engine.register_migration(std::move(v3));
 }
 
 } // namespace containercp::storage

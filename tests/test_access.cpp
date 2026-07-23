@@ -2,6 +2,9 @@
 #include "access/AccessGrantManager.h"
 #include "access/AccessKeyManager.h"
 #include "access/SshKeyValidator.h"
+#include "access/SystemAccountAllocator.h"
+#include "access/SystemAccountMapping.h"
+#include "access/UsernameMapper.h"
 
 #include <cstdint>
 #include <string>
@@ -314,4 +317,82 @@ TEST_CASE("AccessKeyManager set_keys bulk load") {
     CHECK(mgr.list().size() == 2);
     CHECK(mgr.find(5) != nullptr);
     CHECK(mgr.find(10) != nullptr);
+}
+
+/* ===== USERNAME MAPPER ===== */
+
+TEST_CASE("UsernameMapper simple ascii") {
+    auto r = containercp::access::UsernameMapper::map("developer");
+    CHECK(r.valid);
+    CHECK(r.canonical == "au-developer");
+}
+
+TEST_CASE("UsernameMapper uppercase input") {
+    auto r = containercp::access::UsernameMapper::map("TestUser");
+    CHECK(r.valid);
+    CHECK(r.canonical == "au-testuser");
+}
+
+TEST_CASE("UsernameMapper replaces dots") {
+    auto r = containercp::access::UsernameMapper::map("john.doe");
+    CHECK(r.valid);
+    CHECK(r.canonical == "au-john_doe");
+}
+
+TEST_CASE("UsernameMapper collapses separators") {
+    auto r = containercp::access::UsernameMapper::map("a___b");
+    CHECK(r.valid);
+    CHECK(r.canonical == "au-a_b");
+}
+
+TEST_CASE("UsernameMapper rejects empty normalizer") {
+    auto r = containercp::access::UsernameMapper::map(".....");
+    CHECK_FALSE(r.valid);
+}
+
+TEST_CASE("UsernameMapper deterministic output") {
+    auto r1 = containercp::access::UsernameMapper::map("dev");
+    auto r2 = containercp::access::UsernameMapper::map("dev");
+    CHECK(r1.canonical == r2.canonical);
+    CHECK(r1.canonical == "au-dev");
+}
+
+/* ===== UID/GID ALLOCATOR ===== */
+
+TEST_CASE("SystemAccountAllocator first allocation in empty range") {
+    containercp::access::SystemAccountAllocator::Range uid_r{10000, 19999};
+    containercp::access::SystemAccountAllocator::Range gid_r{20000, 29999};
+    containercp::access::SystemAccountAllocator alloc(uid_r, gid_r);
+    auto result = alloc.allocate([](int) { return false; }, [](int) { return false; }, {});
+    CHECK(result.success);
+    CHECK(result.uid == 10000);
+    CHECK(result.gid == 20000);
+}
+
+TEST_CASE("SystemAccountAllocator skips occupied") {
+    containercp::access::SystemAccountAllocator::Range uid_r{10000, 19999};
+    containercp::access::SystemAccountAllocator::Range gid_r{20000, 29999};
+    containercp::access::SystemAccountAllocator alloc(uid_r, gid_r);
+    auto result = alloc.allocate([](int id) { return id == 10000; }, [](int) { return false; }, {});
+    CHECK(result.success);
+    CHECK(result.uid == 10001);
+}
+
+TEST_CASE("SystemAccountAllocator does not reuse deleted mappings") {
+    containercp::access::SystemAccountAllocator::Range uid_r{10000, 19999};
+    containercp::access::SystemAccountAllocator::Range gid_r{20000, 29999};
+    containercp::access::SystemAccountAllocator alloc(uid_r, gid_r);
+    containercp::access::SystemAccountMapping m;
+    m.uid = 10000; m.gid = 20000; m.entity_type = "access_user"; m.entity_id = 1;
+    auto result = alloc.allocate([](int) { return false; }, [](int) { return false; }, {m});
+    CHECK(result.success);
+    CHECK(result.uid == 10001);
+    CHECK(result.gid == 20001);
+}
+
+TEST_CASE("SystemAccountAllocator rejects invalid range") {
+    containercp::access::SystemAccountAllocator::Range r{5000, 1000};
+    containercp::access::SystemAccountAllocator alloc(r, r);
+    auto result = alloc.allocate([](int) { return false; }, [](int) { return false; }, {});
+    CHECK_FALSE(result.success);
 }

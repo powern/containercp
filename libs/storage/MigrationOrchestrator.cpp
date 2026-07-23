@@ -254,7 +254,7 @@ MigrationResult MigrationOrchestrator::migrate_to_sqlite() {
              << "    \"source_version\": \"" << LegacyArchive::json_escape(source_version_) << "\",\n"
              << "    \"target_version\": \"" << LegacyArchive::json_escape(target_version_) << "\",\n"
              << "    \"activation_timestamp\": \"" << LegacyArchive::timestamp_utc() << "\",\n"
-              << "    \"schema_version\": 2,\n"
+              << "    \"schema_version\": 3,\n"
              << "    \"verification_result\": \"success\"\n"
              << "}\n";
         if (!atomic_write_file(state_path, json.str())) {
