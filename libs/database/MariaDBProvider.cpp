@@ -15,6 +15,8 @@
 namespace containercp::database {
 namespace {
 
+constexpr const char* kManagedDatabasePrivileges = "SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES";
+
 DatabaseProviderResult provider_failure(std::string code, std::string message) {
     return {false, std::move(code), std::move(message), {}};
 }
@@ -366,9 +368,9 @@ DatabaseProviderResult MariaDBProvider::grant_database_privileges(const MariaDBC
     if (!user_validation.valid) return provider_failure(user_validation.code, user_validation.message);
     return execute_sql(target,
                        credential,
-                       "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES ON " +
-                            DatabaseIdentifierValidator::quote_identifier(database_name) + ".* TO " + quote_user(user_name) + ";\n",
-                        "privileges_granted");
+                       "GRANT " + std::string(kManagedDatabasePrivileges) + " ON " +
+                             DatabaseIdentifierValidator::quote_identifier(database_name) + ".* TO " + quote_user(user_name) + ";\n",
+                         "privileges_granted");
 }
 
 DatabaseProviderResult MariaDBProvider::create_temporary_sql_console_user(const MariaDBConnectionTarget& target,
@@ -393,8 +395,8 @@ DatabaseProviderResult MariaDBProvider::create_temporary_sql_console_user(const 
 
     const auto grant_result = execute_sql(target,
                                           credential,
-                                          "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES, REFERENCES, CREATE VIEW, SHOW VIEW, TRIGGER, EVENT ON " +
-                                              DatabaseIdentifierValidator::quote_identifier(database_name) + ".* TO " + identity + ";\n",
+                                          "GRANT " + std::string(kManagedDatabasePrivileges) + " ON " +
+                                               DatabaseIdentifierValidator::quote_identifier(database_name) + ".* TO " + identity + ";\n",
                                           "temporary_sql_console_privileges_granted");
     if (!grant_result.success) {
         (void)drop_temporary_sql_console_user(target, credential, database_name, user_name);

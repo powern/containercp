@@ -220,6 +220,12 @@ generated with `SecureRandom`, stored only in the in-memory server-side
 session, and cleared from the session after successful explicit cleanup.
 They must never be serialized to frontend JSON or logs.
 
+Temporary SQL Console users use the same database-scoped privilege list as
+managed application database users. They do not require `REFERENCES`,
+`CREATE VIEW`, `SHOW VIEW`, `TRIGGER`, or `EVENT`, so SQL Console launch does
+not require extra service-account grant authority beyond the existing managed
+database GRANT boundary.
+
 ## Persistent Metadata
 
 `SqlConsoleSessionStore` persists restart-cleanup metadata in a

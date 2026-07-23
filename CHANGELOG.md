@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-23 | `this commit` | SQL Console - align temporary user grants
+
+**Summary:** Unified the managed MariaDB database privilege list used by normal database grants and SQL Console temporary users. SQL Console no longer requests `REFERENCES`, `CREATE VIEW`, `SHOW VIEW`, `TRIGGER`, or `EVENT`, avoiding `mariadb_grant_privilege_denied` when the service account has only the intended managed-database grant authority.
+
+**Files changed:** `libs/database/MariaDBProvider.cpp`, `tests/test_database_lifecycle.cpp`, `docs/development/sql-console.md`, `CHANGELOG.md`
+
+**User-visible behavior:** Launching SQL Console no longer requires broader MariaDB service-account privileges than regular managed database grants.
+
+**Validation:** Incremental local build passed (`cmake --build build2 --target containercp_tests -- -j1`). Focused SQL Console temporary-user grant doctest passed (`1` case, `36` assertions). Focused managed grant doctest passed (`1` case, `11` assertions). Focused SQL Console doctests passed (`29` cases, `315` assertions). Full doctest suite passed (`906` cases, `6718` assertions). `git diff --check` passed.
+
+**Known risks:** The shared privilege list intentionally keeps SQL Console focused on normal interactive table/database operations. SQL objects requiring view, trigger, event, or foreign-key reference privileges remain outside the current SQL Console grant scope.
+
+---
+
 ## 2026-07-22 | `this commit` | SQL Console - add Database GUI launch controls
 
 **Summary:** Added Phase 7 Database GUI integration for SQL Console. The database detail drawer now shows SQL Console launch/status/revoke controls after the server-side Adminer SSO handoff, calls only the public launch/status/revoke REST endpoints, stores only public launch IDs, launch URLs, and session metadata, and opens only the returned launch URL. The UI does not handle temporary database usernames/passwords, launch secrets, SQL Console cookie values, internal provider tokens, internal SSO endpoints, or Adminer login fields.

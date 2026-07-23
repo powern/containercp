@@ -209,9 +209,14 @@ TEST_CASE("MariaDB provider provisions temporary SQL Console user with scoped gr
     }
     CHECK(runner.commands[1].stdin_content.find("CREATE USER 'ccp_sql_0123456789abcdef01234567'@'%'") != std::string::npos);
     CHECK(runner.commands[1].stdin_content.find("IDENTIFIED BY 'generated_console_secret'") != std::string::npos);
-    CHECK(runner.commands[4].stdin_content.find("GRANT SELECT, INSERT, UPDATE, DELETE") != std::string::npos);
+    CHECK(runner.commands[4].stdin_content.find("GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES") != std::string::npos);
     CHECK(runner.commands[4].stdin_content.find(" ON `app_db`.* TO 'ccp_sql_0123456789abcdef01234567'@'%'") != std::string::npos);
     CHECK(runner.commands[4].stdin_content.find("GRANT OPTION") == std::string::npos);
+    CHECK(runner.commands[4].stdin_content.find("REFERENCES") == std::string::npos);
+    CHECK(runner.commands[4].stdin_content.find("CREATE VIEW") == std::string::npos);
+    CHECK(runner.commands[4].stdin_content.find("SHOW VIEW") == std::string::npos);
+    CHECK(runner.commands[4].stdin_content.find("TRIGGER") == std::string::npos);
+    CHECK(runner.commands[4].stdin_content.find("EVENT") == std::string::npos);
 }
 
 TEST_CASE("MariaDB provider drops temporary SQL Console user by generated identity") {
@@ -285,6 +290,11 @@ TEST_CASE("MariaDB provider grants exact application privileges without FLUSH or
     CHECK(sql.find("FLUSH PRIVILEGES") == std::string::npos);
     CHECK(sql.find("ALL PRIVILEGES ON *.*") == std::string::npos);
     CHECK(sql.find("WITH GRANT OPTION") == std::string::npos);
+    CHECK(sql.find("REFERENCES") == std::string::npos);
+    CHECK(sql.find("CREATE VIEW") == std::string::npos);
+    CHECK(sql.find("SHOW VIEW") == std::string::npos);
+    CHECK(sql.find("TRIGGER") == std::string::npos);
+    CHECK(sql.find("EVENT") == std::string::npos);
 }
 
 TEST_CASE("MariaDB provider revokes exact application privileges without FLUSH") {
