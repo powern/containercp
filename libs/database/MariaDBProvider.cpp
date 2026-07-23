@@ -16,6 +16,7 @@ namespace containercp::database {
 namespace {
 
 constexpr const char* kManagedDatabasePrivileges = "SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES";
+constexpr const char* kSqlConsoleExtraPrivileges = "SHOW VIEW, CREATE VIEW, TRIGGER, EVENT, CREATE ROUTINE, ALTER ROUTINE, EXECUTE, REFERENCES";
 
 DatabaseProviderResult provider_failure(std::string code, std::string message) {
     return {false, std::move(code), std::move(message), {}};
@@ -395,7 +396,7 @@ DatabaseProviderResult MariaDBProvider::create_temporary_sql_console_user(const 
 
     const auto grant_result = execute_sql(target,
                                           credential,
-                                          "GRANT " + std::string(kManagedDatabasePrivileges) + " ON " +
+                                           "GRANT " + std::string(kManagedDatabasePrivileges) + ", " + std::string(kSqlConsoleExtraPrivileges) + " ON " +
                                                DatabaseIdentifierValidator::quote_identifier(database_name) + ".* TO " + identity + ";\n",
                                           "temporary_sql_console_privileges_granted");
     if (!grant_result.success) {

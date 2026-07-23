@@ -209,14 +209,9 @@ TEST_CASE("MariaDB provider provisions temporary SQL Console user with scoped gr
     }
     CHECK(runner.commands[1].stdin_content.find("CREATE USER 'ccp_sql_0123456789abcdef01234567'@'%'") != std::string::npos);
     CHECK(runner.commands[1].stdin_content.find("IDENTIFIED BY 'generated_console_secret'") != std::string::npos);
-    CHECK(runner.commands[4].stdin_content.find("GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES") != std::string::npos);
+    CHECK(runner.commands[4].stdin_content.find("GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES, SHOW VIEW, CREATE VIEW, TRIGGER, EVENT, CREATE ROUTINE, ALTER ROUTINE, EXECUTE, REFERENCES") != std::string::npos);
     CHECK(runner.commands[4].stdin_content.find(" ON `app_db`.* TO 'ccp_sql_0123456789abcdef01234567'@'%'") != std::string::npos);
     CHECK(runner.commands[4].stdin_content.find("GRANT OPTION") == std::string::npos);
-    CHECK(runner.commands[4].stdin_content.find("REFERENCES") == std::string::npos);
-    CHECK(runner.commands[4].stdin_content.find("CREATE VIEW") == std::string::npos);
-    CHECK(runner.commands[4].stdin_content.find("SHOW VIEW") == std::string::npos);
-    CHECK(runner.commands[4].stdin_content.find("TRIGGER") == std::string::npos);
-    CHECK(runner.commands[4].stdin_content.find("EVENT") == std::string::npos);
 }
 
 TEST_CASE("MariaDB provider drops temporary SQL Console user by generated identity") {
@@ -479,7 +474,7 @@ TEST_CASE("MariaDB provider real disposable drop and recreate cycle uses scoped 
         << "GRANT CREATE USER ON *.* TO '$CONTAINERCP_DB_SERVICE_USER'@'%';\n"
         << "GRANT SELECT ON mysql.user TO '$CONTAINERCP_DB_SERVICE_USER'@'%';\n"
         << "GRANT SELECT ON mysql.db TO '$CONTAINERCP_DB_SERVICE_USER'@'%';\n"
-        << "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES, GRANT OPTION ON \\`test_gui_apache_local_db\\`.* TO '$CONTAINERCP_DB_SERVICE_USER'@'%';\n"
+        << "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES, SHOW VIEW, CREATE VIEW, TRIGGER, EVENT, CREATE ROUTINE, ALTER ROUTINE, EXECUTE, REFERENCES, GRANT OPTION ON \\`test_gui_apache_local_db\\`.* TO '$CONTAINERCP_DB_SERVICE_USER'@'%';\n"
         << "SQL\n";
     std::ofstream(compose)
         << "services:\n"
