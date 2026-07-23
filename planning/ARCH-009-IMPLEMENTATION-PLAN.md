@@ -8,7 +8,7 @@
 
 | Step | Action | File |
 |------|--------|------|
-| 1.1 | Add `access_keys` SQLite table (schema v2, migration m002) | `SchemaMigrations.cpp` |
+| 1.1 | Add `access_keys` SQLite table (schema v2) | `SchemaMigrations.cpp` |
 | 1.2 | Add `AccessKey` struct + `AccessKeyManager` (CRUD) | `libs/access/AccessKey.{h,cpp}`, `AccessKeyManager.{h,cpp}` |
 | 1.3 | Add `SshKeyValidator` (parse, validate, fingerprint) | `libs/access/SshKeyValidator.{h,cpp}` |
 | 1.4 | Wire to `ServiceRegistry` + persistence | `ServiceRegistry.{h,cpp}`, `Storage/SQLiteStorage` |

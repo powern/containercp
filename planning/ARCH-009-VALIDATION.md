@@ -47,8 +47,8 @@
 - Verify confirms match after apply
 
 ### SQLite Migration (`test_schema.cpp`)
-- m001 → m002 upgrade succeeds with existing data
-- m002 → m001 downgrade succeeds
+- m001 → v2 upgrade succeeds with existing data
+- v2 → m001 downgrade succeeds (if framework supports it)
 - access_keys FK ON DELETE CASCADE works
 - system_accounts UNIQUE constraint enforced
 - Schema version tracked correctly

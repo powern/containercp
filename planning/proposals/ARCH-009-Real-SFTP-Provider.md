@@ -110,7 +110,7 @@ Persisted in new `system_accounts` SQLite table:
 | `username` | TEXT | Canonical system username |
 | `groupname` | TEXT | Canonical system group name |
 
-Allocation: UID range 10000–19999, GID range 20000–29999. Sequential, reused on deletion.
+Allocation: UID range 10000–19999, GID range 20000–29999. Monotonic, not recycled after deletion. Exhaustion of the configured range fails safely with a clear error.
 
 ### Linux groups per Site
 
@@ -178,7 +178,7 @@ UNIQUE constraint on `(access_user_id, fingerprint)` to prevent exact duplicates
 
 `ssh-ed25519`, `ecdsa-sha2-nistp256`, `ecdsa-sha2-nistp384`, `ecdsa-sha2-nistp521`, `ssh-rsa` (SHA256 fingerprint only, minimum 2048-bit).
 
-Rejected: `ssh-dss` (DSA), `ssh-rsa` with SHA1 fingerprints, keys under 2048-bit, malformed keys.
+Rejected: `ssh-dss` (DSA), RSA keys under 2048-bit, malformed keys, unknown algorithms.
 
 ### Key operations
 
@@ -288,7 +288,7 @@ Never report success if OS state is inconsistent.
 
 ## SQLite Schema Changes
 
-### Migration m002 (new)
+### Migration v2 (new)
 
 ```sql
 CREATE TABLE IF NOT EXISTS access_keys (
@@ -427,7 +427,7 @@ struct SftpConfig {
 - sshd config generation and temp-file atomic write
 - Command arg vector correctness (no shell, no injection)
 - Provider state machine (create, remove, enable, disable)
-- SQLite migration (m002)
+- SQLite migration (v2)
 
 ### Integration tests (isolated environment)
 
@@ -457,7 +457,7 @@ struct SftpConfig {
 5. **Confirm: Admin Panel (site_id=0) blocked from SFTP access by default**
 6. **Confirm: `access_grants.access_user_id` FK changed to ON DELETE CASCADE**
 7. **Confirm: existing `auth_type` field retained as-is, no migration needed now**
-8. **Approve the SQLite schema migration m002**
+8. **Approve the SQLite schema migration v2**
 
 ## References
 
