@@ -5,6 +5,7 @@
 #include "SQLiteSnapshotReader.h"
 #include "SQLiteStorage.h"
 #include "access/AccessGrant.h"
+#include "access/AccessKey.h"
 #include "access/AccessUser.h"
 #include "auth/AuthUser.h"
 #include "profile/Profile.h"
@@ -92,6 +93,8 @@ public:
     std::vector<access::AccessUser> load_access_users();
     void save_access_grants(const std::vector<access::AccessGrant>& grants);
     std::vector<access::AccessGrant> load_access_grants();
+    void save_access_keys(const std::vector<access::AccessKey>& keys);
+    std::vector<access::AccessKey> load_access_keys();
 
     // Reverse proxies
     void save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies);
@@ -124,6 +127,7 @@ public:
     CheckedSnapshot<proxy::ReverseProxy> load_reverse_proxies_checked();
     CheckedSnapshot<access::AccessUser> load_access_users_checked();
     CheckedSnapshot<access::AccessGrant> load_access_grants_checked();
+    CheckedSnapshot<access::AccessKey> load_access_keys_checked();
     CheckedSnapshot<auth::AuthUser> load_auth_users_checked();
     CheckedSnapshot<ssl::SslCertificate> load_ssl_certificates_checked();
     CheckedSnapshot<mail::MailDomain> load_mail_domains_checked();

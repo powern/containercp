@@ -693,6 +693,56 @@ std::vector<access::AccessGrant> SQLiteStorage::load_access_grants() {
     return grants;
 }
 
+// --- Access keys ---
+
+bool SQLiteStorage::try_save_access_keys(const std::vector<access::AccessKey>& keys) {
+    return replace_all(pool_, "DELETE FROM access_keys",
+        [&](SQLiteDB& db) -> bool {
+            const char* sql = "INSERT INTO access_keys "
+                "(id, access_user_id, key_type, key_data, key_comment, "
+                "fingerprint, enabled, created_at, updated_at) VALUES ("
+                "?, ?, ?, ?, ?, ?, ?, "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
+                "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
+            for (const auto& k : keys) {
+                if (!db.prepare(sql)) return false;
+                if (!db.bind_int(1, static_cast<int64_t>(k.id))) return false;
+                if (!db.bind_int(2, static_cast<int64_t>(k.access_user_id))) return false;
+                if (!db.bind_text(3, k.key_type)) return false;
+                if (!db.bind_text(4, k.key_data)) return false;
+                if (!db.bind_text(5, k.key_comment)) return false;
+                if (!db.bind_text(6, k.fingerprint)) return false;
+                if (!db.bind_int(7, k.enabled ? 1 : 0)) return false;
+                if (db.step() == false && db.error_code() != 0) return false;
+            }
+            return true;
+        });
+}
+
+void SQLiteStorage::save_access_keys(const std::vector<access::AccessKey>& keys) {
+    require_save(try_save_access_keys(keys), "access_keys");
+}
+
+std::vector<access::AccessKey> SQLiteStorage::load_access_keys() {
+    std::vector<access::AccessKey> keys;
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return keys;
+    if (!rl->prepare("SELECT id, access_user_id, key_type, key_data, key_comment, "
+                      "fingerprint, enabled FROM access_keys ORDER BY id")) return keys;
+    while (rl->step()) {
+        access::AccessKey k;
+        k.id = static_cast<uint64_t>(rl->column_int(0));
+        k.access_user_id = static_cast<uint64_t>(rl->column_int(1));
+        k.key_type = rl->column_text(2);
+        k.key_data = rl->column_text(3);
+        k.key_comment = rl->column_text(4);
+        k.fingerprint = rl->column_text(5);
+        k.enabled = rl->column_int(6) != 0;
+        keys.push_back(std::move(k));
+    }
+    return keys;
+}
+
 // --- Auth users ---
 
 bool SQLiteStorage::try_save_auth_users(const std::vector<auth::AuthUser>& users) {

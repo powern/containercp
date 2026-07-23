@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-23 | `this commit` | ARCH-009 Phase 1 — SSH public key model and validation
+
+**Summary:** Added SQLite-backed SSH public key storage, validation, and management foundation for the Real SFTP Provider epic. Introduced `AccessKey` resource, `AccessKeyManager`, `SshKeyValidator`, schema migration v2 (`access_keys` table), and comprehensive tests.
+
+**Files changed:** `libs/access/AccessKey.{h,cpp}`, `libs/access/AccessKeyManager.{h,cpp}`, `libs/access/SshKeyValidator.{h,cpp}`, `libs/storage/SchemaMigrations.{h,cpp}`, `libs/storage/SQLiteStorage.{h,cpp}`, `libs/storage/SQLiteSnapshotReader.h`, `libs/storage/Storage.{h,cpp}`, `libs/storage/MigrationOrchestrator.cpp`, `libs/core/ServiceRegistry.{h,cpp}`, `CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/test_access.cpp`, `tests/test_schema.cpp`, `tests/test_sqlite_storage.cpp`, `planning/proposals/ARCH-009-Real-SFTP-Provider.md`, `planning/ARCH-009-IMPLEMENTATION-PLAN.md`, `planning/ARCH-009-VALIDATION.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No user-visible changes yet. This is the internal SSH key foundation for ARCH-009. No authorized_keys files are generated, no Linux accounts are created, no sshd configuration is modified.
+
+**Validation:** Full doctest suite passed (`920` cases, `6758` assertions). Focused access tests including SSH key validator, manager, duplicate prevention, and fingerprinting passed (`37` cases, `199` assertions). Schema migration tests passed (v1→v2 upgrade, table inventory, index verification). Schema version in storage-state.json updated to 2. MigrationOrchestrator now writes schema_version=2.
+
+**Known risks:** Phase 1 does not write `authorized_keys` or modify host state. Schema migration v2 is additive only — existing data is preserved. Legacy TXT key storage is not implemented (SQLite-only). `access_grants.access_user_id` FK remains ON DELETE RESTRICT (cascade change deferred).
+
+---
+
 ## 2026-07-23 | `this commit` | SQL Console - align temporary user grants
 
 **Summary:** Unified the managed MariaDB database privilege list used by normal database grants and SQL Console temporary users. SQL Console no longer requests `REFERENCES`, `CREATE VIEW`, `SHOW VIEW`, `TRIGGER`, or `EVENT`, avoiding `mariadb_grant_privilege_denied` when the service account has only the intended managed-database grant authority.

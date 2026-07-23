@@ -3,6 +3,7 @@
 
 #include "ConnectionPool.h"
 #include "access/AccessGrant.h"
+#include "access/AccessKey.h"
 #include "access/AccessUser.h"
 #include "auth/AuthUser.h"
 #include "backup/Backup.h"
@@ -124,6 +125,15 @@ struct SQLiteSnapshotReader {
         std::string ps = db.column_text(3); if (!valid_permission(ps)) return false;
         g.permission = access::permission_from_string(ps);
         g.name = std::to_string(g.access_user_id)+"-"+std::to_string(g.site_id); return true; }
+    static bool read_ak_row(SQLiteDB& db, access::AccessKey& k) {
+        if (!read_uint64_col(db, 0, k.id)) return false;
+        if (!read_uint64_col(db, 1, k.access_user_id)) return false;
+        if (!read_string_col(db, 2, k.key_type)) return false;
+        if (!read_string_col(db, 3, k.key_data)) return false;
+        if (!read_string_col(db, 4, k.key_comment)) return false;
+        if (!read_string_col(db, 5, k.fingerprint)) return false;
+        if (!read_bool_col(db, 6, k.enabled)) return false;
+        return true; }
     static bool read_md_row(SQLiteDB& db, mail::MailDomain& m) {
         if (!read_uint64_col(db, 0, m.id)) return false;
         if (!read_uint64_col(db, 1, m.domain_id)) return false;
@@ -284,6 +294,7 @@ struct SQLiteSnapshotReader {
     SNAPSHOT_DEF(reverse_proxies, proxy::ReverseProxy, "SELECT id, domain, site_id, provider, config_path, upstream, enabled, status FROM reverse_proxies ORDER BY id", read_proxy_row)
     SNAPSHOT_DEF(access_users, access::AccessUser, "SELECT id, username, auth_type, password_hash, enabled FROM access_users ORDER BY id", read_au_row)
     SNAPSHOT_DEF(access_grants, access::AccessGrant, "SELECT id, access_user_id, site_id, permission FROM access_grants ORDER BY id", read_ag_row)
+    SNAPSHOT_DEF(access_keys, access::AccessKey, "SELECT id, access_user_id, key_type, key_data, key_comment, fingerprint, enabled FROM access_keys ORDER BY id", read_ak_row)
     SNAPSHOT_DEF(auth_users, auth::AuthUser, "SELECT id, username, password_hash, must_change_password, enabled, role FROM auth_users ORDER BY id", read_authu_row)
     SNAPSHOT_DEF(ssl_certificates, ssl::SslCertificate, "SELECT id, domain_id, domain, provider, certificate_path, key_path, chain_path, issued_at, expires_at, renew_after, status, auto_renew, https_enabled, redirect_enabled, domains, challenge_type, last_error, last_validation, renew_attempts, version FROM ssl_certificates ORDER BY id", read_ssl_row)
     SNAPSHOT_DEF(mail_domains, mail::MailDomain, "SELECT id, domain_id, site_id, domain_name, mode, relay_host, dkim_selector, dkim_private_key_path, dkim_public_key_dns, max_mailboxes, max_aliases, catch_all, enabled, created_at, updated_at FROM mail_domains ORDER BY id", read_md_row)

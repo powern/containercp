@@ -2,6 +2,7 @@
 #define CONTAINERCP_STORAGE_SQLITE_STORAGE_H
 
 #include "access/AccessGrant.h"
+#include "access/AccessKey.h"
 #include "access/AccessUser.h"
 #include "auth/AuthUser.h"
 #include "backup/Backup.h"
@@ -109,6 +110,11 @@ public:
     // Access grants (child table, FK-dependent)
     void save_access_grants(const std::vector<access::AccessGrant>& grants);
     std::vector<access::AccessGrant> load_access_grants();
+
+    // Access keys (child table, FK → access_users ON DELETE CASCADE)
+    void save_access_keys(const std::vector<access::AccessKey>& keys);
+    std::vector<access::AccessKey> load_access_keys();
+    bool try_save_access_keys(const std::vector<access::AccessKey>& keys);
 
     // Auth users
     void save_auth_users(const std::vector<auth::AuthUser>& users);

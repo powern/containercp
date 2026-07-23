@@ -10,6 +10,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CONTAINERCP_SOURCES
     libs/access/AccessGrant.cpp
     libs/access/AccessGrantManager.cpp
+    libs/access/AccessKey.cpp
+    libs/access/AccessKeyManager.cpp
+    libs/access/SshKeyValidator.cpp
     libs/access/AccessUser.cpp
     libs/access/AccessUserManager.cpp
     libs/access/LocalSftpProvider.cpp

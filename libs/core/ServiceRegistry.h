@@ -2,6 +2,7 @@
 #define CONTAINERCP_CORE_SERVICE_REGISTRY_H
 
 #include "access/AccessGrantManager.h"
+#include "access/AccessKeyManager.h"
 #include "access/AccessUserManager.h"
 #include "auth/AuthService.h"
 #include "auth/AuthUserManager.h"
@@ -109,6 +110,7 @@ public:
     jobs::JobExecutor& job_executor();
     access::AccessUserManager& access_users();
     access::AccessGrantManager& access_grants();
+    access::AccessKeyManager& access_keys();
     access::AccessProvider& access_provider();
     proxy::ReverseProxyManager& reverse_proxies();
     proxy::ProxyProvider& proxy_provider();
@@ -177,6 +179,7 @@ private:
     backup::TarBackupProvider backup_provider_;
     access::AccessUserManager access_users_;
     access::AccessGrantManager access_grants_;
+    access::AccessKeyManager access_keys_;
     access::LocalSftpProvider access_provider_;
     proxy::ReverseProxyManager reverse_proxies_;
     proxy::NginxProxyProvider proxy_provider_;

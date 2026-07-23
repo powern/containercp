@@ -238,6 +238,22 @@ CREATE TABLE IF NOT EXISTS mail_config (
 );
 )SQL";
 
+const char* kSchemaV2DDL = R"SQL(
+CREATE TABLE IF NOT EXISTS access_keys (
+    id              INTEGER PRIMARY KEY,
+    access_user_id  INTEGER NOT NULL REFERENCES access_users(id) ON DELETE CASCADE,
+    key_type        TEXT NOT NULL,
+    key_data        TEXT NOT NULL,
+    key_comment     TEXT NOT NULL DEFAULT '',
+    fingerprint     TEXT NOT NULL,
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE(access_user_id, fingerprint)
+);
+CREATE INDEX IF NOT EXISTS idx_keys_user_id ON access_keys(access_user_id);
+)SQL";
+
 // Storage metadata values set by this migration.
 // These describe the schema state, NOT the active backend.
 // TXT remains the active Storage backend until Phase 11.
@@ -280,6 +296,25 @@ void register_all_schema_migrations(MigrationEngine& engine) {
     };
 
     engine.register_migration(std::move(v1));
+
+    Migration v2;
+    v2.version = 2;
+    v2.name = "ssh_public_keys";
+    v2.descriptor = kSchemaV2DDL;
+    v2.up = [](SQLiteDB& db, std::string& diagnostics) -> bool {
+        if (!db.exec(kSchemaV2DDL)) {
+            diagnostics = "access_keys table creation failed: " + db.error_message();
+            return false;
+        }
+        std::string set_version = "INSERT OR REPLACE INTO storage_meta (key, value) VALUES ('schema_version', '2')";
+        if (!db.exec(set_version)) {
+            diagnostics = "Failed to update schema_version: " + db.error_message();
+            return false;
+        }
+        return true;
+    };
+
+    engine.register_migration(std::move(v2));
 }
 
 } // namespace containercp::storage

@@ -2504,7 +2504,7 @@ static std::string valid_state_json(const std::string& backend,
                                     const std::string& db_path,
                                     const std::string& archive_path = "/srv/containercp/migrations/archive/11111111-2222-4333-8444-555555555555",
                                     const std::string& migration_id = kActivationTestMigrationId,
-                                    int schema_version = 1) {
+                                    int schema_version = 2) {
     std::ostringstream json;
     json << "{\n";
     json << "  \"state_version\": 1,\n";
@@ -2829,7 +2829,7 @@ TEST_CASE("P11-R2 strict activation state parser rejects missing required keys")
     json << "  \"source_version\": \"v0.6.0\",\n";
     json << "  \"target_version\": \"v0.7.0\",\n";
     json << "  \"activation_timestamp\": \"20260718T120000Z\",\n";
-    json << "  \"schema_version\": 1,\n";
+    json << "  \"schema_version\": 2,\n";
     json << "  \"verification_result\": \"success\"\n";
     json << "}\n";
     expect_p11r2_state_rejected(dir, json.str());
@@ -2855,9 +2855,9 @@ TEST_CASE("P11-R2 strict activation state parser rejects wrong value types") {
     init_storage_schema(dir);
 
     std::string json = valid_state_json("sqlite", dir + "containercp.db");
-    auto pos = json.find("\"schema_version\": 1");
+    auto pos = json.find("\"schema_version\": 2");
     REQUIRE(pos != std::string::npos);
-    json.replace(pos, std::string("\"schema_version\": 1").size(), "\"schema_version\": \"1\"");
+    json.replace(pos, std::string("\"schema_version\": 2").size(), "\"schema_version\": \"2\"");
     expect_p11r2_state_rejected(dir, json);
     tclean(dir);
 }

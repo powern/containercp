@@ -367,6 +367,10 @@ ServiceRegistry::ServiceRegistry()
     if (!loaded_grants.empty()) {
         access_grants_.set_grants(loaded_grants);
     }
+    auto loaded_keys = storage_.load_access_keys();
+    if (!loaded_keys.empty()) {
+        access_keys_.set_keys(loaded_keys);
+    }
 
     auto loaded_proxies = storage_.load_reverse_proxies();
     if (!loaded_proxies.empty()) {
@@ -973,6 +977,10 @@ access::AccessGrantManager& ServiceRegistry::access_grants() {
     return access_grants_;
 }
 
+access::AccessKeyManager& ServiceRegistry::access_keys() {
+    return access_keys_;
+}
+
 access::AccessProvider& ServiceRegistry::access_provider() {
     return access_provider_;
 }
@@ -1117,6 +1125,7 @@ void ServiceRegistry::save() {
     storage_.save_mail_smarthost(mail_.smarthost_to_string());
     storage_.save_access_users(access_users_.list());
     storage_.save_access_grants(access_grants_.list());
+    storage_.save_access_keys(access_keys_.list());
     storage_.save_reverse_proxies(reverse_proxies_.list());
     storage_.save_profiles(profiles_.list());
     storage_.save_auth_users(auth_users_.list());

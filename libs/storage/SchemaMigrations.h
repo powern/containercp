@@ -10,6 +10,7 @@ namespace containercp::storage {
 //
 // Current migration versions:
 //   v1 — Initial business tables (18 tables)
+//   v2 — SSH public keys (access_keys)
 void register_all_schema_migrations(MigrationEngine& engine);
 
 } // namespace containercp::storage

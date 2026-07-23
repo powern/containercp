@@ -17,7 +17,7 @@
 namespace containercp::storage {
 
 namespace {
-constexpr int kExpectedSchemaVersion = 1;
+constexpr int kExpectedSchemaVersion = 2;
 
 struct ActivationState {
     int64_t state_version = 0;
@@ -1415,6 +1415,20 @@ std::vector<access::AccessGrant> Storage::load_access_grants() {
     return grants;
 }
 
+void Storage::save_access_keys(const std::vector<access::AccessKey>& keys) {
+    if (use_sqlite()) {
+        sqlite_.save_access_keys(keys);
+        return;
+    }
+}
+
+std::vector<access::AccessKey> Storage::load_access_keys() {
+    if (use_sqlite()) {
+        return sqlite_.load_access_keys();
+    }
+    return {};
+}
+
 void Storage::save_reverse_proxies(const std::vector<proxy::ReverseProxy>& proxies) {
     if (use_sqlite()) {
         sqlite_.save_reverse_proxies(proxies);
@@ -1581,6 +1595,7 @@ CheckedSnapshot<backup::Backup> Storage::load_backups_checked() { SQLiteSnapshot
 CheckedSnapshot<proxy::ReverseProxy> Storage::load_reverse_proxies_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_reverse_proxies(); }
 CheckedSnapshot<access::AccessUser> Storage::load_access_users_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_access_users(); }
 CheckedSnapshot<access::AccessGrant> Storage::load_access_grants_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_access_grants(); }
+CheckedSnapshot<access::AccessKey> Storage::load_access_keys_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_access_keys(); }
 CheckedSnapshot<auth::AuthUser> Storage::load_auth_users_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_auth_users(); }
 CheckedSnapshot<ssl::SslCertificate> Storage::load_ssl_certificates_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_ssl_certificates(); }
 CheckedSnapshot<mail::MailDomain> Storage::load_mail_domains_checked() { SQLiteSnapshotReader snap(pool_); return snap.read_mail_domains(); }
