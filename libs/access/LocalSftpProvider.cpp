@@ -620,10 +620,17 @@ core::OperationResult LocalSftpProvider::ensure_chroot_layout(uint64_t access_us
     auto r3 = runner_->chmod("755", sites_dir);
     if (!r3.success) { out.success = false; out.message = "chmod sites/ failed"; return out; }
 
-    // Postcondition: verify directory exists
+    // Postcondition: verify directory ownership, mode, path identity
     if (fs_inspector_) {
         auto post = fs_inspector_->inspect(sites_dir);
-        if (!post.exists) { out.success = false; out.message = "sites/ verification failed"; return out; }
+        if (!post.exists) { out.success = false; out.message = "sites/ missing"; return out; }
+        if (post.is_symlink) { out.success = false; out.message = "sites/ is symlink"; return out; }
+        if (post.owner_uid != 0) { out.success = false; out.message = "sites/ not root-owned"; return out; }
+        if (post.group_gid != 0) { out.success = false; out.message = "sites/ not root group"; return out; }
+        if (post.mode != 0755) { out.success = false; out.message = "sites/ wrong mode"; return out; }
+        if (post.acl_status != InspectionStatus::Ok && post.acl_status != InspectionStatus::PathMissing) {
+            out.success = false; out.message = "sites/ inspection error"; return out;
+        }
     }
 
     out.success = true; out.message = "chroot layout created"; return out;
