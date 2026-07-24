@@ -469,34 +469,29 @@ core::OperationResult LocalSftpProvider::apply_read_only_acl(uint64_t site_id) {
         out.success = false; out.message = "OS group GID mismatch"; return out;
     }
 
+    // Capture previous ACL state for restoration
     auto prev = fs_inspector_->inspect_acl(public_dir, ro_mapping->groupname);
+    if (prev.acl_status != InspectionStatus::Ok && prev.acl_status != InspectionStatus::AclToolMissing) {
+        out.success = false; out.message = "pre-inspection failed"; return out;
+    }
 
+    // Apply access ACL
     std::string acl_access = "g:" + ro_mapping->groupname + ":r-x";
     auto r = runner_->setfacl_modify(acl_access, public_dir);
-    if (!r.success) {
-        (void)runner_->setfacl_remove("g:" + ro_mapping->groupname, public_dir);
-        out.success = false; out.message = "setfacl failed"; return out;
-    }
+    if (!r.success) { restore_acl(prev, public_dir, ro_mapping->groupname, out); return out; }
 
+    // Apply default ACL
     std::string acl_default = "d:g:" + ro_mapping->groupname + ":r-x";
     auto rd = runner_->setfacl_modify(acl_default, public_dir);
-    if (!rd.success) {
-        (void)runner_->setfacl_remove("g:" + ro_mapping->groupname, public_dir);
-        out.success = false; out.message = "default ACL failed"; return out;
-    }
+    if (!rd.success) { restore_acl(prev, public_dir, ro_mapping->groupname, out); return out; }
 
+    // Verify postcondition
     auto post = fs_inspector_->inspect_acl(public_dir, ro_mapping->groupname);
     if (post.acl_status != InspectionStatus::Ok) {
-        out.success = false; out.message = "ACL inspection error"; return out;
+        restore_acl(prev, public_dir, ro_mapping->groupname, out); return out;
     }
-    if (!post.access_acl_present) {
-        out.success = false; out.message = "ACL postcondition failed"; return out;
-    }
-    if (post.effective_perms.find('w') != std::string::npos) {
-        out.success = false; out.message = "ACL effective perms contain write"; return out;
-    }
-    if (!post.default_acl_present) {
-        out.success = false; out.message = "default ACL postcondition failed"; return out;
+    if (!post.access_acl_present || post.effective_perms.find('w') != std::string::npos || !post.default_acl_present) {
+        restore_acl(prev, public_dir, ro_mapping->groupname, out); return out;
     }
 
     out.success = true; out.message = "RO ACL applied"; return out;
@@ -520,19 +515,45 @@ core::OperationResult LocalSftpProvider::remove_read_only_acl(uint64_t site_id) 
         out.success = false; out.message = "RO site group not active"; return out;
     }
 
+    auto prev = fs_inspector_->inspect_acl(public_dir, ro_mapping->groupname);
+
     auto r1 = runner_->setfacl_remove("g:" + ro_mapping->groupname, public_dir);
     if (!r1.success) { out.success = false; out.message = "setfacl -x failed"; return out; }
-    (void)runner_->setfacl_remove("d:g:" + ro_mapping->groupname, public_dir);
+    auto r2 = runner_->setfacl_remove("d:g:" + ro_mapping->groupname, public_dir);
+    if (!r2.success) { out.success = false; out.message = "default setfacl -x failed"; return out; }
 
     auto post = fs_inspector_->inspect_acl(public_dir, ro_mapping->groupname);
     if (post.acl_status != InspectionStatus::Ok && post.acl_status != InspectionStatus::AclToolMissing) {
         out.success = false; out.message = "ACL inspection error"; return out;
     }
-    if (post.access_acl_present) {
+    if (post.access_acl_present || post.default_acl_present) {
+        // Restore previous ACL
+        auto rb1 = runner_->setfacl_modify("g:" + ro_mapping->groupname + ":" + prev.access_acl_perms, public_dir);
+        if (!rb1.success) { out.success = false; out.message = "rollback failed"; return out; }
+        auto rb2 = runner_->setfacl_modify("d:g:" + ro_mapping->groupname + ":" + prev.default_acl_perms, public_dir);
+        if (!rb2.success) { out.success = false; out.message = "rollback failed"; return out; }
         out.success = false; out.message = "ACL removal postcondition failed"; return out;
     }
 
     out.success = true; out.message = "RO ACL removed"; return out;
+}
+
+// ACL restoration helper
+void LocalSftpProvider::restore_acl(const FsPermissionState& prev, const std::string& path,
+                                     const std::string& groupname, core::OperationResult& out) {
+    if (prev.access_acl_present && !prev.access_acl_perms.empty()) {
+        auto rb = runner_->setfacl_modify("g:" + groupname + ":" + prev.access_acl_perms, path);
+        if (!rb.success) { out.success = false; out.message = "rollback failed"; return; }
+    } else {
+        (void)runner_->setfacl_remove("g:" + groupname, path);
+    }
+    if (prev.default_acl_present && !prev.default_acl_perms.empty()) {
+        auto rb = runner_->setfacl_modify("d:g:" + groupname + ":" + prev.default_acl_perms, path);
+        if (!rb.success) { out.success = false; out.message = "rollback failed"; return; }
+    } else {
+        (void)runner_->setfacl_remove("d:g:" + groupname, path);
+    }
+    out.success = false; out.message = "ACL operation failed, rolled back"; return;
 }
 
 // --- lifecycle ---

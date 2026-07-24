@@ -96,6 +96,8 @@ private:
     bool ensure_global_sftp_group();
     void rollback_create(const std::string& username, const std::string& groupname,
                          uint64_t access_user_id);
+    void restore_acl(const FsPermissionState& prev, const std::string& path,
+                     const std::string& groupname, core::OperationResult& out);
 
     // Resolve entity_type from permission string
     static std::string site_group_entity_type(const std::string& permission);
