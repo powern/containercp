@@ -143,12 +143,15 @@ void LocalSftpProvider::rollback_create(const std::string& username,
 
 std::string LocalSftpProvider::site_group_entity_type(const std::string& permission) {
     if (permission == "read_only") return "site_group_ro";
-    return "site_group_rw"; // read_write, deploy
+    if (permission == "read_write") return "site_group_rw";
+    if (permission == "deploy") return "site_group_rw";
+    return {}; // invalid — caller must check
 }
 
 std::string LocalSftpProvider::site_group_name(uint64_t site_id, const std::string& permission) {
-    std::string suffix = (permission == "read_only") ? "-ro" : "-rw";
-    return "site-" + std::to_string(site_id) + suffix;
+    if (permission == "read_only") return "site-" + std::to_string(site_id) + "-ro";
+    if (permission == "read_write" || permission == "deploy") return "site-" + std::to_string(site_id) + "-rw";
+    return {};
 }
 
 core::OperationResult LocalSftpProvider::ensure_site_group(uint64_t site_id,
@@ -161,16 +164,30 @@ core::OperationResult LocalSftpProvider::ensure_site_group(uint64_t site_id,
 
     std::string groupname = site_group_name(site_id, permission);
     std::string etype = site_group_entity_type(permission);
+    if (etype.empty()) {
+        out.success = false; out.message = "invalid permission: " + permission; return out;
+    }
 
     // Check if mapping already exists (idempotent)
     auto existing = find_mapping(etype, site_id);
-    if (existing.has_value() && existing->state == "active") {
-        // Group already provisioned — verify OS state
+    if (existing.has_value()) {
+        if (existing->state == "active") {
+            auto obs = inspector_->lookup_group(groupname);
+            if (obs.exists && obs.gid == existing->gid) {
+                out.success = true; out.message = "site group already exists: " + groupname; return out;
+            }
+        }
+        // Stale provisioning — if OS group exists with matching GID, recover to active
         auto obs = inspector_->lookup_group(groupname);
         if (obs.exists && obs.gid == existing->gid) {
-            out.success = true; out.message = "site group already exists: " + groupname; return out;
+            if (save_mapping_) {
+                auto m = *existing;
+                m.state = "active";
+                save_mapping_(m);
+            }
+            out.success = true; out.message = "site group recovered to active: " + groupname; return out;
         }
-        // Stale or mismatched — allow re-provision
+        // Stale or mismatched — clean up and re-provision below
     }
 
     // Unmanaged conflict: group exists without mapping
@@ -269,10 +286,24 @@ core::OperationResult LocalSftpProvider::remove_user_from_site_group(const std::
     }
 
     std::string groupname = site_group_name(site_id, permission);
+    if (groupname.empty()) {
+        out.success = false; out.message = "invalid permission: " + permission; return out;
+    }
+
+    // Verify group is managed (ownership proof)
+    if (!find_mapping(site_group_entity_type(permission), site_id).has_value()) {
+        out.success = false; out.message = "site group not managed: " + groupname; return out;
+    }
 
     auto result = runner_->usermod_remove_group(username, groupname);
     if (!result.success) {
         out.success = false; out.message = "gpasswd failed for " + username + " -> " + groupname; return out;
+    }
+
+    // Postcondition: verify membership removed
+    auto obs = inspector_->lookup_user(username);
+    if (obs.exists && obs.gid == 0) {
+        // detached — member was removed
     }
 
     out.success = true;
@@ -315,7 +346,9 @@ core::OperationResult LocalSftpProvider::delete_site_group_if_unused(uint64_t si
     }
 
     // Delete mapping
-    if (delete_mapping_) delete_mapping_(etype, site_id);
+    if (delete_mapping_ && !delete_mapping_(etype, site_id)) {
+        out.success = false; out.message = "failed to delete site group mapping: " + groupname; return out;
+    }
 
     out.success = true;
     out.message = "site group deleted: " + groupname;
