@@ -808,27 +808,37 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     // Step 5: Bind mount
     auto r5 = bind_mount_site(access_user_id, site_id);
     if (!r5.success) {
-        // Reverse order: 5(mount) → 4(acl) → 3(perms) → 2(membership) → 1(group)
-        // Mount: bind_mount_site already cleaned up on failure (umount+rmdir)
+        // Reverse-order rollback: attempt all safe compensations, collect errors.
+        // Order: 5(mount) → 4(acl) → 3(perms) → 2(membership) → 1(group)
+        std::string rollback_errors;
+        auto note = [&](const char* step) { if (!rollback_errors.empty()) rollback_errors += ","; rollback_errors += step; };
+
         if (acl_changed) {
             auto rb = remove_read_only_acl(site_id);
-            if (!rb.success) { out.success = false; out.message = "grant_rollback_acl_failed"; return out; }
+            if (!rb.success) note("acl");
         }
         if (perms_changed && original_gid > 0 && runner_) {
             std::string pub = site_root_resolver_(site_id) + "/public/";
             auto gid_rb = runner_->chgrp(std::to_string(original_gid), pub);
             auto mode_rb = runner_->chmod((original_mode > 0 ? std::to_string(original_mode) : std::string("755")), pub);
-            if (!gid_rb.success || !mode_rb.success) { out.success = false; out.message = "grant_rollback_dir_perms_failed"; return out; }
+            if (!gid_rb.success || !mode_rb.success) note("perms");
         }
         if (membership_added) {
             auto rb2 = remove_user_from_site_group(username, site_id, permission);
-            if (!rb2.success) { out.success = false; out.message = "grant_rollback_membership_failed"; return out; }
+            if (!rb2.success) note("membership");
         }
         if (group_created) {
             auto dg = delete_site_group_if_unused(site_id, permission);
-            if (!dg.success) { out.success = false; out.message = "grant_rollback_group_delete_failed"; return out; }
+            if (!dg.success) note("group");
         }
-        out.success = false; out.message = "grant apply failed, rolled back"; return out;
+
+        if (rollback_errors.empty()) {
+            out.success = false; out.message = "grant apply failed, fully rolled back";
+        } else {
+            out.success = false;
+            out.message = "grant_rollback_incomplete: " + rollback_errors;
+        }
+        return out;
     }
 
     out.success = true; out.message = "grant applied"; return out;
