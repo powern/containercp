@@ -89,6 +89,13 @@ bool LocalSftpProvider::verify_ownership(const SystemAccountMapping& mapping,
     if (observed.username != mapping.username) return false;
     if (mapping.uid > 0 && observed.uid != mapping.uid) return false;
     if (observed.gid != mapping.gid) return false;
+    // UID/GID must be within the configured managed range
+    if (allocator_) {
+        if (mapping.uid > 0 && (mapping.uid < allocator_->uid_min() || mapping.uid > allocator_->uid_max()))
+            return false;
+        if (mapping.gid > 0 && (mapping.gid < allocator_->gid_min() || mapping.gid > allocator_->gid_max()))
+            return false;
+    }
     std::string expected_home = managed_home_root_ + "/" + mapping.username;
     if (observed.home != expected_home) return false;
     if (observed.shell != managed_shell_) return false;
@@ -97,6 +104,7 @@ bool LocalSftpProvider::verify_ownership(const SystemAccountMapping& mapping,
 
 bool LocalSftpProvider::ensure_global_sftp_group() {
     if (global_sftp_group_.empty()) return true;
+    if (!inspector_ || !runner_) return false;
 
     // If group exists, verify it's not an unmanaged conflict
     if (inspector_->group_exists(global_sftp_group_)) {
@@ -119,7 +127,12 @@ void LocalSftpProvider::rollback_create(const std::string& username,
                                          uint64_t access_user_id) {
     (void)runner_->userdel(username);
     (void)runner_->groupdel(groupname);
-    if (delete_mapping_) delete_mapping_("access_user", access_user_id);
+    if (delete_mapping_) {
+        if (!delete_mapping_("access_user", access_user_id)) {
+            logger_.warning("SFTP", "rollback_create: failed to delete stale mapping for access_user_id=" +
+                            std::to_string(access_user_id));
+        }
+    }
 }
 
 // --- lifecycle ---
@@ -194,11 +207,27 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
         out.success = false; out.message = "failed to persist system account mapping"; return out;
     }
 
-    // 6. Create private group
-    auto gr = runner_->groupadd(mapped.canonical, alloc.gid);
-    if (!gr.success) {
-        if (delete_mapping_) delete_mapping_("access_user", user.id);
-        out.success = false; out.message = "groupadd failed: " + mapped.canonical; return out;
+    // 6. Create private group — idempotent: handle stale group from previous attempts
+    {
+        auto existing_gr = inspector_->lookup_group(mapped.canonical);
+        if (existing_gr.exists) {
+            if (existing_gr.gid != alloc.gid) {
+                // Wrong GID from a previous failed attempt — remove and recreate
+                (void)runner_->groupdel(mapped.canonical);
+                auto gr = runner_->groupadd(mapped.canonical, alloc.gid);
+                if (!gr.success) {
+                    if (delete_mapping_) delete_mapping_("access_user", user.id);
+                    out.success = false; out.message = "groupadd failed: " + mapped.canonical; return out;
+                }
+            }
+            // else: group already exists with correct GID — skip
+        } else {
+            auto gr = runner_->groupadd(mapped.canonical, alloc.gid);
+            if (!gr.success) {
+                if (delete_mapping_) delete_mapping_("access_user", user.id);
+                out.success = false; out.message = "groupadd failed: " + mapped.canonical; return out;
+            }
+        }
     }
 
     // 7. Create Linux user

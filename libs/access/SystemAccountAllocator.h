@@ -31,6 +31,11 @@ public:
 
     SystemAccountAllocator(Range uid_range, Range gid_range);
 
+    int uid_min() const { return uid_range_.min; }
+    int uid_max() const { return uid_range_.max; }
+    int gid_min() const { return gid_range_.min; }
+    int gid_max() const { return gid_range_.max; }
+
     // Allocate fresh UID and GID. Neither value is ever reused.
     AllocationResult allocate(IdOccupiedFn uid_occupied,
                               IdOccupiedFn gid_occupied,
