@@ -647,17 +647,21 @@ core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id
     // Mount
     auto r2 = runner_->mount_bind(source, target);
     if (!r2.success) {
-        (void)runner_->rmdir(target);
-        out.success = false; out.message = "mount failed"; return out;
+        auto rb = runner_->rmdir(target);
+        out.success = false;
+        out.message = rb.success ? "mount failed" : "mount failed, rmdir also failed";
+        return out;
     }
 
     // Verify exact identity
     auto post = mount_inspector_->inspect(target);
     if (!post.mounted || post.source != source) {
         auto um = runner_->umount(target);
-        if (!um.success) { out.success = false; out.message = "mount verify fail, rollback fail"; return out; }
-        (void)runner_->rmdir(target);
-        out.success = false; out.message = "mount verification failed"; return out;
+        if (!um.success) { out.success = false; out.message = "mount verify fail, umount rollback fail"; return out; }
+        auto rd = runner_->rmdir(target);
+        out.success = false;
+        out.message = rd.success ? "mount verification failed" : "mount verify fail, rmdir also failed";
+        return out;
     }
 
     out.success = true; out.message = "mounted: " + domain; return out;
@@ -767,21 +771,33 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     // Step 3: Directory permissions (RW only)
     if (permission != "read_only") {
         auto r3 = apply_directory_permissions(site_id, permission);
-        if (!r3.success) { (void)remove_user_from_site_group(username, site_id, permission); return r3; }
+        if (!r3.success) {
+            auto rb = remove_user_from_site_group(username, site_id, permission);
+            (void)rb; // membership removal is best-effort rollback
+            return r3;
+        }
     }
 
     // Step 4: ACL (RO only) — rollback: remove ACL + membership
     if (permission == "read_only") {
         auto r4 = apply_read_only_acl(site_id);
-        if (!r4.success) { (void)remove_user_from_site_group(username, site_id, permission); return r4; }
+        if (!r4.success) {
+            auto rb = remove_user_from_site_group(username, site_id, permission);
+            (void)rb;
+            return r4;
+        }
     }
 
     // Step 5: Bind mount — rollback: reverse steps 2-4
     auto r5 = bind_mount_site(access_user_id, site_id);
     if (!r5.success) {
-        if (permission == "read_only") (void)remove_read_only_acl(site_id);
-        (void)remove_user_from_site_group(username, site_id, permission);
-        return r5;
+        if (permission == "read_only") {
+            auto rb = remove_read_only_acl(site_id);
+            if (!rb.success) { out.success = false; out.message = "grant apply failed, ACL rollback also failed"; return out; }
+        }
+        auto rb2 = remove_user_from_site_group(username, site_id, permission);
+        if (!rb2.success) { out.success = false; out.message = "grant apply failed, membership rollback also failed"; return out; }
+        out.success = false; out.message = "grant apply failed, rolled back"; return out;
     }
 
     out.success = true; out.message = "grant applied"; return out;
@@ -994,8 +1010,11 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
 
     out.success = true;
     out.message = "SFTP user created: " + mapped.canonical;
-    // Phase 3d: apply pending grants
-    if (enabled_) { (void)apply_pending_grants(user.id); }
+    // Phase 3d: apply pending grants — fail if grants cannot be applied
+    if (enabled_) {
+        auto grants = apply_pending_grants(user.id);
+        if (!grants.success) return grants;
+    }
     return out;
 }
 
@@ -1017,7 +1036,8 @@ core::OperationResult LocalSftpProvider::remove_user(const AccessUser& user) {
     }
 
     // Phase 3d: revoke all grants before removing user
-    (void)revoke_all_grants(user.id);
+    auto grants = revoke_all_grants(user.id);
+    if (!grants.success) return grants;
 
     // Remove user (without -r to avoid recursive home delete)
     auto ur = runner_->userdel(mapping->username);
