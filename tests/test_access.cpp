@@ -521,6 +521,30 @@ private:
     std::shared_ptr<FakeInspector> inspector_;
 };
 
+struct FakeFsInspector : containercp::access::FilesystemPermissionInspector {
+    mutable std::map<std::string, containercp::access::FsPermissionState> state_;
+
+    containercp::access::FsPermissionState inspect(const std::string& path) const override {
+        auto it = state_.find(path);
+        if (it != state_.end()) return it->second;
+        // Default: return state matching configured expectations
+        containercp::access::FsPermissionState s;
+        s.exists = true; s.group_gid = 20001; s.mode = 0770;
+        state_[path] = s;
+        return s;
+    }
+    containercp::access::FsPermissionState inspect_acl(const std::string& path,
+                                                        const std::string& groupname) const override {
+        auto key = path + "::" + groupname;
+        auto it = state_.find(key);
+        if (it != state_.end()) return it->second;
+        containercp::access::FsPermissionState s;
+        s.exists = true; s.acl_present = false;
+        state_[key] = s;
+        return s;
+    }
+};
+
 } // namespace
 
 TEST_CASE("Provider find_mapping via show_user returns value for existing entry") {
@@ -539,6 +563,9 @@ TEST_CASE("Provider find_mapping via show_user returns value for existing entry"
     containercp::access::LocalSftpProvider provider(*log);
     provider.set_identity_inspector(inspector);
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping& m) { return true; },
@@ -580,6 +607,9 @@ TEST_CASE("Provider create_user lifecycle") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping& m) {
@@ -633,6 +663,9 @@ TEST_CASE("Provider create_user rejects on unmanaged conflict") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping& m) {
@@ -666,6 +699,9 @@ TEST_CASE("Provider create_user rollback on partial failure") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
 
     bool deleted_ok = false;
     provider.set_mapping_persistence(
@@ -712,6 +748,9 @@ TEST_CASE("Provider idempotent create returns success for already active mapping
     containercp::access::LocalSftpProvider provider(*log);
     provider.set_identity_inspector(inspector);
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
@@ -745,6 +784,9 @@ TEST_CASE("Provider remove_user fails closed when home cleanup fails") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
@@ -780,6 +822,9 @@ TEST_CASE("Provider remove_user fails closed when managed_path_safe detects unsa
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     // Set managed root to a DIFFERENT path so managed_path_safe rejects the home
     provider.set_managed_home_root("/srv/containercp/other");
     bool mapping_deleted = false;
@@ -828,6 +873,9 @@ TEST_CASE("Provider stale provisioning cleanup and retry succeeds") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
 
     int save_count = 0; int delete_count = 0;
     bool final_state_active = false;
@@ -899,6 +947,9 @@ TEST_CASE("Provider verify_ownership rejects UID outside managed range") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
@@ -931,6 +982,9 @@ TEST_CASE("Site group ensure_site_group creates RW group idempotently") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping& m) {
@@ -970,6 +1024,9 @@ TEST_CASE("Site group ensure_site_group creates RO group") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping& m) {
@@ -999,6 +1056,9 @@ TEST_CASE("Site group allocates unique GIDs per group") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping& m) {
@@ -1035,6 +1095,9 @@ TEST_CASE("Site group rejects unmanaged conflict") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
@@ -1067,6 +1130,9 @@ TEST_CASE("Site group add_user_to_site_group adds membership") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
@@ -1092,6 +1158,9 @@ TEST_CASE("Site group add_user rejects unprovisioned group") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
@@ -1121,6 +1190,9 @@ TEST_CASE("Site group delete removes orphaned group") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_grants_lookup([](uint64_t, const std::string&) -> size_t { return 0; });
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
@@ -1150,6 +1222,9 @@ TEST_CASE("Site group delete refuses when grants exist") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_grants_lookup([](uint64_t, const std::string&) -> size_t { return 3; });
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
@@ -1180,6 +1255,9 @@ TEST_CASE("Site group full lifecycle: create-add-remove-delete") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_grants_lookup([](uint64_t, const std::string&) -> size_t { return 0; });
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
@@ -1223,6 +1301,9 @@ TEST_CASE("Site group stale provisioning retry recovers to active") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     bool state_was_updated = false;
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
@@ -1259,6 +1340,9 @@ TEST_CASE("Site group remove_user rejects unmanaged group") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
@@ -1282,6 +1366,9 @@ TEST_CASE("Site group ensure_site_group rejects invalid permission") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
@@ -1320,6 +1407,9 @@ TEST_CASE("Site group recovery fails when save_mapping fails") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping& m) {
@@ -1349,6 +1439,9 @@ TEST_CASE("Site group remove_user verifies ownership completely") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
@@ -1381,6 +1474,9 @@ TEST_CASE("Site group add_user verifies membership postcondition") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
@@ -1411,6 +1507,9 @@ TEST_CASE("Site group delete_mapping failure leaves recoverable state") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_grants_lookup([](uint64_t, const std::string&) -> size_t { return 0; });
     // delete_mapping always fails
     provider.set_mapping_persistence(
@@ -1426,28 +1525,6 @@ TEST_CASE("Site group delete_mapping failure leaves recoverable state") {
 }
 
 /* ===== PHASE 3b: PERMISSION ENFORCEMENT ===== */
-
-namespace {
-struct FakeFsInspector : containercp::access::FilesystemPermissionInspector {
-    std::map<std::string, containercp::access::FsPermissionState> state_;
-
-    containercp::access::FsPermissionState inspect(const std::string& path) const override {
-        auto it = state_.find(path);
-        if (it != state_.end()) return it->second;
-        containercp::access::FsPermissionState s;
-        s.exists = true; s.group_gid = 0; s.mode = 0755;
-        return s;
-    }
-    containercp::access::FsPermissionState inspect_acl(const std::string& path,
-                                                        const std::string& groupname) const override {
-        auto it = state_.find(path + "::" + groupname);
-        if (it != state_.end()) return it->second;
-        containercp::access::FsPermissionState s;
-        s.exists = true; s.acl_present = false;
-        return s;
-    }
-};
-} // namespace
 
 TEST_CASE("Phase3b valid RW permission accepted") {
     auto inspector = std::make_shared<FakeInspector>();
@@ -1467,12 +1544,15 @@ TEST_CASE("Phase3b valid RW permission accepted") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
         [&stored](const std::string&, uint64_t) { return true; });
 
-    CHECK(provider.apply_directory_permissions(1, "/srv/containercp/sites/testsite", "read_write").success);
+    CHECK(provider.apply_directory_permissions(1, "read_write").success);
 }
 
 TEST_CASE("Phase3b deploy permission maps to RW") {
@@ -1493,12 +1573,15 @@ TEST_CASE("Phase3b deploy permission maps to RW") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
         [&stored](const std::string&, uint64_t) { return true; });
 
-    CHECK(provider.apply_directory_permissions(1, "/srv/containercp/sites/testsite", "deploy").success);
+    CHECK(provider.apply_directory_permissions(1, "deploy").success);
 }
 
 TEST_CASE("Phase3b read_only rejected in apply_directory_permissions") {
@@ -1512,8 +1595,11 @@ TEST_CASE("Phase3b read_only rejected in apply_directory_permissions") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
 
-    auto r = provider.apply_directory_permissions(1, "/srv/containercp/sites/testsite", "read_only");
+    auto r = provider.apply_directory_permissions(1, "read_only");
     CHECK_FALSE(r.success);
     CHECK(r.message.find("invalid") != std::string::npos);
 }
@@ -1529,9 +1615,12 @@ TEST_CASE("Phase3b invalid permission rejected") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
 
-    CHECK_FALSE(provider.apply_directory_permissions(1, "/srv/test", "").success);
-    CHECK_FALSE(provider.apply_directory_permissions(1, "/srv/test", "ADMIN").success);
+    CHECK_FALSE(provider.apply_directory_permissions(1, "").success);
+    CHECK_FALSE(provider.apply_directory_permissions(1, "ADMIN").success);
 }
 
 TEST_CASE("Phase3b site_id zero rejected") {
@@ -1545,12 +1634,15 @@ TEST_CASE("Phase3b site_id zero rejected") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
 
-    auto r1 = provider.apply_directory_permissions(0, "/srv/test", "read_write");
+    auto r1 = provider.apply_directory_permissions(0, "read_write");
     CHECK_FALSE(r1.success);
     CHECK(r1.message.find("admin_panel") != std::string::npos);
-    CHECK_FALSE(provider.apply_read_only_acl(0, "/srv/test").success);
-    CHECK_FALSE(provider.remove_read_only_acl(0, "/srv/test").success);
+    CHECK_FALSE(provider.apply_read_only_acl(0).success);
+    CHECK_FALSE(provider.remove_read_only_acl(0).success);
 }
 
 TEST_CASE("Phase3b missing RW mapping rejected") {
@@ -1566,12 +1658,15 @@ TEST_CASE("Phase3b missing RW mapping rejected") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
         [&stored](const std::string&, uint64_t) { return true; });
 
-    CHECK_FALSE(provider.apply_directory_permissions(1, "/srv/containercp/sites/test", "read_write").success);
+    CHECK_FALSE(provider.apply_directory_permissions(1, "read_write").success);
 }
 
 TEST_CASE("Phase3b RO ACL applied and removed") {
@@ -1592,11 +1687,20 @@ TEST_CASE("Phase3b RO ACL applied and removed") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    auto fs = std::make_shared<FakeFsInspector>();
+    provider.set_filesystem_inspector(fs);
+
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
         [&stored](const std::string&, uint64_t) { return true; });
 
-    CHECK(provider.apply_read_only_acl(1, "/srv/containercp/sites/test").success);
-    CHECK(provider.remove_read_only_acl(1, "/srv/containercp/sites/test").success);
+    // Pre-set ACL state so apply postcondition finds it
+    fs->state_["/srv/containercp/sites/test/public/::site-1-ro"] = {true, -1, -1, 0, true, "site-1-ro", "r-x", true};
+    CHECK(provider.apply_read_only_acl(1).success);
+
+    // Pre-set ACL state so remove postcondition finds it absent
+    fs->state_["/srv/containercp/sites/test/public/::site-1-ro"] = {true, -1, -1, 0, false, "", "", true};
+    CHECK(provider.remove_read_only_acl(1).success);
 }

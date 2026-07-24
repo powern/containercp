@@ -61,23 +61,22 @@ public:
 
     // --- Phase 3b: Permission Enforcement ---
 
-    // Set directory ownership and mode for a site's public/ directory.
-    // Requires resolved site root path. Validates permission, path, ownership.
+    // Callback to resolve a site_id to its filesystem root path.
+    using SiteRootFn = std::function<std::string(uint64_t site_id)>;
+    void set_site_root_resolver(SiteRootFn fn);
+
+    // Apply directory ownership and mode. Internally resolves site_root, validates
+    // path, verifies group ownership, captures original state, applies chgrp+chmod,
+    // verifies postconditions, and rolls back on failure.
     core::OperationResult apply_directory_permissions(uint64_t site_id,
-                                                       const std::string& site_root,
                                                        const std::string& permission);
 
-    // Apply POSIX ACL for read-only access for a given site.
-    // Derives group name from site_id internally — no arbitrary group injection.
-    core::OperationResult apply_read_only_acl(uint64_t site_id,
-                                               const std::string& site_root);
+    // Apply/remove read-only POSIX ACL. Internally resolves path and group.
+    core::OperationResult apply_read_only_acl(uint64_t site_id);
+    core::OperationResult remove_read_only_acl(uint64_t site_id);
 
-    // Remove POSIX ACL for read-only access for a given site.
-    core::OperationResult remove_read_only_acl(uint64_t site_id,
-                                                const std::string& site_root);
-
+    // Filesystem inspector is mandatory for Phase 3b operations.
     void set_filesystem_inspector(std::shared_ptr<FilesystemPermissionInspector> inspector);
-    void set_managed_sites_root(const std::string& path);
 
     core::OperationResult create_user(const AccessUser& user) override;
     core::OperationResult remove_user(const AccessUser& user) override;
@@ -113,13 +112,14 @@ private:
 
     GrantsForSiteFn grants_lookup_;
 
+    SiteRootFn site_root_resolver_;
+
     std::shared_ptr<FilesystemPermissionInspector> fs_inspector_;
 
     bool enabled_ = false;
     std::string managed_home_root_ = "/srv/containercp/users";
     std::string managed_shell_ = "/usr/sbin/nologin";
     std::string global_sftp_group_ = "containercp-sftp";
-    std::string managed_sites_root_ = "/srv/containercp/sites";
 };
 
 } // namespace containercp::access
