@@ -768,12 +768,12 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     auto r2 = add_user_to_site_group(username, site_id, permission);
     if (!r2.success) return r2;
 
-    // Step 3: Directory permissions (RW only)
+    // Step 3: Directory permissions (RW only) — rollback: remove membership
     if (permission != "read_only") {
         auto r3 = apply_directory_permissions(site_id, permission);
         if (!r3.success) {
             auto rb = remove_user_from_site_group(username, site_id, permission);
-            (void)rb; // membership removal is best-effort rollback
+            if (!rb.success) { out.success = false; out.message = "grant_rollback_membership_failed"; return out; }
             return r3;
         }
     }
@@ -783,7 +783,7 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
         auto r4 = apply_read_only_acl(site_id);
         if (!r4.success) {
             auto rb = remove_user_from_site_group(username, site_id, permission);
-            (void)rb;
+            if (!rb.success) { out.success = false; out.message = "grant_rollback_membership_failed"; return out; }
             return r4;
         }
     }
@@ -793,10 +793,10 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     if (!r5.success) {
         if (permission == "read_only") {
             auto rb = remove_read_only_acl(site_id);
-            if (!rb.success) { out.success = false; out.message = "grant apply failed, ACL rollback also failed"; return out; }
+            if (!rb.success) { out.success = false; out.message = "grant_rollback_acl_failed"; return out; }
         }
         auto rb2 = remove_user_from_site_group(username, site_id, permission);
-        if (!rb2.success) { out.success = false; out.message = "grant apply failed, membership rollback also failed"; return out; }
+        if (!rb2.success) { out.success = false; out.message = "grant_rollback_membership_failed"; return out; }
         out.success = false; out.message = "grant apply failed, rolled back"; return out;
     }
 
