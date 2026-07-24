@@ -2460,3 +2460,59 @@ TEST_CASE("Phase3d grant_rollback_membership_failed when rollback fails") {
     CHECK_FALSE(r.success);
     CHECK(r.message.find("grant_rollback_membership_failed") != std::string::npos);
 }
+
+TEST_CASE("Phase3d grant_rollback_acl_failed") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active";
+    stored.push_back(um);
+    containercp::access::SystemAccountMapping ro;
+    ro.entity_type = "site_group_ro"; ro.entity_id = 1;
+    ro.gid = 21000; ro.username = "site-1-ro"; ro.groupname = "site-1-ro"; ro.state = "active";
+    stored.push_back(ro);
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    inspector->groups_["site-1-ro"] = {true, "site-1-ro", 21000};
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000, "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+
+    // Pre-populate ACL state: present for apply step, also present for rollback verify
+    auto fs = std::make_shared<FakeFsInspector>();
+    containercp::access::FsPermissionState s;
+    s.exists = true; s.mode = 0770; s.group_gid = 21000;
+    s.acl_status = containercp::access::InspectionStatus::Ok;
+    s.acl.access_present = true; s.acl.access_perms = "r-x"; s.acl.effective_perms = "r-x";
+    s.acl.default_present = true; s.acl.default_perms = "r-x"; s.acl.default_effective = "r-x";
+    fs->state_["/srv/containercp/sites/test/public/::site-1-ro"] = s;
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(fs);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, ""};
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    // apply_grant("read_only", site=1):
+    // Step 1-4 succeed (fake commands), Step 5 bind_mount fails (mount returns false)
+    // Rollback: remove_read_only_acl succeeds, but postcondition sees ACL still present
+    auto r = provider.apply_grant(1, 1, "read_only");
+    CHECK_FALSE(r.success);
+    INFO("actual: " << r.message);
+    CHECK(r.message.find("grant_rollback_acl_failed") != std::string::npos);
+}
