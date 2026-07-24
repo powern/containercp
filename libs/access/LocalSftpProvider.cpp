@@ -653,8 +653,9 @@ core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id
     auto post = mount_inspector_->inspect(target);
     if (!post.mounted || post.source != source) {
         auto um = runner_->umount(target);
-        if (!um.success) { out.success = false; out.message = "mount verification failed, rollback failed"; return out; }
-        (void)runner_->rmdir(target);
+        if (!um.success) { out.success = false; out.message = "mount verify fail, rollback fail"; return out; }
+        auto rd = runner_->rmdir(target);
+        if (!rd.success) { out.success = false; out.message = "mount verify fail, rmdir fail"; return out; }
         out.success = false; out.message = "mount verification failed"; return out;
     }
 
@@ -748,20 +749,36 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     std::string username = resolve_username(access_user_id);
     if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
 
+    // Step 1: Ensure site group — no rollback needed (idempotent)
     auto r1 = ensure_site_group(site_id, permission);
     if (!r1.success) return r1;
+
+    // Step 2: Add membership — rollback: none (membership can be removed later)
     auto r2 = add_user_to_site_group(username, site_id, permission);
     if (!r2.success) return r2;
+
+    // Step 3: Directory permissions (RW only) — rollback: re-apply can fix
     if (permission != "read_only") {
         auto r3 = apply_directory_permissions(site_id, permission);
         if (!r3.success) return r3;
     }
+
+    // Step 4: ACL (RO only) — rollback: remove ACL
     if (permission == "read_only") {
         auto r4 = apply_read_only_acl(site_id);
-        if (!r4.success) return r4;
+        if (!r4.success) {
+            (void)remove_user_from_site_group(username, site_id, permission);
+            return r4;
+        }
     }
+
+    // Step 5: Bind mount — rollback: remove membership
     auto r5 = bind_mount_site(access_user_id, site_id);
-    if (!r5.success) return r5;
+    if (!r5.success) {
+        if (permission == "read_only") (void)remove_read_only_acl(site_id);
+        (void)remove_user_from_site_group(username, site_id, permission);
+        return r5;
+    }
 
     out.success = true; out.message = "grant applied"; return out;
 }

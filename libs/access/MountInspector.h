@@ -1,6 +1,7 @@
 #ifndef CONTAINERCP_ACCESS_MOUNT_INSPECTOR_H
 #define CONTAINERCP_ACCESS_MOUNT_INSPECTOR_H
 
+#include <memory>
 #include <string>
 
 namespace containercp::runtime { class CommandExecutor; }
