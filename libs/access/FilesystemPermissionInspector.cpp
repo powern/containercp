@@ -8,72 +8,92 @@
 namespace containercp::access {
 namespace {
 
-// Parse getfacl output and populate state.acl_* fields.
-// Returns false only on parse failure (malformed output).
-// Sets acl_error on access problems.
-bool parse_getfacl(const std::string& output, const std::string& groupname,
-                   FsPermissionState& state) {
-    state.acl_present = false;
-    state.acl_error = false;
-    state.acl_effective = true;
-    state.acl_group.clear();
-    state.acl_perms.clear();
+bool valid_acl_perms(const std::string& s) {
+    if (s.empty() || s.size() > 3) return false;
+    for (char c : s) { if (c != 'r' && c != 'w' && c != 'x' && c != '-') return false; }
+    return true;
+}
 
-    // Check for getfacl error messages in output
-    if (output.rfind("getfacl:", 0) == 0 || output.find("\ngetfacl:") != std::string::npos) {
-        state.acl_error = true;
-        state.acl_error_msg = output;
-        return false;
-    }
+std::string effective(const std::string& named, const std::string& mask) {
+    if (mask.empty()) return named;
+    std::string out;
+    for (char c : named) out.push_back((mask.find(c) != std::string::npos) ? c : '-');
+    return out;
+}
 
-    std::istringstream ss(output);
-    std::string line;
+struct AclParser {
+    InspectionStatus status = InspectionStatus::Ok;
+    std::string error_detail;
+
+    bool access_found = false;
+    std::string access_group;
+    std::string access_perms;
+
+    bool default_found = false;
+    std::string default_group;
+    std::string default_perms;
+
     std::string mask_perms;
-    bool found_group = false;
 
-    while (std::getline(ss, line)) {
-        // Skip comments and blanks
-        if (line.empty() || line[0] == '#') continue;
-
-        // Detect error lines mixed into output
-        if (line.rfind("getfacl:", 0) == 0) {
-            state.acl_error = true;
-            state.acl_error_msg = line;
+    bool parse(const std::string& output, const std::string& target_group) {
+        // Check for getfacl errors in output
+        if (output.rfind("getfacl:", 0) == 0) {
+            status = InspectionStatus::AclToolMissing;
+            error_detail = output.substr(0, 120);
             return false;
         }
 
-        // Access ACL entry: "group:<name>:<perms>"
-        if (line.rfind("group:", 0) == 0) {
-            auto col1 = line.find(':', 6);
-            if (col1 != std::string::npos) {
-                std::string name = line.substr(6, col1 - 6);
-                std::string perms = line.substr(col1 + 1);
-                if (name == groupname) {
-                    state.acl_present = true;
-                    state.acl_group = name;
-                    state.acl_perms = perms;
-                    found_group = true;
+        std::istringstream ss(output);
+        std::string line;
+        int line_no = 0;
+
+        while (std::getline(ss, line)) {
+            line_no++;
+            if (line.empty() || line[0] == '#') continue;
+
+            // Detect error lines mixed in
+            if (line.rfind("getfacl:", 0) == 0) {
+                status = InspectionStatus::AclToolMissing;
+                error_detail = line.substr(0, 120);
+                return false;
+            }
+
+            // Parse access ACL: "group:<name>:<perms>"
+            if (line.rfind("group:", 0) == 0) {
+                auto c1 = line.find(':', 6);
+                if (c1 == std::string::npos) { status = InspectionStatus::MalformedAclOutput; error_detail = "line " + std::to_string(line_no); return false; }
+                std::string name = line.substr(6, c1 - 6);
+                std::string perms = line.substr(c1 + 1);
+                if (!valid_acl_perms(perms)) { status = InspectionStatus::MalformedAclOutput; error_detail = "invalid perms line " + std::to_string(line_no); return false; }
+                if (name == target_group) {
+                    access_found = true;
+                    access_group = name;
+                    access_perms = perms;
                 }
             }
-        }
-        // Mask entry: "mask:<perms>"
-        else if (line.rfind("mask:", 0) == 0 && line.size() > 5) {
-            mask_perms = line.substr(5);
-        }
-    }
-
-    // Check mask doesn't reduce effective permissions
-    if (found_group && !mask_perms.empty()) {
-        for (char c : state.acl_perms) {
-            if (mask_perms.find(c) == std::string::npos) {
-                state.acl_effective = false;
-                break;
+            // Parse default ACL: "default:group:<name>:<perms>"
+            else if (line.rfind("default:group:", 0) == 0) {
+                auto c1 = line.find(':', 14);
+                if (c1 == std::string::npos) { status = InspectionStatus::MalformedAclOutput; error_detail = "line " + std::to_string(line_no); return false; }
+                std::string name = line.substr(14, c1 - 14);
+                std::string perms = line.substr(c1 + 1);
+                if (!valid_acl_perms(perms)) { status = InspectionStatus::MalformedAclOutput; error_detail = "invalid default perms line " + std::to_string(line_no); return false; }
+                if (name == target_group) {
+                    default_found = true;
+                    default_group = name;
+                    default_perms = perms;
+                }
+            }
+            // Parse mask: "mask:<perms>"
+            else if (line.rfind("mask:", 0) == 0 && line.size() > 5) {
+                std::string m = line.substr(5);
+                if (!valid_acl_perms(m)) { status = InspectionStatus::MalformedAclOutput; error_detail = "invalid mask line " + std::to_string(line_no); return false; }
+                mask_perms = m;
             }
         }
+        return true;
     }
-
-    return true;
-}
+};
 
 } // namespace
 
@@ -85,7 +105,6 @@ public:
     FsPermissionState inspect(const std::string& path) const override {
         FsPermissionState s;
         struct stat st;
-        // Use lstat to detect symlinks without following them
         if (::lstat(path.c_str(), &st) != 0) return s;
         s.exists = true;
         s.is_symlink = S_ISLNK(st.st_mode);
@@ -99,24 +118,37 @@ public:
                                    const std::string& groupname) const override {
         FsPermissionState s = inspect(path);
         if (!s.exists) {
-            s.acl_error = true;
-            s.acl_error_msg = "path does not exist";
+            s.acl_status = InspectionStatus::PathMissing;
             return s;
         }
 
         auto result = executor_.run({"getfacl", "-cp", path});
         if (result.exit_code != 0) {
-            s.acl_error = true;
-            s.acl_error_msg = "getfacl failed (exit=" + std::to_string(result.exit_code) +
-                               "): " + result.err;
+            s.acl_status = InspectionStatus::AclToolMissing;
+            s.acl_error_detail = "exit=" + std::to_string(result.exit_code);
             return s;
         }
 
-        if (!parse_getfacl(result.out, groupname, s)) {
-            // parse_getfacl already set acl_error
+        AclParser parser;
+        if (!parser.parse(result.out, groupname)) {
+            s.acl_status = parser.status;
+            s.acl_error_detail = parser.error_detail;
             return s;
         }
 
+        // Access ACL
+        s.access_acl_present = parser.access_found;
+        s.access_acl_group = parser.access_group;
+        s.access_acl_perms = parser.access_perms;
+        s.effective_perms = effective(parser.access_perms, parser.mask_perms);
+
+        // Default ACL
+        s.default_acl_present = parser.default_found;
+        s.default_acl_group = parser.default_group;
+        s.default_acl_perms = parser.default_perms;
+        s.default_effective_perms = effective(parser.default_perms, parser.mask_perms);
+
+        s.acl_status = InspectionStatus::Ok;
         return s;
     }
 
@@ -129,12 +161,20 @@ make_real_filesystem_inspector(runtime::CommandExecutor& executor) {
     return std::make_shared<RealFilesystemPermissionInspector>(executor);
 }
 
-bool filesystem_acl_supported() {
+InspectionStatus check_acl_capability(const std::string& test_path) {
     runtime::CommandExecutor exec;
-    // Check both setfacl and getfacl availability
-    auto r1 = exec.run({"setfacl", "--version"});
-    auto r2 = exec.run({"getfacl", "--version"});
-    return r1.exit_code == 0 && r2.exit_code == 0;
+    if (exec.run({"setfacl", "--version"}).exit_code != 0) return InspectionStatus::AclToolMissing;
+    if (exec.run({"getfacl", "--version"}).exit_code != 0) return InspectionStatus::AclToolMissing;
+
+    // Verify ACLs work on the target path
+    auto result = exec.run({"getfacl", "-cp", test_path});
+    if (result.exit_code != 0) {
+        if (result.err.find("not supported") != std::string::npos ||
+            result.err.find("Operation not supported") != std::string::npos)
+            return InspectionStatus::AclUnsupported;
+        return InspectionStatus::AclToolMissing;
+    }
+    return InspectionStatus::Ok;
 }
 
 } // namespace containercp::access
