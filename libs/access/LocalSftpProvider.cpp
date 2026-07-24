@@ -63,6 +63,14 @@ void LocalSftpProvider::set_mapping_persistence(LoadMappingsFn load, SaveMapping
     delete_mapping_ = std::move(remove);
 }
 
+void LocalSftpProvider::set_filesystem_inspector(std::shared_ptr<FilesystemPermissionInspector> inspector) {
+    fs_inspector_ = std::move(inspector);
+}
+
+void LocalSftpProvider::set_managed_sites_root(const std::string& path) {
+    managed_sites_root_ = path;
+}
+
 void LocalSftpProvider::set_grants_lookup(GrantsForSiteFn fn) {
     grants_lookup_ = std::move(fn);
 }
@@ -377,77 +385,175 @@ core::OperationResult LocalSftpProvider::delete_site_group_if_unused(uint64_t si
 
 // --- Phase 3b: Permission Enforcement ---
 
+namespace {
+
+bool valid_permission_for_site_dir(const std::string& permission) {
+    return permission == "read_write" || permission == "deploy";
+}
+
+bool valid_site_root(const std::string& site_root, const std::string& managed_root) {
+    if (managed_root.empty() || site_root.empty()) return false;
+    std::error_code ec;
+    auto canonical = std::filesystem::weakly_canonical(
+        std::filesystem::absolute(site_root, ec), ec);
+    auto canonical_root = std::filesystem::weakly_canonical(
+        std::filesystem::absolute(managed_root, ec), ec);
+    if (ec || canonical_root.empty() || canonical.empty()) return false;
+    // Reject if canonical equals managed root (no specific site directory)
+    if (canonical == canonical_root) return false;
+    std::string root_str = canonical_root.string();
+    if (!root_str.empty() && root_str.back() != '/') root_str += '/';
+    std::string path_str = canonical.string();
+    if (path_str.rfind(root_str, 0) != 0) return false;
+    if (std::filesystem::is_symlink(canonical, ec)) return false;
+    if (ec && ec != std::errc::no_such_file_or_directory) return false;
+    return true;
+}
+
+} // namespace
+
 core::OperationResult LocalSftpProvider::apply_directory_permissions(uint64_t site_id,
                                                                       const std::string& site_root,
                                                                       const std::string& permission) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "apply_directory_permissions"), out;
-    if (!runner_) {
-        out.success = false; out.message = "provider dependencies not configured"; return out;
+    if (!runner_) { out.success = false; out.message = "provider dependencies not configured"; return out; }
+
+    // Reject Admin Panel
+    if (site_id == 0) {
+        out.success = false; out.message = "admin_panel_sftp_access_forbidden"; return out;
     }
 
-    std::string rw_group = site_group_name(site_id, "read_write");
-    std::string public_dir = site_root + "/public/";
+    // Validate permission — only RW/deploy should call this
+    if (!valid_permission_for_site_dir(permission)) {
+        out.success = false; out.message = "invalid or unsupported permission for directory: " + permission;
+        return out;
+    }
 
-    // Set group ownership to site-<id>-rw
+    // Validate site root path
+    if (!valid_site_root(site_root, managed_sites_root_)) {
+        out.success = false; out.message = "unsafe or unmanaged site root: " + site_root; return out;
+    }
+
+    // Verify site group is managed and active
+    auto rw_mapping = find_mapping("site_group_rw", site_id);
+    if (!rw_mapping.has_value() || rw_mapping->state != "active") {
+        out.success = false; out.message = "RW site group not active for site_id=" + std::to_string(site_id);
+        return out;
+    }
+    auto obs_grp = inspector_->lookup_group(rw_mapping->groupname);
+    if (!obs_grp.exists || obs_grp.gid != rw_mapping->gid) {
+        out.success = false; out.message = "OS group mismatch for site group"; return out;
+    }
+
+    std::string public_dir = site_root + "/public/";
+    std::string rw_group = rw_mapping->groupname;
+
+    // Capture original state for rollback
+    FsPermissionState original;
+    if (fs_inspector_) original = fs_inspector_->inspect(public_dir);
+
+    // Apply chgrp
     auto r1 = runner_->chgrp(rw_group, public_dir);
     if (!r1.success) {
-        out.success = false; out.message = "chgrp failed: " + public_dir; return out;
+        out.success = false; out.message = "chgrp failed"; return out;
+    }
+    // Postcondition: verify chgrp
+    if (fs_inspector_) {
+        auto post = fs_inspector_->inspect(public_dir);
+        if (!post.exists || post.group_gid != rw_mapping->gid) {
+            out.success = false; out.message = "chgrp postcondition failed"; return out;
+        }
     }
 
-    // Set permissions: rwx for owner (root) and group, nothing for others
+    // Apply chmod
     auto r2 = runner_->chmod("770", public_dir);
     if (!r2.success) {
-        out.success = false; out.message = "chmod failed: " + public_dir; return out;
+        // Rollback chgrp
+        if (original.exists && original.group_gid > 0) {
+            (void)runner_->chgrp(std::to_string(original.group_gid), public_dir);
+        }
+        out.success = false; out.message = "chmod failed"; return out;
+    }
+    // Postcondition: verify chmod
+    if (fs_inspector_) {
+        auto post = fs_inspector_->inspect(public_dir);
+        if (!post.exists || post.mode != 0770) {
+            out.success = false; out.message = "chmod postcondition failed"; return out;
+        }
     }
 
     out.success = true;
-    out.message = "directory permissions applied: " + public_dir + " -> " + rw_group + " 770";
+    out.message = "directory permissions applied";
     return out;
 }
 
-core::OperationResult LocalSftpProvider::apply_read_only_acl(const std::string& path,
-                                                              const std::string& ro_groupname) {
+core::OperationResult LocalSftpProvider::apply_read_only_acl(uint64_t site_id,
+                                                              const std::string& site_root) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "apply_read_only_acl"), out;
-    if (!runner_) {
-        out.success = false; out.message = "provider dependencies not configured"; return out;
-    }
-    if (ro_groupname.empty()) {
-        out.success = false; out.message = "empty RO group name"; return out;
-    }
-
-    std::string acl_spec = "g:" + ro_groupname + ":r-x";
-    auto r = runner_->setfacl_modify(acl_spec, path);
-    if (!r.success) {
-        out.success = false; out.message = "setfacl failed: " + path; return out;
+    if (!runner_) { out.success = false; out.message = "provider dependencies not configured"; return out; }
+    if (site_id == 0) { out.success = false; out.message = "admin_panel_sftp_access_forbidden"; return out; }
+    if (!valid_site_root(site_root, managed_sites_root_)) {
+        out.success = false; out.message = "unsafe site root"; return out;
     }
 
-    out.success = true;
-    out.message = "read-only ACL applied: " + path + " -> " + acl_spec;
-    return out;
+    auto ro_mapping = find_mapping("site_group_ro", site_id);
+    if (!ro_mapping.has_value() || ro_mapping->state != "active") {
+        out.success = false; out.message = "RO site group not active"; return out;
+    }
+    auto obs_grp = inspector_->lookup_group(ro_mapping->groupname);
+    if (!obs_grp.exists || obs_grp.gid != ro_mapping->gid) {
+        out.success = false; out.message = "OS group mismatch for RO group"; return out;
+    }
+
+    std::string public_dir = site_root + "/public/";
+    std::string acl_spec = "g:" + ro_mapping->groupname + ":r-x";
+
+    auto r = runner_->setfacl_modify(acl_spec, public_dir);
+    if (!r.success) { out.success = false; out.message = "setfacl failed"; return out; }
+
+    // Postcondition
+    if (fs_inspector_) {
+        auto post = fs_inspector_->inspect_acl(public_dir, ro_mapping->groupname);
+        if (!post.acl_present) {
+            out.success = false; out.message = "ACL postcondition failed"; return out;
+        }
+    }
+
+    out.success = true; out.message = "RO ACL applied"; return out;
 }
 
-core::OperationResult LocalSftpProvider::remove_read_only_acl(const std::string& path,
-                                                               const std::string& ro_groupname) {
+core::OperationResult LocalSftpProvider::remove_read_only_acl(uint64_t site_id,
+                                                               const std::string& site_root) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "remove_read_only_acl"), out;
-    if (!runner_) {
-        out.success = false; out.message = "provider dependencies not configured"; return out;
-    }
-    if (ro_groupname.empty()) {
-        out.success = false; out.message = "empty RO group name"; return out;
-    }
-
-    std::string acl_spec = "g:" + ro_groupname;
-    auto r = runner_->setfacl_remove(acl_spec, path);
-    if (!r.success) {
-        out.success = false; out.message = "setfacl -x failed: " + path; return out;
+    if (!runner_) { out.success = false; out.message = "provider dependencies not configured"; return out; }
+    if (site_id == 0) { out.success = false; out.message = "admin_panel_sftp_access_forbidden"; return out; }
+    if (!valid_site_root(site_root, managed_sites_root_)) {
+        out.success = false; out.message = "unsafe site root"; return out;
     }
 
-    out.success = true;
-    out.message = "read-only ACL removed: " + path;
-    return out;
+    auto ro_mapping = find_mapping("site_group_ro", site_id);
+    if (!ro_mapping.has_value() || ro_mapping->state != "active") {
+        out.success = false; out.message = "RO site group not active"; return out;
+    }
+
+    std::string public_dir = site_root + "/public/";
+    std::string acl_spec = "g:" + ro_mapping->groupname;
+
+    auto r = runner_->setfacl_remove(acl_spec, public_dir);
+    if (!r.success) { out.success = false; out.message = "setfacl -x failed"; return out; }
+
+    // Postcondition
+    if (fs_inspector_) {
+        auto post = fs_inspector_->inspect_acl(public_dir, ro_mapping->groupname);
+        if (post.acl_present) {
+            out.success = false; out.message = "ACL removal postcondition failed"; return out;
+        }
+    }
+
+    out.success = true; out.message = "RO ACL removed"; return out;
 }
 
 // --- lifecycle ---

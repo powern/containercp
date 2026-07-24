@@ -12,6 +12,7 @@ set(CONTAINERCP_SOURCES
     libs/access/AccessGrantManager.cpp
     libs/access/AccessKey.cpp
     libs/access/AccessKeyManager.cpp
+    libs/access/FilesystemPermissionInspector.cpp
     libs/access/SshKeyValidator.cpp
     libs/access/SystemAccountAllocator.cpp
     libs/access/SystemAccountCommandRunner.cpp

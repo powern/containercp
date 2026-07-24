@@ -2,6 +2,7 @@
 #define CONTAINERCP_ACCESS_LOCAL_SFTP_PROVIDER_H
 
 #include "access/AccessProvider.h"
+#include "access/FilesystemPermissionInspector.h"
 #include "access/SystemAccountAllocator.h"
 #include "access/SystemAccountCommandRunner.h"
 #include "access/SystemAccountMapping.h"
@@ -61,18 +62,22 @@ public:
     // --- Phase 3b: Permission Enforcement ---
 
     // Set directory ownership and mode for a site's public/ directory.
-    // Requires resolved site root path.
+    // Requires resolved site root path. Validates permission, path, ownership.
     core::OperationResult apply_directory_permissions(uint64_t site_id,
                                                        const std::string& site_root,
                                                        const std::string& permission);
 
-    // Apply POSIX ACL for read-only access via a site group.
-    core::OperationResult apply_read_only_acl(const std::string& path,
-                                               const std::string& ro_groupname);
+    // Apply POSIX ACL for read-only access for a given site.
+    // Derives group name from site_id internally — no arbitrary group injection.
+    core::OperationResult apply_read_only_acl(uint64_t site_id,
+                                               const std::string& site_root);
 
-    // Remove POSIX ACL for read-only access.
-    core::OperationResult remove_read_only_acl(const std::string& path,
-                                                const std::string& ro_groupname);
+    // Remove POSIX ACL for read-only access for a given site.
+    core::OperationResult remove_read_only_acl(uint64_t site_id,
+                                                const std::string& site_root);
+
+    void set_filesystem_inspector(std::shared_ptr<FilesystemPermissionInspector> inspector);
+    void set_managed_sites_root(const std::string& path);
 
     core::OperationResult create_user(const AccessUser& user) override;
     core::OperationResult remove_user(const AccessUser& user) override;
@@ -108,10 +113,13 @@ private:
 
     GrantsForSiteFn grants_lookup_;
 
+    std::shared_ptr<FilesystemPermissionInspector> fs_inspector_;
+
     bool enabled_ = false;
     std::string managed_home_root_ = "/srv/containercp/users";
     std::string managed_shell_ = "/usr/sbin/nologin";
     std::string global_sftp_group_ = "containercp-sftp";
+    std::string managed_sites_root_ = "/srv/containercp/sites";
 };
 
 } // namespace containercp::access

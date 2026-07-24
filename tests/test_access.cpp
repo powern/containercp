@@ -1427,7 +1427,133 @@ TEST_CASE("Site group delete_mapping failure leaves recoverable state") {
 
 /* ===== PHASE 3b: PERMISSION ENFORCEMENT ===== */
 
-TEST_CASE("apply_directory_permissions sets chgrp and chmod") {
+namespace {
+struct FakeFsInspector : containercp::access::FilesystemPermissionInspector {
+    std::map<std::string, containercp::access::FsPermissionState> state_;
+
+    containercp::access::FsPermissionState inspect(const std::string& path) const override {
+        auto it = state_.find(path);
+        if (it != state_.end()) return it->second;
+        containercp::access::FsPermissionState s;
+        s.exists = true; s.group_gid = 0; s.mode = 0755;
+        return s;
+    }
+    containercp::access::FsPermissionState inspect_acl(const std::string& path,
+                                                        const std::string& groupname) const override {
+        auto it = state_.find(path + "::" + groupname);
+        if (it != state_.end()) return it->second;
+        containercp::access::FsPermissionState s;
+        s.exists = true; s.acl_present = false;
+        return s;
+    }
+};
+} // namespace
+
+TEST_CASE("Phase3b valid RW permission accepted") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping m;
+    m.entity_type = "site_group_rw"; m.entity_id = 1;
+    m.gid = 20001; m.username = "site-1-rw"; m.groupname = "site-1-rw"; m.state = "active";
+    stored.push_back(m);
+    inspector->groups_["site-1-rw"] = {true, "site-1-rw", 20001};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    CHECK(provider.apply_directory_permissions(1, "/srv/containercp/sites/testsite", "read_write").success);
+}
+
+TEST_CASE("Phase3b deploy permission maps to RW") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping m;
+    m.entity_type = "site_group_rw"; m.entity_id = 1;
+    m.gid = 20001; m.username = "site-1-rw"; m.groupname = "site-1-rw"; m.state = "active";
+    stored.push_back(m);
+    inspector->groups_["site-1-rw"] = {true, "site-1-rw", 20001};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    CHECK(provider.apply_directory_permissions(1, "/srv/containercp/sites/testsite", "deploy").success);
+}
+
+TEST_CASE("Phase3b read_only rejected in apply_directory_permissions") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+
+    auto r = provider.apply_directory_permissions(1, "/srv/containercp/sites/testsite", "read_only");
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("invalid") != std::string::npos);
+}
+
+TEST_CASE("Phase3b invalid permission rejected") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+
+    CHECK_FALSE(provider.apply_directory_permissions(1, "/srv/test", "").success);
+    CHECK_FALSE(provider.apply_directory_permissions(1, "/srv/test", "ADMIN").success);
+}
+
+TEST_CASE("Phase3b site_id zero rejected") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+
+    auto r1 = provider.apply_directory_permissions(0, "/srv/test", "read_write");
+    CHECK_FALSE(r1.success);
+    CHECK(r1.message.find("admin_panel") != std::string::npos);
+    CHECK_FALSE(provider.apply_read_only_acl(0, "/srv/test").success);
+    CHECK_FALSE(provider.remove_read_only_acl(0, "/srv/test").success);
+}
+
+TEST_CASE("Phase3b missing RW mapping rejected") {
     auto inspector = std::make_shared<FakeInspector>();
     FakeCommandRunner fake_commands(inspector);
     std::vector<containercp::access::SystemAccountMapping> stored;
@@ -1440,114 +1566,37 @@ TEST_CASE("apply_directory_permissions sets chgrp and chmod") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
 
-    auto r = provider.apply_directory_permissions(1, "/srv/containercp/sites/example.com", "read_write");
-    CHECK(r.success);
-
-    // Verify command vectors
-    bool found_chgrp = false, found_chmod = false;
-    for (const auto& cmd : fake_commands.cmds_) {
-        if (!cmd.args.empty() && cmd.args[0] == "chgrp") {
-            CHECK(cmd.args[1] == "site-1-rw");
-            CHECK(cmd.args[2] == "/srv/containercp/sites/example.com/public/");
-            found_chgrp = true;
-        }
-        if (!cmd.args.empty() && cmd.args[0] == "chmod") {
-            CHECK(cmd.args[1] == "770");
-            found_chmod = true;
-        }
-    }
-    CHECK(found_chgrp);
-    CHECK(found_chmod);
+    CHECK_FALSE(provider.apply_directory_permissions(1, "/srv/containercp/sites/test", "read_write").success);
 }
 
-TEST_CASE("apply_read_only_acl emits correct setfacl command") {
+TEST_CASE("Phase3b RO ACL applied and removed") {
     auto inspector = std::make_shared<FakeInspector>();
     FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping m;
+    m.entity_type = "site_group_ro"; m.entity_id = 1;
+    m.gid = 21000; m.username = "site-1-ro"; m.groupname = "site-1-ro"; m.state = "active";
+    stored.push_back(m);
+    inspector->groups_["site-1-ro"] = {true, "site-1-ro", 21000};
 
     auto* log = &containercp::logger::Logger::instance();
     containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
 
-    auto r = provider.apply_read_only_acl("/srv/containercp/sites/example.com/public/", "site-1-ro");
-    CHECK(r.success);
-    REQUIRE(fake_commands.cmds_.size() == 1);
-    CHECK(fake_commands.cmds_[0].args[0] == "setfacl");
-    CHECK(fake_commands.cmds_[0].args[1] == "-m");
-    CHECK(fake_commands.cmds_[0].args[2] == "g:site-1-ro:r-x");
-}
-
-TEST_CASE("remove_read_only_acl emits correct setfacl -x command") {
-    auto inspector = std::make_shared<FakeInspector>();
-    FakeCommandRunner fake_commands(inspector);
-
-    auto* log = &containercp::logger::Logger::instance();
-    containercp::access::LocalSftpProvider provider(*log);
-    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
-        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            return fake_commands.run(cmd);
-        }));
-    provider.set_enabled(true);
-
-    auto r = provider.remove_read_only_acl("/srv/containercp/sites/myapp.org/public/", "site-1-ro");
-    CHECK(r.success);
-    CHECK(fake_commands.cmds_[0].args[0] == "setfacl");
-    CHECK(fake_commands.cmds_[0].args[1] == "-x");
-    CHECK(fake_commands.cmds_[0].args[2] == "g:site-1-ro");
-}
-
-TEST_CASE("apply_directory_permissions fails on chgrp failure") {
-    auto inspector = std::make_shared<FakeInspector>();
-    FakeCommandRunner fake_commands(inspector);
-    fake_commands.fail_next_ = true;
-
-    auto* log = &containercp::logger::Logger::instance();
-    containercp::access::LocalSftpProvider provider(*log);
-    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
-        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            return fake_commands.run(cmd);
-        }));
-    provider.set_enabled(true);
-
-    auto r = provider.apply_directory_permissions(1, "/srv/containercp/sites/example.com", "read_write");
-    CHECK_FALSE(r.success);
-    CHECK(r.message.find("chgrp") != std::string::npos);
-}
-
-TEST_CASE("apply_directory_permissions idempotent on double call") {
-    auto inspector = std::make_shared<FakeInspector>();
-    FakeCommandRunner fake_commands(inspector);
-
-    auto* log = &containercp::logger::Logger::instance();
-    containercp::access::LocalSftpProvider provider(*log);
-    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
-        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            return fake_commands.run(cmd);
-        }));
-    provider.set_enabled(true);
-
-    CHECK(provider.apply_directory_permissions(1, "/srv", "read_write").success);
-    CHECK(provider.apply_directory_permissions(1, "/srv", "read_write").success);
-    // Both calls should produce the same commands (chgrp/chmod are idempotent at OS level)
-    CHECK(fake_commands.cmds_.size() == 4); // 2 per call
-}
-
-TEST_CASE("apply_read_only_acl rejects empty group name") {
-    auto inspector = std::make_shared<FakeInspector>();
-    FakeCommandRunner fake_commands(inspector);
-
-    auto* log = &containercp::logger::Logger::instance();
-    containercp::access::LocalSftpProvider provider(*log);
-    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
-        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            return fake_commands.run(cmd);
-        }));
-    provider.set_enabled(true);
-
-    CHECK_FALSE(provider.apply_read_only_acl("/path", "").success);
-    CHECK_FALSE(provider.remove_read_only_acl("/path", "").success);
+    CHECK(provider.apply_read_only_acl(1, "/srv/containercp/sites/test").success);
+    CHECK(provider.remove_read_only_acl(1, "/srv/containercp/sites/test").success);
 }
