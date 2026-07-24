@@ -2332,3 +2332,80 @@ TEST_CASE("Phase3c mount_verify reports mount status") {
 
     CHECK(provider.mount_verify("/path").success);
 }
+
+/* ===== PHASE 3d: GRANT LIFECYCLE INTEGRATION ===== */
+
+TEST_CASE("Phase3d apply_grant resolves username and creates group") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping user_map;
+    user_map.entity_type = "access_user"; user_map.entity_id = 1;
+    user_map.username = "au-dev"; user_map.groupname = "au-dev";
+    user_map.uid = 10000; user_map.gid = 20000; user_map.state = "active";
+    stored.push_back(user_map);
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000, "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    // ensure_site_group creates the mapping + group, so it succeeds
+    auto r = provider.apply_grant(1, 1, "read_write", "test.local");
+    CHECK(r.success);
+}
+
+
+
+TEST_CASE("Phase3d revoke_all_grants processes all grants") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping user_map;
+    user_map.entity_type = "access_user"; user_map.entity_id = 1;
+    user_map.username = "au-dev"; user_map.groupname = "au-dev";
+    user_map.uid = 10000; user_map.gid = 20000; user_map.state = "active";
+    stored.push_back(user_map);
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000, "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mountpoint") { fake_commands.run(cmd); return containercp::core::OperationResult{false, ""}; }
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_grants_loader([](uint64_t) {
+        std::vector<containercp::access::LocalSftpProvider::GrantInfo> grants;
+        grants.push_back({1, "test", "read_write"});
+        return grants;
+    });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    auto r = provider.revoke_all_grants(1);
+    CHECK(r.success);
+}
