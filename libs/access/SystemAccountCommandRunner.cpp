@@ -94,4 +94,8 @@ core::OperationResult SystemAccountCommandRunner::mountpoint_check(const std::st
 core::OperationResult SystemAccountCommandRunner::rmdir(const std::string& path) {
     return run_({{"rmdir", path}});
 }
+core::OperationResult SystemAccountCommandRunner::chown_root(const std::string& path) {
+    return run_({{"chown", "root:root", path}});
+}
+
 } // namespace containercp::access

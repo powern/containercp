@@ -49,6 +49,7 @@ public:
     core::OperationResult umount(const std::string& target);
     core::OperationResult mountpoint_check(const std::string& path);
     core::OperationResult rmdir(const std::string& path);
+    core::OperationResult chown_root(const std::string& path);
 
 private:
     RunFn run_;

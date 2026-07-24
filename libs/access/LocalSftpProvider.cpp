@@ -614,6 +614,12 @@ core::OperationResult LocalSftpProvider::ensure_chroot_layout(uint64_t access_us
     auto r = runner_->mkdir_p(sites_dir);
     if (!r.success) { out.success = false; out.message = "mkdir sites/ failed"; return out; }
 
+    // Enforce root-owned chroot layout (OpenSSH ChrootDirectory requirement)
+    auto r2 = runner_->chown_root(sites_dir);
+    if (!r2.success) { out.success = false; out.message = "chown sites/ failed"; return out; }
+    auto r3 = runner_->chmod("755", sites_dir);
+    if (!r3.success) { out.success = false; out.message = "chmod sites/ failed"; return out; }
+
     // Postcondition: verify directory exists
     if (fs_inspector_) {
         auto post = fs_inspector_->inspect(sites_dir);
