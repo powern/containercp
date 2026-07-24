@@ -10,15 +10,15 @@
 namespace containercp::access {
 namespace {
 
-// Canonical POSIX permission format — exactly "rwx" triples per position.
+// Canonical POSIX permission format — strict positional check:
+//   position 0: 'r' or '-'
+//   position 1: 'w' or '-'
+//   position 2: 'x' or '-'
 bool valid_acl_perms(const std::string& s) {
     if (s.size() != 3) return false;
-    static const char kAllowed[] = {'r', 'w', 'x', '-'};
-    for (int i = 0; i < 3; ++i) {
-        bool ok = false;
-        for (char c : kAllowed) { if (s[i] == c) { ok = true; break; } }
-        if (!ok) return false;
-    }
+    if (s[0] != 'r' && s[0] != '-') return false;
+    if (s[1] != 'w' && s[1] != '-') return false;
+    if (s[2] != 'x' && s[2] != '-') return false;
     return true;
 }
 
@@ -144,8 +144,9 @@ InspectionStatus classify_getfacl_error(int exit_code, const std::string& stderr
     if (stderr_out.find("not supported") != std::string::npos ||
         stderr_out.find("Operation not supported") != std::string::npos)
         return InspectionStatus::AclUnsupported;
-    if (exit_code == 127 || stderr_out.find("not found") != std::string::npos ||
-        stderr_out.find("No such file") != std::string::npos)
+    if (stderr_out.find("No such file") != std::string::npos)
+        return InspectionStatus::PathMissing;
+    if (exit_code == 127 || stderr_out.find("not found") != std::string::npos)
         return InspectionStatus::AclToolMissing;
     return InspectionStatus::AclParseFailed;
 }

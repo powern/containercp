@@ -471,8 +471,8 @@ core::OperationResult LocalSftpProvider::apply_read_only_acl(uint64_t site_id) {
 
     // Capture previous ACL state for restoration
     auto prev = fs_inspector_->inspect_acl(public_dir, ro_mapping->groupname);
-    if (prev.acl_status != InspectionStatus::Ok && prev.acl_status != InspectionStatus::AclToolMissing) {
-        out.success = false; out.message = "pre-inspection failed"; return out;
+    if (prev.acl_status != InspectionStatus::Ok) {
+        out.success = false; out.message = "ACL pre-inspection failed"; return out;
     }
 
     // Apply access ACL
@@ -538,22 +538,35 @@ core::OperationResult LocalSftpProvider::remove_read_only_acl(uint64_t site_id) 
     out.success = true; out.message = "RO ACL removed"; return out;
 }
 
-// ACL restoration helper
+// ACL restoration helper — restores previous access+default ACL and verifies
 void LocalSftpProvider::restore_acl(const FsPermissionState& prev, const std::string& path,
                                      const std::string& groupname, core::OperationResult& out) {
+    // Restore access ACL
     if (prev.access_acl_present && !prev.access_acl_perms.empty()) {
         auto rb = runner_->setfacl_modify("g:" + groupname + ":" + prev.access_acl_perms, path);
-        if (!rb.success) { out.success = false; out.message = "rollback failed"; return; }
+        if (!rb.success) { out.success = false; out.message = "rollback restore access ACL failed"; return; }
     } else {
-        (void)runner_->setfacl_remove("g:" + groupname, path);
+        auto rb = runner_->setfacl_remove("g:" + groupname, path);
+        if (!rb.success) { out.success = false; out.message = "rollback remove access ACL failed"; return; }
     }
+    // Restore default ACL
     if (prev.default_acl_present && !prev.default_acl_perms.empty()) {
         auto rb = runner_->setfacl_modify("d:g:" + groupname + ":" + prev.default_acl_perms, path);
-        if (!rb.success) { out.success = false; out.message = "rollback failed"; return; }
+        if (!rb.success) { out.success = false; out.message = "rollback restore default ACL failed"; return; }
     } else {
-        (void)runner_->setfacl_remove("d:g:" + groupname, path);
+        auto rb = runner_->setfacl_remove("d:g:" + groupname, path);
+        if (!rb.success) { out.success = false; out.message = "rollback remove default ACL failed"; return; }
     }
-    out.success = false; out.message = "ACL operation failed, rolled back"; return;
+    // Postcondition: verify restoration
+    auto post = fs_inspector_->inspect_acl(path, groupname);
+    if (post.acl_status != InspectionStatus::Ok) {
+        out.success = false; out.message = "rollback verification failed"; return;
+    }
+    if (post.access_acl_present != prev.access_acl_present ||
+        post.default_acl_present != prev.default_acl_present) {
+        out.success = false; out.message = "rollback state mismatch"; return;
+    }
+    out.success = false; out.message = "ACL operation failed, rolled back";
 }
 
 // --- lifecycle ---
