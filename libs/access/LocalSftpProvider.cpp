@@ -595,7 +595,22 @@ core::OperationResult LocalSftpProvider::ensure_chroot_layout(uint64_t access_us
         out.success = false; out.message = "user mapping not active"; return out;
     }
 
-    std::string sites_dir = managed_home_root_ + "/" + username + "/sites/";
+    // Verify trusted identity: username, UID/GID, home, shell, observed OS state
+    std::string expected_home = managed_home_root_ + "/" + mapping->username;
+    if (expected_home.rfind(managed_home_root_, 0) != 0) {
+        out.success = false; out.message = "home outside managed root"; return out;
+    }
+    if (inspector_) {
+        auto obs = inspector_->lookup_user(mapping->username);
+        if (!obs.exists) { out.success = false; out.message = "OS user missing"; return out; }
+        if (obs.uid != mapping->uid || obs.gid != mapping->gid) {
+            out.success = false; out.message = "OS user UID/GID mismatch"; return out;
+        }
+        if (obs.home != expected_home) { out.success = false; out.message = "OS home mismatch"; return out; }
+        if (obs.shell != managed_shell_) { out.success = false; out.message = "OS shell mismatch"; return out; }
+    }
+
+    std::string sites_dir = expected_home + "/sites/";
     auto r = runner_->mkdir_p(sites_dir);
     if (!r.success) { out.success = false; out.message = "mkdir sites/ failed"; return out; }
 
