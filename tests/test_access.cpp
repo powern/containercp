@@ -740,20 +740,50 @@ TEST_CASE("Provider remove_user fails closed when managed_path_safe detects unsa
 }
 
 TEST_CASE("Provider stale provisioning cleanup and retry succeeds") {
-    auto inspector = std::make_shared<FakeInspector>();
+    // Test the complete stale-provisioning recovery lifecycle:
+    // 1. Stale mapping (state="provisioning") exists from previous failed attempt.
+    // 2. A stale managed group exists on the OS.
+    // 3. create_user() cleans up stale state, provisions fresh state, and returns SUCCESS.
+    // 4. The mapping finishes in ACTIVE state.
+    // 5. A second create_user() call is idempotent and succeeds without mutation.
+
+    // Custom inspector: user_exists returns false for managed "au-*" names (allowing
+    // provisioning to proceed), but lookup_user returns the OS state for verification.
+    struct TestInspector : FakeInspector {
+        bool user_exists(const std::string& name) const override {
+            if (name.rfind("au-", 0) == 0) return false;
+            return FakeInspector::user_exists(name);
+        }
+        bool group_exists(const std::string& name) const override {
+            if (name.rfind("au-", 0) == 0) return false;
+            return FakeInspector::group_exists(name);
+        }
+        // Auto-populate matching observed state for any "au-*" user
+        containercp::access::ObservedUser lookup_user(const std::string& name) const override {
+            auto it = users_.find(name);
+            if (it != users_.end()) return it->second;
+            containercp::access::ObservedUser u;
+            u.exists = true; u.username = name;
+            u.uid = 10000; u.gid = 20000;
+            u.home = "/srv/containercp/users/" + name;
+            u.shell = "/usr/sbin/nologin"; u.locked = true;
+            return u;
+        }
+    };
+    auto inspector = std::make_shared<TestInspector>();
+
     FakeCommandRunner fake_commands;
     std::vector<containercp::access::SystemAccountMapping> stored;
 
-    // Pre-populate with stale "provisioning" state from a previous failed attempt
+    // --- Phase A: stale state from a previous failed attempt ---
     containercp::access::SystemAccountMapping stale;
     stale.entity_type = "access_user"; stale.entity_id = 1;
     stale.username = "au-retry"; stale.groupname = "au-retry";
     stale.uid = 10050; stale.gid = 20050; stale.state = "provisioning";
     stored.push_back(stale);
 
-    // Stale group from previous attempt exists but user was never created
+    // Stale managed group from previous failed attempt
     inspector->groups_["au-retry"] = {true, "au-retry", 20050};
-    // Global group must exist for ensure_global_sftp_group postcondition
     inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
 
     auto* log = &containercp::logger::Logger::instance();
@@ -769,10 +799,12 @@ TEST_CASE("Provider stale provisioning cleanup and retry succeeds") {
     provider.set_enabled(true);
 
     int save_count = 0; int delete_count = 0;
+    bool final_state_active = false;
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
-        [&save_count, &stored](const containercp::access::SystemAccountMapping& m) {
+        [&save_count, &stored, &final_state_active](const containercp::access::SystemAccountMapping& m) {
             save_count++;
+            if (m.state == "active") final_state_active = true;
             for (auto& s : stored) {
                 if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; }
             }
@@ -785,18 +817,24 @@ TEST_CASE("Provider stale provisioning cleanup and retry succeeds") {
             return true;
         });
 
-    // Stale user was never created — don't pre-populate inspector users_
-
-    // Don't pre-set user — stale provisioning never completed user creation.
-    // The test verifies stale cleanup runs correctly.
-
+    // --- Test 1: First create — stale cleanup + fresh provision → SUCCESS ---
     containercp::access::AccessUser user;
     user.id = 1; user.username = "retry";
     auto result = provider.create_user(user);
-    // Stale cleanup should delete the old mapping and save a new one
-    // create_user may fail at verify_ownership since mock inspector has no user
-    CHECK(delete_count >= 1);
-    CHECK(save_count >= 1);
+    CHECK(result.success);
+    CHECK(result.message.find("au-retry") != std::string::npos);
+    CHECK(delete_count >= 1);   // stale mapping was deleted
+    CHECK(save_count >= 2);     // provisioning + active saves
+    CHECK(final_state_active);  // mapping finished in ACTIVE state
+
+    // --- Test 2: Second create is idempotent — no mutation ---
+    int save_before = save_count;
+    int delete_before = delete_count;
+    auto result2 = provider.create_user(user);
+    CHECK(result2.success);
+    CHECK(result2.message.find("already provisioned") != std::string::npos);
+    CHECK(save_count == save_before);    // no new saves
+    CHECK(delete_count == delete_before); // no new deletions
 }
 
 TEST_CASE("Provider verify_ownership rejects UID outside managed range") {

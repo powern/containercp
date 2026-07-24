@@ -161,11 +161,14 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
         out.success = false; out.message = "SFTP provider dependencies not configured"; return out;
     }
 
-    // Clean up stale provisioning if needed
+    // Clean up stale provisioning if needed.
+    // The SQLite mapping is the ownership proof — "au-*" names belong
+    // exclusively to ContainerCP. No OS verification needed for deletion.
     if (existing.has_value()) {
-        auto observed = inspector_->lookup_user(existing->username);
-        if (observed.exists) {
+        if (inspector_->user_exists(existing->username)) {
             (void)runner_->userdel(existing->username);
+        }
+        if (inspector_->group_exists(existing->groupname)) {
             (void)runner_->groupdel(existing->groupname);
         }
         std::string home = managed_home_root_ + "/" + existing->username;
@@ -175,8 +178,12 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
         }
         if (delete_mapping_) delete_mapping_("access_user", user.id);
     }
+    // Check for unmanaged conflicts BEFORE creating anything new
     if (inspector_->user_exists(mapped.canonical)) {
         out.success = false; out.message = "unmanaged_account_conflict: " + mapped.canonical; return out;
+    }
+    if (inspector_->group_exists(mapped.canonical)) {
+        out.success = false; out.message = "unmanaged_group_conflict: " + mapped.canonical; return out;
     }
 
     // 3. Ensure global group exists
