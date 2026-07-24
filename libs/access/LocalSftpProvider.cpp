@@ -688,6 +688,11 @@ core::OperationResult LocalSftpProvider::unmount_site(uint64_t access_user_id, u
     if (!existing.mounted) {
         out.success = true; out.message = "already unmounted"; return out;
     }
+    // Only unmount managed bind mounts pointing to expected source
+    std::string expected_source = site_root + "/public/";
+    if (!existing.is_bind || existing.source != expected_source) {
+        out.success = false; out.message = "foreign mount — refusing to unmount"; return out;
+    }
 
     auto r1 = runner_->umount(target);
     if (!r1.success) { out.success = false; out.message = "umount failed"; return out; }
@@ -709,7 +714,6 @@ core::OperationResult LocalSftpProvider::cleanup_all_mounts(uint64_t access_user
     std::string username = resolve_username(access_user_id);
     if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
 
-    std::string sites_dir = managed_home_root_ + "/" + username + "/sites/";
 
     // Enumerate all mounts within the user's sites/ using mount inspector via known domains.
     // We iterate persisted grants to know which domains to check.
