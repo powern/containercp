@@ -445,22 +445,53 @@ public:
 
 class FakeCommandRunner {
 public:
+    explicit FakeCommandRunner(std::shared_ptr<FakeInspector> inspector = nullptr)
+        : inspector_(std::move(inspector)) {}
+
     containercp::core::OperationResult run(const containercp::access::SystemAccountCommandRunner::Command& cmd) {
         cmds_.push_back(cmd);
         if (fail_next_) { fail_next_ = false; return {false, "injected failure"}; }
+        apply_to_inspector(cmd);
         return {true, "ok"};
     }
     std::vector<containercp::access::SystemAccountCommandRunner::Command> cmds_;
     bool fail_next_ = false;
-};
 
-containercp::access::SystemAccountCommandRunner
-make_test_runner(FakeCommandRunner* fake) {
-    return containercp::access::SystemAccountCommandRunner(
-        [fake](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            return fake->run(cmd);
-        });
-}
+private:
+    void apply_to_inspector(const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+        if (!inspector_ || cmd.args.empty()) return;
+        const auto& prog = cmd.args[0];
+
+        if (prog == "useradd" && cmd.args.size() >= 2) {
+            const auto& name = cmd.args.back();
+            containercp::access::ObservedUser u;
+            u.exists = true; u.username = name;
+            u.shell = "/usr/sbin/nologin"; u.locked = true;
+            // Parse -u UID and -g GID
+            for (size_t i = 1; i + 1 < cmd.args.size(); ++i) {
+                if (cmd.args[i] == "-u") u.uid = std::stoi(cmd.args[i + 1]);
+                if (cmd.args[i] == "-g") u.gid = std::stoi(cmd.args[i + 1]);
+                if (cmd.args[i] == "-d") u.home = cmd.args[i + 1];
+            }
+            inspector_->users_[name] = u;
+        } else if (prog == "groupadd") {
+            std::string name = cmd.args.back();
+            containercp::access::ObservedGroup g;
+            g.exists = true; g.name = name;
+            // Parse -g GID
+            for (size_t i = 1; i + 1 < cmd.args.size(); ++i) {
+                if (cmd.args[i] == "-g") g.gid = std::stoi(cmd.args[i + 1]);
+            }
+            inspector_->groups_[name] = g;
+        } else if (prog == "userdel" && cmd.args.size() >= 2) {
+            inspector_->users_.erase(cmd.args.back());
+        } else if (prog == "groupdel" && cmd.args.size() >= 2) {
+            inspector_->groups_.erase(cmd.args.back());
+        }
+    }
+
+    std::shared_ptr<FakeInspector> inspector_;
+};
 
 } // namespace
 
@@ -740,49 +771,21 @@ TEST_CASE("Provider remove_user fails closed when managed_path_safe detects unsa
 }
 
 TEST_CASE("Provider stale provisioning cleanup and retry succeeds") {
-    // Test the complete stale-provisioning recovery lifecycle:
-    // 1. Stale mapping (state="provisioning") exists from previous failed attempt.
-    // 2. A stale managed group exists on the OS.
-    // 3. create_user() cleans up stale state, provisions fresh state, and returns SUCCESS.
-    // 4. The mapping finishes in ACTIVE state.
-    // 5. A second create_user() call is idempotent and succeeds without mutation.
+    // End-to-end stale-provisioning recovery with a real OS-emulating fake:
+    // FakeCommandRunner mutates FakeInspector exactly as useradd/groupadd/userdel would.
+    // No fabricated state — all lookups read the same consistent OS map.
 
-    // Custom inspector: user_exists returns false for managed "au-*" names (allowing
-    // provisioning to proceed), but lookup_user returns the OS state for verification.
-    struct TestInspector : FakeInspector {
-        bool user_exists(const std::string& name) const override {
-            if (name.rfind("au-", 0) == 0) return false;
-            return FakeInspector::user_exists(name);
-        }
-        bool group_exists(const std::string& name) const override {
-            if (name.rfind("au-", 0) == 0) return false;
-            return FakeInspector::group_exists(name);
-        }
-        // Auto-populate matching observed state for any "au-*" user
-        containercp::access::ObservedUser lookup_user(const std::string& name) const override {
-            auto it = users_.find(name);
-            if (it != users_.end()) return it->second;
-            containercp::access::ObservedUser u;
-            u.exists = true; u.username = name;
-            u.uid = 10000; u.gid = 20000;
-            u.home = "/srv/containercp/users/" + name;
-            u.shell = "/usr/sbin/nologin"; u.locked = true;
-            return u;
-        }
-    };
-    auto inspector = std::make_shared<TestInspector>();
-
-    FakeCommandRunner fake_commands;
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
     std::vector<containercp::access::SystemAccountMapping> stored;
 
-    // --- Phase A: stale state from a previous failed attempt ---
+    // Initial stale state: mapping from previous failed attempt,
+    // group was created but useradd failed.
     containercp::access::SystemAccountMapping stale;
     stale.entity_type = "access_user"; stale.entity_id = 1;
     stale.username = "au-retry"; stale.groupname = "au-retry";
     stale.uid = 10050; stale.gid = 20050; stale.state = "provisioning";
     stored.push_back(stale);
-
-    // Stale managed group from previous failed attempt
     inspector->groups_["au-retry"] = {true, "au-retry", 20050};
     inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
 
@@ -817,7 +820,7 @@ TEST_CASE("Provider stale provisioning cleanup and retry succeeds") {
             return true;
         });
 
-    // --- Test 1: First create — stale cleanup + fresh provision → SUCCESS ---
+    // --- Test 1: First create recovers from stale state ---
     containercp::access::AccessUser user;
     user.id = 1; user.username = "retry";
     auto result = provider.create_user(user);
@@ -826,15 +829,22 @@ TEST_CASE("Provider stale provisioning cleanup and retry succeeds") {
     CHECK(delete_count >= 1);   // stale mapping was deleted
     CHECK(save_count >= 2);     // provisioning + active saves
     CHECK(final_state_active);  // mapping finished in ACTIVE state
+    // Fake OS state must be internally consistent after create
+    CHECK(inspector->user_exists("au-retry"));
+    CHECK(inspector->group_exists("au-retry"));
+    CHECK_FALSE(inspector->user_exists("au-retry") != inspector->group_exists("au-retry")); // both exist
 
-    // --- Test 2: Second create is idempotent — no mutation ---
+    // --- Test 2: Second create is idempotent — zero mutations ---
     int save_before = save_count;
     int delete_before = delete_count;
     auto result2 = provider.create_user(user);
     CHECK(result2.success);
     CHECK(result2.message.find("already provisioned") != std::string::npos);
-    CHECK(save_count == save_before);    // no new saves
-    CHECK(delete_count == delete_before); // no new deletions
+    CHECK(save_count == save_before);
+    CHECK(delete_count == delete_before);
+    // OS state unchanged
+    CHECK(inspector->user_exists("au-retry"));
+    CHECK(inspector->group_exists("au-retry"));
 }
 
 TEST_CASE("Provider verify_ownership rejects UID outside managed range") {
