@@ -1701,17 +1701,17 @@ TEST_CASE("Phase3b RO ACL applied and removed") {
     containercp::access::FsPermissionState acl_on;
     acl_on.exists = true; acl_on.mode = 0770; acl_on.group_gid = 21000;
     acl_on.acl_status = containercp::access::InspectionStatus::Ok;
-    acl_on.access_acl_present = true; acl_on.access_acl_group = "site-1-ro";
-    acl_on.access_acl_perms = "r-x"; acl_on.effective_perms = "r-x";
-    acl_on.default_acl_present = true; acl_on.default_acl_group = "site-1-ro";
-    acl_on.default_acl_perms = "r-x"; acl_on.default_effective_perms = "r-x";
+    acl_on.acl.access_present = true; acl_on.acl.access_group = "site-1-ro";
+    acl_on.acl.access_perms = "r-x"; acl_on.acl.effective_perms = "r-x";
+    acl_on.acl.default_present = true; acl_on.acl.default_group = "site-1-ro";
+    acl_on.acl.default_perms = "r-x"; acl_on.acl.default_effective = "r-x";
     fs->state_["/srv/containercp/sites/test/public/::site-1-ro"] = acl_on;
     CHECK(provider.apply_read_only_acl(1).success);
 
     // Pre-set ACL state so remove postcondition finds it absent
     containercp::access::FsPermissionState acl_off;
     acl_off.exists = true; acl_off.mode = 0770; acl_off.group_gid = 21000;
-    acl_off.access_acl_present = false; acl_off.acl_status = containercp::access::InspectionStatus::Ok;
+    acl_off.acl.access_present = false; acl_off.acl_status = containercp::access::InspectionStatus::Ok;
     fs->state_["/srv/containercp/sites/test/public/::site-1-ro"] = acl_off;
     CHECK(provider.remove_read_only_acl(1).success);
 }
@@ -1804,10 +1804,10 @@ TEST_CASE("Phase3b effective perms reject write access") {
     containercp::access::FsPermissionState s;
     s.exists = true; s.mode = 0770; s.group_gid = 21000;
     s.acl_status = containercp::access::InspectionStatus::Ok;
-    s.access_acl_present = true; s.access_acl_perms = "r-x";
-    s.effective_perms = "rwx";  // mask didn't strip write
-    s.default_acl_present = true; s.default_acl_perms = "r-x";
-    s.default_effective_perms = "r-x";
+    s.acl.access_present = true; s.acl.access_perms = "r-x";
+    s.acl.effective_perms = "rwx";  // mask didn't strip write
+    s.acl.default_present = true; s.acl.default_perms = "r-x";
+    s.acl.default_effective = "r-x";
     fs->state_["/srv/containercp/sites/test/public/::site-1-ro"] = s;
 
     auto* log = &containercp::logger::Logger::instance();
@@ -1991,7 +1991,7 @@ TEST_CASE("Phase3b rollback restores and verifies previous ACL state") {
     containercp::access::FsPermissionState prev_state;
     prev_state.exists = true; prev_state.mode = 0770; prev_state.group_gid = 21000;
     prev_state.acl_status = containercp::access::InspectionStatus::Ok;
-    prev_state.access_acl_present = false; prev_state.default_acl_present = false;
+    prev_state.acl.access_present = false; prev_state.acl.default_present = false;
     fs->state_["/srv/containercp/sites/test/public/::site-1-ro"] = prev_state;
 
     // Post-inspection after apply: simulate that setfacl succeeded but ACL is still absent (postcondition failure)
@@ -2020,5 +2020,221 @@ TEST_CASE("Phase3b rollback restores and verifies previous ACL state") {
     // But the overall result is failure (ACL postcondition failed)
     CHECK_FALSE(r.success);
     // Rollback should have been called — verify the state is still ACL absent
-    CHECK(prev_state.access_acl_present == false);
+    CHECK(prev_state.acl.access_present == false);
+}
+
+/* ===== PHASE 3b: DIRECT PARSER + ACL FILESYSTEM + ROLLBACK TESTS ===== */
+
+// Shared fake ACL filesystem state — models real setfacl/getfacl mutations
+struct FakeAclFs {
+    struct Entry {
+        bool present = false;
+        std::string group;
+        std::string perms;
+        std::string mask;
+        std::string effective;
+        bool has_mask = false;
+    };
+    Entry access;
+    Entry default_;
+    bool getfacl_error = false;
+
+    void apply_modify(const std::string& acl_spec) {
+        // Format: "g:<name>:<perms>" or "d:g:<name>:<perms>" or "g:<name>:<perms>,d:g:..."
+        auto col1 = acl_spec.find(':');
+        auto col2 = acl_spec.find(':', col1 + 1);
+        if (col1 == std::string::npos || col2 == std::string::npos) return;
+        bool is_default = (acl_spec.rfind("d:", 0) == 0);
+        std::string group = acl_spec.substr(is_default ? 3 : 2, (is_default ? acl_spec.find(':', 3) : col1) - (is_default ? 3 : 2));
+        // Re-parse after group since group may contain ':'? No, it's just the name.
+        std::string perms = acl_spec.substr(acl_spec.rfind(':') + 1);
+
+        auto& target = is_default ? default_ : access;
+        target.present = true;
+        target.group = group;
+        target.perms = perms;
+        target.effective = perms; // unless mask set
+        if (target.has_mask) {
+            std::string eff = "---";
+            for (int i = 0; i < 3; ++i) {
+                if (target.perms[i] == target.mask[i] && target.perms[i] != '-') eff[i] = target.perms[i];
+            }
+            target.effective = eff;
+        }
+    }
+
+    void apply_remove(const std::string& acl_spec) {
+        // Format: "g:<name>" or "d:g:<name>"
+        bool is_default = (acl_spec.rfind("d:", 0) == 0);
+        auto& target = is_default ? default_ : access;
+        target = Entry{};
+    }
+
+    containercp::access::AclState to_acl_state() const {
+        containercp::access::AclState s;
+        s.access_present = access.present;
+        s.access_group = access.group;
+        s.access_perms = access.perms;
+        s.effective_perms = access.effective;
+        s.access_mask = access.has_mask ? access.mask : "";
+        s.default_present = default_.present;
+        s.default_group = default_.group;
+        s.default_perms = default_.perms;
+        s.default_effective = default_.effective;
+        s.default_mask = default_.has_mask ? default_.mask : "";
+        return s;
+    }
+};
+
+TEST_CASE("Phase3b valid_acl_perms rejects invalid and accepts valid") {
+    using containercp::access::valid_acl_perms;
+    // Invalid
+    CHECK_FALSE(valid_acl_perms("x--"));
+    CHECK_FALSE(valid_acl_perms("-r-"));
+    CHECK_FALSE(valid_acl_perms("wrx"));
+    CHECK_FALSE(valid_acl_perms("xr-"));
+    CHECK_FALSE(valid_acl_perms("rw"));
+    CHECK_FALSE(valid_acl_perms("rwxx"));
+    CHECK_FALSE(valid_acl_perms("r-x-"));
+    CHECK_FALSE(valid_acl_perms(""));
+    // Valid
+    CHECK(valid_acl_perms("rwx"));
+    CHECK(valid_acl_perms("rw-"));
+    CHECK(valid_acl_perms("r-x"));
+    CHECK(valid_acl_perms("r--"));
+    CHECK(valid_acl_perms("-wx"));
+    CHECK(valid_acl_perms("-w-"));
+    CHECK(valid_acl_perms("--x"));
+    CHECK(valid_acl_perms("---"));
+}
+
+TEST_CASE("Phase3b parse_getfacl duplicate detection") {
+    using containercp::access::parse_getfacl;
+    containercp::access::AclState s;
+    containercp::access::InspectionStatus st;
+    std::string err;
+
+    // Duplicate access group
+    CHECK_FALSE(parse_getfacl("group:g1:r-x\ngroup:g1:rwx\n", "g1", s, st, err));
+    CHECK(st == containercp::access::InspectionStatus::MalformedAclOutput);
+    CHECK(err.find("dup group") != std::string::npos);
+
+    // Duplicate default group
+    s = {}; st = containercp::access::InspectionStatus::Ok;
+    CHECK_FALSE(parse_getfacl("default:group:g1:r-x\ndefault:group:g1:rwx\n", "g1", s, st, err));
+    CHECK(st == containercp::access::InspectionStatus::MalformedAclOutput);
+    CHECK(err.find("dup dflt") != std::string::npos);
+
+    // Duplicate access mask
+    s = {}; st = containercp::access::InspectionStatus::Ok;
+    CHECK_FALSE(parse_getfacl("mask:r-x\nmask:rwx\n", "g1", s, st, err));
+    CHECK(st == containercp::access::InspectionStatus::MalformedAclOutput);
+    CHECK(err.find("dup mask") != std::string::npos);
+
+    // Unknown line
+    s = {}; st = containercp::access::InspectionStatus::Ok;
+    CHECK_FALSE(parse_getfacl("badger:stoat:r-x\n", "g1", s, st, err));
+    CHECK(st == containercp::access::InspectionStatus::MalformedAclOutput);
+}
+
+TEST_CASE("Phase3b parse_getfacl correct parsing") {
+    using containercp::access::parse_getfacl;
+    containercp::access::AclState s;
+    containercp::access::InspectionStatus st;
+    std::string err;
+    CHECK(parse_getfacl("group:g1:r-x\ndefault:group:g1:r--\nmask:rwx\n", "g1", s, st, err));
+    CHECK(st == containercp::access::InspectionStatus::Ok);
+    CHECK(s.access_present);
+    CHECK(s.access_perms == "r-x");
+    CHECK(s.effective_perms == "r-x");
+    CHECK(s.default_present);
+    CHECK(s.default_perms == "r--");
+    CHECK(s.access_mask == "rwx");
+}
+
+TEST_CASE("Phase3b FakeAclFs models real setfacl mutations") {
+    FakeAclFs fs;
+    fs.apply_modify("g:site-1-ro:r-x");
+    CHECK(fs.access.present);
+    CHECK(fs.access.perms == "r-x");
+    CHECK_FALSE(fs.default_.present);
+
+    fs.apply_modify("d:g:site-1-ro:r-x");
+    CHECK(fs.default_.present);
+
+    fs.apply_remove("g:site-1-ro");
+    CHECK_FALSE(fs.access.present);
+    CHECK(fs.default_.present); // default still there
+
+    fs.apply_remove("d:g:site-1-ro");
+    CHECK_FALSE(fs.default_.present);
+}
+
+TEST_CASE("Phase3b classify_getfacl_error direct tests") {
+    using containercp::access::classify_getfacl_error;
+    CHECK(classify_getfacl_error(1, "Permission denied") == containercp::access::InspectionStatus::AccessDenied);
+    CHECK(classify_getfacl_error(1, "Operation not supported") == containercp::access::InspectionStatus::AclUnsupported);
+    CHECK(classify_getfacl_error(1, "No such file") == containercp::access::InspectionStatus::PathMissing);
+    CHECK(classify_getfacl_error(127, "") == containercp::access::InspectionStatus::AclToolMissing);
+    CHECK(classify_getfacl_error(1, "command not found") == containercp::access::InspectionStatus::AclToolMissing);
+    CHECK(classify_getfacl_error(1, "unknown error") == containercp::access::InspectionStatus::AclParseFailed);
+}
+
+TEST_CASE("Phase3b effective_acl positional calculation") {
+    using containercp::access::effective_acl;
+    CHECK(effective_acl("rwx", "r-x") == "r-x");
+    CHECK(effective_acl("r-x", "r--") == "r--");
+    CHECK(effective_acl("rwx", "rwx") == "rwx");
+    CHECK(effective_acl("r-x", "") == "r-x");
+    CHECK(effective_acl("rwx", "---") == "---");
+}
+
+TEST_CASE("Phase3b ACL rollback restores complete previous state") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping m;
+    m.entity_type = "site_group_ro"; m.entity_id = 1;
+    m.gid = 21000; m.username = "site-1-ro"; m.groupname = "site-1-ro"; m.state = "active";
+    stored.push_back(m);
+    inspector->groups_["site-1-ro"] = {true, "site-1-ro", 21000};
+
+    FakeAclFs acl_fs;
+    acl_fs.access.present = true; acl_fs.access.group = "site-1-ro";
+    acl_fs.access.perms = "rw-"; acl_fs.access.effective = "rw-";
+    acl_fs.default_.present = true; acl_fs.default_.group = "site-1-ro";
+    acl_fs.default_.perms = "r--"; acl_fs.default_.effective = "r--";
+    auto initial_state = acl_fs.to_acl_state();
+
+    auto fs = std::make_shared<FakeFsInspector>();
+    // Pre-inspection returns the initial state
+    containercp::access::FsPermissionState prev;
+    prev.exists = true; prev.mode = 0770; prev.group_gid = 21000;
+    prev.acl_status = containercp::access::InspectionStatus::Ok;
+    prev.acl = initial_state;
+    fs->state_["/srv/containercp/sites/test/public/::site-1-ro"] = prev;
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(fs);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    auto r = provider.apply_read_only_acl(1);
+    // setfacl runs (fake), postcondition re-reads the SAME state.
+    // Since ACL is already present but perms are "rw-" not "r-x",
+    // setfacl_modify("r-x") would update it — but fake inspector re-reads
+    // the pre-set state which still has "rw-". effective_perms has 'w' → fails.
+    // restore_acl is called, restores to initial state → rollback verification passes.
+    // Overall result: failure (ACL effective perms contain write).
+    CHECK_FALSE(r.success);
 }

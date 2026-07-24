@@ -490,7 +490,7 @@ core::OperationResult LocalSftpProvider::apply_read_only_acl(uint64_t site_id) {
     if (post.acl_status != InspectionStatus::Ok) {
         restore_acl(prev, public_dir, ro_mapping->groupname, out); return out;
     }
-    if (!post.access_acl_present || post.effective_perms.find('w') != std::string::npos || !post.default_acl_present) {
+    if (!post.acl.access_present || post.acl.effective_perms.find('w') != std::string::npos || !post.acl.default_present) {
         restore_acl(prev, public_dir, ro_mapping->groupname, out); return out;
     }
 
@@ -526,11 +526,11 @@ core::OperationResult LocalSftpProvider::remove_read_only_acl(uint64_t site_id) 
     if (post.acl_status != InspectionStatus::Ok && post.acl_status != InspectionStatus::AclToolMissing) {
         out.success = false; out.message = "ACL inspection error"; return out;
     }
-    if (post.access_acl_present || post.default_acl_present) {
+    if (post.acl.access_present || post.acl.default_present) {
         // Restore previous ACL
-        auto rb1 = runner_->setfacl_modify("g:" + ro_mapping->groupname + ":" + prev.access_acl_perms, public_dir);
+        auto rb1 = runner_->setfacl_modify("g:" + ro_mapping->groupname + ":" + prev.acl.access_perms, public_dir);
         if (!rb1.success) { out.success = false; out.message = "rollback failed"; return out; }
-        auto rb2 = runner_->setfacl_modify("d:g:" + ro_mapping->groupname + ":" + prev.default_acl_perms, public_dir);
+        auto rb2 = runner_->setfacl_modify("d:g:" + ro_mapping->groupname + ":" + prev.acl.default_perms, public_dir);
         if (!rb2.success) { out.success = false; out.message = "rollback failed"; return out; }
         out.success = false; out.message = "ACL removal postcondition failed"; return out;
     }
@@ -542,28 +542,34 @@ core::OperationResult LocalSftpProvider::remove_read_only_acl(uint64_t site_id) 
 void LocalSftpProvider::restore_acl(const FsPermissionState& prev, const std::string& path,
                                      const std::string& groupname, core::OperationResult& out) {
     // Restore access ACL
-    if (prev.access_acl_present && !prev.access_acl_perms.empty()) {
-        auto rb = runner_->setfacl_modify("g:" + groupname + ":" + prev.access_acl_perms, path);
+    if (prev.acl.access_present && !prev.acl.access_perms.empty()) {
+        auto rb = runner_->setfacl_modify("g:" + groupname + ":" + prev.acl.access_perms, path);
         if (!rb.success) { out.success = false; out.message = "rollback restore access ACL failed"; return; }
     } else {
         auto rb = runner_->setfacl_remove("g:" + groupname, path);
         if (!rb.success) { out.success = false; out.message = "rollback remove access ACL failed"; return; }
     }
     // Restore default ACL
-    if (prev.default_acl_present && !prev.default_acl_perms.empty()) {
-        auto rb = runner_->setfacl_modify("d:g:" + groupname + ":" + prev.default_acl_perms, path);
+    if (prev.acl.default_present && !prev.acl.default_perms.empty()) {
+        auto rb = runner_->setfacl_modify("d:g:" + groupname + ":" + prev.acl.default_perms, path);
         if (!rb.success) { out.success = false; out.message = "rollback restore default ACL failed"; return; }
     } else {
         auto rb = runner_->setfacl_remove("d:g:" + groupname, path);
         if (!rb.success) { out.success = false; out.message = "rollback remove default ACL failed"; return; }
     }
-    // Postcondition: verify restoration
+    // Postcondition: verify full ACL state restoration
     auto post = fs_inspector_->inspect_acl(path, groupname);
     if (post.acl_status != InspectionStatus::Ok) {
         out.success = false; out.message = "rollback verification failed"; return;
     }
-    if (post.access_acl_present != prev.access_acl_present ||
-        post.default_acl_present != prev.default_acl_present) {
+    if (post.acl.access_present != prev.acl.access_present ||
+        post.acl.default_present != prev.acl.default_present ||
+        (prev.acl.access_present && (post.acl.access_group != prev.acl.access_group ||
+         post.acl.access_perms != prev.acl.access_perms ||
+         post.acl.effective_perms != prev.acl.effective_perms)) ||
+        (prev.acl.default_present && (post.acl.default_group != prev.acl.default_group ||
+         post.acl.default_perms != prev.acl.default_perms ||
+         post.acl.default_effective != prev.acl.default_effective))) {
         out.success = false; out.message = "rollback state mismatch"; return;
     }
     out.success = false; out.message = "ACL operation failed, rolled back";
