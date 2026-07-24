@@ -582,18 +582,11 @@ void LocalSftpProvider::set_mount_inspector(std::shared_ptr<MountInspector> insp
     mount_inspector_ = std::move(inspector);
 }
 
-// Resolve the managed user home from SQLite mapping. Returns empty if not found/inactive.
-static std::string resolve_managed_home(const std::string& username, const std::string& home_root) {
-    if (username.empty()) return {};
-    return home_root + "/" + username;
-}
-
 core::OperationResult LocalSftpProvider::ensure_chroot_layout(uint64_t access_user_id) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "ensure_chroot_layout"), out;
     if (!runner_) { out.success = false; out.message = "provider dependencies not configured"; return out; }
 
-    // Resolve trusted username from SQLite
     std::string username = resolve_username(access_user_id);
     if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
 
@@ -605,6 +598,12 @@ core::OperationResult LocalSftpProvider::ensure_chroot_layout(uint64_t access_us
     std::string sites_dir = managed_home_root_ + "/" + username + "/sites/";
     auto r = runner_->mkdir_p(sites_dir);
     if (!r.success) { out.success = false; out.message = "mkdir sites/ failed"; return out; }
+
+    // Postcondition: verify directory exists
+    if (fs_inspector_) {
+        auto post = fs_inspector_->inspect(sites_dir);
+        if (!post.exists) { out.success = false; out.message = "sites/ verification failed"; return out; }
+    }
 
     out.success = true; out.message = "chroot layout created"; return out;
 }
@@ -647,15 +646,17 @@ core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id
 
     // Mount
     auto r2 = runner_->mount_bind(source, target);
-    if (!r2.success) { out.success = false; out.message = "mount failed"; return out; }
+    if (!r2.success) {
+        (void)runner_->rmdir(target);
+        out.success = false; out.message = "mount failed"; return out;
+    }
 
     // Verify exact identity
     auto post = mount_inspector_->inspect(target);
     if (!post.mounted || post.source != source) {
         auto um = runner_->umount(target);
         if (!um.success) { out.success = false; out.message = "mount verify fail, rollback fail"; return out; }
-        auto rd = runner_->rmdir(target);
-        if (!rd.success) { out.success = false; out.message = "mount verify fail, rmdir fail"; return out; }
+        (void)runner_->rmdir(target);
         out.success = false; out.message = "mount verification failed"; return out;
     }
 
@@ -713,14 +714,16 @@ core::OperationResult LocalSftpProvider::cleanup_all_mounts(uint64_t access_user
     // Enumerate all mounts within the user's sites/ using mount inspector via known domains.
     // We iterate persisted grants to know which domains to check.
     size_t cleaned = 0;
+    size_t failed = 0;
     if (grants_loader_) {
         auto grants = grants_loader_(access_user_id);
         for (const auto& g : grants) {
             auto r = unmount_site(access_user_id, g.site_id);
-            if (r.success) cleaned++;
+            if (r.success) cleaned++; else failed++;
         }
     }
 
+    if (failed > 0) { out.success = false; out.message = std::to_string(cleaned) + " cleaned, " + std::to_string(failed) + " failed"; return out; }
     out.success = true;
     out.message = std::to_string(cleaned) + " mounts cleaned";
     return out;
@@ -749,30 +752,27 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     std::string username = resolve_username(access_user_id);
     if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
 
-    // Step 1: Ensure site group — no rollback needed (idempotent)
+    // Step 1: Ensure site group — no rollback (idempotent, re-apply safe)
     auto r1 = ensure_site_group(site_id, permission);
     if (!r1.success) return r1;
 
-    // Step 2: Add membership — rollback: none (membership can be removed later)
+    // Step 2: Add membership
     auto r2 = add_user_to_site_group(username, site_id, permission);
     if (!r2.success) return r2;
 
-    // Step 3: Directory permissions (RW only) — rollback: re-apply can fix
+    // Step 3: Directory permissions (RW only)
     if (permission != "read_only") {
         auto r3 = apply_directory_permissions(site_id, permission);
-        if (!r3.success) return r3;
+        if (!r3.success) { (void)remove_user_from_site_group(username, site_id, permission); return r3; }
     }
 
-    // Step 4: ACL (RO only) — rollback: remove ACL
+    // Step 4: ACL (RO only) — rollback: remove ACL + membership
     if (permission == "read_only") {
         auto r4 = apply_read_only_acl(site_id);
-        if (!r4.success) {
-            (void)remove_user_from_site_group(username, site_id, permission);
-            return r4;
-        }
+        if (!r4.success) { (void)remove_user_from_site_group(username, site_id, permission); return r4; }
     }
 
-    // Step 5: Bind mount — rollback: remove membership
+    // Step 5: Bind mount — rollback: reverse steps 2-4
     auto r5 = bind_mount_site(access_user_id, site_id);
     if (!r5.success) {
         if (permission == "read_only") (void)remove_read_only_acl(site_id);

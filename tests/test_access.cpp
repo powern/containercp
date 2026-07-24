@@ -2338,3 +2338,61 @@ TEST_CASE("Phase3c apply_grant rollback on bind mount failure") {
     CHECK_FALSE(r.success);
 }
 
+
+TEST_CASE("Phase3c bind_mount fails without mount inspector") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active";
+    stored.push_back(um);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    // No mount_inspector → fails closed
+    auto r = provider.bind_mount_site(1, 1);
+    CHECK_FALSE(r.success);
+}
+
+TEST_CASE("Phase3c cleanup_all_mounts fails on partial failure") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active";
+    stored.push_back(um);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "umount") return containercp::core::OperationResult{false, "busy"};
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_grants_loader([](uint64_t) {
+        std::vector<containercp::access::LocalSftpProvider::GrantInfo> g;
+        g.push_back({1, "test", "read_write"});
+        g.push_back({2, "test2", "read_only"});
+        return g;
+    });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    auto r = provider.cleanup_all_mounts(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("failed") != std::string::npos);
+}
