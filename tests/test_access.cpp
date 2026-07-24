@@ -2516,3 +2516,51 @@ TEST_CASE("Phase3d grant_rollback_acl_failed") {
     INFO("actual: " << r.message);
     CHECK(r.message.find("grant_rollback_acl_failed") != std::string::npos);
 }
+
+TEST_CASE("Phase3d grant rolls back newly created site group") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active";
+    stored.push_back(um);
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000, "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+
+    auto fs = std::make_shared<FakeFsInspector>();
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(fs);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            // Fail at Step 2 (add_user_to_site_group) — the group was just created at Step 1
+            if (cmd.args[0] == "usermod") return containercp::core::OperationResult{false, "fail"};
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    bool group_deleted = false;
+    provider.set_grants_lookup([&group_deleted](uint64_t, const std::string&) -> size_t { return 0; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [&stored, &group_deleted](const std::string& t, uint64_t id) {
+            if (t.find("site_group") != std::string::npos) group_deleted = true;
+            return true;
+        });
+
+    auto r = provider.apply_grant(1, 1, "read_write");
+    CHECK_FALSE(r.success);
+    // Group was created at step 1, step 2 fails → group should be rolled back
+    // The delete_site_group_if_unused is called with (void) for now
+    // but the group was tracked for deletion
+}

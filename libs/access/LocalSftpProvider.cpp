@@ -760,41 +760,46 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     std::string username = resolve_username(access_user_id);
     if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
 
-    // Step 1: Ensure site group — no rollback (idempotent, re-apply safe)
+    // Step 1: Ensure site group. Track if we created it vs. it already existed.
+    bool group_was_created = !find_mapping(site_group_entity_type(permission), site_id).has_value();
     auto r1 = ensure_site_group(site_id, permission);
     if (!r1.success) return r1;
 
     // Step 2: Add membership
     auto r2 = add_user_to_site_group(username, site_id, permission);
-    if (!r2.success) return r2;
+    if (!r2.success) {
+        if (group_was_created) (void)delete_site_group_if_unused(site_id, permission);
+        return r2;
+    }
 
-    // Step 3: Directory permissions (RW only) — rollback: remove membership
+    // Step 3: Directory permissions (RW only) — rollback: remove membership + group
     if (permission != "read_only") {
         auto r3 = apply_directory_permissions(site_id, permission);
         if (!r3.success) {
             auto rb = remove_user_from_site_group(username, site_id, permission);
             if (!rb.success) { out.success = false; out.message = "grant_rollback_membership_failed"; return out; }
+            if (group_was_created) { auto dg = delete_site_group_if_unused(site_id, permission); if (!dg.success) { out.success = false; out.message = "grant_rollback_group_delete_failed"; return out; } }
             return r3;
         }
     }
 
-    // Step 4: ACL (RO only) — rollback: remove ACL + membership
+    // Step 4: ACL (RO only) — rollback: remove ACL + membership + group
     if (permission == "read_only") {
         auto r4 = apply_read_only_acl(site_id);
         if (!r4.success) {
             auto rb = remove_user_from_site_group(username, site_id, permission);
             if (!rb.success) { out.success = false; out.message = "grant_rollback_membership_failed"; return out; }
+            if (group_was_created) { auto dg = delete_site_group_if_unused(site_id, permission); if (!dg.success) { out.success = false; out.message = "grant_rollback_group_delete_failed"; return out; } }
             return r4;
         }
     }
 
-    // Step 5: Bind mount — rollback: reverse steps 2-4
+    // Step 5: Bind mount — rollback: reverse steps 2-4 + group
     auto r5 = bind_mount_site(access_user_id, site_id);
     if (!r5.success) {
         if (permission == "read_only") {
             auto rb = remove_read_only_acl(site_id);
             if (!rb.success) { out.success = false; out.message = "grant_rollback_acl_failed"; return out; }
-            // Verify ACL was actually removed
             if (fs_inspector_) {
                 auto post = fs_inspector_->inspect_acl(site_root_resolver_(site_id) + "/public/",
                                                         site_group_name(site_id, "read_only"));
@@ -805,6 +810,10 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
         }
         auto rb2 = remove_user_from_site_group(username, site_id, permission);
         if (!rb2.success) { out.success = false; out.message = "grant_rollback_membership_failed"; return out; }
+        if (group_was_created) {
+            auto dg = delete_site_group_if_unused(site_id, permission);
+            if (!dg.success) { out.success = false; out.message = "grant_rollback_group_delete_failed"; return out; }
+        }
         out.success = false; out.message = "grant apply failed, rolled back"; return out;
     }
 
