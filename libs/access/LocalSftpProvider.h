@@ -34,6 +34,30 @@ public:
     void set_mapping_persistence(LoadMappingsFn load, SaveMappingFn save,
                                  DeleteMappingFn remove);
 
+    // Returns how many grants reference a given site group.
+    // Used to determine if a group can be safely deleted.
+    using GrantsForSiteFn = std::function<size_t(uint64_t site_id, const std::string& permission)>;
+    void set_grants_lookup(GrantsForSiteFn fn);
+
+    // --- Phase 3a: Site Grant Groups ---
+
+    // Ensure a site-<id>-rw or site-<id>-ro group exists. Idempotent.
+    core::OperationResult ensure_site_group(uint64_t site_id, const std::string& permission);
+
+    // Add a managed user to a site group's supplementary membership.
+    core::OperationResult add_user_to_site_group(const std::string& username,
+                                                  uint64_t site_id,
+                                                  const std::string& permission);
+
+    // Remove a managed user from a site group.
+    core::OperationResult remove_user_from_site_group(const std::string& username,
+                                                       uint64_t site_id,
+                                                       const std::string& permission);
+
+    // Delete a site group if no grants reference it.
+    core::OperationResult delete_site_group_if_unused(uint64_t site_id,
+                                                       const std::string& permission);
+
     core::OperationResult create_user(const AccessUser& user) override;
     core::OperationResult remove_user(const AccessUser& user) override;
     core::OperationResult enable_user(const AccessUser& user) override;
@@ -53,6 +77,11 @@ private:
     void rollback_create(const std::string& username, const std::string& groupname,
                          uint64_t access_user_id);
 
+    // Resolve entity_type from permission string
+    static std::string site_group_entity_type(const std::string& permission);
+    // Build site group name: "site-<id>-rw" or "site-<id>-ro"
+    static std::string site_group_name(uint64_t site_id, const std::string& permission);
+
     logger::Logger& logger_;
     std::shared_ptr<SystemIdentityInspector> inspector_;
     std::unique_ptr<SystemAccountCommandRunner> runner_;
@@ -60,6 +89,8 @@ private:
     LoadMappingsFn load_mappings_;
     SaveMappingFn save_mapping_;
     DeleteMappingFn delete_mapping_;
+
+    GrantsForSiteFn grants_lookup_;
 
     bool enabled_ = false;
     std::string managed_home_root_ = "/srv/containercp/users";

@@ -63,6 +63,10 @@ void LocalSftpProvider::set_mapping_persistence(LoadMappingsFn load, SaveMapping
     delete_mapping_ = std::move(remove);
 }
 
+void LocalSftpProvider::set_grants_lookup(GrantsForSiteFn fn) {
+    grants_lookup_ = std::move(fn);
+}
+
 // --- helpers ---
 
 bool LocalSftpProvider::disabled_result(core::OperationResult& out, const char* op) const {
@@ -133,6 +137,189 @@ void LocalSftpProvider::rollback_create(const std::string& username,
                             std::to_string(access_user_id));
         }
     }
+}
+
+// --- Phase 3a: Site Grant Groups ---
+
+std::string LocalSftpProvider::site_group_entity_type(const std::string& permission) {
+    if (permission == "read_only") return "site_group_ro";
+    return "site_group_rw"; // read_write, deploy
+}
+
+std::string LocalSftpProvider::site_group_name(uint64_t site_id, const std::string& permission) {
+    std::string suffix = (permission == "read_only") ? "-ro" : "-rw";
+    return "site-" + std::to_string(site_id) + suffix;
+}
+
+core::OperationResult LocalSftpProvider::ensure_site_group(uint64_t site_id,
+                                                            const std::string& permission) {
+    core::OperationResult out;
+    if (!enabled_) return disabled_result(out, "ensure_site_group"), out;
+    if (!inspector_ || !runner_ || !allocator_) {
+        out.success = false; out.message = "provider dependencies not configured"; return out;
+    }
+
+    std::string groupname = site_group_name(site_id, permission);
+    std::string etype = site_group_entity_type(permission);
+
+    // Check if mapping already exists (idempotent)
+    auto existing = find_mapping(etype, site_id);
+    if (existing.has_value() && existing->state == "active") {
+        // Group already provisioned — verify OS state
+        auto obs = inspector_->lookup_group(groupname);
+        if (obs.exists && obs.gid == existing->gid) {
+            out.success = true; out.message = "site group already exists: " + groupname; return out;
+        }
+        // Stale or mismatched — allow re-provision
+    }
+
+    // Unmanaged conflict: group exists without mapping
+    if (inspector_->group_exists(groupname)) {
+        out.success = false; out.message = "unmanaged_group_conflict: " + groupname; return out;
+    }
+
+    // Allocate GID
+    auto persisted = load_mappings_ ? load_mappings_() : std::vector<SystemAccountMapping>{};
+    auto alloc = allocator_->allocate(
+        [this](int id) { return inspector_->uid_occupied(id); },
+        [this](int id) { return inspector_->gid_occupied(id); },
+        persisted);
+    if (!alloc.success) {
+        out.success = false; out.message = alloc.error; return out;
+    }
+
+    // Persist provisioning mapping
+    SystemAccountMapping mapping;
+    mapping.entity_type = etype;
+    mapping.entity_id   = site_id;
+    mapping.gid         = alloc.gid;
+    mapping.username    = groupname;
+    mapping.groupname   = groupname;
+    mapping.state       = "provisioning";
+    if (save_mapping_ && !save_mapping_(mapping)) {
+        out.success = false; out.message = "failed to persist site group mapping"; return out;
+    }
+
+    // Create OS group
+    auto gr = runner_->groupadd(groupname, alloc.gid);
+    if (!gr.success) {
+        if (delete_mapping_) delete_mapping_(etype, site_id);
+        out.success = false; out.message = "groupadd failed: " + groupname; return out;
+    }
+
+    // Verify postcondition
+    auto obs = inspector_->lookup_group(groupname);
+    if (!obs.exists || obs.gid != alloc.gid) {
+        mapping.state = "error";
+        if (save_mapping_) save_mapping_(mapping);
+        out.success = false; out.message = "post-create group verification failed"; return out;
+    }
+
+    // Mark active
+    mapping.state = "active";
+    if (save_mapping_ && !save_mapping_(mapping)) {
+        out.success = false; out.message = "failed to save active state"; return out;
+    }
+
+    out.success = true;
+    out.message = "site group created: " + groupname;
+    return out;
+}
+
+core::OperationResult LocalSftpProvider::add_user_to_site_group(const std::string& username,
+                                                                 uint64_t site_id,
+                                                                 const std::string& permission) {
+    core::OperationResult out;
+    if (!enabled_) return disabled_result(out, "add_user_to_site_group"), out;
+    if (!inspector_ || !runner_) {
+        out.success = false; out.message = "provider dependencies not configured"; return out;
+    }
+
+    std::string groupname = site_group_name(site_id, permission);
+
+    // Verify group exists and is managed
+    auto mapping = find_mapping(site_group_entity_type(permission), site_id);
+    if (!mapping.has_value()) {
+        out.success = false; out.message = "site group not provisioned: " + groupname; return out;
+    }
+
+    // Verify user exists
+    if (!inspector_->user_exists(username)) {
+        out.success = false; out.message = "user not found: " + username; return out;
+    }
+
+    // Add to supplementary group
+    auto result = runner_->usermod_add_group(username, groupname);
+    if (!result.success) {
+        out.success = false; out.message = "usermod failed for " + username + " -> " + groupname; return out;
+    }
+
+    out.success = true;
+    out.message = "user added to site group: " + username + " -> " + groupname;
+    return out;
+}
+
+core::OperationResult LocalSftpProvider::remove_user_from_site_group(const std::string& username,
+                                                                      uint64_t site_id,
+                                                                      const std::string& permission) {
+    core::OperationResult out;
+    if (!enabled_) return disabled_result(out, "remove_user_from_site_group"), out;
+    if (!inspector_ || !runner_) {
+        out.success = false; out.message = "provider dependencies not configured"; return out;
+    }
+
+    std::string groupname = site_group_name(site_id, permission);
+
+    auto result = runner_->usermod_remove_group(username, groupname);
+    if (!result.success) {
+        out.success = false; out.message = "gpasswd failed for " + username + " -> " + groupname; return out;
+    }
+
+    out.success = true;
+    out.message = "user removed from site group: " + username + " -> " + groupname;
+    return out;
+}
+
+core::OperationResult LocalSftpProvider::delete_site_group_if_unused(uint64_t site_id,
+                                                                      const std::string& permission) {
+    core::OperationResult out;
+    if (!enabled_) return disabled_result(out, "delete_site_group"), out;
+    if (!inspector_ || !runner_) {
+        out.success = false; out.message = "provider dependencies not configured"; return out;
+    }
+
+    std::string etype = site_group_entity_type(permission);
+    std::string groupname = site_group_name(site_id, permission);
+
+    // Check if any grants still reference this group
+    if (grants_lookup_) {
+        size_t grant_count = grants_lookup_(site_id, permission);
+        if (grant_count > 0) {
+            out.success = false;
+            out.message = "site group still has " + std::to_string(grant_count) + " grants: " + groupname;
+            return out;
+        }
+    }
+
+    // Verify mapping exists (ownership proof)
+    auto mapping = find_mapping(etype, site_id);
+    if (!mapping.has_value()) {
+        // Group doesn't exist in mappings — nothing to delete
+        out.success = true; out.message = "site group mapping not found: " + groupname; return out;
+    }
+
+    // Delete OS group
+    auto gd = runner_->groupdel(groupname);
+    if (!gd.success) {
+        out.success = false; out.message = "groupdel failed: " + groupname; return out;
+    }
+
+    // Delete mapping
+    if (delete_mapping_) delete_mapping_(etype, site_id);
+
+    out.success = true;
+    out.message = "site group deleted: " + groupname;
+    return out;
 }
 
 // --- lifecycle ---

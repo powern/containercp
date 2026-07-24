@@ -883,3 +883,287 @@ TEST_CASE("Provider verify_ownership rejects UID outside managed range") {
     CHECK_FALSE(result.success);
     CHECK(result.message.find("unmanaged") != std::string::npos);
 }
+
+/* ===== PHASE 3a: SITE GRANT GROUPS ===== */
+
+TEST_CASE("Site group ensure_site_group creates RW group idempotently") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) {
+                if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; }
+            }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    auto r1 = provider.ensure_site_group(1, "read_write");
+    CHECK(r1.success);
+    CHECK_FALSE(stored.empty());
+    CHECK(stored[0].entity_type == "site_group_rw");
+    CHECK(stored[0].username == "site-1-rw");
+    CHECK(stored[0].state == "active");
+
+    size_t before = stored.size();
+    auto r2 = provider.ensure_site_group(1, "read_write");
+    CHECK(r2.success);
+    CHECK(stored.size() == before);
+}
+
+TEST_CASE("Site group ensure_site_group creates RO group") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    auto r = provider.ensure_site_group(2, "read_only");
+    CHECK(r.success);
+    CHECK(stored[0].entity_type == "site_group_ro");
+    CHECK(stored[0].username == "site-2-ro");
+}
+
+TEST_CASE("Site group allocates unique GIDs per group") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) {
+                if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; }
+            }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    provider.ensure_site_group(1, "read_write");
+    provider.ensure_site_group(1, "read_only");
+    provider.ensure_site_group(2, "read_write");
+    CHECK(stored.size() == 3);
+    CHECK(stored[0].gid != stored[1].gid);
+    CHECK(stored[1].gid != stored[2].gid);
+    CHECK(stored[0].gid != stored[2].gid);
+}
+
+TEST_CASE("Site group rejects unmanaged conflict") {
+    auto inspector = std::make_shared<FakeInspector>();
+    inspector->groups_["site-5-rw"] = {true, "site-5-rw", 99999};
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    auto r = provider.ensure_site_group(5, "read_write");
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("unmanaged_group_conflict") != std::string::npos);
+    CHECK(stored.empty());
+}
+
+TEST_CASE("Site group add_user_to_site_group adds membership") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping m;
+    m.entity_type = "site_group_rw"; m.entity_id = 1;
+    m.gid = 20001; m.username = "site-1-rw"; m.groupname = "site-1-rw";
+    m.state = "active";
+    stored.push_back(m);
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 21000,
+                                    "/srv/containercp/users/au-dev",
+                                    "/usr/sbin/nologin", true};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    auto r = provider.add_user_to_site_group("au-dev", 1, "read_write");
+    CHECK(r.success);
+}
+
+TEST_CASE("Site group add_user rejects unprovisioned group") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 21000,
+                                    "/srv/containercp/users/au-dev",
+                                    "/usr/sbin/nologin", true};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    auto r = provider.add_user_to_site_group("au-dev", 99, "read_write");
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("not provisioned") != std::string::npos);
+}
+
+TEST_CASE("Site group delete removes orphaned group") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping m;
+    m.entity_type = "site_group_rw"; m.entity_id = 1;
+    m.gid = 20001; m.username = "site-1-rw"; m.groupname = "site-1-rw";
+    m.state = "active";
+    stored.push_back(m);
+    inspector->groups_["site-1-rw"] = {true, "site-1-rw", 20001};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_grants_lookup([](uint64_t, const std::string&) -> size_t { return 0; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { stored.clear(); return true; });
+
+    auto r = provider.delete_site_group_if_unused(1, "read_write");
+    CHECK(r.success);
+    CHECK(stored.empty());
+}
+
+TEST_CASE("Site group delete refuses when grants exist") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping m;
+    m.entity_type = "site_group_rw"; m.entity_id = 1;
+    m.gid = 20001; m.username = "site-1-rw"; m.groupname = "site-1-rw";
+    m.state = "active";
+    stored.push_back(m);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_grants_lookup([](uint64_t, const std::string&) -> size_t { return 3; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    auto r = provider.delete_site_group_if_unused(1, "read_write");
+    CHECK_FALSE(r.success);
+    CHECK_FALSE(stored.empty());
+}
+
+TEST_CASE("Site group full lifecycle: create-add-remove-delete") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    inspector->users_["au-life"] = {true, "au-life", 10000, 21000,
+                                     "/srv/containercp/users/au-life",
+                                     "/usr/sbin/nologin", true};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_grants_lookup([](uint64_t, const std::string&) -> size_t { return 0; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { stored.clear(); return true; });
+
+    CHECK(provider.ensure_site_group(10, "read_write").success);
+    CHECK(stored.back().state == "active");
+    CHECK(provider.add_user_to_site_group("au-life", 10, "read_write").success);
+    CHECK(provider.remove_user_from_site_group("au-life", 10, "read_write").success);
+    CHECK(provider.delete_site_group_if_unused(10, "read_write").success);
+    CHECK(stored.empty());
+}
