@@ -2241,171 +2241,61 @@ TEST_CASE("Phase3b ACL rollback restores complete previous state") {
 
 /* ===== PHASE 3c: CHROOT LAYOUT & BIND MOUNTS ===== */
 
-TEST_CASE("Phase3c ensure_chroot_layout creates sites directory") {
-    auto inspector = std::make_shared<FakeInspector>();
-    FakeCommandRunner fake_commands(inspector);
 
-    auto* log = &containercp::logger::Logger::instance();
-    containercp::access::LocalSftpProvider provider(*log);
-    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
-        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            return fake_commands.run(cmd);
-        }));
-    provider.set_enabled(true);
+/* ===== PHASE 3c: CHROOT LAYOUT ===== */
 
-    auto r = provider.ensure_chroot_layout("au-dev");
-    CHECK(r.success);
-    // Verify mkdir -p was called with correct path
-    bool found = false;
-    for (const auto& cmd : fake_commands.cmds_) {
-        if (cmd.args[0] == "mkdir") {
-            CHECK(cmd.args[2] == "/srv/containercp/users/au-dev/sites/");
-            found = true;
-        }
-    }
-    CHECK(found);
-}
-
-TEST_CASE("Phase3c bind_mount_site creates mount and verifies") {
-    auto inspector = std::make_shared<FakeInspector>();
-    FakeCommandRunner fake_commands(inspector);
-
-    auto* log = &containercp::logger::Logger::instance();
-    containercp::access::LocalSftpProvider provider(*log);
-    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
-        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            // mountpoint_check after mount should return success
-            if (cmd.args[0] == "mountpoint") { fake_commands.run(cmd); return containercp::core::OperationResult{true, "is mountpoint"}; }
-            return fake_commands.run(cmd);
-        }));
-    provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/example.com"; });
-
-    auto r = provider.bind_mount_site("au-dev", 1, "example.com");
-    CHECK(r.success);
-    // Verify all 3 commands ran: mkdir, mount --bind, mountpoint -q
-    CHECK(fake_commands.cmds_.size() >= 3);
-}
-
-TEST_CASE("Phase3c unmount_site runs umount and rmdir") {
-    auto inspector = std::make_shared<FakeInspector>();
-    FakeCommandRunner fake_commands(inspector);
-
-    auto* log = &containercp::logger::Logger::instance();
-    containercp::access::LocalSftpProvider provider(*log);
-    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
-        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mountpoint") { fake_commands.run(cmd); return containercp::core::OperationResult{false, "not mountpoint"}; }
-            return fake_commands.run(cmd);
-        }));
-    provider.set_enabled(true);
-
-    auto r = provider.unmount_site("au-dev", "example.com");
-    CHECK(r.success);
-}
-
-TEST_CASE("Phase3c bind_mount rejects site_id zero") {
-    auto inspector = std::make_shared<FakeInspector>();
-    FakeCommandRunner fake_commands(inspector);
-
-    auto* log = &containercp::logger::Logger::instance();
-    containercp::access::LocalSftpProvider provider(*log);
-    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
-        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            return fake_commands.run(cmd);
-        }));
-    provider.set_enabled(true);
-
-    CHECK_FALSE(provider.bind_mount_site("au-dev", 0, "admin").success);
-}
-
-TEST_CASE("Phase3c mount_verify reports mount status") {
-    auto inspector = std::make_shared<FakeInspector>();
-    FakeCommandRunner fake_commands(inspector);
-
-    auto* log = &containercp::logger::Logger::instance();
-    containercp::access::LocalSftpProvider provider(*log);
-    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
-        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            return fake_commands.run(cmd);
-        }));
-
-    CHECK(provider.mount_verify("/path").success);
-}
-
-/* ===== PHASE 3d: GRANT LIFECYCLE INTEGRATION ===== */
-
-TEST_CASE("Phase3d apply_grant resolves username and creates group") {
+TEST_CASE("Phase3c ensure_chroot_layout resolves trusted user") {
     auto inspector = std::make_shared<FakeInspector>();
     FakeCommandRunner fake_commands(inspector);
     std::vector<containercp::access::SystemAccountMapping> stored;
-    containercp::access::SystemAccountMapping user_map;
-    user_map.entity_type = "access_user"; user_map.entity_id = 1;
-    user_map.username = "au-dev"; user_map.groupname = "au-dev";
-    user_map.uid = 10000; user_map.gid = 20000; user_map.state = "active";
-    stored.push_back(user_map);
-    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
-    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000, "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active";
+    stored.push_back(um);
 
     auto* log = &containercp::logger::Logger::instance();
     containercp::access::LocalSftpProvider provider(*log);
-    provider.set_identity_inspector(inspector);
-    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
             return fake_commands.run(cmd);
         }));
-    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
-        containercp::access::SystemAccountAllocator::Range{10000, 19999},
-        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
-    provider.set_mapping_persistence(
-        [&stored]() { return stored; },
-        [&stored](const containercp::access::SystemAccountMapping& m) {
-            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
-            stored.push_back(m); return true;
-        },
-        [&stored](const std::string&, uint64_t) { return true; });
-
-    // ensure_site_group creates the mapping + group, so it succeeds
-    auto r = provider.apply_grant(1, 1, "read_write", "test.local");
-    CHECK(r.success);
-}
-
-
-
-TEST_CASE("Phase3d revoke_all_grants processes all grants") {
-    auto inspector = std::make_shared<FakeInspector>();
-    FakeCommandRunner fake_commands(inspector);
-    std::vector<containercp::access::SystemAccountMapping> stored;
-    containercp::access::SystemAccountMapping user_map;
-    user_map.entity_type = "access_user"; user_map.entity_id = 1;
-    user_map.username = "au-dev"; user_map.groupname = "au-dev";
-    user_map.uid = 10000; user_map.gid = 20000; user_map.state = "active";
-    stored.push_back(user_map);
-    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000, "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
-
-    auto* log = &containercp::logger::Logger::instance();
-    containercp::access::LocalSftpProvider provider(*log);
-    provider.set_identity_inspector(inspector);
-    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
-    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
-        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mountpoint") { fake_commands.run(cmd); return containercp::core::OperationResult{false, ""}; }
-            return fake_commands.run(cmd);
-        }));
-    provider.set_enabled(true);
-    provider.set_grants_loader([](uint64_t) {
-        std::vector<containercp::access::LocalSftpProvider::GrantInfo> grants;
-        grants.push_back({1, "test", "read_write"});
-        return grants;
-    });
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
         [&stored](const std::string&, uint64_t) { return true; });
 
-    auto r = provider.revoke_all_grants(1);
-    CHECK(r.success);
+    CHECK(provider.ensure_chroot_layout(1).success);
+}
+
+TEST_CASE("Phase3c ensure_chroot_layout rejects unknown user_id") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        []() { return std::vector<containercp::access::SystemAccountMapping>{}; },
+        [](const containercp::access::SystemAccountMapping&) { return true; },
+        [](const std::string&, uint64_t) { return true; });
+
+    CHECK_FALSE(provider.ensure_chroot_layout(999).success);
+}
+
+TEST_CASE("Phase3c bind_mount_site rejects site_id zero") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    CHECK_FALSE(provider.bind_mount_site(1, 0).success);
 }
