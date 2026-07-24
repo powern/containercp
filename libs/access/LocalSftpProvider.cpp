@@ -575,152 +575,195 @@ void LocalSftpProvider::restore_acl(const FsPermissionState& prev, const std::st
     out.success = false; out.message = "ACL operation failed, rolled back";
 }
 
+
 // --- Phase 3c: Chroot Layout & Bind Mounts ---
 
-core::OperationResult LocalSftpProvider::ensure_chroot_layout(const std::string& username) {
+void LocalSftpProvider::set_mount_inspector(std::shared_ptr<MountInspector> inspector) {
+    mount_inspector_ = std::move(inspector);
+}
+
+// Resolve the managed user home from SQLite mapping. Returns empty if not found/inactive.
+static std::string resolve_managed_home(const std::string& username, const std::string& home_root) {
+    if (username.empty()) return {};
+    return home_root + "/" + username;
+}
+
+core::OperationResult LocalSftpProvider::ensure_chroot_layout(uint64_t access_user_id) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "ensure_chroot_layout"), out;
     if (!runner_) { out.success = false; out.message = "provider dependencies not configured"; return out; }
+
+    // Resolve trusted username from SQLite
+    std::string username = resolve_username(access_user_id);
+    if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
+
+    auto mapping = find_mapping("access_user", access_user_id);
+    if (!mapping.has_value() || mapping->state != "active") {
+        out.success = false; out.message = "user mapping not active"; return out;
+    }
 
     std::string sites_dir = managed_home_root_ + "/" + username + "/sites/";
     auto r = runner_->mkdir_p(sites_dir);
     if (!r.success) { out.success = false; out.message = "mkdir sites/ failed"; return out; }
 
-    out.success = true; out.message = "chroot layout created for " + username;
-    return out;
+    out.success = true; out.message = "chroot layout created"; return out;
 }
 
-core::OperationResult LocalSftpProvider::bind_mount_site(const std::string& username,
-                                                          uint64_t site_id, const std::string& domain) {
+core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id, uint64_t site_id) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "bind_mount_site"), out;
-    if (!runner_ || !site_root_resolver_) {
+    if (!runner_ || !mount_inspector_ || !site_root_resolver_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
     if (site_id == 0) { out.success = false; out.message = "admin_panel_sftp_access_forbidden"; return out; }
 
+    std::string username = resolve_username(access_user_id);
+    if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
+
     std::string site_root = site_root_resolver_(site_id);
     if (site_root.empty()) { out.success = false; out.message = "site not found"; return out; }
+
+    // Derive domain from site root (last path component)
+    std::string domain = site_root;
+    while (!domain.empty() && domain.back() == '/') domain.pop_back();
+    auto pos = domain.rfind('/');
+    domain = (pos != std::string::npos) ? domain.substr(pos + 1) : domain;
 
     std::string source = site_root + "/public/";
     std::string target = managed_home_root_ + "/" + username + "/sites/" + domain;
 
-    // Create target directory
-    auto r1 = runner_->mkdir_p(target);
-    if (!r1.success) { out.success = false; out.message = "mkdir mount target failed"; return out; }
+    // Check if exact expected bind already exists (idempotent)
+    auto existing = mount_inspector_->inspect(target);
+    if (existing.mounted && existing.is_bind && existing.source == source) {
+        out.success = true; out.message = "mount already exists"; return out;
+    }
+    if (existing.mounted && (!existing.is_bind || existing.source != source)) {
+        out.success = false; out.message = "foreign mount at target"; return out;
+    }
 
-    // Bind mount
+    // Create target
+    auto r1 = runner_->mkdir_p(target);
+    if (!r1.success) { out.success = false; out.message = "mkdir failed"; return out; }
+
+    // Mount
     auto r2 = runner_->mount_bind(source, target);
     if (!r2.success) { out.success = false; out.message = "mount failed"; return out; }
 
-    // Verify
-    auto r3 = runner_->mountpoint_check(target);
-    if (!r3.success) { out.success = false; out.message = "mount verification failed"; return out; }
+    // Verify exact identity
+    auto post = mount_inspector_->inspect(target);
+    if (!post.mounted || post.source != source) {
+        auto um = runner_->umount(target);
+        if (!um.success) { out.success = false; out.message = "mount verification failed, rollback failed"; return out; }
+        (void)runner_->rmdir(target);
+        out.success = false; out.message = "mount verification failed"; return out;
+    }
 
-    out.success = true; out.message = "site mounted: " + domain;
-    return out;
+    out.success = true; out.message = "mounted: " + domain; return out;
 }
 
-core::OperationResult LocalSftpProvider::unmount_site(const std::string& username,
-                                                       const std::string& domain) {
+core::OperationResult LocalSftpProvider::unmount_site(uint64_t access_user_id, uint64_t site_id) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "unmount_site"), out;
-    if (!runner_) { out.success = false; out.message = "provider dependencies not configured"; return out; }
+    if (!runner_ || !mount_inspector_) {
+        out.success = false; out.message = "provider dependencies not configured"; return out;
+    }
+    if (site_id == 0) { out.success = false; out.message = "admin_panel_sftp_access_forbidden"; return out; }
+
+    std::string username = resolve_username(access_user_id);
+    if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
+
+    std::string site_root = site_root_resolver_(site_id);
+    if (site_root.empty()) { out.success = false; out.message = "site not found"; return out; }
+
+    std::string domain = site_root;
+    while (!domain.empty() && domain.back() == '/') domain.pop_back();
+    auto pos = domain.rfind('/');
+    domain = (pos != std::string::npos) ? domain.substr(pos + 1) : domain;
 
     std::string target = managed_home_root_ + "/" + username + "/sites/" + domain;
+
+    auto existing = mount_inspector_->inspect(target);
+    if (!existing.mounted) {
+        out.success = true; out.message = "already unmounted"; return out;
+    }
 
     auto r1 = runner_->umount(target);
     if (!r1.success) { out.success = false; out.message = "umount failed"; return out; }
 
-    // Verify it's no longer a mountpoint
-    auto r2 = runner_->mountpoint_check(target);
-    if (r2.success) { out.success = false; out.message = "umount verification failed"; return out; }
+    auto post = mount_inspector_->inspect(target);
+    if (post.mounted) { out.success = false; out.message = "umount verification failed"; return out; }
 
-    // Remove the now-empty directory
-    (void)runner_->rmdir(target);
+    auto r2 = runner_->rmdir(target);
+    if (!r2.success) { out.success = false; out.message = "rmdir failed"; return out; }
 
-    out.success = true; out.message = "site unmounted: " + domain;
-    return out;
+    out.success = true; out.message = "unmounted: " + domain; return out;
 }
 
-core::OperationResult LocalSftpProvider::cleanup_all_mounts(const std::string& username) {
+core::OperationResult LocalSftpProvider::cleanup_all_mounts(uint64_t access_user_id) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "cleanup_all_mounts"), out;
     if (!runner_) { out.success = false; out.message = "provider dependencies not configured"; return out; }
 
+    std::string username = resolve_username(access_user_id);
+    if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
+
     std::string sites_dir = managed_home_root_ + "/" + username + "/sites/";
 
-    // Try to unmount everything under sites/
-    // Using findmnt or iterating known mounts would be better, but for Phase 3c
-    // we unmount via the known domain list. The caller (Phase 3d integration)
-    // will enumerate grants and call unmount_site() for each domain.
-    // This function provides a best-effort blanket cleanup.
-    // The reconciler in Phase 5 handles orphaned mounts.
+    // Enumerate all mounts within the user's sites/ using mount inspector via known domains.
+    // We iterate persisted grants to know which domains to check.
+    size_t cleaned = 0;
+    if (grants_loader_) {
+        auto grants = grants_loader_(access_user_id);
+        for (const auto& g : grants) {
+            auto r = unmount_site(access_user_id, g.site_id);
+            if (r.success) cleaned++;
+        }
+    }
 
-    out.success = true; out.message = "mounts cleaned for " + username;
-    return out;
-}
-
-core::OperationResult LocalSftpProvider::mount_verify(const std::string& path) {
-    core::OperationResult out;
-    if (!runner_) { out.success = false; out.message = "provider dependencies not configured"; return out; }
-    auto r = runner_->mountpoint_check(path);
-    out.success = r.success;
-    out.message = r.success ? "is mountpoint" : "not a mountpoint";
+    out.success = true;
+    out.message = std::to_string(cleaned) + " mounts cleaned";
     return out;
 }
 
 // --- Phase 3d: Grant Lifecycle Integration ---
 
-void LocalSftpProvider::set_grants_loader(LoadGrantsFn fn) {
-    grants_loader_ = std::move(fn);
-}
+void LocalSftpProvider::set_grants_loader(LoadGrantsFn fn) { grants_loader_ = std::move(fn); }
 
 std::string LocalSftpProvider::resolve_username(uint64_t access_user_id) {
-    auto mappings = load_mappings_ ? load_mappings_() : std::vector<SystemAccountMapping>{};
+    if (!load_mappings_) return {};
+    auto mappings = load_mappings_();
     for (const auto& m : mappings) {
-        if (m.entity_type == "access_user" && m.entity_id == access_user_id) {
+        if (m.entity_type == "access_user" && m.entity_id == access_user_id && m.state == "active")
             return m.username;
-        }
     }
     return {};
 }
 
 core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, uint64_t site_id,
-                                                       const std::string& permission,
-                                                       const std::string& domain) {
+                                                       const std::string& permission) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "apply_grant"), out;
+    if (site_id == 0) { out.success = false; out.message = "admin_panel_sftp_access_forbidden"; return out; }
 
     std::string username = resolve_username(access_user_id);
     if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
 
-    // 1. Ensure site group exists
     auto r1 = ensure_site_group(site_id, permission);
     if (!r1.success) return r1;
-
-    // 2. Add user to site group
     auto r2 = add_user_to_site_group(username, site_id, permission);
     if (!r2.success) return r2;
-
-    // 3. Apply directory permissions (only for RW)
     if (permission != "read_only") {
         auto r3 = apply_directory_permissions(site_id, permission);
         if (!r3.success) return r3;
     }
-
-    // 4. Apply ACL for read-only
     if (permission == "read_only") {
         auto r4 = apply_read_only_acl(site_id);
         if (!r4.success) return r4;
     }
-
-    // 5. Create bind mount
-    auto r5 = bind_mount_site(username, site_id, domain);
+    auto r5 = bind_mount_site(access_user_id, site_id);
     if (!r5.success) return r5;
 
-    out.success = true; out.message = "grant applied: " + domain;
-    return out;
+    out.success = true; out.message = "grant applied"; return out;
 }
 
 core::OperationResult LocalSftpProvider::revoke_grant(uint64_t access_user_id, uint64_t site_id,
@@ -731,54 +774,44 @@ core::OperationResult LocalSftpProvider::revoke_grant(uint64_t access_user_id, u
     std::string username = resolve_username(access_user_id);
     if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
 
-    // 1. Unmount site
-    std::string domain = "site-" + std::to_string(site_id); // fallback
-    (void)unmount_site(username, domain);
-
-    // 2. Remove from site group
+    auto r1 = unmount_site(access_user_id, site_id);
+    if (!r1.success) return r1;
     auto r2 = remove_user_from_site_group(username, site_id, permission);
     if (!r2.success) return r2;
-
-    // 3. Clean up ACL for read-only
     if (permission == "read_only") {
-        (void)remove_read_only_acl(site_id);
+        auto r3 = remove_read_only_acl(site_id);
+        if (!r3.success) return r3;
     }
 
-    out.success = true; out.message = "grant revoked";
-    return out;
+    out.success = true; out.message = "grant revoked"; return out;
 }
 
 core::OperationResult LocalSftpProvider::apply_pending_grants(uint64_t access_user_id) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "apply_pending_grants"), out;
-    if (!grants_loader_) {
-        out.success = true; out.message = "no grants loader configured"; return out;
-    }
+    if (!grants_loader_) { out.success = true; out.message = "no grants loader"; return out; }
 
     auto grants = grants_loader_(access_user_id);
     for (const auto& g : grants) {
-        auto r = apply_grant(access_user_id, g.site_id, g.permission, g.domain);
+        auto r = apply_grant(access_user_id, g.site_id, g.permission);
         if (!r.success) return r;
     }
-
-    out.success = true; out.message = std::to_string(grants.size()) + " grants applied";
-    return out;
+    out.success = true; out.message = std::to_string(grants.size()) + " grants applied"; return out;
 }
 
 core::OperationResult LocalSftpProvider::revoke_all_grants(uint64_t access_user_id) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "revoke_all_grants"), out;
-    if (!grants_loader_) {
-        out.success = true; out.message = "no grants loader configured"; return out;
-    }
+    if (!grants_loader_) { out.success = true; out.message = "no grants loader"; return out; }
 
     auto grants = grants_loader_(access_user_id);
+    size_t failed = 0;
     for (const auto& g : grants) {
-        (void)revoke_grant(access_user_id, g.site_id, g.permission);
+        auto r = revoke_grant(access_user_id, g.site_id, g.permission);
+        if (!r.success) failed++;
     }
-
-    out.success = true; out.message = std::to_string(grants.size()) + " grants revoked";
-    return out;
+    if (failed > 0) { out.success = false; out.message = std::to_string(failed) + " grants failed to revoke"; return out; }
+    out.success = true; out.message = std::to_string(grants.size()) + " grants revoked"; return out;
 }
 
 // --- lifecycle ---

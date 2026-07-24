@@ -3,6 +3,7 @@
 
 #include "access/AccessProvider.h"
 #include "access/FilesystemPermissionInspector.h"
+#include "access/MountInspector.h"
 #include "access/SystemAccountAllocator.h"
 #include "access/SystemAccountCommandRunner.h"
 #include "access/SystemAccountMapping.h"
@@ -80,45 +81,37 @@ public:
 
     // --- Phase 3c: Chroot Layout & Bind Mounts ---
 
-    // Create the sites/ directory under the user chroot home.
-    core::OperationResult ensure_chroot_layout(const std::string& username);
+    // Mount inspector is mandatory for Phase 3c operations.
+    void set_mount_inspector(std::shared_ptr<MountInspector> inspector);
 
-    // Bind-mount a site's public/ into the user's chroot home.
-    core::OperationResult bind_mount_site(const std::string& username,
-                                           uint64_t site_id, const std::string& domain);
+    // Create the full chroot layout under the managed user home.
+    // user_id must resolve to an active SystemAccountMapping.
+    core::OperationResult ensure_chroot_layout(uint64_t access_user_id);
+
+    // Bind-mount a site's public/ into the user's chroot.
+    // Resolves username, home, domain from trusted SQLite state.
+    core::OperationResult bind_mount_site(uint64_t access_user_id, uint64_t site_id);
 
     // Unmount a site from the user's chroot.
-    core::OperationResult unmount_site(const std::string& username,
-                                        const std::string& domain);
+    core::OperationResult unmount_site(uint64_t access_user_id, uint64_t site_id);
 
-    // Unmount all site bind mounts for a user (called before remove_user).
-    core::OperationResult cleanup_all_mounts(const std::string& username);
-
-    // Verify a path is a mountpoint.
-    core::OperationResult mount_verify(const std::string& path);
+    // Unmount all managed bind mounts for a user (before remove_user).
+    core::OperationResult cleanup_all_mounts(uint64_t access_user_id);
 
     // --- Phase 3d: Grant Lifecycle Integration ---
 
-    // Callback: returns (site_id, domain, permission) for all grants of a user.
     struct GrantInfo { uint64_t site_id; std::string domain; std::string permission; };
     using LoadGrantsFn = std::function<std::vector<GrantInfo>(uint64_t access_user_id)>;
     void set_grants_loader(LoadGrantsFn fn);
 
-    // Apply a single grant: group membership + permission + ACL + bind mount.
     core::OperationResult apply_grant(uint64_t access_user_id, uint64_t site_id,
-                                       const std::string& permission, const std::string& domain);
-
-    // Revoke a single grant: unmount + remove from group + cleanup ACL.
+                                       const std::string& permission);
     core::OperationResult revoke_grant(uint64_t access_user_id, uint64_t site_id,
                                         const std::string& permission);
-
-    // Apply all pending grants for a user (called at end of create_user).
     core::OperationResult apply_pending_grants(uint64_t access_user_id);
-
-    // Revoke all grants for a user (called at start of remove_user).
     core::OperationResult revoke_all_grants(uint64_t access_user_id);
 
-    // Resolve username from access_user_id via the system_accounts mapping.
+    // Resolve username from access_user_id via system_accounts mapping.
     std::string resolve_username(uint64_t access_user_id);
 
     core::OperationResult create_user(const AccessUser& user) override;
@@ -161,6 +154,7 @@ private:
     LoadGrantsFn grants_loader_;
 
     std::shared_ptr<FilesystemPermissionInspector> fs_inspector_;
+    std::shared_ptr<MountInspector> mount_inspector_;
 
     bool enabled_ = false;
     std::string managed_home_root_ = "/srv/containercp/users";
