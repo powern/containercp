@@ -772,8 +772,15 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
         return r2;
     }
 
-    // Step 3: Directory permissions (RW only) — rollback: remove membership + group
+    // Step 3: Directory permissions (RW only) — capture original state for rollback
+    int original_gid = -1;
+    int original_mode = -1;
     if (permission != "read_only") {
+        if (fs_inspector_) {
+            std::string pub = site_root_resolver_(site_id) + "/public/";
+            auto orig = fs_inspector_->inspect(pub);
+            if (orig.exists) { original_gid = orig.group_gid; original_mode = orig.mode; }
+        }
         auto r3 = apply_directory_permissions(site_id, permission);
         if (!r3.success) {
             auto rb = remove_user_from_site_group(username, site_id, permission);
@@ -794,7 +801,7 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
         }
     }
 
-    // Step 5: Bind mount — rollback: reverse steps 2-4 + group
+    // Step 5: Bind mount — rollback: reverse steps 2-4 + group + permissions
     auto r5 = bind_mount_site(access_user_id, site_id);
     if (!r5.success) {
         if (permission == "read_only") {
@@ -806,6 +813,15 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
                 if (post.acl_status == InspectionStatus::Ok && post.acl.access_present) {
                     out.success = false; out.message = "grant_rollback_acl_verification_failed"; return out;
                 }
+            }
+        }
+        // Rollback directory permissions: restore original GID and mode
+        if (permission != "read_only" && original_gid > 0 && runner_) {
+            std::string pub = site_root_resolver_(site_id) + "/public/";
+            auto gid_rb = runner_->chgrp(std::to_string(original_gid), pub);
+            auto mode_rb = runner_->chmod((original_mode > 0 ? std::to_string(original_mode) : std::string("755")), pub);
+            if (!gid_rb.success || !mode_rb.success) {
+                out.success = false; out.message = "grant_rollback_dir_perms_failed"; return out;
             }
         }
         auto rb2 = remove_user_from_site_group(username, site_id, permission);
