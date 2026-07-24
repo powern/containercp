@@ -97,6 +97,30 @@ public:
     // Verify a path is a mountpoint.
     core::OperationResult mount_verify(const std::string& path);
 
+    // --- Phase 3d: Grant Lifecycle Integration ---
+
+    // Callback: returns (site_id, domain, permission) for all grants of a user.
+    struct GrantInfo { uint64_t site_id; std::string domain; std::string permission; };
+    using LoadGrantsFn = std::function<std::vector<GrantInfo>(uint64_t access_user_id)>;
+    void set_grants_loader(LoadGrantsFn fn);
+
+    // Apply a single grant: group membership + permission + ACL + bind mount.
+    core::OperationResult apply_grant(uint64_t access_user_id, uint64_t site_id,
+                                       const std::string& permission, const std::string& domain);
+
+    // Revoke a single grant: unmount + remove from group + cleanup ACL.
+    core::OperationResult revoke_grant(uint64_t access_user_id, uint64_t site_id,
+                                        const std::string& permission);
+
+    // Apply all pending grants for a user (called at end of create_user).
+    core::OperationResult apply_pending_grants(uint64_t access_user_id);
+
+    // Revoke all grants for a user (called at start of remove_user).
+    core::OperationResult revoke_all_grants(uint64_t access_user_id);
+
+    // Resolve username from access_user_id via the system_accounts mapping.
+    std::string resolve_username(uint64_t access_user_id);
+
     core::OperationResult create_user(const AccessUser& user) override;
     core::OperationResult remove_user(const AccessUser& user) override;
     core::OperationResult enable_user(const AccessUser& user) override;
@@ -134,6 +158,7 @@ private:
     GrantsForSiteFn grants_lookup_;
 
     SiteRootFn site_root_resolver_;
+    LoadGrantsFn grants_loader_;
 
     std::shared_ptr<FilesystemPermissionInspector> fs_inspector_;
 

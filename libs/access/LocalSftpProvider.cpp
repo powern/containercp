@@ -670,6 +670,117 @@ core::OperationResult LocalSftpProvider::mount_verify(const std::string& path) {
     return out;
 }
 
+// --- Phase 3d: Grant Lifecycle Integration ---
+
+void LocalSftpProvider::set_grants_loader(LoadGrantsFn fn) {
+    grants_loader_ = std::move(fn);
+}
+
+std::string LocalSftpProvider::resolve_username(uint64_t access_user_id) {
+    auto mappings = load_mappings_ ? load_mappings_() : std::vector<SystemAccountMapping>{};
+    for (const auto& m : mappings) {
+        if (m.entity_type == "access_user" && m.entity_id == access_user_id) {
+            return m.username;
+        }
+    }
+    return {};
+}
+
+core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, uint64_t site_id,
+                                                       const std::string& permission,
+                                                       const std::string& domain) {
+    core::OperationResult out;
+    if (!enabled_) return disabled_result(out, "apply_grant"), out;
+
+    std::string username = resolve_username(access_user_id);
+    if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
+
+    // 1. Ensure site group exists
+    auto r1 = ensure_site_group(site_id, permission);
+    if (!r1.success) return r1;
+
+    // 2. Add user to site group
+    auto r2 = add_user_to_site_group(username, site_id, permission);
+    if (!r2.success) return r2;
+
+    // 3. Apply directory permissions (only for RW)
+    if (permission != "read_only") {
+        auto r3 = apply_directory_permissions(site_id, permission);
+        if (!r3.success) return r3;
+    }
+
+    // 4. Apply ACL for read-only
+    if (permission == "read_only") {
+        auto r4 = apply_read_only_acl(site_id);
+        if (!r4.success) return r4;
+    }
+
+    // 5. Create bind mount
+    auto r5 = bind_mount_site(username, site_id, domain);
+    if (!r5.success) return r5;
+
+    out.success = true; out.message = "grant applied: " + domain;
+    return out;
+}
+
+core::OperationResult LocalSftpProvider::revoke_grant(uint64_t access_user_id, uint64_t site_id,
+                                                        const std::string& permission) {
+    core::OperationResult out;
+    if (!enabled_) return disabled_result(out, "revoke_grant"), out;
+
+    std::string username = resolve_username(access_user_id);
+    if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
+
+    // 1. Unmount site
+    std::string domain = "site-" + std::to_string(site_id); // fallback
+    (void)unmount_site(username, domain);
+
+    // 2. Remove from site group
+    auto r2 = remove_user_from_site_group(username, site_id, permission);
+    if (!r2.success) return r2;
+
+    // 3. Clean up ACL for read-only
+    if (permission == "read_only") {
+        (void)remove_read_only_acl(site_id);
+    }
+
+    out.success = true; out.message = "grant revoked";
+    return out;
+}
+
+core::OperationResult LocalSftpProvider::apply_pending_grants(uint64_t access_user_id) {
+    core::OperationResult out;
+    if (!enabled_) return disabled_result(out, "apply_pending_grants"), out;
+    if (!grants_loader_) {
+        out.success = true; out.message = "no grants loader configured"; return out;
+    }
+
+    auto grants = grants_loader_(access_user_id);
+    for (const auto& g : grants) {
+        auto r = apply_grant(access_user_id, g.site_id, g.permission, g.domain);
+        if (!r.success) return r;
+    }
+
+    out.success = true; out.message = std::to_string(grants.size()) + " grants applied";
+    return out;
+}
+
+core::OperationResult LocalSftpProvider::revoke_all_grants(uint64_t access_user_id) {
+    core::OperationResult out;
+    if (!enabled_) return disabled_result(out, "revoke_all_grants"), out;
+    if (!grants_loader_) {
+        out.success = true; out.message = "no grants loader configured"; return out;
+    }
+
+    auto grants = grants_loader_(access_user_id);
+    for (const auto& g : grants) {
+        (void)revoke_grant(access_user_id, g.site_id, g.permission);
+    }
+
+    out.success = true; out.message = std::to_string(grants.size()) + " grants revoked";
+    return out;
+}
+
 // --- lifecycle ---
 
 core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
@@ -829,6 +940,8 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
 
     out.success = true;
     out.message = "SFTP user created: " + mapped.canonical;
+    // Phase 3d: apply pending grants
+    if (enabled_) { (void)apply_pending_grants(user.id); }
     return out;
 }
 
@@ -848,6 +961,9 @@ core::OperationResult LocalSftpProvider::remove_user(const AccessUser& user) {
     if (!verify_ownership(*mapping, observed)) {
         out.success = false; out.message = "unmanaged_account_conflict: " + mapping->username; return out;
     }
+
+    // Phase 3d: revoke all grants before removing user
+    (void)revoke_all_grants(user.id);
 
     // Remove user (without -r to avoid recursive home delete)
     auto ur = runner_->userdel(mapping->username);
