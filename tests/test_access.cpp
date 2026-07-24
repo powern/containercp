@@ -1424,3 +1424,130 @@ TEST_CASE("Site group delete_mapping failure leaves recoverable state") {
     // Mapping preserved — group can be retried
     CHECK_FALSE(stored.empty());
 }
+
+/* ===== PHASE 3b: PERMISSION ENFORCEMENT ===== */
+
+TEST_CASE("apply_directory_permissions sets chgrp and chmod") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+
+    auto r = provider.apply_directory_permissions(1, "/srv/containercp/sites/example.com", "read_write");
+    CHECK(r.success);
+
+    // Verify command vectors
+    bool found_chgrp = false, found_chmod = false;
+    for (const auto& cmd : fake_commands.cmds_) {
+        if (!cmd.args.empty() && cmd.args[0] == "chgrp") {
+            CHECK(cmd.args[1] == "site-1-rw");
+            CHECK(cmd.args[2] == "/srv/containercp/sites/example.com/public/");
+            found_chgrp = true;
+        }
+        if (!cmd.args.empty() && cmd.args[0] == "chmod") {
+            CHECK(cmd.args[1] == "770");
+            found_chmod = true;
+        }
+    }
+    CHECK(found_chgrp);
+    CHECK(found_chmod);
+}
+
+TEST_CASE("apply_read_only_acl emits correct setfacl command") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+
+    auto r = provider.apply_read_only_acl("/srv/containercp/sites/example.com/public/", "site-1-ro");
+    CHECK(r.success);
+    REQUIRE(fake_commands.cmds_.size() == 1);
+    CHECK(fake_commands.cmds_[0].args[0] == "setfacl");
+    CHECK(fake_commands.cmds_[0].args[1] == "-m");
+    CHECK(fake_commands.cmds_[0].args[2] == "g:site-1-ro:r-x");
+}
+
+TEST_CASE("remove_read_only_acl emits correct setfacl -x command") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+
+    auto r = provider.remove_read_only_acl("/srv/containercp/sites/myapp.org/public/", "site-1-ro");
+    CHECK(r.success);
+    CHECK(fake_commands.cmds_[0].args[0] == "setfacl");
+    CHECK(fake_commands.cmds_[0].args[1] == "-x");
+    CHECK(fake_commands.cmds_[0].args[2] == "g:site-1-ro");
+}
+
+TEST_CASE("apply_directory_permissions fails on chgrp failure") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    fake_commands.fail_next_ = true;
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+
+    auto r = provider.apply_directory_permissions(1, "/srv/containercp/sites/example.com", "read_write");
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("chgrp") != std::string::npos);
+}
+
+TEST_CASE("apply_directory_permissions idempotent on double call") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+
+    CHECK(provider.apply_directory_permissions(1, "/srv", "read_write").success);
+    CHECK(provider.apply_directory_permissions(1, "/srv", "read_write").success);
+    // Both calls should produce the same commands (chgrp/chmod are idempotent at OS level)
+    CHECK(fake_commands.cmds_.size() == 4); // 2 per call
+}
+
+TEST_CASE("apply_read_only_acl rejects empty group name") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+
+    CHECK_FALSE(provider.apply_read_only_acl("/path", "").success);
+    CHECK_FALSE(provider.remove_read_only_acl("/path", "").success);
+}

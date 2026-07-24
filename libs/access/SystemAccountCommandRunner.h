@@ -37,6 +37,12 @@ public:
     core::OperationResult usermod_expiredate(const std::string& username, const std::string& date);
     core::OperationResult usermod_shell(const std::string& username, const std::string& shell);
 
+    // --- Phase 3b: Filesystem permission commands ---
+    core::OperationResult chgrp(const std::string& group, const std::string& path);
+    core::OperationResult chmod(const std::string& mode, const std::string& path);
+    core::OperationResult setfacl_modify(const std::string& acl_spec, const std::string& path);
+    core::OperationResult setfacl_remove(const std::string& acl_spec, const std::string& path);
+
 private:
     RunFn run_;
 };

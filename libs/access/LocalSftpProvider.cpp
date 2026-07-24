@@ -375,6 +375,81 @@ core::OperationResult LocalSftpProvider::delete_site_group_if_unused(uint64_t si
     return out;
 }
 
+// --- Phase 3b: Permission Enforcement ---
+
+core::OperationResult LocalSftpProvider::apply_directory_permissions(uint64_t site_id,
+                                                                      const std::string& site_root,
+                                                                      const std::string& permission) {
+    core::OperationResult out;
+    if (!enabled_) return disabled_result(out, "apply_directory_permissions"), out;
+    if (!runner_) {
+        out.success = false; out.message = "provider dependencies not configured"; return out;
+    }
+
+    std::string rw_group = site_group_name(site_id, "read_write");
+    std::string public_dir = site_root + "/public/";
+
+    // Set group ownership to site-<id>-rw
+    auto r1 = runner_->chgrp(rw_group, public_dir);
+    if (!r1.success) {
+        out.success = false; out.message = "chgrp failed: " + public_dir; return out;
+    }
+
+    // Set permissions: rwx for owner (root) and group, nothing for others
+    auto r2 = runner_->chmod("770", public_dir);
+    if (!r2.success) {
+        out.success = false; out.message = "chmod failed: " + public_dir; return out;
+    }
+
+    out.success = true;
+    out.message = "directory permissions applied: " + public_dir + " -> " + rw_group + " 770";
+    return out;
+}
+
+core::OperationResult LocalSftpProvider::apply_read_only_acl(const std::string& path,
+                                                              const std::string& ro_groupname) {
+    core::OperationResult out;
+    if (!enabled_) return disabled_result(out, "apply_read_only_acl"), out;
+    if (!runner_) {
+        out.success = false; out.message = "provider dependencies not configured"; return out;
+    }
+    if (ro_groupname.empty()) {
+        out.success = false; out.message = "empty RO group name"; return out;
+    }
+
+    std::string acl_spec = "g:" + ro_groupname + ":r-x";
+    auto r = runner_->setfacl_modify(acl_spec, path);
+    if (!r.success) {
+        out.success = false; out.message = "setfacl failed: " + path; return out;
+    }
+
+    out.success = true;
+    out.message = "read-only ACL applied: " + path + " -> " + acl_spec;
+    return out;
+}
+
+core::OperationResult LocalSftpProvider::remove_read_only_acl(const std::string& path,
+                                                               const std::string& ro_groupname) {
+    core::OperationResult out;
+    if (!enabled_) return disabled_result(out, "remove_read_only_acl"), out;
+    if (!runner_) {
+        out.success = false; out.message = "provider dependencies not configured"; return out;
+    }
+    if (ro_groupname.empty()) {
+        out.success = false; out.message = "empty RO group name"; return out;
+    }
+
+    std::string acl_spec = "g:" + ro_groupname;
+    auto r = runner_->setfacl_remove(acl_spec, path);
+    if (!r.success) {
+        out.success = false; out.message = "setfacl -x failed: " + path; return out;
+    }
+
+    out.success = true;
+    out.message = "read-only ACL removed: " + path;
+    return out;
+}
+
 // --- lifecycle ---
 
 core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {

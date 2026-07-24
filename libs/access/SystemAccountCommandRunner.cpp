@@ -59,4 +59,20 @@ core::OperationResult SystemAccountCommandRunner::usermod_shell(const std::strin
     return run_({{"usermod", "-s", shell, username}});
 }
 
+core::OperationResult SystemAccountCommandRunner::chgrp(const std::string& group, const std::string& path) {
+    return run_({{"chgrp", group, path}});
+}
+
+core::OperationResult SystemAccountCommandRunner::chmod(const std::string& mode, const std::string& path) {
+    return run_({{"chmod", mode, path}});
+}
+
+core::OperationResult SystemAccountCommandRunner::setfacl_modify(const std::string& acl_spec, const std::string& path) {
+    return run_({{"setfacl", "-m", acl_spec, path}});
+}
+
+core::OperationResult SystemAccountCommandRunner::setfacl_remove(const std::string& acl_spec, const std::string& path) {
+    return run_({{"setfacl", "-x", acl_spec, path}});
+}
+
 } // namespace containercp::access

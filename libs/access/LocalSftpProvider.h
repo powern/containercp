@@ -58,6 +58,22 @@ public:
     core::OperationResult delete_site_group_if_unused(uint64_t site_id,
                                                        const std::string& permission);
 
+    // --- Phase 3b: Permission Enforcement ---
+
+    // Set directory ownership and mode for a site's public/ directory.
+    // Requires resolved site root path.
+    core::OperationResult apply_directory_permissions(uint64_t site_id,
+                                                       const std::string& site_root,
+                                                       const std::string& permission);
+
+    // Apply POSIX ACL for read-only access via a site group.
+    core::OperationResult apply_read_only_acl(const std::string& path,
+                                               const std::string& ro_groupname);
+
+    // Remove POSIX ACL for read-only access.
+    core::OperationResult remove_read_only_acl(const std::string& path,
+                                                const std::string& ro_groupname);
+
     core::OperationResult create_user(const AccessUser& user) override;
     core::OperationResult remove_user(const AccessUser& user) override;
     core::OperationResult enable_user(const AccessUser& user) override;
