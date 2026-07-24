@@ -632,6 +632,17 @@ void ServiceRegistry::start() {
 
     // Start background proxy health monitor (after all startup init is complete)
     recovery_manager_.start();
+
+    // ARCH-009 Phase 3b: inject filesystem inspector and site root resolver
+    // into the SFTP provider. ACL tools are optional — provider degrades gracefully.
+    access_provider_.set_filesystem_inspector(
+        access::make_real_filesystem_inspector(credential_command_executor_));
+    access_provider_.set_site_root_resolver([this](uint64_t site_id) -> std::string {
+        if (site_id == 0) return {};
+        auto* site = sites_.find_by_id(site_id);
+        if (site == nullptr) return {};
+        return config_.data_root() + "/sites/" + site->domain;
+    });
 }
 
 void ServiceRegistry::shutdown() {
