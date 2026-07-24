@@ -13,7 +13,10 @@ struct FsPermissionState {
     int    owner_uid = -1;
     int    group_gid = -1;
     int    mode = 0;
+    bool   is_symlink = false;
     bool   acl_present = false;
+    bool   acl_error = false;     // getfacl unavailable, permission denied, parse failure
+    std::string acl_error_msg;
     std::string acl_group;
     std::string acl_perms;
     bool   acl_effective = true;

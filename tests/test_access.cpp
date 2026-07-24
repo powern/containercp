@@ -1697,10 +1697,90 @@ TEST_CASE("Phase3b RO ACL applied and removed") {
         [&stored](const std::string&, uint64_t) { return true; });
 
     // Pre-set ACL state so apply postcondition finds it
-    fs->state_["/srv/containercp/sites/test/public/::site-1-ro"] = {true, -1, -1, 0, true, "site-1-ro", "r-x", true};
+    containercp::access::FsPermissionState acl_on;
+    acl_on.exists = true; acl_on.mode = 0770; acl_on.group_gid = 21000;
+    acl_on.acl_present = true; acl_on.acl_group = "site-1-ro"; acl_on.acl_perms = "r-x"; acl_on.acl_effective = true;
+    fs->state_["/srv/containercp/sites/test/public/::site-1-ro"] = acl_on;
     CHECK(provider.apply_read_only_acl(1).success);
 
     // Pre-set ACL state so remove postcondition finds it absent
-    fs->state_["/srv/containercp/sites/test/public/::site-1-ro"] = {true, -1, -1, 0, false, "", "", true};
+    containercp::access::FsPermissionState acl_off;
+    acl_off.exists = true; acl_off.mode = 0770; acl_off.group_gid = 21000;
+    acl_off.acl_present = false;
+    fs->state_["/srv/containercp/sites/test/public/::site-1-ro"] = acl_off;
     CHECK(provider.remove_read_only_acl(1).success);
+}
+
+TEST_CASE("Phase3b symlink public/ rejected") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping m;
+    m.entity_type = "site_group_rw"; m.entity_id = 1;
+    m.gid = 20001; m.username = "site-1-rw"; m.groupname = "site-1-rw"; m.state = "active";
+    stored.push_back(m);
+    inspector->groups_["site-1-rw"] = {true, "site-1-rw", 20001};
+
+    auto fs = std::make_shared<FakeFsInspector>();
+    // Set the path to appear as a symlink
+    containercp::access::FsPermissionState sym_state;
+    sym_state.exists = true; sym_state.is_symlink = true; sym_state.mode = 0770;
+    sym_state.group_gid = 20001;
+    fs->state_["/srv/containercp/sites/test/public/"] = sym_state;
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(fs);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    auto r = provider.apply_directory_permissions(1, "read_write");
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("symlink") != std::string::npos);
+}
+
+TEST_CASE("Phase3b ACL error propagated on inspection failure") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping m;
+    m.entity_type = "site_group_ro"; m.entity_id = 1;
+    m.gid = 21000; m.username = "site-1-ro"; m.groupname = "site-1-ro"; m.state = "active";
+    stored.push_back(m);
+    inspector->groups_["site-1-ro"] = {true, "site-1-ro", 21000};
+
+    auto fs = std::make_shared<FakeFsInspector>();
+    // ACL inspection returns an error
+    containercp::access::FsPermissionState err_state;
+    err_state.exists = true; err_state.acl_error = true;
+    err_state.acl_error_msg = "getfacl unavailable";
+    fs->state_["/srv/containercp/sites/test/public/::site-1-ro"] = err_state;
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_filesystem_inspector(fs);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    auto r = provider.apply_read_only_acl(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("ACL inspection error") != std::string::npos);
 }

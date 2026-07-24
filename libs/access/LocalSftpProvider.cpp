@@ -424,6 +424,12 @@ core::OperationResult LocalSftpProvider::apply_directory_permissions(uint64_t si
 
     // Inspect original state for rollback
     auto original = fs_inspector_->inspect(public_dir);
+    if (!original.exists) {
+        out.success = false; out.message = "public/ directory not found"; return out;
+    }
+    if (original.is_symlink) {
+        out.success = false; out.message = "public/ is a symlink — rejected"; return out;
+    }
 
     // Apply chgrp
     auto r1 = runner_->chgrp(rw_group, public_dir);
@@ -478,6 +484,7 @@ core::OperationResult LocalSftpProvider::apply_read_only_acl(uint64_t site_id) {
     if (!r.success) { out.success = false; out.message = "setfacl failed"; return out; }
 
     auto post = fs_inspector_->inspect_acl(public_dir, ro_mapping->groupname);
+    if (post.acl_error) { out.success = false; out.message = "ACL inspection error: " + post.acl_error_msg; return out; }
     if (!post.acl_present) { out.success = false; out.message = "ACL postcondition failed"; return out; }
 
     out.success = true; out.message = "RO ACL applied"; return out;
@@ -506,6 +513,7 @@ core::OperationResult LocalSftpProvider::remove_read_only_acl(uint64_t site_id) 
     if (!r.success) { out.success = false; out.message = "setfacl -x failed"; return out; }
 
     auto post = fs_inspector_->inspect_acl(public_dir, ro_mapping->groupname);
+    if (post.acl_error) { out.success = false; out.message = "ACL inspection error: " + post.acl_error_msg; return out; }
     if (post.acl_present) { out.success = false; out.message = "ACL removal postcondition failed"; return out; }
 
     out.success = true; out.message = "RO ACL removed"; return out;
