@@ -2252,6 +2252,10 @@ TEST_CASE("Phase3c ensure_chroot_layout resolves trusted user") {
     um.entity_type = "access_user"; um.entity_id = 1;
     um.username = "au-dev"; um.state = "active";
     stored.push_back(um);
+    containercp::access::SystemAccountMapping ro_grp;
+    ro_grp.entity_type = "site_group_ro"; ro_grp.entity_id = 1;
+    ro_grp.gid = 21000; ro_grp.username = "site-1-ro"; ro_grp.groupname = "site-1-ro"; ro_grp.state = "active";
+    stored.push_back(ro_grp);
 
     auto* log = &containercp::logger::Logger::instance();
     containercp::access::LocalSftpProvider provider(*log);
@@ -2308,6 +2312,10 @@ TEST_CASE("Phase3c apply_grant rollback on bind mount failure") {
     um.entity_type = "access_user"; um.entity_id = 1;
     um.username = "au-dev"; um.state = "active";
     stored.push_back(um);
+    containercp::access::SystemAccountMapping ro_grp;
+    ro_grp.entity_type = "site_group_ro"; ro_grp.entity_id = 1;
+    ro_grp.gid = 21000; ro_grp.username = "site-1-ro"; ro_grp.groupname = "site-1-ro"; ro_grp.state = "active";
+    stored.push_back(ro_grp);
     inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
     inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000, "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
 
@@ -2347,6 +2355,10 @@ TEST_CASE("Phase3c bind_mount fails without mount inspector") {
     um.entity_type = "access_user"; um.entity_id = 1;
     um.username = "au-dev"; um.state = "active";
     stored.push_back(um);
+    containercp::access::SystemAccountMapping ro_grp;
+    ro_grp.entity_type = "site_group_ro"; ro_grp.entity_id = 1;
+    ro_grp.gid = 21000; ro_grp.username = "site-1-ro"; ro_grp.groupname = "site-1-ro"; ro_grp.state = "active";
+    stored.push_back(ro_grp);
 
     auto* log = &containercp::logger::Logger::instance();
     containercp::access::LocalSftpProvider provider(*log);
@@ -2370,6 +2382,10 @@ TEST_CASE("Phase3c cleanup_all_mounts fails on partial failure") {
     um.entity_type = "access_user"; um.entity_id = 1;
     um.username = "au-dev"; um.state = "active";
     stored.push_back(um);
+    containercp::access::SystemAccountMapping ro_grp;
+    ro_grp.entity_type = "site_group_ro"; ro_grp.entity_id = 1;
+    ro_grp.gid = 21000; ro_grp.username = "site-1-ro"; ro_grp.groupname = "site-1-ro"; ro_grp.state = "active";
+    stored.push_back(ro_grp);
 
     auto* log = &containercp::logger::Logger::instance();
     containercp::access::LocalSftpProvider provider(*log);
@@ -2405,6 +2421,10 @@ TEST_CASE("Phase3d grant_rollback_membership_failed when rollback fails") {
     um.entity_type = "access_user"; um.entity_id = 1;
     um.username = "au-dev"; um.state = "active";
     stored.push_back(um);
+    containercp::access::SystemAccountMapping ro_grp;
+    ro_grp.entity_type = "site_group_ro"; ro_grp.entity_id = 1;
+    ro_grp.gid = 21000; ro_grp.username = "site-1-ro"; ro_grp.groupname = "site-1-ro"; ro_grp.state = "active";
+    stored.push_back(ro_grp);
     inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
     inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000, "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
 

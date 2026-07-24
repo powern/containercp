@@ -794,6 +794,14 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
         if (permission == "read_only") {
             auto rb = remove_read_only_acl(site_id);
             if (!rb.success) { out.success = false; out.message = "grant_rollback_acl_failed"; return out; }
+            // Verify ACL was actually removed
+            if (fs_inspector_) {
+                auto post = fs_inspector_->inspect_acl(site_root_resolver_(site_id) + "/public/",
+                                                        site_group_name(site_id, "read_only"));
+                if (post.acl_status == InspectionStatus::Ok && post.acl.access_present) {
+                    out.success = false; out.message = "grant_rollback_acl_verification_failed"; return out;
+                }
+            }
         }
         auto rb2 = remove_user_from_site_group(username, site_id, permission);
         if (!rb2.success) { out.success = false; out.message = "grant_rollback_membership_failed"; return out; }
