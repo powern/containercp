@@ -183,7 +183,11 @@ core::OperationResult LocalSftpProvider::ensure_site_group(uint64_t site_id,
             if (save_mapping_) {
                 auto m = *existing;
                 m.state = "active";
-                save_mapping_(m);
+                if (!save_mapping_(m)) {
+                    out.success = false;
+                    out.message = "failed to persist active state for recovered group: " + groupname;
+                    return out;
+                }
             }
             out.success = true; out.message = "site group recovered to active: " + groupname; return out;
         }
@@ -271,6 +275,11 @@ core::OperationResult LocalSftpProvider::add_user_to_site_group(const std::strin
         out.success = false; out.message = "usermod failed for " + username + " -> " + groupname; return out;
     }
 
+    // Postcondition: verify membership
+    if (!inspector_->user_in_group(username, groupname)) {
+        out.success = false; out.message = "membership verification failed: " + username; return out;
+    }
+
     out.success = true;
     out.message = "user added to site group: " + username + " -> " + groupname;
     return out;
@@ -290,9 +299,21 @@ core::OperationResult LocalSftpProvider::remove_user_from_site_group(const std::
         out.success = false; out.message = "invalid permission: " + permission; return out;
     }
 
-    // Verify group is managed (ownership proof)
-    if (!find_mapping(site_group_entity_type(permission), site_id).has_value()) {
+    std::string etype = site_group_entity_type(permission);
+    // Complete ownership verification
+    auto mapping = find_mapping(etype, site_id);
+    if (!mapping.has_value()) {
         out.success = false; out.message = "site group not managed: " + groupname; return out;
+    }
+    if (mapping->state != "active") {
+        out.success = false; out.message = "site group not active: " + groupname; return out;
+    }
+    auto obs_grp = inspector_->lookup_group(groupname);
+    if (!obs_grp.exists || obs_grp.gid != mapping->gid) {
+        out.success = false; out.message = "OS group mismatch for: " + groupname; return out;
+    }
+    if (!inspector_->user_exists(username)) {
+        out.success = false; out.message = "user not found: " + username; return out;
     }
 
     auto result = runner_->usermod_remove_group(username, groupname);
@@ -300,10 +321,9 @@ core::OperationResult LocalSftpProvider::remove_user_from_site_group(const std::
         out.success = false; out.message = "gpasswd failed for " + username + " -> " + groupname; return out;
     }
 
-    // Postcondition: verify membership removed
-    auto obs = inspector_->lookup_user(username);
-    if (obs.exists && obs.gid == 0) {
-        // detached — member was removed
+    // Postcondition: verify membership was removed
+    if (inspector_->user_in_group(username, groupname)) {
+        out.success = false; out.message = "membership removal verification failed: " + username; return out;
     }
 
     out.success = true;

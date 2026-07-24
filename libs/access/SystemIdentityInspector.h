@@ -35,6 +35,8 @@ public:
     virtual bool          group_exists(const std::string& name) const = 0;
     virtual bool          uid_occupied(int uid) const = 0;
     virtual bool          gid_occupied(int gid) const = 0;
+    virtual bool          user_in_group(const std::string& username,
+                                        const std::string& groupname) const = 0;
 };
 
 // Real implementation using libc NSS APIs.
@@ -47,6 +49,8 @@ public:
     bool          group_exists(const std::string& name) const override;
     bool          uid_occupied(int uid) const override;
     bool          gid_occupied(int gid) const override;
+    bool          user_in_group(const std::string& username,
+                                const std::string& groupname) const override;
 };
 
 } // namespace containercp::access

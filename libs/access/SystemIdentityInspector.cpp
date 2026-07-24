@@ -64,4 +64,14 @@ bool RealSystemIdentityInspector::gid_occupied(int gid) const {
     return getgrgid(static_cast<gid_t>(gid)) != nullptr;
 }
 
+bool RealSystemIdentityInspector::user_in_group(const std::string& username,
+                                                 const std::string& groupname) const {
+    struct group* gr = getgrnam(groupname.c_str());
+    if (gr == nullptr) return false;
+    for (char** mem = gr->gr_mem; *mem != nullptr; ++mem) {
+        if (username == *mem) return true;
+    }
+    return false;
+}
+
 } // namespace containercp::access
