@@ -2238,3 +2238,97 @@ TEST_CASE("Phase3b ACL rollback restores complete previous state") {
     // Overall result: failure (ACL effective perms contain write).
     CHECK_FALSE(r.success);
 }
+
+/* ===== PHASE 3c: CHROOT LAYOUT & BIND MOUNTS ===== */
+
+TEST_CASE("Phase3c ensure_chroot_layout creates sites directory") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+
+    auto r = provider.ensure_chroot_layout("au-dev");
+    CHECK(r.success);
+    // Verify mkdir -p was called with correct path
+    bool found = false;
+    for (const auto& cmd : fake_commands.cmds_) {
+        if (cmd.args[0] == "mkdir") {
+            CHECK(cmd.args[2] == "/srv/containercp/users/au-dev/sites/");
+            found = true;
+        }
+    }
+    CHECK(found);
+}
+
+TEST_CASE("Phase3c bind_mount_site creates mount and verifies") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            // mountpoint_check after mount should return success
+            if (cmd.args[0] == "mountpoint") { fake_commands.run(cmd); return containercp::core::OperationResult{true, "is mountpoint"}; }
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/example.com"; });
+
+    auto r = provider.bind_mount_site("au-dev", 1, "example.com");
+    CHECK(r.success);
+    // Verify all 3 commands ran: mkdir, mount --bind, mountpoint -q
+    CHECK(fake_commands.cmds_.size() >= 3);
+}
+
+TEST_CASE("Phase3c unmount_site runs umount and rmdir") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mountpoint") { fake_commands.run(cmd); return containercp::core::OperationResult{false, "not mountpoint"}; }
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+
+    auto r = provider.unmount_site("au-dev", "example.com");
+    CHECK(r.success);
+}
+
+TEST_CASE("Phase3c bind_mount rejects site_id zero") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+
+    CHECK_FALSE(provider.bind_mount_site("au-dev", 0, "admin").success);
+}
+
+TEST_CASE("Phase3c mount_verify reports mount status") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+
+    CHECK(provider.mount_verify("/path").success);
+}

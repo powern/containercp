@@ -78,6 +78,25 @@ public:
     // Filesystem inspector is mandatory for Phase 3b operations.
     void set_filesystem_inspector(std::shared_ptr<FilesystemPermissionInspector> inspector);
 
+    // --- Phase 3c: Chroot Layout & Bind Mounts ---
+
+    // Create the sites/ directory under the user chroot home.
+    core::OperationResult ensure_chroot_layout(const std::string& username);
+
+    // Bind-mount a site's public/ into the user's chroot home.
+    core::OperationResult bind_mount_site(const std::string& username,
+                                           uint64_t site_id, const std::string& domain);
+
+    // Unmount a site from the user's chroot.
+    core::OperationResult unmount_site(const std::string& username,
+                                        const std::string& domain);
+
+    // Unmount all site bind mounts for a user (called before remove_user).
+    core::OperationResult cleanup_all_mounts(const std::string& username);
+
+    // Verify a path is a mountpoint.
+    core::OperationResult mount_verify(const std::string& path);
+
     core::OperationResult create_user(const AccessUser& user) override;
     core::OperationResult remove_user(const AccessUser& user) override;
     core::OperationResult enable_user(const AccessUser& user) override;

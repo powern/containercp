@@ -75,4 +75,23 @@ core::OperationResult SystemAccountCommandRunner::setfacl_remove(const std::stri
     return run_({{"setfacl", "-x", acl_spec, path}});
 }
 
+core::OperationResult SystemAccountCommandRunner::mkdir_p(const std::string& path) {
+    return run_({{"mkdir", "-p", path}});
+}
+
+core::OperationResult SystemAccountCommandRunner::mount_bind(const std::string& source, const std::string& target) {
+    return run_({{"mount", "--bind", source, target}});
+}
+
+core::OperationResult SystemAccountCommandRunner::umount(const std::string& target) {
+    return run_({{"umount", target}});
+}
+
+core::OperationResult SystemAccountCommandRunner::mountpoint_check(const std::string& path) {
+    return run_({{"mountpoint", "-q", path}});
+}
+
+core::OperationResult SystemAccountCommandRunner::rmdir(const std::string& path) {
+    return run_({{"rmdir", path}});
+}
 } // namespace containercp::access

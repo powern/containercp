@@ -43,6 +43,13 @@ public:
     core::OperationResult setfacl_modify(const std::string& acl_spec, const std::string& path);
     core::OperationResult setfacl_remove(const std::string& acl_spec, const std::string& path);
 
+    // --- Phase 3c: Filesystem mount commands ---
+    core::OperationResult mkdir_p(const std::string& path);
+    core::OperationResult mount_bind(const std::string& source, const std::string& target);
+    core::OperationResult umount(const std::string& target);
+    core::OperationResult mountpoint_check(const std::string& path);
+    core::OperationResult rmdir(const std::string& path);
+
 private:
     RunFn run_;
 };
