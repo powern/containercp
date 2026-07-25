@@ -7,6 +7,7 @@
 #include "access/SystemAccountMapping.h"
 #include "access/SystemIdentityInspector.h"
 #include "access/LocalSftpProvider.h"
+#include "access/MountInspector.h"
 #include "access/UsernameMapper.h"
 #include "core/OperationResult.h"
 #include "logger/Logger.h"
@@ -3771,4 +3772,129 @@ TEST_CASE("ARCH-009 ACL rollback full-state mismatch") {
     // The rollback postcondition should find that the ACL is still present
     // (because setfacl -x was intercepted), causing a state mismatch
     CHECK(r.message.find("acl:postcondition:mismatch") != std::string::npos);
+}
+
+// --- ARCH-009 Task 20: Mountinfo parser tests ---
+
+TEST_CASE("ARCH-009 mountinfo parses real bind mount") {
+    using containercp::access::MountStatus;
+    std::string line = "37 26 0:30 /srv/containercp/sites/example/public "
+                       "/srv/containercp/users/dev/sites/example rw,relatime "
+                       "- ext4 /dev/sdc1 rw";
+    auto s = containercp::access::parse_mountinfo_line(line);
+    CHECK(s.status == MountStatus::Ok);
+    CHECK(s.mount_id == 37);
+    CHECK(s.parent_id == 26);
+    CHECK(s.device == "0:30");
+    CHECK(s.bind_root == "/srv/containercp/sites/example/public");
+    CHECK(s.target == "/srv/containercp/users/dev/sites/example");
+    CHECK(s.is_bind);
+    CHECK(s.fstype == "ext4");
+    CHECK(s.source == "/dev/sdc1");
+    CHECK(s.super_options == "rw");
+    CHECK(s.options == "rw,relatime");
+}
+
+TEST_CASE("ARCH-009 mountinfo parses normal filesystem mount") {
+    using containercp::access::MountStatus;
+    std::string line = "26 0 8:2 / / rw,relatime shared:1 - ext4 /dev/sda1 rw";
+    auto s = containercp::access::parse_mountinfo_line(line);
+    CHECK(s.status == MountStatus::Ok);
+    CHECK(s.mount_id == 26);
+    CHECK(s.parent_id == 0);
+    CHECK(s.device == "8:2");
+    CHECK(s.bind_root == "/");
+    CHECK(s.target == "/");
+    CHECK_FALSE(s.is_bind);
+    CHECK(s.fstype == "ext4");
+    CHECK(s.source == "/dev/sda1");
+    CHECK(s.options == "rw,relatime");
+    CHECK(s.optional_fields.size() == 1);
+    CHECK(s.optional_fields[0] == "shared:1");
+}
+
+TEST_CASE("ARCH-009 mountinfo parses nested bind mount") {
+    using containercp::access::MountStatus;
+    std::string line = "38 37 0:30 /srv/containercp/sites/example/public/sub "
+                       "/srv/containercp/users/dev/sites/example/sub rw,relatime "
+                       "- ext4 /dev/sdc1 rw";
+    auto s = containercp::access::parse_mountinfo_line(line);
+    CHECK(s.status == MountStatus::Ok);
+    CHECK(s.mount_id == 38);
+    CHECK(s.parent_id == 37);
+    CHECK(s.bind_root == "/srv/containercp/sites/example/public/sub");
+    CHECK(s.target == "/srv/containercp/users/dev/sites/example/sub");
+    CHECK(s.is_bind);
+}
+
+TEST_CASE("ARCH-009 mountinfo decodes escaped source") {
+    using containercp::access::MountStatus;
+    std::string line = "39 26 0:31 / /mnt rw,relatime shared:2 - tmpfs tmpfs\\040with\\040space rw";
+    auto s = containercp::access::parse_mountinfo_line(line);
+    CHECK(s.status == MountStatus::Ok);
+    CHECK(s.source == "tmpfs with space");
+}
+
+TEST_CASE("ARCH-009 mountinfo decodes escaped target") {
+    using containercp::access::MountStatus;
+    std::string line = "40 26 0:32 / /mnt/my\\011dir rw,relatime "
+                       "- ext4 /dev/sdb1 rw";
+    auto s = containercp::access::parse_mountinfo_line(line);
+    CHECK(s.status == MountStatus::Ok);
+    CHECK(s.target == "/mnt/my\tdir");
+}
+
+TEST_CASE("ARCH-009 mountinfo rejects malformed field count") {
+    using containercp::access::MountStatus;
+    // Only 5 fields before separator (need at least 6: id parent_id dev root mountpoint options)
+    std::string line = "26 0 8:2 / rw,relatime - ext4 /dev/sda1 rw";
+    auto s = containercp::access::parse_mountinfo_line(line);
+    CHECK(s.status == MountStatus::Absent);
+    CHECK(s.error_detail.find("too few fields") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 mountinfo rejects missing separator") {
+    using containercp::access::MountStatus;
+    std::string line = "26 0 8:2 / / rw,relatime ext4 /dev/sda1 rw";
+    auto s = containercp::access::parse_mountinfo_line(line);
+    CHECK(s.status == MountStatus::Absent);
+    CHECK(s.error_detail.find("missing separator") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 mountinfo duplicate target returns first") {
+    using containercp::access::MountStatus;
+    std::string content =
+        "37 26 0:30 /src/public /target rw,relatime - ext4 /dev/sdc1 rw\n"
+        "38 37 0:30 /other /target rw,relatime - ext4 /dev/sdc1 rw\n";
+    auto s = containercp::access::parse_mountinfo(content, "/target");
+    CHECK(s.status == MountStatus::Ok);
+    CHECK(s.bind_root == "/src/public");
+}
+
+TEST_CASE("ARCH-009 mountinfo rejects source mismatch") {
+    using containercp::access::MountStatus;
+    std::string line = "37 26 0:30 /src/public /actual-target rw,relatime "
+                       "- ext4 /dev/sdc1 rw";
+    // Using parse_mountinfo_line with target_filter that doesn't match
+    auto s = containercp::access::parse_mountinfo_line(line, "/wrong-target");
+    CHECK(s.status == MountStatus::Absent);
+    CHECK(s.error_detail.find("target mismatch") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 mountinfo rejects target mismatch via parse_mountinfo") {
+    using containercp::access::MountStatus;
+    std::string content = "37 26 0:30 /src/public /actual-target rw,relatime "
+                          "- ext4 /dev/sdc1 rw\n";
+    auto s = containercp::access::parse_mountinfo(content, "/nonexistent");
+    CHECK(s.status == MountStatus::Absent);
+    CHECK(s.error_detail.find("not found") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 mountinfo decodes backslash escape") {
+    using containercp::access::MountStatus;
+    std::string line = "41 26 0:33 /path/with\\134backslash /mnt/point rw,relatime "
+                       "- ext4 /dev/sdc1 rw";
+    auto s = containercp::access::parse_mountinfo_line(line);
+    CHECK(s.status == MountStatus::Ok);
+    CHECK(s.bind_root == "/path/with\\backslash");
 }

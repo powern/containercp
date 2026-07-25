@@ -322,7 +322,7 @@ TEST_CASE("Schema v3 re-running migration is no-op") {
     clean(path);
     {
         auto db = make_db(path);
-        CHECK(containercp::storage::MigrationEngine().current_version(db) == 3);
+        CHECK(containercp::storage::MigrationEngine().current_version(db) == 4);
         // Second run
         containercp::storage::MigrationEngine eng2;
         containercp::storage::register_all_schema_migrations(eng2);

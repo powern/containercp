@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-25 | `this commit` | ARCH-009 Task 20 — Validate real bind-mount semantics in MountInspector
+
+**Summary:** Rewrote `MountState` struct with full fields (mount_id, parent_id, device, bind_root, target, options, optional_fields, fstype, source, super_options). Rewrote `parse_mountinfo()` and added `parse_mountinfo_line()` with proper escape-sequence decoding (`\040` → space, `\011` → tab, `\012` → newline, `\134` → backslash) and whitespace-aware tokenization. Added bind-mount identity determination based on `root != "/"`. Rejects malformed mountinfo (missing separator, too few fields). Added 11 direct parser tests covering: real bind mount, normal filesystem mount, nested bind mount, escaped source, escaped target, backslash escape, malformed field count, missing separator, duplicate targets, source mismatch, target mismatch. Also bumped `kExpectedSchemaVersion` from 3 to 4, updated `MigrationOrchestrator` activation state to write `schema_version: 4`, and updated all test references from v3 to v4.
+
+**Files changed:** `libs/access/MountInspector.{h,cpp}`, `libs/storage/Storage.cpp`, `libs/storage/MigrationOrchestrator.cpp`, `tests/test_sqlite_storage.cpp`, `tests/test_schema.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** No user-visible behavioral change. Mount inspection now correctly parses all mountinfo fields and decodes escape sequences, providing richer diagnostic data for bind-mount verification.
+
+**Validation:** Full doctest suite passed (1018 cases, 7058 assertions). All 11 new ARCH-009 mountinfo parser tests pass. All existing tests pass.
+
+**Known risks:** None.
+
+---
+
 ## 2026-07-25 | `this commit` | ARCH-009 Task 19 — Persisted trusted home path in ensure_chroot_layout
 
 **Summary:** Added `home` field to `SystemAccountMapping` struct (schema v4 migration, SQL storage, `create_user` persistence). `ensure_chroot_layout()` now uses the persisted `mapping->home` as the source of truth instead of reconstructing it from `managed_home_root_ + username`. Added full verification: mapping exists, entity_type is access_user, state active, username/UID/GID/home/shell match observed OS, persisted home non‑empty and inside managed root, component-based path validation, and username component check. `verify_ownership()` falls back to `mapping.home` when present. Added 7 regression tests.
