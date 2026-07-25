@@ -39,10 +39,28 @@ bool managed_path_safe(const std::string& path, const std::string& managed_root)
 
 } // namespace
 
+// forward declarations for helpers defined later
+bool contains_username_component(const std::string& path, const std::string& username);
+
 // --- constructor / configuration ---
 
 LocalSftpProvider::LocalSftpProvider(logger::Logger& logger)
     : logger_(logger) {}
+
+bool contains_username_component(const std::string& path, const std::string& username) {
+    if (path.empty() || username.empty()) return false;
+    std::string::size_type start = 0;
+    while (true) {
+        auto slash = path.find('/', start);
+        std::string component = (slash == std::string::npos)
+            ? path.substr(start)
+            : path.substr(start, slash - start);
+        if (component == username) return true;
+        if (slash == std::string::npos) break;
+        start = slash + 1;
+    }
+    return false;
+}
 
 void LocalSftpProvider::set_identity_inspector(std::shared_ptr<SystemIdentityInspector> inspector) {
     inspector_ = std::move(inspector);
@@ -110,7 +128,9 @@ bool LocalSftpProvider::verify_ownership(const SystemAccountMapping& mapping,
         if (mapping.gid > 0 && (mapping.gid < allocator_->gid_min() || mapping.gid > allocator_->gid_max()))
             return false;
     }
-    std::string expected_home = managed_home_root_ + "/" + mapping.username;
+    // Use persisted home if available, otherwise fall back to computed path
+    std::string expected_home = mapping.home.empty() ? managed_home_root_ + "/" + mapping.username : mapping.home;
+    if (!mapping.home.empty() && !contains_username_component(mapping.home, mapping.username)) return false;
     if (observed.home != expected_home) return false;
     if (observed.shell != managed_shell_) return false;
     return true;
@@ -690,32 +710,35 @@ core::OperationResult LocalSftpProvider::ensure_chroot_layout(uint64_t access_us
     if (!enabled_) return disabled_result(out, "ensure_chroot_layout"), out;
     if (!runner_) { out.success = false; out.message = "provider dependencies not configured"; return out; }
 
-    std::string username = resolve_username(access_user_id);
-    if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
-
     auto mapping = find_mapping("access_user", access_user_id);
-    if (!mapping.has_value() || mapping->state != "active") {
-        out.success = false; out.message = "user mapping not active"; return out;
-    }
+    if (!mapping.has_value()) { out.success = false; out.message = "user mapping not found"; return out; }
+    if (mapping->entity_type != "access_user") { out.success = false; out.message = "entity type not access_user"; return out; }
+    if (mapping->state != "active") { out.success = false; out.message = "user mapping not active"; return out; }
 
-    // Verify trusted identity: username, UID/GID, home, shell, observed OS state
-    std::string expected_home = managed_home_root_ + "/" + mapping->username;
-    if (expected_home.rfind(managed_home_root_, 0) != 0) {
+    // Verify persisted home is non-empty and inside managed root
+    if (mapping->home.empty()) { out.success = false; out.message = "persisted home empty"; return out; }
+    if (mapping->home.rfind(managed_home_root_, 0) != 0) {
         out.success = false; out.message = "home outside managed root"; return out;
     }
-    auto pv = validate_managed_path(expected_home, managed_home_root_);
+    auto pv = validate_managed_path(mapping->home, managed_home_root_);
     if (!pv.ok) { out.success = false; out.message = "path invalid: " + pv.error; return out; }
+    if (!contains_username_component(mapping->home, mapping->username)) {
+        out.success = false; out.message = "home path does not reference username"; return out;
+    }
+
+    // Verify observed OS identity matches persisted mapping
     if (inspector_) {
         auto obs = inspector_->lookup_user(mapping->username);
         if (!obs.exists) { out.success = false; out.message = "OS user missing"; return out; }
-        if (obs.uid != mapping->uid || obs.gid != mapping->gid) {
-            out.success = false; out.message = "OS user UID/GID mismatch"; return out;
-        }
-        if (obs.home != expected_home) { out.success = false; out.message = "OS home mismatch"; return out; }
+        if (obs.username != mapping->username) { out.success = false; out.message = "OS username mismatch"; return out; }
+        if (obs.uid != mapping->uid) { out.success = false; out.message = "OS UID mismatch"; return out; }
+        if (obs.gid != mapping->gid) { out.success = false; out.message = "OS GID mismatch"; return out; }
+        if (obs.home != mapping->home) { out.success = false; out.message = "OS home mismatch"; return out; }
         if (obs.shell != managed_shell_) { out.success = false; out.message = "OS shell mismatch"; return out; }
     }
 
-    std::string sites_dir = expected_home + "/sites/";
+    std::string home = mapping->home;
+    std::string sites_dir = home + "/sites/";
 
     // Track whether we created this directory (rollback only what we created)
     bool dir_created = false;
@@ -1155,6 +1178,7 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
     mapping.uid         = alloc.uid;
     mapping.gid         = alloc.gid;
     mapping.state       = "provisioning";
+    mapping.home        = managed_home_root_ + "/" + mapped.canonical;
     if (save_mapping_ && !save_mapping_(mapping)) {
         out.success = false; out.message = "failed to persist system account mapping"; return out;
     }

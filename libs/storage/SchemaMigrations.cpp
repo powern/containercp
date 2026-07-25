@@ -272,6 +272,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_sysacct_uid ON system_accounts(uid);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sysacct_groupname ON system_accounts(groupname);
 )SQL";
 
+const char* kSchemaV4Home = R"SQL(
+ALTER TABLE system_accounts ADD COLUMN home TEXT NOT NULL DEFAULT '';
+)SQL";
+
 // Storage metadata values set by this migration.
 // These describe the schema state, NOT the active backend.
 // TXT remains the active Storage backend until Phase 11.
@@ -352,6 +356,25 @@ void register_all_schema_migrations(MigrationEngine& engine) {
     };
 
     engine.register_migration(std::move(v3));
+
+    Migration v4;
+    v4.version = 4;
+    v4.name = "system_accounts_home";
+    v4.descriptor = kSchemaV4Home;
+    v4.up = [](SQLiteDB& db, std::string& diagnostics) -> bool {
+        if (!db.exec(kSchemaV4Home)) {
+            diagnostics = "system_accounts.home column add failed: " + db.error_message();
+            return false;
+        }
+        std::string set_version = "INSERT OR REPLACE INTO storage_meta (key, value) VALUES ('schema_version', '4')";
+        if (!db.exec(set_version)) {
+            diagnostics = "Failed to update schema_version: " + db.error_message();
+            return false;
+        }
+        return true;
+    };
+
+    engine.register_migration(std::move(v4));
 }
 
 } // namespace containercp::storage

@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-25 | `this commit` | ARCH-009 Task 19 — Persisted trusted home path in ensure_chroot_layout
+
+**Summary:** Added `home` field to `SystemAccountMapping` struct (schema v4 migration, SQL storage, `create_user` persistence). `ensure_chroot_layout()` now uses the persisted `mapping->home` as the source of truth instead of reconstructing it from `managed_home_root_ + username`. Added full verification: mapping exists, entity_type is access_user, state active, username/UID/GID/home/shell match observed OS, persisted home non‑empty and inside managed root, component-based path validation, and username component check. `verify_ownership()` falls back to `mapping.home` when present. Added 7 regression tests.
+
+**Files changed:** `libs/access/SystemAccountMapping.h`, `libs/access/LocalSftpProvider.{h,cpp}`, `libs/storage/SchemaMigrations.cpp`, `libs/storage/SQLiteStorage.cpp`, `libs/storage/Storage.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** `ensure_chroot_layout` now validates the persisted home path against the observed OS state. If the persisted home is empty, outside the managed root, does not reference the username, or does not match the OS home/shell/UID/GID, the operation fails with a descriptive error message.
+
+**Validation:** Full doctest suite passed (1000 cases, 7002 assertions). All 13 ARCH-009 tests pass (7 new + 6 existing). All 2 Phase3c chroot_layout tests pass.
+
+**Known risks:** None.
+
+---
+
 ## 2026-07-25 | `this commit` | ARCH-009 Task 18 — Complete ACL rollback verification
 
 **Summary:** Enhanced `apply_grant()` ACL rollback on bind-mount failure to restore the exact original ACL state instead of simply removing it. Added `restore_acl_state()` method with full-state comparison covering all `AclState` fields: access ACL presence, group, permissions, effective permissions, mask; default ACL presence, group, permissions, effective permissions, mask. Original ACL state is captured before `apply_read_only_acl()` is called. Enhanced `restore_acl()` to verify access and default masks. Enhanced `FakeCommandRunner` setfacl handler to properly simulate ACL modifications (parse `-m`/`-x`, `g:`/`d:g:` specs, update `access_present`/`default_present` and all ACL fields). Added 7 regression tests covering: initially absent ACL, existing access ACL, existing default ACL, different masks, rollback command failure, rollback inspection failure, and full-state mismatch.

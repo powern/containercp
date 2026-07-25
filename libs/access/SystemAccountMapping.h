@@ -17,6 +17,7 @@ struct SystemAccountMapping {
     std::string username;      // canonical system username
     std::string groupname;     // canonical primary group name
     std::string state;         // "active", "provisioning", "removing", "error"
+    std::string home;          // persisted trusted home directory path
     std::string created_at;
     std::string updated_at;
 };

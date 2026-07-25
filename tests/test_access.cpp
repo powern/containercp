@@ -2376,15 +2376,20 @@ TEST_CASE("Phase3c ensure_chroot_layout resolves trusted user") {
     std::vector<containercp::access::SystemAccountMapping> stored;
     containercp::access::SystemAccountMapping um;
     um.entity_type = "access_user"; um.entity_id = 1;
-    um.username = "au-dev"; um.state = "active";
+    um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+    um.home = "/srv/containercp/users/au-dev";
     stored.push_back(um);
     containercp::access::SystemAccountMapping ro_grp;
     ro_grp.entity_type = "site_group_ro"; ro_grp.entity_id = 1;
     ro_grp.gid = 21000; ro_grp.username = "site-1-ro"; ro_grp.groupname = "site-1-ro"; ro_grp.state = "active";
     stored.push_back(ro_grp);
 
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+
     auto* log = &containercp::logger::Logger::instance();
     containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
             return fake_commands.run(cmd);
@@ -2415,6 +2420,216 @@ TEST_CASE("Phase3c ensure_chroot_layout rejects unknown user_id") {
         [](const std::string&, uint64_t) { return true; });
 
     CHECK_FALSE(provider.ensure_chroot_layout(999).success);
+}
+
+// --- ARCH-009 Task 19: Persisted trusted home path tests ---
+
+TEST_CASE("ARCH-009 ensure_chroot_layout valid persisted home") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+    um.home = "/srv/containercp/users/au-dev";
+    stored.push_back(um);
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    CHECK(provider.ensure_chroot_layout(1).success);
+}
+
+TEST_CASE("ARCH-009 ensure_chroot_layout rejects wrong persisted home") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+    um.home = "/srv/containercp/users/wrong-path";
+    stored.push_back(um);
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    auto r = provider.ensure_chroot_layout(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("does not reference username") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 ensure_chroot_layout rejects OS home mismatch") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+    um.home = "/srv/containercp/users/au-dev";
+    stored.push_back(um);
+    // OS has a different home than what mapping says
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/different", "/usr/sbin/nologin", true};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    auto r = provider.ensure_chroot_layout(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("OS home mismatch") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 ensure_chroot_layout rejects cross-user home") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+    um.home = "/srv/containercp/users/other-user";
+    stored.push_back(um);
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/other-user", "/usr/sbin/nologin", true};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    // Cross-user: home points to another user's dir — path validation should catch it
+    // because "other-user" != "au-dev" in the path
+    auto r = provider.ensure_chroot_layout(1);
+    CHECK_FALSE(r.success);
+}
+
+TEST_CASE("ARCH-009 ensure_chroot_layout rejects home outside managed root") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+    um.home = "/etc/passwd";
+    stored.push_back(um);
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/etc/passwd", "/usr/sbin/nologin", true};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    auto r = provider.ensure_chroot_layout(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("home outside managed root") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 ensure_chroot_layout rejects symlink home") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+    um.home = "/srv/containercp/users/au-dev";
+    stored.push_back(um);
+    // OS home points to a symlink path
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev/...", "/usr/sbin/nologin", true};
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    auto r = provider.ensure_chroot_layout(1);
+    CHECK_FALSE(r.success);
+}
+
+TEST_CASE("ARCH-009 ensure_chroot_layout rejects inactive mapping") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "provisioning";
+    um.home = "/srv/containercp/users/au-dev";
+    stored.push_back(um);
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping&) { return true; },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    auto r = provider.ensure_chroot_layout(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("user mapping not active") != std::string::npos);
 }
 
 TEST_CASE("Phase3c bind_mount_site rejects site_id zero") {
