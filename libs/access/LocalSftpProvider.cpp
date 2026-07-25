@@ -71,15 +71,7 @@ void LocalSftpProvider::set_site_resolver(SiteInfoFn fn) {
     site_resolver_ = std::move(fn);
 }
 
-// Helper: resolve SiteInfo and extract root, rejecting invalid sites.
-static std::string resolve_site_root(containercp::access::LocalSftpProvider::SiteInfoFn& fn, uint64_t site_id) {
-    auto info = fn(site_id);
-    return info.valid ? info.root : "";
-}
-static std::string resolve_site_domain(containercp::access::LocalSftpProvider::SiteInfoFn& fn, uint64_t site_id) {
-    auto info = fn(site_id);
-    return info.valid ? info.domain : "";
-}
+
 
 void LocalSftpProvider::set_grants_lookup(GrantsForSiteFn fn) {
     grants_lookup_ = std::move(fn);
@@ -861,7 +853,6 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     bool membership_added = true;  // assume change unless proven otherwise
     bool perms_changed   = false;
     bool acl_changed     = false;
-    bool mount_created   = false;
     int  original_gid    = -1;
     int  original_mode   = -1;
 
@@ -1117,7 +1108,7 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
     // 9. Create home directory — owned by root for OpenSSH chroot compatibility
     {
         std::error_code ec;
-        bool home_ok = std::filesystem::create_directory(home, ec);
+        bool home_ok = std::filesystem::create_directories(home, ec);
         if (!home_ok || ec) {
             rollback_create(mapped.canonical, mapped.canonical, user.id);
             out.success = false; out.message = "home directory creation failed"; return out;

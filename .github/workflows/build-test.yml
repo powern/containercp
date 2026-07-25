@@ -22,7 +22,7 @@ jobs:
 
       - name: Setup environment
         run: |
-          sudo mkdir -p /srv/containercp/sites
+          sudo mkdir -p /srv/containercp/sites /srv/containercp/users
           sudo chmod -R 777 /srv/containercp
           curl -fsSL https://get.docker.com | sudo sh
           sudo dockerd &>/tmp/dockerd.log &
