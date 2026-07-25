@@ -134,6 +134,8 @@ private:
                          uint64_t access_user_id);
     void restore_acl(const FsPermissionState& prev, const std::string& path,
                      const std::string& groupname, core::OperationResult& out);
+    void rollback_chroot_rmdir(const std::string& path, bool created_by_us,
+                                core::OperationResult& out);
 
     // Resolve entity_type from permission string
     static std::string site_group_entity_type(const std::string& permission);

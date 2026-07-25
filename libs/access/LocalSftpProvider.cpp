@@ -611,14 +611,20 @@ core::OperationResult LocalSftpProvider::ensure_chroot_layout(uint64_t access_us
     }
 
     std::string sites_dir = expected_home + "/sites/";
+
+    // Track whether we created this directory (rollback only what we created)
+    bool dir_created = false;
+    if (fs_inspector_) { auto pre = fs_inspector_->inspect(sites_dir); dir_created = !pre.exists; }
+    else dir_created = true; // assume created if no inspector
+
     auto r = runner_->mkdir_p(sites_dir);
     if (!r.success) { out.success = false; out.message = "mkdir sites/ failed"; return out; }
 
     // Enforce root-owned chroot layout (OpenSSH ChrootDirectory requirement)
     auto r2 = runner_->chown_root(sites_dir);
-    if (!r2.success) { out.success = false; out.message = "chown sites/ failed"; return out; }
+    if (!r2.success) { rollback_chroot_rmdir(sites_dir, dir_created, out); return out; }
     auto r3 = runner_->chmod("755", sites_dir);
-    if (!r3.success) { out.success = false; out.message = "chmod sites/ failed"; return out; }
+    if (!r3.success) { rollback_chroot_rmdir(sites_dir, dir_created, out); return out; }
 
     // Postcondition: verify directory ownership, mode, path identity
     if (fs_inspector_) {
@@ -629,7 +635,7 @@ core::OperationResult LocalSftpProvider::ensure_chroot_layout(uint64_t access_us
         if (post.group_gid != 0) { out.success = false; out.message = "sites/ not root group"; return out; }
         if (post.mode != 0755) { out.success = false; out.message = "sites/ wrong mode"; return out; }
         if (post.acl_status != InspectionStatus::Ok && post.acl_status != InspectionStatus::PathMissing) {
-            out.success = false; out.message = "sites/ inspection error"; return out;
+            rollback_chroot_rmdir(sites_dir, dir_created, out); return out;
         }
     }
 
@@ -918,6 +924,14 @@ core::OperationResult LocalSftpProvider::revoke_all_grants(uint64_t access_user_
     }
     if (failed > 0) { out.success = false; out.message = std::to_string(failed) + " grants failed to revoke"; return out; }
     out.success = true; out.message = std::to_string(grants.size()) + " grants revoked"; return out;
+}
+
+void LocalSftpProvider::rollback_chroot_rmdir(const std::string& path, bool created_by_us,
+                                                core::OperationResult& out) {
+    if (!created_by_us || path.empty()) return;
+    auto rd = runner_->rmdir(path);
+    out.success = false;
+    out.message = rd.success ? "chroot operation failed, rolled back" : "chroot operation failed, rmdir rollback also failed";
 }
 
 // --- lifecycle ---
