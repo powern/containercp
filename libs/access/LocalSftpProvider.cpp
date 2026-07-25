@@ -67,8 +67,18 @@ void LocalSftpProvider::set_filesystem_inspector(std::shared_ptr<FilesystemPermi
     fs_inspector_ = std::move(inspector);
 }
 
-void LocalSftpProvider::set_site_root_resolver(SiteRootFn fn) {
-    site_root_resolver_ = std::move(fn);
+void LocalSftpProvider::set_site_resolver(SiteInfoFn fn) {
+    site_resolver_ = std::move(fn);
+}
+
+// Helper: resolve SiteInfo and extract root, rejecting invalid sites.
+static std::string resolve_site_root(containercp::access::LocalSftpProvider::SiteInfoFn& fn, uint64_t site_id) {
+    auto info = fn(site_id);
+    return info.valid ? info.root : "";
+}
+static std::string resolve_site_domain(containercp::access::LocalSftpProvider::SiteInfoFn& fn, uint64_t site_id) {
+    auto info = fn(site_id);
+    return info.valid ? info.domain : "";
 }
 
 void LocalSftpProvider::set_grants_lookup(GrantsForSiteFn fn) {
@@ -402,13 +412,13 @@ core::OperationResult LocalSftpProvider::apply_directory_permissions(uint64_t si
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
     if (site_id == 0) { out.success = false; out.message = "admin_panel_sftp_access_forbidden"; return out; }
-    if (!site_root_resolver_) { out.success = false; out.message = "site root resolver not configured"; return out; }
+    if (!site_resolver_) { out.success = false; out.message = "site root resolver not configured"; return out; }
     if (!valid_permission_for_site_dir(permission)) {
         out.success = false; out.message = "invalid permission"; return out;
     }
 
-    std::string site_root = site_root_resolver_(site_id);
-    if (site_root.empty()) { out.success = false; out.message = "site not found"; return out; }
+    auto site_info = site_resolver_(site_id); if (!site_info.valid) { out.success = false; out.message = "site not found"; return out; } std::string site_root = site_info.root;
+
     std::string public_dir = site_root + "/public/";
 
     auto rw_mapping = find_mapping("site_group_rw", site_id);
@@ -454,10 +464,10 @@ core::OperationResult LocalSftpProvider::apply_read_only_acl(uint64_t site_id) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
     if (site_id == 0) { out.success = false; out.message = "admin_panel_sftp_access_forbidden"; return out; }
-    if (!site_root_resolver_) { out.success = false; out.message = "site root resolver not configured"; return out; }
+    if (!site_resolver_) { out.success = false; out.message = "site root resolver not configured"; return out; }
 
-    std::string site_root = site_root_resolver_(site_id);
-    if (site_root.empty()) { out.success = false; out.message = "site not found"; return out; }
+    auto site_info = site_resolver_(site_id); if (!site_info.valid) { out.success = false; out.message = "site not found"; return out; } std::string site_root = site_info.root;
+
     std::string public_dir = site_root + "/public/";
 
     auto ro_mapping = find_mapping("site_group_ro", site_id);
@@ -504,10 +514,10 @@ core::OperationResult LocalSftpProvider::remove_read_only_acl(uint64_t site_id) 
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
     if (site_id == 0) { out.success = false; out.message = "admin_panel_sftp_access_forbidden"; return out; }
-    if (!site_root_resolver_) { out.success = false; out.message = "site root resolver not configured"; return out; }
+    if (!site_resolver_) { out.success = false; out.message = "site root resolver not configured"; return out; }
 
-    std::string site_root = site_root_resolver_(site_id);
-    if (site_root.empty()) { out.success = false; out.message = "site not found"; return out; }
+    auto site_info = site_resolver_(site_id); if (!site_info.valid) { out.success = false; out.message = "site not found"; return out; } std::string site_root = site_info.root;
+
     std::string public_dir = site_root + "/public/";
 
     auto ro_mapping = find_mapping("site_group_ro", site_id);
@@ -701,7 +711,7 @@ core::OperationResult LocalSftpProvider::ensure_chroot_layout(uint64_t access_us
 core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id, uint64_t site_id) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "bind_mount_site"), out;
-    if (!runner_ || !mount_inspector_ || !site_root_resolver_) {
+    if (!runner_ || !mount_inspector_ || !site_resolver_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
     if (site_id == 0) { out.success = false; out.message = "admin_panel_sftp_access_forbidden"; return out; }
@@ -709,14 +719,10 @@ core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id
     std::string username = resolve_username(access_user_id);
     if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
 
-    std::string site_root = site_root_resolver_(site_id);
-    if (site_root.empty()) { out.success = false; out.message = "site not found"; return out; }
+    auto site_info = site_resolver_(site_id); if (!site_info.valid) { out.success = false; out.message = "site not found"; return out; } std::string site_root = site_info.root;
 
-    // Derive domain from site root (last path component)
-    std::string domain = site_root;
-    while (!domain.empty() && domain.back() == '/') domain.pop_back();
-    auto pos = domain.rfind('/');
-    domain = (pos != std::string::npos) ? domain.substr(pos + 1) : domain;
+
+    std::string domain = site_info.domain;
 
     std::string source = site_root + "/public/";
     std::string target = managed_home_root_ + "/" + username + "/sites/" + domain;
@@ -768,8 +774,8 @@ core::OperationResult LocalSftpProvider::unmount_site(uint64_t access_user_id, u
     std::string username = resolve_username(access_user_id);
     if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
 
-    std::string site_root = site_root_resolver_(site_id);
-    if (site_root.empty()) { out.success = false; out.message = "site not found"; return out; }
+    auto site_info = site_resolver_(site_id); if (!site_info.valid) { out.success = false; out.message = "site not found"; return out; } std::string site_root = site_info.root;
+
 
     std::string domain = site_root;
     while (!domain.empty() && domain.back() == '/') domain.pop_back();
@@ -871,7 +877,7 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     // Step 3: Directory permissions (RW only)
     if (permission != "read_only") {
         if (fs_inspector_) {
-            std::string pub = site_root_resolver_(site_id) + "/public/";
+            std::string pub = site_resolver_(site_id).root + "/public/";
             auto orig = fs_inspector_->inspect(pub);
             if (orig.exists) { original_gid = orig.group_gid; original_mode = orig.mode; }
         }
@@ -908,7 +914,7 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
             if (!rb.success) note("acl");
         }
         if (perms_changed && original_gid > 0 && runner_) {
-            std::string pub = site_root_resolver_(site_id) + "/public/";
+            std::string pub = site_resolver_(site_id).root + "/public/";
             auto gid_rb = runner_->chgrp(std::to_string(original_gid), pub);
             auto mode_rb = runner_->chmod((original_mode > 0 ? std::to_string(original_mode) : std::string("755")), pub);
             if (!gid_rb.success || !mode_rb.success) note("perms");

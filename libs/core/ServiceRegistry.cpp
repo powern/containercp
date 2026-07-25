@@ -640,11 +640,12 @@ void ServiceRegistry::start() {
     access_provider_.set_mount_inspector(
         access::make_real_mount_inspector(credential_command_executor_));
     // Site root resolver for bind mount targets.
-    access_provider_.set_site_root_resolver([this](uint64_t site_id) -> std::string {
-        if (site_id == 0) return {};
+    access_provider_.set_site_resolver([this](uint64_t site_id) -> containercp::access::LocalSftpProvider::SiteInfo {
+        containercp::access::LocalSftpProvider::SiteInfo info; info.site_id = site_id;
+        if (site_id == 0) return info;
         auto* site = sites_.find_by_id(site_id);
-        if (site == nullptr) return {};
-        return config_.data_root() + "/sites/" + site->domain;
+        if (site == nullptr) return info;
+        info.valid = true; info.domain = site->domain; info.root = config_.data_root() + "/sites/" + site->domain; return info;
     });
 }
 

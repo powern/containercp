@@ -62,9 +62,10 @@ public:
 
     // --- Phase 3b: Permission Enforcement ---
 
-    // Callback to resolve a site_id to its filesystem root path.
-    using SiteRootFn = std::function<std::string(uint64_t site_id)>;
-    void set_site_root_resolver(SiteRootFn fn);
+    // Trusted Site identity resolved from site_id.
+    struct SiteInfo { bool valid = false; uint64_t site_id = 0; std::string domain; std::string root; };
+    using SiteInfoFn = std::function<SiteInfo(uint64_t site_id)>;
+    void set_site_resolver(SiteInfoFn fn);
 
     // Apply directory ownership and mode. Internally resolves site_root, validates
     // path, verifies group ownership, captures original state, applies chgrp+chmod,
@@ -152,7 +153,7 @@ private:
 
     GrantsForSiteFn grants_lookup_;
 
-    SiteRootFn site_root_resolver_;
+    SiteInfoFn site_resolver_;
     LoadGrantsFn grants_loader_;
 
     std::shared_ptr<FilesystemPermissionInspector> fs_inspector_;

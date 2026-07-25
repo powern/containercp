@@ -564,7 +564,7 @@ TEST_CASE("Provider find_mapping via show_user returns value for existing entry"
     containercp::access::LocalSftpProvider provider(*log);
     provider.set_identity_inspector(inspector);
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -608,7 +608,7 @@ TEST_CASE("Provider create_user lifecycle") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -664,7 +664,7 @@ TEST_CASE("Provider create_user rejects on unmanaged conflict") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -700,7 +700,7 @@ TEST_CASE("Provider create_user rollback on partial failure") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
 
@@ -749,7 +749,7 @@ TEST_CASE("Provider idempotent create returns success for already active mapping
     containercp::access::LocalSftpProvider provider(*log);
     provider.set_identity_inspector(inspector);
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -785,7 +785,7 @@ TEST_CASE("Provider remove_user fails closed when home cleanup fails") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -823,7 +823,7 @@ TEST_CASE("Provider remove_user fails closed when managed_path_safe detects unsa
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     // Set managed root to a DIFFERENT path so managed_path_safe rejects the home
@@ -874,7 +874,7 @@ TEST_CASE("Provider stale provisioning cleanup and retry succeeds") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
 
@@ -948,7 +948,7 @@ TEST_CASE("Provider verify_ownership rejects UID outside managed range") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -983,7 +983,7 @@ TEST_CASE("Site group ensure_site_group creates RW group idempotently") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -1025,7 +1025,7 @@ TEST_CASE("Site group ensure_site_group creates RO group") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -1057,7 +1057,7 @@ TEST_CASE("Site group allocates unique GIDs per group") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -1096,7 +1096,7 @@ TEST_CASE("Site group rejects unmanaged conflict") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -1131,7 +1131,7 @@ TEST_CASE("Site group add_user_to_site_group adds membership") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -1159,7 +1159,7 @@ TEST_CASE("Site group add_user rejects unprovisioned group") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -1191,7 +1191,7 @@ TEST_CASE("Site group delete removes orphaned group") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_grants_lookup([](uint64_t, const std::string&) -> size_t { return 0; });
@@ -1223,7 +1223,7 @@ TEST_CASE("Site group delete refuses when grants exist") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_grants_lookup([](uint64_t, const std::string&) -> size_t { return 3; });
@@ -1256,7 +1256,7 @@ TEST_CASE("Site group full lifecycle: create-add-remove-delete") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_grants_lookup([](uint64_t, const std::string&) -> size_t { return 0; });
@@ -1302,7 +1302,7 @@ TEST_CASE("Site group stale provisioning retry recovers to active") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     bool state_was_updated = false;
@@ -1341,7 +1341,7 @@ TEST_CASE("Site group remove_user rejects unmanaged group") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -1367,7 +1367,7 @@ TEST_CASE("Site group ensure_site_group rejects invalid permission") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -1408,7 +1408,7 @@ TEST_CASE("Site group recovery fails when save_mapping fails") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -1440,7 +1440,7 @@ TEST_CASE("Site group remove_user verifies ownership completely") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -1475,7 +1475,7 @@ TEST_CASE("Site group add_user verifies membership postcondition") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -1508,7 +1508,7 @@ TEST_CASE("Site group delete_mapping failure leaves recoverable state") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_grants_lookup([](uint64_t, const std::string&) -> size_t { return 0; });
@@ -1545,7 +1545,7 @@ TEST_CASE("Phase3b valid RW permission accepted") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -1574,7 +1574,7 @@ TEST_CASE("Phase3b deploy permission maps to RW") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -1596,7 +1596,7 @@ TEST_CASE("Phase3b read_only rejected in apply_directory_permissions") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
 
@@ -1616,7 +1616,7 @@ TEST_CASE("Phase3b invalid permission rejected") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
 
@@ -1635,7 +1635,7 @@ TEST_CASE("Phase3b site_id zero rejected") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
 
@@ -1659,7 +1659,7 @@ TEST_CASE("Phase3b missing RW mapping rejected") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_mapping_persistence(
@@ -1688,7 +1688,7 @@ TEST_CASE("Phase3b RO ACL applied and removed") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     auto fs = std::make_shared<FakeFsInspector>();
     provider.set_filesystem_inspector(fs);
 
@@ -1741,7 +1741,7 @@ TEST_CASE("Phase3b symlink public/ rejected") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(fs);
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
@@ -1778,7 +1778,7 @@ TEST_CASE("Phase3b ACL error propagated on inspection failure") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(fs);
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
@@ -1818,7 +1818,7 @@ TEST_CASE("Phase3b effective perms reject write access") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(fs);
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
@@ -1863,7 +1863,7 @@ TEST_CASE("Phase3b malformed ACL output rejected") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(fs);
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
@@ -1890,7 +1890,7 @@ TEST_CASE("Phase3b lstat permission denied returns AccessDenied") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(fs);
     provider.set_mapping_persistence(
         []() { return std::vector<containercp::access::SystemAccountMapping>{}; },
@@ -1925,7 +1925,7 @@ TEST_CASE("Phase3b fail-closed when ACL tools missing") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(fs);
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
@@ -1965,7 +1965,7 @@ TEST_CASE("Phase3b valid_acl_perms rejects invalid positions") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(fs);
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
@@ -2006,7 +2006,7 @@ TEST_CASE("Phase3b rollback restores and verifies previous ACL state") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(fs);
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
@@ -2222,7 +2222,7 @@ TEST_CASE("Phase3b ACL rollback restores complete previous state") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(fs);
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
@@ -2333,7 +2333,7 @@ TEST_CASE("Phase3c apply_grant rollback on bind mount failure") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping& m) {
@@ -2363,7 +2363,7 @@ TEST_CASE("Phase3c bind_mount fails without mount inspector") {
     auto* log = &containercp::logger::Logger::instance();
     containercp::access::LocalSftpProvider provider(*log);
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
@@ -2396,7 +2396,7 @@ TEST_CASE("Phase3c cleanup_all_mounts fails on partial failure") {
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_grants_loader([](uint64_t) {
         std::vector<containercp::access::LocalSftpProvider::GrantInfo> g;
         g.push_back({1, "test", "read_write"});
@@ -2442,7 +2442,7 @@ TEST_CASE("Phase3d grant rolls back newly created site group") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20000, 29999}));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     bool group_deleted = false;
     provider.set_grants_lookup([&group_deleted](uint64_t, const std::string&) -> size_t { return 0; });
     provider.set_mapping_persistence(
@@ -2492,7 +2492,7 @@ TEST_CASE("Phase3d grant_rollback_incomplete collects multiple errors") {
         containercp::access::SystemAccountAllocator::Range{10000, 19999},
         containercp::access::SystemAccountAllocator::Range{20001, 29999}));
     provider.set_enabled(true);
-    provider.set_site_root_resolver([](uint64_t) { return "/srv/containercp/sites/test"; });
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping& m) {
