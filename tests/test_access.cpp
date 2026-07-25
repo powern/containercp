@@ -2866,7 +2866,7 @@ TEST_CASE("Phase3c cleanup_all_mounts fails on partial failure") {
 
     auto r = provider.cleanup_all_mounts(1);
     CHECK_FALSE(r.success);
-    CHECK(r.message.find("failed") != std::string::npos);
+    CHECK(r.message.find("cleanup_all_mounts:") != std::string::npos);
 }
 
 
@@ -4185,7 +4185,7 @@ TEST_CASE("ARCH-009 bind mount rollback rmdir failure") {
                 ++call_count;
                 if (call_count == 1) {
                     // First rmdir attempt (the one in rollback) — fail it
-                    return containercp::core::OperationResult{false, "rmdir failed"};
+                    return containercp::core::OperationResult{false, "rmdir failed", ""};
                 }
             }
             return ctx.fake_commands.run(cmd);
@@ -5270,5 +5270,262 @@ TEST_CASE("ARCH-009 revoke_grant missing mount_inspector") {
     CHECK_FALSE(r.success);
     // revoke_grant calls unmount_site which reports the missing dep
     CHECK(r.message == "provider dependencies not configured");
+    CHECK(ctx.mutation_count() == 0);
+}
+
+// --- ARCH-009 Task 27: Complete cleanup_all_mounts Failure Aggregation ---
+
+struct CleanupMountsContext {
+    std::shared_ptr<FakeInspector> inspector;
+    FakeCommandRunner fake_commands;
+    std::shared_ptr<FakeLiveFsInspector> fs_insp;
+    std::shared_ptr<FakeLiveMountInspector> mount_insp;
+    containercp::access::LocalSftpProvider provider;
+
+    // Map site_id → (domain, root) so resolver varies by site
+    std::map<uint64_t, std::pair<std::string, std::string>> sites_;
+
+    CleanupMountsContext()
+        : inspector(std::make_shared<FakeInspector>())
+        , fake_commands(inspector)
+        , fs_insp(std::make_shared<FakeLiveFsInspector>(inspector->fs_state_))
+        , mount_insp(std::make_shared<FakeLiveMountInspector>(inspector->mount_state_))
+        , provider(containercp::logger::Logger::instance())
+    {
+        inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                       "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+
+        provider.set_identity_inspector(inspector);
+        provider.set_mount_inspector(mount_insp);
+        provider.set_filesystem_inspector(fs_insp);
+        provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+            [this](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+                return fake_commands.run(cmd);
+            }));
+        provider.set_enabled(true);
+
+        containercp::access::SystemAccountMapping um;
+        um.entity_type = "access_user"; um.entity_id = 1;
+        um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+        std::vector<containercp::access::SystemAccountMapping> stored = {um};
+        provider.set_mapping_persistence(
+            [stored]() { return stored; },
+            [](const containercp::access::SystemAccountMapping&) { return true; },
+            [](const std::string&, uint64_t) { return true; });
+
+        provider.set_grants_loader([](uint64_t) {
+            return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
+        });
+        // Default resolver returns invalid; override via add_site() for known IDs
+        provider.set_site_resolver([](uint64_t) {
+            containercp::access::LocalSftpProvider::SiteInfo info;
+            info.valid = false;
+            return info;
+        });
+    }
+
+    void add_site(uint64_t site_id, const std::string& domain, const std::string& root) {
+        sites_[site_id] = {domain, root};
+        provider.set_site_resolver([this](uint64_t id) {
+            containercp::access::LocalSftpProvider::SiteInfo info;
+            auto it = this->sites_.find(id);
+            if (it != this->sites_.end()) {
+                info.valid = true; info.site_id = id;
+                info.domain = it->second.first;
+                info.root = it->second.second;
+            }
+            return info;
+        });
+    }
+
+    void add_mount(const std::string& target, const std::string& source) {
+        inspector->mount_state_->mounted_paths_.insert(target);
+        inspector->mount_state_->bind_sources_[target] = source;
+        // Ensure fs state has a directory entry for the target
+        containercp::access::FsPermissionState dir;
+        dir.exists = true; dir.is_symlink = false; dir.mode = S_IFDIR | 0755; dir.group_gid = 0;
+        inspector->fs_state_->state_[target] = dir;
+    }
+
+    size_t mutation_count() const { return fake_commands.cmds_.size(); }
+};
+
+TEST_CASE("ARCH-009 cleanup_all_mounts all cleaned") {
+    CleanupMountsContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_site(2, "other", "/srv/containercp/sites/other");
+    ctx.provider.set_grants_loader([](uint64_t) {
+        std::vector<containercp::access::LocalSftpProvider::GrantInfo> g;
+        g.push_back({1, "test", "read_write"});
+        g.push_back({2, "other", "read_only"});
+        return g;
+    });
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/srv/containercp/sites/test/public/");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/other", "/srv/containercp/sites/other/public/");
+
+    auto r = ctx.provider.cleanup_all_mounts(1);
+    CHECK(r.success);
+    CHECK(r.message == "2 mounts cleaned");
+}
+
+TEST_CASE("ARCH-009 cleanup_all_mounts first mount fails") {
+    CleanupMountsContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_site(2, "other", "/srv/containercp/sites/other");
+    ctx.provider.set_grants_loader([](uint64_t) {
+        std::vector<containercp::access::LocalSftpProvider::GrantInfo> g;
+        g.push_back({1, "test", "read_write"});
+        g.push_back({2, "other", "read_only"});
+        return g;
+    });
+    // Mount 2 is correct
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/other", "/srv/containercp/sites/other/public/");
+    // Mount 1 has wrong source to fail identity
+    ctx.inspector->mount_state_->mounted_paths_.insert("/srv/containercp/users/au-dev/sites/test");
+    ctx.inspector->mount_state_->bind_sources_["/srv/containercp/users/au-dev/sites/test"] = "/wrong/source";
+    ctx.inspector->fs_state_->state_["/srv/containercp/users/au-dev/sites/test"] = []{
+        containercp::access::FsPermissionState d;
+        d.exists = true; d.is_symlink = false; d.mode = S_IFDIR | 0755; d.group_gid = 0;
+        return d;
+    }();
+
+    auto r = ctx.provider.cleanup_all_mounts(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("1:foreign_or_mismatched_mount") != std::string::npos);
+    CHECK(r.message.find("cleanup_all_mounts:1 failures") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 cleanup_all_mounts middle mount fails") {
+    CleanupMountsContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_site(2, "a", "/srv/containercp/sites/a");
+    ctx.add_site(3, "b", "/srv/containercp/sites/b");
+    ctx.provider.set_grants_loader([](uint64_t) {
+        std::vector<containercp::access::LocalSftpProvider::GrantInfo> g;
+        g.push_back({1, "test", "read_write"});
+        g.push_back({2, "a", "read_write"});
+        g.push_back({3, "b", "read_write"});
+        return g;
+    });
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/srv/containercp/sites/test/public/");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/b", "/srv/containercp/sites/b/public/");
+    // Mount 2 has wrong source
+    ctx.inspector->mount_state_->mounted_paths_.insert("/srv/containercp/users/au-dev/sites/a");
+    ctx.inspector->mount_state_->bind_sources_["/srv/containercp/users/au-dev/sites/a"] = "/wrong";
+    ctx.inspector->fs_state_->state_["/srv/containercp/users/au-dev/sites/a"] = []{
+        containercp::access::FsPermissionState d;
+        d.exists = true; d.is_symlink = false; d.mode = S_IFDIR | 0755; d.group_gid = 0;
+        return d;
+    }();
+
+    auto r = ctx.provider.cleanup_all_mounts(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("2:foreign_or_mismatched_mount") != std::string::npos);
+    CHECK(r.message.find("cleanup_all_mounts:1 failures") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 cleanup_all_mounts multiple failures") {
+    CleanupMountsContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_site(2, "a", "/srv/containercp/sites/a");
+    ctx.add_site(3, "b", "/srv/containercp/sites/b");
+    ctx.provider.set_grants_loader([](uint64_t) {
+        std::vector<containercp::access::LocalSftpProvider::GrantInfo> g;
+        g.push_back({1, "test", "read_write"});
+        g.push_back({2, "a", "read_write"});
+        g.push_back({3, "b", "read_write"});
+        return g;
+    });
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/a", "/srv/containercp/sites/a/public/");
+    // Mounts 1 and 3 have wrong source
+    ctx.inspector->mount_state_->mounted_paths_.insert("/srv/containercp/users/au-dev/sites/test");
+    ctx.inspector->mount_state_->bind_sources_["/srv/containercp/users/au-dev/sites/test"] = "/wrong1";
+    ctx.inspector->fs_state_->state_["/srv/containercp/users/au-dev/sites/test"] = []{
+        containercp::access::FsPermissionState d;
+        d.exists = true; d.is_symlink = false; d.mode = S_IFDIR | 0755; d.group_gid = 0;
+        return d;
+    }();
+    ctx.inspector->mount_state_->mounted_paths_.insert("/srv/containercp/users/au-dev/sites/b");
+    ctx.inspector->mount_state_->bind_sources_["/srv/containercp/users/au-dev/sites/b"] = "/wrong2";
+    ctx.inspector->fs_state_->state_["/srv/containercp/users/au-dev/sites/b"] = []{
+        containercp::access::FsPermissionState d;
+        d.exists = true; d.is_symlink = false; d.mode = S_IFDIR | 0755; d.group_gid = 0;
+        return d;
+    }();
+
+    auto r = ctx.provider.cleanup_all_mounts(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("cleanup_all_mounts:2 failures") != std::string::npos);
+    CHECK(r.message.find("1:foreign_or_mismatched_mount") != std::string::npos);
+    CHECK(r.message.find("3:foreign_or_mismatched_mount") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 cleanup_all_mounts foreign mount") {
+    CleanupMountsContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.provider.set_grants_loader([](uint64_t) {
+        std::vector<containercp::access::LocalSftpProvider::GrantInfo> g;
+        g.push_back({1, "test", "read_write"});
+        return g;
+    });
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/srv/evil/public/");
+
+    auto r = ctx.provider.cleanup_all_mounts(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("foreign_or_mismatched_mount") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 cleanup_all_mounts site resolution failure") {
+    CleanupMountsContext ctx;
+    // site_resolver returns invalid for all IDs — no sites added
+    ctx.provider.set_grants_loader([](uint64_t) {
+        std::vector<containercp::access::LocalSftpProvider::GrantInfo> g;
+        g.push_back({1, "test", "read_write"});
+        return g;
+    });
+
+    auto r = ctx.provider.cleanup_all_mounts(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("site not found") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 cleanup_all_mounts inspector failure") {
+    CleanupMountsContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.provider.set_grants_loader([](uint64_t) {
+        std::vector<containercp::access::LocalSftpProvider::GrantInfo> g;
+        g.push_back({1, "test", "read_write"});
+        return g;
+    });
+    // Replace mount inspector with one that always fails
+    class FailMountInspector : public containercp::access::MountInspector {
+    public:
+        containercp::access::MountState inspect(const std::string&) const override {
+            containercp::access::MountState s;
+            s.status = containercp::access::MountStatus::InspectionFailed;
+            return s;
+        }
+    };
+    ctx.provider.set_mount_inspector(std::make_shared<FailMountInspector>());
+
+    auto r = ctx.provider.cleanup_all_mounts(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("unmount_inspection") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 cleanup_all_mounts empty list") {
+    CleanupMountsContext ctx;
+    auto r = ctx.provider.cleanup_all_mounts(1);
+    CHECK(r.success);
+    CHECK(r.message == "0 mounts cleaned");
+    CHECK(ctx.mutation_count() == 0);
+}
+
+TEST_CASE("ARCH-009 cleanup_all_mounts missing loader") {
+    CleanupMountsContext ctx;
+    ctx.provider.set_grants_loader(nullptr);
+    auto r = ctx.provider.cleanup_all_mounts(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "grant_loader_not_configured");
     CHECK(ctx.mutation_count() == 0);
 }

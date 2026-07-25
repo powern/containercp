@@ -1043,7 +1043,7 @@ core::OperationResult LocalSftpProvider::unmount_site(uint64_t access_user_id, u
 core::OperationResult LocalSftpProvider::cleanup_all_mounts(uint64_t access_user_id) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "cleanup_all_mounts"), out;
-    if (!runner_ || !mount_inspector_) {
+    if (!runner_ || !mount_inspector_ || !site_resolver_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
     if (!grants_loader_) { out.success = false; out.message = "grant_loader_not_configured"; return out; }
@@ -1053,15 +1053,25 @@ core::OperationResult LocalSftpProvider::cleanup_all_mounts(uint64_t access_user
 
     // Enumerate all mounts within the user's sites/ using mount inspector via known domains.
     // We iterate persisted grants to know which domains to check.
-    size_t cleaned = 0;
-    size_t failed = 0;
     auto grants = grants_loader_(access_user_id);
+    std::string failures;
+    size_t failed = 0;
     for (const auto& g : grants) {
+        std::string site_label = std::to_string(g.site_id);
         auto r = unmount_site(access_user_id, g.site_id);
-        if (r.success) cleaned++; else failed++;
+        if (!r.success) {
+            if (!failures.empty()) failures += "; ";
+            failures += site_label + ":" + r.message;
+            failed++;
+        }
     }
 
-    if (failed > 0) { out.success = false; out.message = std::to_string(cleaned) + " cleaned, " + std::to_string(failed) + " failed"; return out; }
+    size_t cleaned = grants.size() - failed;
+    if (failed > 0) {
+        out.success = false;
+        out.message = "cleanup_all_mounts:" + std::to_string(failed) + " failures — " + failures;
+        return out;
+    }
     out.success = true;
     out.message = std::to_string(cleaned) + " mounts cleaned";
     return out;

@@ -6,7 +6,21 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-25 | `this commit` | ARCH-009 Task 26 — Fail Closed When Grant Storage Is Not Configured
+## 2026-07-25 | `this commit` | ARCH-009 Task 27 — Complete cleanup_all_mounts Failure Aggregation
+
+**Summary:** Rewrote `cleanup_all_mounts()` to collect detailed failure diagnostics per-site. All persisted grants are loaded, each site resolved through trusted SQLite data, and `unmount_site()` invoked for every expected mount. Failures are aggregated with per-site error tokens (`site_id:error_token`), separated by `; `, and returned in a bounded deterministic message (`cleanup_all_mounts:N failures — site_id:error, ...`). Processing continues after individual failures — independent mounts are never skipped. Grant persistence is never mutated by unmount failures. Added `site_resolver_` dependency check. Added 9 tests covering: all cleaned, first mount fails, middle mount fails, multiple failures, foreign mount, site resolution failure, inspector failure, empty grant list, missing loader.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** `cleanup_all_mounts` now returns a structured diagnostic message listing each failed mount with its error token, instead of a generic "X cleaned, Y failed" count. All persisted grants are always iterated regardless of individual failures. Grants are never deleted on unmount failure.
+
+**Validation:** Full doctest suite passed (1078 cases, 7211 assertions). 9 new task tests + 3 existing cleanup tests pass. `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
+## 2026-07-25 | `935afa1` | ARCH-009 Task 26 — Fail Closed When Grant Storage Is Not Configured
 
 **Summary:** Fixed 5 methods that silently treated missing grant storage dependencies as idempotent success or empty results. `cleanup_all_mounts()` now fails with `grant_loader_not_configured` when `grants_loader_` is missing (previously returned "0 mounts cleaned"). `apply_pending_grants()` and `revoke_all_grants()` fail with the same token instead of returning "no grants loader" as success. `apply_grant()` now validates `site_resolver_` and `inspector_` upfront (previously would crash). All failing paths perform zero filesystem mutation. Added `mount_inspector_` and `runner_` dependency checks to `cleanup_all_mounts()`. Updated 4 existing tests to set `grants_loader_` where lifecycle methods now require it. Added 8 direct dependency-missing tests verifying failure, exact error token, zero command mutations, and zero persisted-state changes.
 
