@@ -876,6 +876,21 @@ TEST_CASE("Provider create_user lifecycle") {
     provider.set_grants_loader([](uint64_t) {
         return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
     });
+    std::vector<containercp::storage::GrantLifecycleState> life_glc;
+    provider.set_grant_lifecycle_storage(
+        [&life_glc]() -> std::vector<containercp::storage::GrantLifecycleState> { return life_glc; },
+        [&life_glc](const containercp::storage::GrantLifecycleState& s) -> bool {
+            for (auto& p : life_glc) {
+                if (p.access_user_id == s.access_user_id && p.site_id == s.site_id) { p = s; return true; }
+            }
+            life_glc.push_back(s); return true;
+        },
+        [&life_glc](uint64_t uid, uint64_t sid) -> bool {
+            for (auto it = life_glc.begin(); it != life_glc.end(); ++it) {
+                if (it->access_user_id == uid && it->site_id == sid) { life_glc.erase(it); return true; }
+            }
+            return false;
+        });
 
     containercp::access::AccessUser user;
     user.id = 1; user.username = "testdev";
@@ -1047,6 +1062,21 @@ TEST_CASE("Provider remove_user fails closed when home cleanup fails") {
     provider.set_grants_loader([](uint64_t) {
         return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
     });
+    std::vector<containercp::storage::GrantLifecycleState> cleanup_glc;
+    provider.set_grant_lifecycle_storage(
+        [&cleanup_glc]() -> std::vector<containercp::storage::GrantLifecycleState> { return cleanup_glc; },
+        [&cleanup_glc](const containercp::storage::GrantLifecycleState& s) -> bool {
+            for (auto& p : cleanup_glc) {
+                if (p.access_user_id == s.access_user_id && p.site_id == s.site_id) { p = s; return true; }
+            }
+            cleanup_glc.push_back(s); return true;
+        },
+        [&cleanup_glc](uint64_t uid, uint64_t sid) -> bool {
+            for (auto it = cleanup_glc.begin(); it != cleanup_glc.end(); ++it) {
+                if (it->access_user_id == uid && it->site_id == sid) { cleanup_glc.erase(it); return true; }
+            }
+            return false;
+        });
 
     containercp::access::AccessUser user;
     user.id = 1; user.username = "cleanup";
@@ -1091,6 +1121,21 @@ TEST_CASE("Provider remove_user fails closed when managed_path_safe detects unsa
     provider.set_grants_loader([](uint64_t) {
         return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
     });
+    std::vector<containercp::storage::GrantLifecycleState> unsafe_glc;
+    provider.set_grant_lifecycle_storage(
+        [&unsafe_glc]() -> std::vector<containercp::storage::GrantLifecycleState> { return unsafe_glc; },
+        [&unsafe_glc](const containercp::storage::GrantLifecycleState& s) -> bool {
+            for (auto& p : unsafe_glc) {
+                if (p.access_user_id == s.access_user_id && p.site_id == s.site_id) { p = s; return true; }
+            }
+            unsafe_glc.push_back(s); return true;
+        },
+        [&unsafe_glc](uint64_t uid, uint64_t sid) -> bool {
+            for (auto it = unsafe_glc.begin(); it != unsafe_glc.end(); ++it) {
+                if (it->access_user_id == uid && it->site_id == sid) { unsafe_glc.erase(it); return true; }
+            }
+            return false;
+        });
 
     containercp::access::AccessUser user;
     user.id = 1; user.username = "unsafe";
@@ -6937,4 +6982,172 @@ TEST_CASE("ARCH-009 pending grants cross-site isolation") {
     CHECK_FALSE(r.success); // site 1 fails because no site setup
     // Processing site 1 should not affect site 2
     (void)r;
+}
+
+// --- ARCH-009 Task 37: Complete revoke_all_grants Lifecycle ---
+
+TEST_CASE("ARCH-009 revoke all no grants") {
+    PendingGrantsContext ctx;
+    auto r = ctx.provider.revoke_all_grants(1);
+    CHECK(r.success);
+    CHECK(r.message == "0 grants revoked");
+}
+
+TEST_CASE("ARCH-009 revoke all one active grant") {
+    PendingGrantsContext ctx;
+    ctx.add_ls(1, "read_write", "active");
+    ctx.setup_site(1, "read_write");
+    ctx.add_mount();
+    auto r = ctx.provider.revoke_all_grants(1);
+    CHECK(r.success);
+    CHECK(ctx.glc_.empty());
+}
+
+TEST_CASE("ARCH-009 revoke all multiple active grants") {
+    PendingGrantsContext ctx;
+    ctx.add_ls(1, "read_write", "active");
+    ctx.add_ls(2, "read_write", "active");
+    ctx.setup_site(1, "read_write");
+    ctx.setup_site(2, "read_write");
+    ctx.add_mount();
+    // Site 2 mount
+    std::string tgt2 = "/srv/containercp/users/au-dev/sites/test";
+    ctx.inspector->mount_state_->mounted_paths_.insert(tgt2);
+    ctx.inspector->mount_state_->bind_sources_[tgt2] = "/srv/containercp/sites/test/public/";
+    ctx.inspector->fs_state_->state_[tgt2] = []{
+        containercp::access::FsPermissionState d;
+        d.exists = true; d.is_symlink = false; d.mode = S_IFDIR | 0755; d.group_gid = 0;
+        return d;
+    }();
+    ctx.provider.set_site_resolver([](uint64_t id) {
+        containercp::access::LocalSftpProvider::SiteInfo info;
+        info.valid = true; info.site_id = id;
+        info.domain = "test"; info.root = "/srv/containercp/sites/test";
+        return info;
+    });
+    auto r = ctx.provider.revoke_all_grants(1);
+    CHECK(r.success);
+    CHECK(ctx.glc_.empty());
+}
+
+TEST_CASE("ARCH-009 revoke all first failure continues") {
+    PendingGrantsContext ctx;
+    ctx.add_ls(1, "read_write", "active");
+    ctx.add_ls(2, "read_write", "active");
+    ctx.setup_site(1, "read_write");
+    ctx.setup_site(2, "read_write");
+    ctx.add_mount();
+    std::string tgt2 = "/srv/containercp/users/au-dev/sites/test";
+    ctx.inspector->mount_state_->mounted_paths_.insert(tgt2);
+    ctx.inspector->mount_state_->bind_sources_[tgt2] = "/srv/containercp/sites/test/public/";
+    ctx.inspector->fs_state_->state_[tgt2] = []{
+        containercp::access::FsPermissionState d;
+        d.exists = true; d.is_symlink = false; d.mode = S_IFDIR | 0755; d.group_gid = 0;
+        return d;
+    }();
+    ctx.provider.set_site_resolver([](uint64_t id) {
+        containercp::access::LocalSftpProvider::SiteInfo info;
+        info.valid = true; info.site_id = id;
+        info.domain = "test"; info.root = "/srv/containercp/sites/test";
+        return info;
+    });
+    // Intercept umount to fail for first site
+    bool first_umount = true;
+    ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx, &first_umount](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "umount" && first_umount) {
+                first_umount = false;
+                return containercp::core::OperationResult{false, "busy", ""};
+            }
+            return ctx.fake_commands.run(cmd);
+        }));
+    auto r = ctx.provider.revoke_all_grants(1);
+    CHECK_FALSE(r.success);
+    // At least one failure recorded
+    CHECK(r.message.find("failures") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 revoke all revoking state recovery") {
+    PendingGrantsContext ctx;
+    ctx.add_ls(1, "read_write", "revoking");
+    ctx.setup_site(1, "read_write");
+    ctx.add_mount();
+    auto r = ctx.provider.revoke_all_grants(1);
+    CHECK(r.success);
+    CHECK(ctx.glc_.empty());
+}
+
+TEST_CASE("ARCH-009 revoke all applying state cleanup") {
+    PendingGrantsContext ctx;
+    ctx.add_ls(1, "read_write", "applying");
+    ctx.setup_site(1, "read_write");
+    ctx.setup_site_source(1);
+    ctx.add_mount();
+    // Add chroot sites/ dir
+    containercp::access::FsPermissionState sd;
+    sd.exists = true; sd.is_symlink = false; sd.mode = S_IFDIR | 0755; sd.group_gid = 0;
+    ctx.inspector->fs_state_->state_["/srv/containercp/users/au-dev/sites/"] = sd;
+    auto r = ctx.provider.revoke_all_grants(1);
+    CHECK(r.success);
+    // Record should be revoked and deleted
+    CHECK(ctx.glc_.empty());
+}
+
+TEST_CASE("ARCH-009 revoke all error state cleanup") {
+    PendingGrantsContext ctx;
+    ctx.add_ls(1, "read_write", "error");
+    ctx.setup_site(1, "read_write");
+    ctx.setup_site_source(1);
+    ctx.add_mount();
+    containercp::access::FsPermissionState sd;
+    sd.exists = true; sd.is_symlink = false; sd.mode = S_IFDIR | 0755; sd.group_gid = 0;
+    ctx.inspector->fs_state_->state_["/srv/containercp/users/au-dev/sites/"] = sd;
+    auto r = ctx.provider.revoke_all_grants(1);
+    CHECK(r.success);
+    // Error state should be cleaned up successfully
+    (void)r;
+}
+
+TEST_CASE("ARCH-009 revoke all persistence failure") {
+    PendingGrantsContext ctx;
+    ctx.add_ls(1, "read_write", "active");
+    ctx.setup_site(1, "read_write");
+    ctx.add_mount();
+    // Break delete
+    ctx.provider.set_grant_lifecycle_storage(
+        [&ctx]() -> std::vector<containercp::storage::GrantLifecycleState> { return ctx.glc_; },
+        [&ctx](const containercp::storage::GrantLifecycleState& s) -> bool {
+            for (auto& p : ctx.glc_) {
+                if (p.access_user_id == s.access_user_id && p.site_id == s.site_id) { p = s; return true; }
+            }
+            ctx.glc_.push_back(s); return true;
+        },
+        [](uint64_t, uint64_t) -> bool { return false; }); // delete always fails
+    auto r = ctx.provider.revoke_all_grants(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("failures") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 revoke all one failed remains") {
+    PendingGrantsContext ctx;
+    // First grant has no setup → will fail
+    ctx.add_ls(1, "read_write", "active");
+    ctx.setup_site(1, "read_write");
+    ctx.add_mount();
+    ctx.provider.set_site_resolver([](uint64_t id) {
+        containercp::access::LocalSftpProvider::SiteInfo info;
+        info.valid = true; info.site_id = id;
+        info.domain = "test"; info.root = "/srv/containercp/sites/test";
+        return info;
+    });
+    // Intercept umount to fail
+    ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "umount") return containercp::core::OperationResult{false, "busy", ""};
+            return ctx.fake_commands.run(cmd);
+        }));
+    auto r = ctx.provider.revoke_all_grants(1);
+    CHECK_FALSE(r.success);
+    // Failed record should remain
+    CHECK_FALSE(ctx.glc_.empty());
 }

@@ -2050,15 +2050,83 @@ core::OperationResult LocalSftpProvider::revoke_all_grants(uint64_t access_user_
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "revoke_all_grants"), out;
     if (!grants_loader_) { out.success = false; out.message = "grant_loader_not_configured"; return out; }
-
-    auto grants = grants_loader_(access_user_id);
-    size_t failed = 0;
-    for (const auto& g : grants) {
-        auto r = revoke_grant(access_user_id, g.site_id, g.permission);
-        if (!r.success) failed++;
+    if (!load_all_grant_lifecycle_) {
+        out.success = false; out.message = "provider dependencies not configured"; return out;
     }
-    if (failed > 0) { out.success = false; out.message = std::to_string(failed) + " grants failed to revoke"; return out; }
-    out.success = true; out.message = std::to_string(grants.size()) + " grants revoked"; return out;
+
+    // 1. Load all lifecycle records for this user
+    auto all_lifecycle = load_all_grant_lifecycle_();
+    std::vector<storage::GrantLifecycleState> user_records;
+    for (const auto& l : all_lifecycle) {
+        if (l.access_user_id == access_user_id) {
+            user_records.push_back(l);
+        }
+    }
+
+    // Sort by site_id for deterministic ordering
+    std::sort(user_records.begin(), user_records.end(),
+        [](const auto& a, const auto& b) { return a.site_id < b.site_id; });
+
+    // 2. Process each record
+    std::string diag;
+    size_t revoked = 0;
+    size_t failures = 0;
+    auto note = [&](const std::string& entry) {
+        if (!diag.empty()) diag += "; ";
+        diag += entry;
+    };
+
+    for (auto& ls : user_records) {
+        std::string label = "s" + std::to_string(ls.site_id);
+        auto r = revoke_grant(access_user_id, ls.site_id, ls.permission);
+        if (r.success) {
+            revoked++;
+        } else {
+            note(label + ":" + r.message);
+            failures++;
+        }
+    }
+
+    // 3. Re-check persisted state — verify no non-terminal grants remain
+    if (load_all_grant_lifecycle_) {
+        auto check = load_all_grant_lifecycle_();
+        size_t remaining = 0;
+        for (const auto& l : check) {
+            if (l.access_user_id == access_user_id && l.state != "error") {
+                remaining++;
+            }
+        }
+        if (remaining > 0) {
+            note("remaining:" + std::to_string(remaining));
+            failures++;
+        }
+    }
+
+    // 4. Verify zero managed mounts remain (only if mount inspector available)
+    if (mount_inspector_ && failures == 0) {
+        std::string user_root = managed_home_root_ + "/" + resolve_username(access_user_id);
+        if (!user_root.empty()) {
+            auto observed = mount_inspector_->enumerate(user_root);
+            for (const auto& m : observed) {
+                // Only flag bind mounts under sites/ (managed mounts)
+                std::string sites_prefix = user_root + "/sites/";
+                if (m.target.rfind(sites_prefix, 0) == 0 && m.mounted) {
+                    note("still_mounted:" + m.target);
+                    failures++;
+                }
+            }
+        }
+    }
+
+    if (failures > 0) {
+        out.success = false;
+        out.message = "revoke_all_grants:" + std::to_string(failures) + " failures, "
+                      + std::to_string(revoked) + " revoked — " + diag;
+        return out;
+    }
+    out.success = true;
+    out.message = std::to_string(revoked) + " grants revoked";
+    return out;
 }
 
 void LocalSftpProvider::rollback_chroot_rmdir(const std::string& path, bool created_by_us,

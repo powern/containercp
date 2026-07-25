@@ -6,7 +6,21 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-25 | `this commit` | ARCH-009 Task 36 — Complete apply_pending_grants Lifecycle
+## 2026-07-25 | `this commit` | ARCH-009 Task 37 — Complete revoke_all_grants Lifecycle
+
+**Summary:** Rewrote `revoke_all_grants()` to process lifecycle records instead of raw grants. Loads all records for the user, sorts by `site_id`, processes each through `revoke_grant()`. Continues after independent failures with bounded error aggregation. Returns failure if any revoke fails. Preserves failed grants for retry. Re-checks persisted state after processing and verifies zero managed mounts remain for successfully revoked grants. Never mutates foreign mounts. Requires lifecycle storage callbacks. Added 9 tests: no grants, one active, multiple active, first failure continues, revoking state recovery, applying state cleanup, error state cleanup, persistence failure, one failed grant remains.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** `revoke_all_grants()` now processes lifecycle records instead of raw grants. All grants are attempted even if some fail. Postcondition checks verify no records or mounts remain.
+
+**Validation:** Full doctest suite passed (1160 cases, 7524 assertions). 9 new revoke_all lifecycle tests pass. `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
+## 2026-07-25 | `43eaa43` | ARCH-009 Task 36 — Complete apply_pending_grants Lifecycle
 
 **Summary:** Rewrote `apply_pending_grants()` to process persisted lifecycle records instead of raw grants. Loads all lifecycle records for the user, sorts by `site_id` for deterministic ordering, and processes only allowed states: `pending`, `applying`, and `error` (recoverable). `active` grants are verified by calling `apply_grant` (idempotent check). `revoking` grants are rejected with a stable transition error. Processing continues after individual failures. Bounded diagnostics collect site labels and error tokens. Returns failure if any grant fails — never reports success after partial application. Requires lifecycle storage callbacks. Added 11 tests: empty list, one pending, multiple pending, first failure continues, active verification, revoking rejection, recoverable error, persistence failure, missing loader, multiple failures, cross-site isolation.
 
