@@ -798,6 +798,15 @@ core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id
         out.success = false; out.message = "foreign mount at target"; return out;
     }
 
+    // Track whether we create the target directory (for rollback)
+    bool dir_created = false;
+    if (fs_inspector_) {
+        auto pre = fs_inspector_->inspect(target);
+        dir_created = !pre.exists;
+    } else {
+        dir_created = true;
+    }
+
     // Create target
     auto r1 = runner_->mkdir_p(target);
     if (!r1.success) { out.success = false; out.message = "mkdir failed"; return out; }
@@ -805,21 +814,45 @@ core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id
     // Mount
     auto r2 = runner_->mount_bind(source, target);
     if (!r2.success) {
-        auto rb = runner_->rmdir(target);
-        out.success = false;
-        out.message = rb.success ? "mount failed" : "mount failed, rmdir also failed";
+        if (dir_created) {
+            auto rb = runner_->rmdir(target);
+            out.success = false;
+            out.message = rb.success ? "mount failed" : "mount failed, rmdir also failed";
+        } else {
+            out.success = false; out.message = "mount failed";
+        }
         return out;
     }
 
     // Verify exact identity
     auto post = mount_inspector_->inspect(target);
     if (!post.mounted || post.bind_root != source) {
+        // The mount was created by this operation — we verified no valid mount
+        // existed before the mount_bind call above.
+
+        // 1. Umount
         auto um = runner_->umount(target);
-        if (!um.success) { out.success = false; out.message = "mount verify fail, umount rollback fail"; return out; }
-        auto rd = runner_->rmdir(target);
-        out.success = false;
-        out.message = rd.success ? "mount verification failed" : "mount verify fail, rmdir also failed";
-        return out;
+        if (!um.success) { out.success = false; out.message = "mount rollback umount failure"; return out; }
+
+        // 2. Verify umount via inspector
+        if (mount_inspector_) {
+            auto check = mount_inspector_->inspect(target);
+            if (check.mounted) { out.success = false; out.message = "mount rollback still mounted"; return out; }
+        }
+
+        // 3. Rmdir only if we created it
+        if (dir_created) {
+            auto rd = runner_->rmdir(target);
+            if (!rd.success) { out.success = false; out.message = "mount rollback rmdir failure"; return out; }
+
+            // 4. Verify removal via fs_inspector
+            if (fs_inspector_) {
+                auto check = fs_inspector_->inspect(target);
+                if (check.exists) { out.success = false; out.message = "mount rollback target still exists"; return out; }
+            }
+        }
+
+        out.success = false; out.message = "mount verification failed"; return out;
     }
 
     out.success = true; out.message = "mounted: " + domain; return out;

@@ -454,6 +454,7 @@ public:
     };
     struct MountState {
         std::set<std::string> mounted_paths_;
+        std::map<std::string, std::string> bind_sources_; // target → source
     };
     std::shared_ptr<FsState> fs_state_ = std::make_shared<FsState>();
     std::shared_ptr<MountState> mount_state_ = std::make_shared<MountState>();
@@ -615,14 +616,18 @@ private:
             }
         } else if (prog == "mount" && cmd.args.size() >= 4) {
             // mount --bind source target
-            // For testing, just record that mount happened
             if (inspector_->mount_state_) {
                 std::string target = cmd.args.back();
+                std::string source = cmd.args[cmd.args.size() - 2];
                 inspector_->mount_state_->mounted_paths_.insert(target);
+                inspector_->mount_state_->bind_sources_[target] = source;
             }
         } else if (prog == "umount" && cmd.args.size() >= 2) {
             std::string target = cmd.args.back();
-            if (inspector_->mount_state_) inspector_->mount_state_->mounted_paths_.erase(target);
+            if (inspector_->mount_state_) {
+                inspector_->mount_state_->mounted_paths_.erase(target);
+                inspector_->mount_state_->bind_sources_.erase(target);
+            }
         } else if (prog == "mountpoint" && cmd.args.size() >= 2) {
             // mountpoint_check
             // No state change needed for test
@@ -671,6 +676,82 @@ class FakeMountInspector : public containercp::access::MountInspector {
 public:
     containercp::access::MountState state_;
     containercp::access::MountState inspect(const std::string&) const override { return state_; }
+};
+
+// Live mount inspector that reads from shared FakeInspector mount state.
+// Tracks target→source bind mappings so inspect() returns consistent results.
+class FakeLiveMountInspector : public containercp::access::MountInspector {
+public:
+    explicit FakeLiveMountInspector(std::shared_ptr<FakeInspector::MountState> state)
+        : mount_state_(std::move(state)) {}
+
+    containercp::access::MountState inspect(const std::string& path) const override {
+        if (!mount_state_) {
+            containercp::access::MountState s;
+            s.status = containercp::access::MountStatus::InspectionFailed;
+            s.error_detail = "no mount state";
+            return s;
+        }
+        if (mount_state_->mounted_paths_.count(path) == 0) {
+            containercp::access::MountState s;
+            s.status = containercp::access::MountStatus::Absent;
+            s.error_detail = "not mounted";
+            return s;
+        }
+        containercp::access::MountState s;
+        s.mounted = true;
+        s.is_bind = true;
+        s.target = path;
+        auto it = mount_state_->bind_sources_.find(path);
+        s.bind_root = (it != mount_state_->bind_sources_.end()) ? it->second : "";
+        s.status = containercp::access::MountStatus::Ok;
+        return s;
+    }
+
+private:
+    std::shared_ptr<FakeInspector::MountState> mount_state_;
+};
+
+// Live fs inspector that reads from shared FakeInspector fs state without auto-creating.
+class FakeLiveFsInspector : public containercp::access::FilesystemPermissionInspector {
+public:
+    explicit FakeLiveFsInspector(std::shared_ptr<FakeInspector::FsState> state)
+        : fs_state_(std::move(state)) {}
+
+    containercp::access::FsPermissionState inspect(const std::string& path) const override {
+        if (!fs_state_) {
+            containercp::access::FsPermissionState s;
+            s.exists = false;
+            s.acl_status = containercp::access::InspectionStatus::PathInspectionFailed;
+            return s;
+        }
+        auto it = fs_state_->state_.find(path);
+        if (it != fs_state_->state_.end()) return it->second;
+        containercp::access::FsPermissionState s;
+        s.exists = false;
+        s.acl_status = containercp::access::InspectionStatus::Ok;
+        return s;
+    }
+
+    containercp::access::FsPermissionState inspect_acl(const std::string& path,
+                                                        const std::string& groupname) const override {
+        auto key = path + "::" + groupname;
+        if (!fs_state_) {
+            containercp::access::FsPermissionState s;
+            s.exists = false;
+            s.acl_status = containercp::access::InspectionStatus::PathInspectionFailed;
+            return s;
+        }
+        auto it = fs_state_->state_.find(key);
+        if (it != fs_state_->state_.end()) return it->second;
+        containercp::access::FsPermissionState s;
+        s.exists = true; s.mode = 0770;
+        s.acl_status = containercp::access::InspectionStatus::Ok;
+        return s;
+    }
+
+private:
+    std::shared_ptr<FakeInspector::FsState> fs_state_;
 };
 
 } // namespace
@@ -3897,4 +3978,261 @@ TEST_CASE("ARCH-009 mountinfo decodes backslash escape") {
     auto s = containercp::access::parse_mountinfo_line(line);
     CHECK(s.status == MountStatus::Ok);
     CHECK(s.bind_root == "/path/with\\backslash");
+}
+
+// --- ARCH-009 Task 21: Bind-mount rollback verification ---
+
+// Helper: create a provider with live fake inspectors that share state with FakeCommandRunner
+struct BindMountTestContext {
+    std::shared_ptr<FakeInspector> inspector;
+    FakeCommandRunner fake_commands;
+    std::shared_ptr<FakeLiveMountInspector> mount_inspector;
+    std::shared_ptr<FakeLiveFsInspector> fs_inspector;
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::LocalSftpProvider provider;
+
+    BindMountTestContext()
+        : inspector(std::make_shared<FakeInspector>())
+        , fake_commands(inspector)
+        , mount_inspector(std::make_shared<FakeLiveMountInspector>(inspector->mount_state_))
+        , fs_inspector(std::make_shared<FakeLiveFsInspector>(inspector->fs_state_))
+        , provider(containercp::logger::Logger::instance())
+    {
+        containercp::access::SystemAccountMapping um;
+        um.entity_type = "access_user"; um.entity_id = 1;
+        um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+        stored.push_back(um);
+
+        inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                       "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+
+        provider.set_identity_inspector(inspector);
+        provider.set_mount_inspector(mount_inspector);
+        provider.set_filesystem_inspector(fs_inspector);
+        provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+            [this](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+                return fake_commands.run(cmd);
+            }));
+        provider.set_enabled(true);
+        provider.set_site_resolver([](uint64_t id) {
+            containercp::access::LocalSftpProvider::SiteInfo info;
+            info.valid = true; info.site_id = id;
+            info.domain = "test"; info.root = "/srv/containercp/sites/test";
+            return info;
+        });
+        provider.set_mapping_persistence(
+            [this]() { return stored; },
+            [this](const containercp::access::SystemAccountMapping& m) {
+                for (auto& s : stored) {
+                    if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; }
+                }
+                stored.push_back(m); return true;
+            },
+            [](const std::string&, uint64_t) { return true; });
+    }
+};
+
+TEST_CASE("ARCH-009 bind mount verification failure clean rollback") {
+    BindMountTestContext ctx;
+
+    // After mount_bind records the mount, erase it from shared state so
+    // the verification inspect returns Absent → triggers rollback.
+    auto wrapper = std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            auto result = ctx.fake_commands.run(cmd);
+            if (cmd.args[0] == "mount" && result.success) {
+                std::string target = cmd.args.back();
+                ctx.inspector->mount_state_->mounted_paths_.erase(target);
+                ctx.inspector->mount_state_->bind_sources_.erase(target);
+            }
+            return result;
+        });
+    ctx.provider.set_command_runner(std::move(wrapper));
+
+    auto r = ctx.provider.bind_mount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "mount verification failed");
+    // Directory was cleaned up (dir was created by this operation)
+    CHECK(ctx.inspector->fs_state_->state_.count(
+        "/srv/containercp/users/au-dev/sites/test") == 0);
+}
+
+TEST_CASE("ARCH-009 bind mount rollback umount failure") {
+    BindMountTestContext ctx;
+
+    // Make mount succeed, verification fail, then umount fail
+    // Override command runner to erase mount from state after mount (to trigger verification failure)
+    // and fail on umount
+    bool umount_called = false;
+    auto wrapper = std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx, &umount_called](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount" && !umount_called) {
+                auto result = ctx.fake_commands.run(cmd);
+                // Erase mount from state so verification fails
+                if (result.success) {
+                    std::string target = cmd.args.back();
+                    ctx.inspector->mount_state_->mounted_paths_.erase(target);
+                    ctx.inspector->mount_state_->bind_sources_.erase(target);
+                }
+                return result;
+            }
+            if (cmd.args[0] == "umount") {
+                umount_called = true;
+                return containercp::core::OperationResult{false, "umount failed"};
+            }
+            return ctx.fake_commands.run(cmd);
+        });
+    ctx.provider.set_command_runner(std::move(wrapper));
+
+    auto r = ctx.provider.bind_mount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "mount rollback umount failure");
+}
+
+TEST_CASE("ARCH-009 bind mount rollback still mounted") {
+    BindMountTestContext ctx;
+
+    // Mount succeeds and is recorded. Verification sees wrong bind_root → fails.
+    // Umount succeeds BUT re-inspect still sees the mount (simulated by re-adding after umount).
+    bool in_umount = false;
+    auto wrapper = std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx, &in_umount](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") {
+                auto result = ctx.fake_commands.run(cmd);
+                if (result.success) {
+                    std::string target = cmd.args.back();
+                    ctx.inspector->mount_state_->bind_sources_[target] = "/wrong/source";
+                }
+                return result;
+            }
+            if (cmd.args[0] == "umount") {
+                in_umount = true;
+                auto result = ctx.fake_commands.run(cmd);
+                // After umount removes the mount, re-add it so re-inspect sees "still mounted"
+                std::string target = cmd.args.back();
+                ctx.inspector->mount_state_->mounted_paths_.insert(target);
+                ctx.inspector->mount_state_->bind_sources_[target] = "/wrong/source";
+                return result;
+            }
+            return ctx.fake_commands.run(cmd);
+        });
+    ctx.provider.set_command_runner(std::move(wrapper));
+
+    auto r = ctx.provider.bind_mount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "mount rollback still mounted");
+    // Directory should still exist (dir was created but rollback stopped before rmdir)
+    CHECK(ctx.inspector->fs_state_->state_.count(
+        "/srv/containercp/users/au-dev/sites/test") > 0);
+}
+
+TEST_CASE("ARCH-009 bind mount rollback rmdir failure") {
+    BindMountTestContext ctx;
+
+    int call_count = 0;
+    auto wrapper = std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx, &call_count](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") {
+                auto result = ctx.fake_commands.run(cmd);
+                if (result.success) {
+                    std::string target = cmd.args.back();
+                    ctx.inspector->mount_state_->mounted_paths_.erase(target);
+                    ctx.inspector->mount_state_->bind_sources_.erase(target);
+                }
+                return result;
+            }
+            if (cmd.args[0] == "rmdir") {
+                ++call_count;
+                if (call_count == 1) {
+                    // First rmdir attempt (the one in rollback) — fail it
+                    return containercp::core::OperationResult{false, "rmdir failed"};
+                }
+            }
+            return ctx.fake_commands.run(cmd);
+        });
+    ctx.provider.set_command_runner(std::move(wrapper));
+
+    auto r = ctx.provider.bind_mount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "mount rollback rmdir failure");
+}
+
+TEST_CASE("ARCH-009 bind mount rollback target still exists") {
+    BindMountTestContext ctx;
+
+    auto wrapper = std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") {
+                auto result = ctx.fake_commands.run(cmd);
+                if (result.success) {
+                    std::string target = cmd.args.back();
+                    ctx.inspector->mount_state_->mounted_paths_.erase(target);
+                    ctx.inspector->mount_state_->bind_sources_.erase(target);
+                }
+                return result;
+            }
+            if (cmd.args[0] == "rmdir") {
+                auto result = ctx.fake_commands.run(cmd);
+                // rmdir succeeds (removes from fs_state_) but re-add so fs_inspect sees it
+                if (result.success) {
+                    std::string target = cmd.args.back();
+                    containercp::access::FsPermissionState s;
+                    s.exists = true; s.group_gid = 0; s.mode = 0755;
+                    s.acl_status = containercp::access::InspectionStatus::Ok;
+                    ctx.inspector->fs_state_->state_[target] = s;
+                }
+                return result;
+            }
+            return ctx.fake_commands.run(cmd);
+        });
+    ctx.provider.set_command_runner(std::move(wrapper));
+
+    auto r = ctx.provider.bind_mount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "mount rollback target still exists");
+}
+
+TEST_CASE("ARCH-009 bind mount rollback with pre-existing directory") {
+    BindMountTestContext ctx;
+
+    // Pre-create the target directory so dir_created = false
+    containercp::access::FsPermissionState s;
+    s.exists = true; s.group_gid = 20000; s.mode = 0755;
+    s.acl_status = containercp::access::InspectionStatus::Ok;
+    ctx.inspector->fs_state_->state_["/srv/containercp/users/au-dev/sites/test"] = s;
+
+    auto wrapper = std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") {
+                auto result = ctx.fake_commands.run(cmd);
+                if (result.success) {
+                    std::string target = cmd.args.back();
+                    ctx.inspector->mount_state_->mounted_paths_.erase(target);
+                    ctx.inspector->mount_state_->bind_sources_.erase(target);
+                }
+                return result;
+            }
+            return ctx.fake_commands.run(cmd);
+        });
+    ctx.provider.set_command_runner(std::move(wrapper));
+
+    auto r = ctx.provider.bind_mount_site(1, 1);
+    CHECK_FALSE(r.success);
+    // Should skip rmdir because dir_created = false
+    CHECK(r.message == "mount verification failed");
+    // Directory should still exist (was pre-existing, not removed)
+    CHECK(ctx.inspector->fs_state_->state_.count(
+        "/srv/containercp/users/au-dev/sites/test") > 0);
+}
+
+TEST_CASE("ARCH-009 bind mount verification failure mounts correctly") {
+    // Happy path: the mount succeeds and verification passes
+    BindMountTestContext ctx;
+
+    auto r = ctx.provider.bind_mount_site(1, 1);
+    CHECK(r.success);
+    CHECK(r.message == "mounted: test");
+    // Verify mount was recorded
+    CHECK(ctx.inspector->mount_state_->mounted_paths_.count(
+        "/srv/containercp/users/au-dev/sites/test") > 0);
 }

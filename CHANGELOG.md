@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-25 | `this commit` | ARCH-009 Task 21 — Complete bind-mount rollback verification
+
+**Summary:** Rewrote the rollback in `bind_mount_site()` to perform full verified cleanup after mount verification failure. The new rollback sequence: (1) prove the mount was created by the current operation via pre-mount check, (2) `umount()` with result check, (3) re-inspect via `MountInspector` to confirm unmounted, (4) `rmdir()` only if directory was created by this operation (tracked via `fs_inspector_` pre-check), (5) re-inspect via `FilesystemPermissionInspector` to confirm removal. Returns distinct stable error tokens: `"mount rollback umount failure"`, `"mount rollback still mounted"`, `"mount rollback rmdir failure"`, `"mount rollback target still exists"`, `"mount verification failed"` (clean rollback). Added `FakeLiveMountInspector` and `FakeLiveFsInspector` that share state with `FakeCommandRunner` for realistic rollback testing. Added `bind_sources_` map to `FakeInspector::MountState` for target→source tracking. Added 7 regression tests covering: clean rollback, umount failure, still-mounted after rollback, rmdir failure, target-still-exists, pre-existing directory (no rmdir), and success path.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Mount verification failure during `bind_mount_site` now produces specific error tokens for each rollback step, enabling precise diagnostics.
+
+**Validation:** Full doctest suite passed (1025 cases, 7076 assertions). All 7 new ARCH-009 bind-mount rollback tests pass. All 6 existing Phase3c tests pass. All 41 access tests pass. `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
 ## 2026-07-25 | `this commit` | ARCH-009 Task 20 — Validate real bind-mount semantics in MountInspector
 
 **Summary:** Rewrote `MountState` struct with full fields (mount_id, parent_id, device, bind_root, target, options, optional_fields, fstype, source, super_options). Rewrote `parse_mountinfo()` and added `parse_mountinfo_line()` with proper escape-sequence decoding (`\040` → space, `\011` → tab, `\012` → newline, `\134` → backslash) and whitespace-aware tokenization. Added bind-mount identity determination based on `root != "/"`. Rejects malformed mountinfo (missing separator, too few fields). Added 11 direct parser tests covering: real bind mount, normal filesystem mount, nested bind mount, escaped source, escaped target, backslash escape, malformed field count, missing separator, duplicate targets, source mismatch, target mismatch. Also bumped `kExpectedSchemaVersion` from 3 to 4, updated `MigrationOrchestrator` activation state to write `schema_version: 4`, and updated all test references from v3 to v4.
