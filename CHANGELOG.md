@@ -6,7 +6,21 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-25 | `this commit` | ARCH-009 Task 34 — Drive revoke_grant from Persisted State
+## 2026-07-25 | `this commit` | ARCH-009 Task 35 — Preserve Shared ACLs and Site Groups
+
+**Summary:** Hardened ACL retention and site group deletion in `revoke_grant()` to consider all persisted lifecycle records, not just the current user's grant. RO ACL is kept while any lifecycle record in a non-terminal state (`active`, `applying`, `revoking`) requires read-only access for the same site. Site group (RW/RO) is kept while any lifecycle record references the same site+permission, OR any OS membership exists. Both checks use a `count_active_lifecycle()` lambda that iterates lifecycle records and skips the record being revoked (to avoid self-reference). Added `setup_completed_steps(perm)` parameter to test context for setting up the correct group type. Added 10 tests: two RO users → ACL retained, last RO user → ACL removed, two RW users → group retained, last RW user → group deleted, applying grant references group, revoking grant retry, stale OS membership, persistence lookup failure, group deletion command failure, ACL removal command failure.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Site RO ACL is preserved when another user still has an active/applying/revoking grant for the same site. Site groups are preserved when any lifecycle record references them or any OS membership exists. Group deletion and ACL removal verify postconditions and preserve error state on failure.
+
+**Validation:** Full doctest suite passed (1140 cases, 7485 assertions). 10 new retention tests pass. `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
+## 2026-07-25 | `b8fe734` | ARCH-009 Task 34 — Drive revoke_grant from Persisted State
 
 **Summary:** Rewrote `revoke_grant()` to be driven by persisted grant lifecycle state. Loads `GrantLifecycleState` record by `(access_user_id, site_id)`. If no record exists, verifies absence of managed state before idempotent success. Handles each lifecycle state: `active` → transitions to `revoking`; `revoking` → continues revoke; `pending` → deletes without OS mutation after verifying no managed state; `applying` → recovers or rolls back before revoking; `error` → performs cleanup (unmount if mounted, remove membership, delete group). After all steps pass, deletes the lifecycle record. On partial failure, preserves `revoking` or `error` state with bounded last error. Conditions group deletion on no remaining grants or OS membership. Conditions RO ACL removal on no other relevant grant requiring it. Added 6 new tests: active→revoking transition, revoking continues, pending delete, missing idempotent, error cleanup, unmount failure preserved.
 

@@ -1898,6 +1898,22 @@ core::OperationResult LocalSftpProvider::revoke_grant(uint64_t access_user_id, u
         diag += entry;
     };
 
+    // Count lifecycle records for this site+permission in non-terminal states
+    auto count_active_lifecycle = [&](const std::string& perm) -> size_t {
+        if (!load_all_grant_lifecycle_) return grants_lookup_ ? grants_lookup_(site_id, perm) : 0;
+        size_t count = 0;
+        auto all = load_all_grant_lifecycle_();
+        for (const auto& l : all) {
+            if (l.site_id == site_id && l.permission == perm
+                && l.state != "error" && l.state != "pending") {
+                // Don't count the record being revoked
+                if (l.access_user_id == access_user_id) continue;
+                count++;
+            }
+        }
+        return count;
+    };
+
     // Step 1: Unmount
     auto r1 = unmount_site(access_user_id, site_id);
     if (!r1.success) { note("unmount:" + r1.message); failures++; }
@@ -1906,12 +1922,9 @@ core::OperationResult LocalSftpProvider::revoke_grant(uint64_t access_user_id, u
         auto r2 = remove_user_from_site_group(username, site_id, permission);
         if (!r2.success) { note("membership:" + r2.message); failures++; }
         else {
-            // Step 3: Remove RO ACL only if no other relevant grant requires it
+            // Step 3: Remove RO ACL only if no other lifecycle record requires it
             if (permission == "read_only") {
-                bool other_grants_need_ro = false;
-                if (grants_lookup_) {
-                    other_grants_need_ro = (grants_lookup_(site_id, "read_only") > 1);
-                }
+                bool other_grants_need_ro = (count_active_lifecycle("read_only") > 0);
                 if (!other_grants_need_ro) {
                     auto r3 = remove_read_only_acl(site_id);
                     if (!r3.success) { note("acl:" + r3.message); failures++; }
@@ -1920,13 +1933,18 @@ core::OperationResult LocalSftpProvider::revoke_grant(uint64_t access_user_id, u
         }
     }
 
-    // Step 4: Delete site group only if no remaining grant or OS membership
+    // Step 4: Delete site group only if no lifecycle reference AND no OS membership
     {
         bool can_delete = true;
-        if (grants_lookup_) {
-            can_delete = (grants_lookup_(site_id, permission) == 0);
+        if (count_active_lifecycle(permission) > 0) {
+            can_delete = false;
         }
-        // Check if any user is still in the group by trying lookup
+        if (can_delete && inspector_) {
+            auto grp_name = site_group_name(site_id, permission);
+            if (inspector_->user_in_group(username, grp_name)) {
+                can_delete = false;
+            }
+        }
         if (can_delete && find_mapping(site_group_entity_type(permission), site_id).has_value()) {
             auto rd = delete_site_group_if_unused(site_id, permission);
             if (!rd.success) { note("group:" + rd.message); failures++; }

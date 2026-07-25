@@ -6327,7 +6327,7 @@ struct RevokeLifecycleContext {
         provider.set_grants_loader([](uint64_t) {
             return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
         });
-        provider.set_grants_lookup([](uint64_t, const std::string&) { return size_t{1}; });
+        provider.set_grants_lookup([](uint64_t, const std::string&) { return size_t{0}; });
         provider.set_site_resolver([](uint64_t id) {
             containercp::access::LocalSftpProvider::SiteInfo info;
             info.valid = true; info.site_id = id;
@@ -6370,13 +6370,16 @@ struct RevokeLifecycleContext {
         glc_.push_back(ls);
     }
 
-    void setup_completed_steps() {
+    void setup_completed_steps(const std::string& perm = "read_write") {
+        std::string etype = (perm == "read_only") ? "site_group_ro" : "site_group_rw";
+        std::string gname = (perm == "read_only") ? "site-1-ro" : "site-1-rw";
+        int gid = (perm == "read_only") ? 21000 : 20001;
         containercp::access::SystemAccountMapping grp;
-        grp.entity_type = "site_group_rw"; grp.entity_id = 1;
-        grp.gid = 20001; grp.username = "site-1-rw"; grp.groupname = "site-1-rw"; grp.state = "active";
+        grp.entity_type = etype; grp.entity_id = 1;
+        grp.gid = gid; grp.username = gname; grp.groupname = gname; grp.state = "active";
         persisted_sys_.push_back(grp);
-        inspector->groups_["site-1-rw"] = {true, "site-1-rw", 20001};
-        inspector->supp_groups_["au-dev"].insert("site-1-rw");
+        inspector->groups_[gname] = {true, gname, gid};
+        inspector->supp_groups_["au-dev"].insert(gname);
         containercp::access::FsPermissionState sites_dir;
         sites_dir.exists = true; sites_dir.is_symlink = false; sites_dir.mode = S_IFDIR | 0755; sites_dir.group_gid = 0;
         inspector->fs_state_->state_["/srv/containercp/users/au-dev/sites/"] = sites_dir;
@@ -6450,6 +6453,187 @@ TEST_CASE("ARCH-009 revoke active grant unmount failure") {
     auto r = ctx.provider.revoke_grant(1, 1, "read_write");
     CHECK_FALSE(r.success);
     CHECK(r.message.find("unmount") != std::string::npos);
+    CHECK(ctx.glc_.size() == 1);
+    CHECK(ctx.glc_[0].state == "error");
+}
+
+// --- ARCH-009 Task 35: Preserve Shared ACLs and Site Groups ---
+
+TEST_CASE("ARCH-009 revoke one of two RO users retains ACL") {
+    RevokeLifecycleContext ctx;
+    containercp::storage::GrantLifecycleState ls1;
+    ls1.access_user_id = 1; ls1.site_id = 1; ls1.permission = "read_only"; ls1.state = "active";
+    ctx.glc_.push_back(ls1);
+    containercp::storage::GrantLifecycleState ls2;
+    ls2.access_user_id = 2; ls2.site_id = 1; ls2.permission = "read_only"; ls2.state = "active";
+    ctx.glc_.push_back(ls2);
+    ctx.setup_completed_steps("read_only");
+    ctx.add_mount();
+    auto r = ctx.provider.revoke_grant(1, 1, "read_only");
+    CHECK(r.success);
+    CHECK(ctx.glc_.size() == 1);
+    CHECK(ctx.glc_[0].access_user_id == 2);
+}
+
+TEST_CASE("ARCH-009 revoke last RO user removes ACL") {
+    RevokeLifecycleContext ctx;
+    ctx.provider.set_site_resolver([](uint64_t id) {
+        containercp::access::LocalSftpProvider::SiteInfo info;
+        info.valid = true; info.site_id = id;
+        info.domain = "test"; info.root = "/srv/containercp/sites/test";
+        return info;
+    });
+    containercp::storage::GrantLifecycleState ls;
+    ls.access_user_id = 1; ls.site_id = 1; ls.permission = "read_only"; ls.state = "active";
+    ctx.glc_.push_back(ls);
+    containercp::access::SystemAccountMapping ro_grp;
+    ro_grp.entity_type = "site_group_ro"; ro_grp.entity_id = 1;
+    ro_grp.gid = 21000; ro_grp.username = "site-1-ro"; ro_grp.groupname = "site-1-ro"; ro_grp.state = "active";
+    ctx.persisted_sys_.push_back(ro_grp);
+    ctx.inspector->groups_["site-1-ro"] = {true, "site-1-ro", 21000};
+    ctx.setup_completed_steps("read_only");
+    ctx.add_mount();
+    auto r = ctx.provider.revoke_grant(1, 1, "read_only");
+    CHECK(r.success);
+    CHECK(ctx.glc_.empty());
+}
+
+TEST_CASE("ARCH-009 revoke one of two RW users retains group") {
+    RevokeLifecycleContext ctx;
+    containercp::storage::GrantLifecycleState ls1;
+    ls1.access_user_id = 1; ls1.site_id = 1; ls1.permission = "read_write"; ls1.state = "active";
+    ctx.glc_.push_back(ls1);
+    containercp::storage::GrantLifecycleState ls2;
+    ls2.access_user_id = 2; ls2.site_id = 1; ls2.permission = "read_write"; ls2.state = "active";
+    ctx.glc_.push_back(ls2);
+    ctx.setup_completed_steps();
+    ctx.add_mount();
+    auto r = ctx.provider.revoke_grant(1, 1, "read_write");
+    CHECK(r.success);
+    CHECK(ctx.glc_.size() == 1);
+    CHECK(ctx.glc_[0].access_user_id == 2);
+    bool gm = false;
+    for (auto& s : ctx.persisted_sys_) { if (s.entity_type == "site_group_rw" && s.entity_id == 1) gm = true; }
+    CHECK(gm);
+}
+
+TEST_CASE("ARCH-009 revoke last RW user deletes group") {
+    RevokeLifecycleContext ctx;
+    containercp::storage::GrantLifecycleState ls;
+    ls.access_user_id = 1; ls.site_id = 1; ls.permission = "read_write"; ls.state = "active";
+    ctx.glc_.push_back(ls);
+    ctx.setup_completed_steps();
+    ctx.add_mount();
+    ctx.provider.set_grants_lookup([](uint64_t, const std::string&) { return size_t{0}; });
+    auto r = ctx.provider.revoke_grant(1, 1, "read_write");
+    CHECK(r.success);
+    CHECK(ctx.glc_.empty());
+    bool gm = false;
+    for (auto& s : ctx.persisted_sys_) {
+        if (s.entity_type.find("site_group") != std::string::npos && s.entity_id == 1) gm = true;
+    }
+    CHECK_FALSE(gm);
+}
+
+TEST_CASE("ARCH-009 revoke applying grant still references group") {
+    RevokeLifecycleContext ctx;
+    containercp::storage::GrantLifecycleState a1;
+    a1.access_user_id = 1; a1.site_id = 1; a1.permission = "read_write"; a1.state = "active";
+    ctx.glc_.push_back(a1);
+    containercp::storage::GrantLifecycleState a2;
+    a2.access_user_id = 2; a2.site_id = 1; a2.permission = "read_write"; a2.state = "applying";
+    ctx.glc_.push_back(a2);
+    ctx.setup_completed_steps();
+    ctx.add_mount();
+    auto r = ctx.provider.revoke_grant(1, 1, "read_write");
+    CHECK(r.success);
+    bool gm = false;
+    for (auto& s : ctx.persisted_sys_) { if (s.entity_type == "site_group_rw" && s.entity_id == 1) gm = true; }
+    CHECK(gm);
+}
+
+TEST_CASE("ARCH-009 revoke revoking grant retry") {
+    RevokeLifecycleContext ctx;
+    containercp::storage::GrantLifecycleState ls;
+    ls.access_user_id = 1; ls.site_id = 1; ls.permission = "read_write"; ls.state = "revoking";
+    ctx.glc_.push_back(ls);
+    ctx.setup_completed_steps();
+    ctx.add_mount();
+    auto r = ctx.provider.revoke_grant(1, 1, "read_write");
+    CHECK(r.success);
+}
+
+TEST_CASE("ARCH-009 revoke stale OS membership check") {
+    RevokeLifecycleContext ctx;
+    containercp::storage::GrantLifecycleState ls;
+    ls.access_user_id = 1; ls.site_id = 1; ls.permission = "read_write"; ls.state = "active";
+    ctx.glc_.push_back(ls);
+    ctx.setup_completed_steps();
+    ctx.add_mount();
+    ctx.inspector->supp_groups_["other-user"].insert("site-1-rw");
+    auto r = ctx.provider.revoke_grant(1, 1, "read_write");
+    CHECK(r.success);
+}
+
+TEST_CASE("ARCH-009 revoke persistence lookup failure") {
+    RevokeLifecycleContext ctx;
+    ctx.add_grant_record("active");
+    ctx.setup_completed_steps();
+    ctx.add_mount();
+    ctx.provider.set_grant_lifecycle_storage(
+        []() -> std::vector<containercp::storage::GrantLifecycleState> { return {}; },
+        [](const containercp::storage::GrantLifecycleState&) -> bool { return false; },
+        [](uint64_t, uint64_t) -> bool { return false; });
+    auto r = ctx.provider.revoke_grant(1, 1, "read_write");
+    // Mount exists without lifecycle record → fail closed
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("missing_with_state") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 revoke group deletion command failure") {
+    RevokeLifecycleContext ctx;
+    ctx.add_grant_record("active");
+    ctx.setup_completed_steps();
+    ctx.add_mount();
+    ctx.provider.set_grants_lookup([](uint64_t, const std::string&) { return size_t{0}; });
+    ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "groupdel") return containercp::core::OperationResult{false, "groupdel failed", ""};
+            return ctx.fake_commands.run(cmd);
+        }));
+    auto r = ctx.provider.revoke_grant(1, 1, "read_write");
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("group:") != std::string::npos);
+    CHECK(ctx.glc_.size() == 1);
+    CHECK(ctx.glc_[0].state == "error");
+}
+
+TEST_CASE("ARCH-009 revoke ACL removal command failure") {
+    RevokeLifecycleContext ctx;
+    ctx.provider.set_site_resolver([](uint64_t id) {
+        containercp::access::LocalSftpProvider::SiteInfo info;
+        info.valid = true; info.site_id = id;
+        info.domain = "test"; info.root = "/srv/containercp/sites/test";
+        return info;
+    });
+    containercp::storage::GrantLifecycleState ls;
+    ls.access_user_id = 1; ls.site_id = 1; ls.permission = "read_only"; ls.state = "active";
+    ctx.glc_.push_back(ls);
+    containercp::access::SystemAccountMapping ro_grp;
+    ro_grp.entity_type = "site_group_ro"; ro_grp.entity_id = 1;
+    ro_grp.gid = 21000; ro_grp.username = "site-1-ro"; ro_grp.groupname = "site-1-ro"; ro_grp.state = "active";
+    ctx.persisted_sys_.push_back(ro_grp);
+    ctx.inspector->groups_["site-1-ro"] = {true, "site-1-ro", 21000};
+    ctx.setup_completed_steps("read_only");
+    ctx.add_mount();
+    ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "setfacl") return containercp::core::OperationResult{false, "setfacl failed", ""};
+            return ctx.fake_commands.run(cmd);
+        }));
+    auto r = ctx.provider.revoke_grant(1, 1, "read_only");
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("acl:") != std::string::npos);
     CHECK(ctx.glc_.size() == 1);
     CHECK(ctx.glc_[0].state == "error");
 }
