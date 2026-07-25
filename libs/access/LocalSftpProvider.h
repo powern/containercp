@@ -16,6 +16,8 @@
 #include <string>
 #include <vector>
 
+namespace containercp::storage { struct ManagedMountState; }
+
 namespace containercp::access {
 
 class LocalSftpProvider : public AccessProvider {
@@ -105,6 +107,20 @@ public:
     // mounts.
     core::OperationResult reconcile_mounts(uint64_t access_user_id);
 
+    // Persisted mount lifecycle callbacks.
+    using LoadAllManagedMountsFn = std::function<std::vector<storage::ManagedMountState>()>;
+    using SaveManagedMountFn = std::function<bool(const storage::ManagedMountState&)>;
+    using DeleteManagedMountFn = std::function<bool(uint64_t, uint64_t)>;
+    void set_managed_mount_storage(LoadAllManagedMountsFn load_all,
+                                   SaveManagedMountFn save,
+                                   DeleteManagedMountFn remove);
+
+    // Reconcile all persisted managed mounts against the real filesystem
+    // and mount state.  Inspects each mount by lifecycle state and takes
+    // the appropriate action.  Idempotent across daemon restarts.
+    // Must only be called after all provider dependencies are configured.
+    core::OperationResult reconcile_startup_mounts();
+
     // --- Phase 3d: Grant Lifecycle Integration ---
 
     struct GrantInfo { uint64_t site_id; std::string domain; std::string permission; };
@@ -178,6 +194,10 @@ private:
 
     std::shared_ptr<FilesystemPermissionInspector> fs_inspector_;
     std::shared_ptr<MountInspector> mount_inspector_;
+
+    LoadAllManagedMountsFn load_all_managed_mounts_;
+    SaveManagedMountFn save_managed_mount_;
+    DeleteManagedMountFn delete_managed_mount_;
 
     bool enabled_ = false;
     std::string managed_home_root_ = "/srv/containercp/users";

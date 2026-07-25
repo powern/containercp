@@ -601,6 +601,10 @@ bool Storage::sqlite_ready() const {
     return sqlite_ready_;
 }
 
+SQLiteStorage& Storage::sqlite() {
+    return sqlite_;
+}
+
 std::string Storage::nodes_file() const {
     return db_path_ + "nodes.db";
 }

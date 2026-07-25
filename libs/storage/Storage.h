@@ -2,6 +2,7 @@
 #define CONTAINERCP_STORAGE_STORAGE_H
 
 #include "ConnectionPool.h"
+#include "SQLiteStorage.h"
 #include "SQLiteSnapshotReader.h"
 #include "SQLiteStorage.h"
 #include "access/AccessGrant.h"
@@ -114,6 +115,10 @@ public:
     // explicit mode initialization failed, returns false and core
     // resource operations are no-ops (no silent TXT fallback).
     bool sqlite_ready() const;
+
+    // Direct access to the SQLite storage backend.
+    // Valid to call only when sqlite_ready() returns true.
+    SQLiteStorage& sqlite();
 
     // Checked loads — distinguish successful empty from query failure
     CheckedSnapshot<node::Node> load_nodes_checked();

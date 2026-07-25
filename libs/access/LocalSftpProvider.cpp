@@ -1,6 +1,7 @@
 #include "access/LocalSftpProvider.h"
 
 #include "access/UsernameMapper.h"
+#include "storage/ManagedMountState.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -94,6 +95,14 @@ void LocalSftpProvider::set_site_resolver(SiteInfoFn fn) {
 
 void LocalSftpProvider::set_grants_lookup(GrantsForSiteFn fn) {
     grants_lookup_ = std::move(fn);
+}
+
+void LocalSftpProvider::set_managed_mount_storage(LoadAllManagedMountsFn load_all,
+                                                    SaveManagedMountFn save,
+                                                    DeleteManagedMountFn remove) {
+    load_all_managed_mounts_ = std::move(load_all);
+    save_managed_mount_ = std::move(save);
+    delete_managed_mount_ = std::move(remove);
 }
 
 // --- helpers ---
@@ -1202,6 +1211,159 @@ core::OperationResult LocalSftpProvider::reconcile_mounts(uint64_t access_user_i
     out.message = "reconcile_mounts:" + std::to_string(reconciled) + " fixed";
     if (reconciled > 0 || !diag.empty()) out.message += " — " + diag;
     out.success = true;
+    return out;
+}
+
+core::OperationResult LocalSftpProvider::reconcile_startup_mounts() {
+    core::OperationResult out;
+    if (!enabled_) return disabled_result(out, "reconcile_startup_mounts"), out;
+    if (!load_all_managed_mounts_ || !save_managed_mount_) {
+        out.success = false; out.message = "managed mount storage not configured"; return out;
+    }
+
+    auto mounts = load_all_managed_mounts_();
+    std::string diag;
+    size_t reconciled = 0;
+    size_t failures = 0;
+
+    auto note = [&](const std::string& entry) {
+        if (!diag.empty()) diag += "; ";
+        diag += entry;
+    };
+
+    for (auto& mount : mounts) {
+        std::string ident = "u" + std::to_string(mount.access_user_id)
+                          + "/s" + std::to_string(mount.site_id);
+
+        if (mount.state == "active") {
+            if (!site_resolver_ || !mount_inspector_ || !runner_) {
+                note("active:skip:" + ident + ":deps");
+                continue;
+            }
+            auto si = site_resolver_(mount.site_id);
+            if (!si.valid) { note("active:skip:" + ident + ":site"); continue; }
+            auto ms = mount_inspector_->inspect(mount.target_path);
+            if (ms.status == MountStatus::Ok && ms.mounted && ms.is_bind && ms.bind_root == mount.source_path) {
+                continue; // Mount is correct
+            }
+            if (!ms.mounted || ms.status != MountStatus::Ok) {
+                // Mount missing — recreate
+                auto bm = bind_mount_site(mount.access_user_id, mount.site_id);
+                if (bm.success) {
+                    mount.last_error = "";
+                    if (!save_managed_mount_(mount)) { note("active:recreate:persist:" + ident); failures++; }
+                    else { note("active:recreated:" + ident); reconciled++; }
+                } else {
+                    mount.last_error = bm.message;
+                    mount.state = "error";
+                    if (!save_managed_mount_(mount)) { note("active:fail:persist:" + ident); failures++; }
+                    else { note("active:fail:" + ident + ":" + bm.message); failures++; }
+                }
+            } else {
+                // Foreign mount — don't touch, mark error
+                mount.last_error = "foreign mount at target";
+                mount.state = "error";
+                if (!save_managed_mount_(mount)) { note("active:foreign:persist:" + ident); failures++; }
+                else { note("active:foreign:" + ident); failures++; }
+            }
+        } else if (mount.state == "removing") {
+            if (!runner_ || !mount_inspector_) {
+                note("removing:skip:" + ident + ":deps");
+                continue;
+            }
+            auto um = unmount_site(mount.access_user_id, mount.site_id);
+            if (um.success) {
+                if (delete_managed_mount_ && delete_managed_mount_(mount.access_user_id, mount.site_id)) {
+                    note("removing:done:" + ident); reconciled++;
+                } else {
+                    note("removing:persist:" + ident); failures++;
+                }
+            } else {
+                mount.last_error = um.message;
+                mount.state = "error";
+                if (!save_managed_mount_(mount)) { note("removing:fail:persist:" + ident); failures++; }
+                else { note("removing:fail:" + ident); failures++; }
+            }
+        } else if (mount.state == "applying") {
+            if (!site_resolver_ || !mount_inspector_ || !runner_) {
+                note("applying:skip:" + ident + ":deps");
+                continue;
+            }
+            auto si = site_resolver_(mount.site_id);
+            if (!si.valid) { note("applying:skip:" + ident + ":site"); continue; }
+            auto ms = mount_inspector_->inspect(mount.target_path);
+            if (ms.status == MountStatus::Ok && ms.mounted && ms.is_bind && ms.bind_root == mount.source_path) {
+                // Mount already exists correctly — complete
+                mount.state = "active";
+                mount.last_error = "";
+                if (!save_managed_mount_(mount)) { note("applying:complete:persist:" + ident); failures++; }
+                else { note("applying:completed:" + ident); reconciled++; }
+            } else if (ms.mounted) {
+                // Wrong mount at target — rollback
+                auto um = runner_->umount(mount.target_path);
+                if (um.success) {
+                    mount.last_error = "rolled back after crash";
+                    mount.state = "error";
+                    if (!save_managed_mount_(mount)) { note("applying:rollback:persist:" + ident); failures++; }
+                    else { note("applying:rolled_back:" + ident); failures++; }
+                } else {
+                    mount.last_error = "rollback umount failed: " + um.message;
+                    mount.state = "error";
+                    if (!save_managed_mount_(mount)) { note("applying:rollback_fail:persist:" + ident); failures++; }
+                    else { note("applying:rollback_fail:" + ident); failures++; }
+                }
+            } else {
+                // Nothing at target — retry as pending
+                mount.state = "pending";
+                mount.last_error = "retry after crash";
+                if (!save_managed_mount_(mount)) { note("applying:retry:persist:" + ident); failures++; }
+                else { note("applying:retry:" + ident); reconciled++; }
+            }
+        } else if (mount.state == "pending") {
+            if (!site_resolver_ || !mount_inspector_ || !runner_) {
+                note("pending:skip:" + ident + ":deps");
+                continue;
+            }
+            auto si = site_resolver_(mount.site_id);
+            if (!si.valid) { note("pending:skip:" + ident + ":site"); continue; }
+            auto bm = bind_mount_site(mount.access_user_id, mount.site_id);
+            if (bm.success) {
+                mount.state = "active";
+                mount.last_error = "";
+                if (!save_managed_mount_(mount)) { note("pending:apply:persist:" + ident); failures++; }
+                else { note("pending:applied:" + ident); reconciled++; }
+            } else {
+                mount.last_error = bm.message;
+                mount.state = "error";
+                if (!save_managed_mount_(mount)) { note("pending:fail:persist:" + ident); failures++; }
+                else { note("pending:fail:" + ident); failures++; }
+            }
+        } else if (mount.state == "error") {
+            // Error state — only perform approved recoverable action:
+            // If mount is actually active and correct, clear the error.
+            if (mount_inspector_) {
+                auto ms = mount_inspector_->inspect(mount.target_path);
+                if (ms.status == MountStatus::Ok && ms.mounted && ms.is_bind && ms.bind_root == mount.source_path) {
+                    mount.state = "active";
+                    mount.last_error = "";
+                    if (!save_managed_mount_(mount)) { note("error:recover:persist:" + ident); failures++; }
+                    else { note("error:recovered:" + ident); reconciled++; }
+                } else {
+                    // Leave as error — do not attempt recovery
+                }
+            }
+        }
+    }
+
+    if (failures > 0) {
+        out.success = false;
+        out.message = "reconcile_startup:" + std::to_string(failures) + " failures, "
+                      + std::to_string(reconciled) + " fixed — " + diag;
+        return out;
+    }
+    out.success = true;
+    out.message = "reconcile_startup:" + std::to_string(reconciled) + " fixed";
+    if (reconciled > 0 || !diag.empty()) out.message += " — " + diag;
     return out;
 }
 

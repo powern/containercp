@@ -1,4 +1,5 @@
 #include "ServiceRegistry.h"
+#include "storage/ManagedMountState.h"
 #include "auth/AuthService.h"
 #include "template/web_templates.h"
 #include "utils/PasswordGenerator.h"
@@ -647,6 +648,29 @@ void ServiceRegistry::start() {
         if (site == nullptr) return info;
         info.valid = true; info.domain = site->domain; info.root = config_.data_root() + "/sites/" + site->domain; return info;
     });
+
+    // ARCH-009 Task 29/30: managed mount storage callbacks + command runner
+    access_provider_.set_managed_mount_storage(
+        [this]() -> std::vector<storage::ManagedMountState> { return storage_.sqlite().list_all_managed_mounts(); },
+        [this](const storage::ManagedMountState& m) -> bool { return storage_.sqlite().save_managed_mount(m); },
+        [this](uint64_t uid, uint64_t sid) -> bool { return storage_.sqlite().delete_managed_mount(uid, sid); }
+    );
+
+    // Configure command runner for mount operations
+    access_provider_.set_command_runner(
+        std::make_unique<access::SystemAccountCommandRunner>(
+            [this](const access::SystemAccountCommandRunner::Command& cmd) -> core::OperationResult {
+                auto result = credential_command_executor_.run(cmd.args);
+                return {result.exit_code == 0, result.err, result.out};
+            }));
+
+    // ARCH-009 Task 30: reconcile persisted managed mounts at startup
+    auto mount_reconcile = access_provider_.reconcile_startup_mounts();
+    if (!mount_reconcile.success) {
+        logger_.warning("SFTP", "Startup mount reconciliation: " + mount_reconcile.message);
+    } else if (mount_reconcile.message.find("0 fixed") == std::string::npos) {
+        logger_.info("SFTP", "Startup mount reconciliation: " + mount_reconcile.message);
+    }
 }
 
 void ServiceRegistry::shutdown() {

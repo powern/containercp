@@ -6,7 +6,21 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-25 | `this commit` | ARCH-009 Task 29 — Add Persisted Mount Lifecycle State
+## 2026-07-25 | `this commit` | ARCH-009 Task 30 — Implement Startup Mount Reconciliation
+
+**Summary:** Implemented `reconcile_startup_mounts()` in `LocalSftpProvider` — a deterministic startup reconciliation process for persisted managed mounts. Reads all mounts from storage, classifies by lifecycle state, and takes action: `active` → verify/recreate/reject foreign; `removing` → unmount and delete record; `applying` → complete/rollback/retry; `pending` → apply; `error` → recover if mount is actually correct, otherwise preserve. Added `set_managed_mount_storage()` callbacks for persistence. Added `sqlite()` accessor to `Storage`. Wired into `ServiceRegistry::start()` after all Phase 3 dependencies. Added command runner configuration. Each persistence result checked; failures remain retryable and visible. Added 13 tests covering every lifecycle state and crash scenario: active present, active missing (recreated), active foreign (rejected), removing (unmounted), removing already absent, pending applied, applying completed, applying crash after mkdir (retry), applying crash after mount (completed), error recovered, error preserved, persistence failure, repeated startup idempotency.
+
+**Files changed:** `libs/access/LocalSftpProvider.{h,cpp}`, `libs/storage/Storage.{h,cpp}`, `libs/core/ServiceRegistry.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** On daemon startup, all persisted managed mounts are reconciled against real filesystem and mount state. Incorrect mounts are rejected or fixed. Crash/restart mid-operation is handled deterministically. Foreign mounts are never mutated.
+
+**Validation:** Full doctest suite passed (1108 cases, 7342 assertions). 13 new startup reconcile tests pass. `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
+## 2026-07-25 | `05dd71e` | ARCH-009 Task 29 — Add Persisted Mount Lifecycle State
 
 **Summary:** Added `managed_mounts` table as the source of truth for expected managed SFTP mounts. Created `ManagedMountState` struct with composite key `(access_user_id, site_id)`. Lifecycle states: pending, applying, active, removing, error (validated via `valid_mount_state()`). Schema migration v5 adds the table and `idx_managed_mounts_user` index. Storage CRUD operations: `load_managed_mount`, `list_managed_mounts_by_user`, `list_all_managed_mounts`, `save_managed_mount` (INSERT OR REPLACE with state validation), `delete_managed_mount`. Updated `kExpectedSchemaVersion` from 4 to 5 in `Storage.cpp` and `MigrationOrchestrator.cpp`. Updated all schema tests (20 app tables, 22 total tables, 18 indices). Updated `valid_state_json` default to version 5. Added 10 storage tests covering: schema upgrade, insert, update, unique conflict, list by user, list all, delete, load missing, invalid state rejection, transaction success.
 

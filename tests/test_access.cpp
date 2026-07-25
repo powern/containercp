@@ -11,6 +11,7 @@
 #include "access/UsernameMapper.h"
 #include "core/OperationResult.h"
 #include "logger/Logger.h"
+#include "storage/ManagedMountState.h"
 
 #include <algorithm>
 #include <set>
@@ -5743,4 +5744,319 @@ TEST_CASE("ARCH-009 reconcile partial failure") {
     CHECK(r.message.find("stale:site_2") != std::string::npos);
     CHECK(r.message.find("missing:site_3") != std::string::npos);
     CHECK(r.message.find("reconcile_mounts:2 failures") != std::string::npos);
+}
+
+// --- ARCH-009 Task 30: Startup Mount Reconciliation ---
+
+struct StartupReconcileContext {
+    std::shared_ptr<FakeInspector> inspector;
+    FakeCommandRunner fake_commands;
+    std::shared_ptr<FakeLiveFsInspector> fs_insp;
+    std::shared_ptr<FakeLiveMountInspector> mount_insp;
+    containercp::access::LocalSftpProvider provider;
+    std::map<uint64_t, std::pair<std::string, std::string>> sites_;
+    std::vector<containercp::storage::ManagedMountState> persisted_;
+    std::vector<containercp::access::LocalSftpProvider::GrantInfo> grants_;
+    bool persist_fail_next_ = false;
+
+    StartupReconcileContext()
+        : inspector(std::make_shared<FakeInspector>())
+        , fake_commands(inspector)
+        , fs_insp(std::make_shared<FakeLiveFsInspector>(inspector->fs_state_))
+        , mount_insp(std::make_shared<FakeLiveMountInspector>(inspector->mount_state_))
+        , provider(containercp::logger::Logger::instance())
+    {
+        inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                       "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+        inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+
+        provider.set_identity_inspector(inspector);
+        provider.set_mount_inspector(mount_insp);
+        provider.set_filesystem_inspector(fs_insp);
+        provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+            [this](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+                return fake_commands.run(cmd);
+            }));
+        provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+            containercp::access::SystemAccountAllocator::Range{10000, 19999},
+            containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+        provider.set_enabled(true);
+
+        containercp::access::SystemAccountMapping um;
+        um.entity_type = "access_user"; um.entity_id = 1;
+        um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+        std::vector<containercp::access::SystemAccountMapping> stored = {um};
+        provider.set_mapping_persistence(
+            [stored]() { return stored; },
+            [this](const containercp::access::SystemAccountMapping& m) {
+                for (auto& s : persisted_sys_mappings_) {
+                    if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; }
+                }
+                persisted_sys_mappings_.push_back(m); return true;
+            },
+            [this](const std::string& t, uint64_t id) {
+                persisted_sys_mappings_.erase(std::remove_if(persisted_sys_mappings_.begin(), persisted_sys_mappings_.end(),
+                    [&](const auto& s) { return s.entity_type == t && s.entity_id == id; }), persisted_sys_mappings_.end());
+                return true;
+            });
+        provider.set_grants_loader([this](uint64_t) { return grants_; });
+        provider.set_grants_lookup([](uint64_t, const std::string&) { return size_t{0}; });
+        provider.set_site_resolver(nullptr);
+
+        provider.set_managed_home_root("/srv/containercp/users");
+
+        // Managed mount storage callbacks
+        provider.set_managed_mount_storage(
+            [this]() -> std::vector<containercp::storage::ManagedMountState> { return persisted_; },
+            [this](const containercp::storage::ManagedMountState& m) -> bool {
+                if (persist_fail_next_) { persist_fail_next_ = false; return false; }
+                for (auto& p : persisted_) {
+                    if (p.access_user_id == m.access_user_id && p.site_id == m.site_id) {
+                        p = m; return true;
+                    }
+                }
+                persisted_.push_back(m); return true;
+            },
+            [this](uint64_t uid, uint64_t sid) -> bool {
+                for (auto it = persisted_.begin(); it != persisted_.end(); ++it) {
+                    if (it->access_user_id == uid && it->site_id == sid) {
+                        persisted_.erase(it); return true;
+                    }
+                }
+                return false;
+            });
+    }
+
+    std::vector<containercp::access::SystemAccountMapping> persisted_sys_mappings_;
+
+    void add_site(uint64_t site_id, const std::string& domain, const std::string& root) {
+        sites_[site_id] = {domain, root};
+        provider.set_site_resolver([this](uint64_t id) {
+            containercp::access::LocalSftpProvider::SiteInfo info;
+            auto it = sites_.find(id);
+            if (it != sites_.end()) {
+                info.valid = true; info.site_id = id;
+                info.domain = it->second.first;
+                info.root = it->second.second;
+            }
+            return info;
+        });
+    }
+
+    void add_mount(const std::string& target, const std::string& source) {
+        inspector->mount_state_->mounted_paths_.insert(target);
+        inspector->mount_state_->bind_sources_[target] = source;
+        containercp::access::FsPermissionState dir;
+        dir.exists = true; dir.is_symlink = false; dir.mode = S_IFDIR | 0755; dir.group_gid = 0;
+        inspector->fs_state_->state_[target] = dir;
+    }
+
+    void add_pending_mount(uint64_t uid, uint64_t sid, const std::string& domain,
+                           const std::string& src, const std::string& tgt) {
+        containercp::storage::ManagedMountState m;
+        m.access_user_id = uid; m.site_id = sid; m.domain = domain;
+        m.source_path = src; m.target_path = tgt; m.state = "pending";
+        persisted_.push_back(m);
+    }
+
+    void add_active_mount(uint64_t uid, uint64_t sid, const std::string& domain,
+                          const std::string& src, const std::string& tgt) {
+        containercp::storage::ManagedMountState m;
+        m.access_user_id = uid; m.site_id = sid; m.domain = domain;
+        m.source_path = src; m.target_path = tgt; m.state = "active";
+        persisted_.push_back(m);
+    }
+
+    void add_removing_mount(uint64_t uid, uint64_t sid, const std::string& domain,
+                            const std::string& src, const std::string& tgt) {
+        containercp::storage::ManagedMountState m;
+        m.access_user_id = uid; m.site_id = sid; m.domain = domain;
+        m.source_path = src; m.target_path = tgt; m.state = "removing";
+        persisted_.push_back(m);
+    }
+
+    void add_applying_mount(uint64_t uid, uint64_t sid, const std::string& domain,
+                            const std::string& src, const std::string& tgt) {
+        containercp::storage::ManagedMountState m;
+        m.access_user_id = uid; m.site_id = sid; m.domain = domain;
+        m.source_path = src; m.target_path = tgt; m.state = "applying";
+        persisted_.push_back(m);
+    }
+
+    void add_error_mount(uint64_t uid, uint64_t sid, const std::string& domain,
+                         const std::string& src, const std::string& tgt) {
+        containercp::storage::ManagedMountState m;
+        m.access_user_id = uid; m.site_id = sid; m.domain = domain;
+        m.source_path = src; m.target_path = tgt; m.state = "error";
+        m.last_error = "previous error";
+        persisted_.push_back(m);
+    }
+
+    size_t mutation_count() const { return fake_commands.cmds_.size(); }
+};
+
+TEST_CASE("ARCH-009 startup reconcile active mount present") {
+    StartupReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_active_mount(1, 1, "test", "/srv/containercp/sites/test/public/",
+                         "/srv/containercp/users/au-dev/sites/test");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/srv/containercp/sites/test/public/");
+    auto r = ctx.provider.reconcile_startup_mounts();
+    CHECK(r.success);
+    CHECK(ctx.persisted_.size() == 1);
+    CHECK(ctx.persisted_[0].state == "active");
+}
+
+TEST_CASE("ARCH-009 startup reconcile active mount missing recreated") {
+    StartupReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_active_mount(1, 1, "test", "/srv/containercp/sites/test/public/",
+                         "/srv/containercp/users/au-dev/sites/test");
+    // Mount not present on filesystem — will be recreated
+    auto r = ctx.provider.reconcile_startup_mounts();
+    CHECK(r.success);
+    CHECK(r.message.find("recreated") != std::string::npos);
+    CHECK(ctx.persisted_.size() == 1);
+    CHECK(ctx.persisted_[0].state == "active");
+}
+
+TEST_CASE("ARCH-009 startup reconcile active foreign mount marked error") {
+    StartupReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_active_mount(1, 1, "test", "/srv/containercp/sites/test/public/",
+                         "/srv/containercp/users/au-dev/sites/test");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/wrong/source");
+    auto r = ctx.provider.reconcile_startup_mounts();
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("foreign") != std::string::npos);
+    CHECK(ctx.persisted_.size() == 1);
+    CHECK(ctx.persisted_[0].state == "error");
+}
+
+TEST_CASE("ARCH-009 startup reconcile removing mount unmounted") {
+    StartupReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_removing_mount(1, 1, "test", "/srv/containercp/sites/test/public/",
+                           "/srv/containercp/users/au-dev/sites/test");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/srv/containercp/sites/test/public/");
+    auto r = ctx.provider.reconcile_startup_mounts();
+    CHECK(r.success);
+    CHECK(r.message.find("removing:done") != std::string::npos);
+    // Mount record should be deleted
+    CHECK(ctx.persisted_.empty());
+}
+
+TEST_CASE("ARCH-009 startup reconcile removing mount already absent") {
+    StartupReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_removing_mount(1, 1, "test", "/srv/containercp/sites/test/public/",
+                           "/srv/containercp/users/au-dev/sites/test");
+    // No mount present — unmount_site returns "already unmounted" → success
+    auto r = ctx.provider.reconcile_startup_mounts();
+    CHECK(r.success);
+    CHECK(r.message.find("removing:done") != std::string::npos);
+    CHECK(ctx.persisted_.empty());
+}
+
+TEST_CASE("ARCH-009 startup reconcile pending mount applied") {
+    StartupReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_pending_mount(1, 1, "test", "/srv/containercp/sites/test/public/",
+                          "/srv/containercp/users/au-dev/sites/test");
+    auto r = ctx.provider.reconcile_startup_mounts();
+    CHECK(r.success);
+    CHECK(r.message.find("pending:applied") != std::string::npos);
+    CHECK(ctx.persisted_.size() == 1);
+    CHECK(ctx.persisted_[0].state == "active");
+}
+
+TEST_CASE("ARCH-009 startup reconcile applying mount completed") {
+    StartupReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_applying_mount(1, 1, "test", "/srv/containercp/sites/test/public/",
+                           "/srv/containercp/users/au-dev/sites/test");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/srv/containercp/sites/test/public/");
+    auto r = ctx.provider.reconcile_startup_mounts();
+    CHECK(r.success);
+    CHECK(r.message.find("applying:completed") != std::string::npos);
+    CHECK(ctx.persisted_[0].state == "active");
+}
+
+TEST_CASE("ARCH-009 startup reconcile applying crash after mkdir") {
+    StartupReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_applying_mount(1, 1, "test", "/srv/containercp/sites/test/public/",
+                           "/srv/containercp/users/au-dev/sites/test");
+    // Mount not present, no dir — retry
+    auto r = ctx.provider.reconcile_startup_mounts();
+    CHECK(r.success);
+    CHECK(r.message.find("applying:retry") != std::string::npos);
+    CHECK(ctx.persisted_[0].state == "pending");
+}
+
+TEST_CASE("ARCH-009 startup reconcile applying crash after mount") {
+    StartupReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_applying_mount(1, 1, "test", "/srv/containercp/sites/test/public/",
+                           "/srv/containercp/users/au-dev/sites/test");
+    // Mount exists and is correct — complete
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/srv/containercp/sites/test/public/");
+    auto r = ctx.provider.reconcile_startup_mounts();
+    CHECK(r.success);
+    CHECK(r.message.find("applying:completed") != std::string::npos);
+    CHECK(ctx.persisted_[0].state == "active");
+}
+
+TEST_CASE("ARCH-009 startup reconcile error mount recovered") {
+    StartupReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_error_mount(1, 1, "test", "/srv/containercp/sites/test/public/",
+                        "/srv/containercp/users/au-dev/sites/test");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/srv/containercp/sites/test/public/");
+    auto r = ctx.provider.reconcile_startup_mounts();
+    CHECK(r.success);
+    CHECK(ctx.persisted_.size() == 1);
+    // Error with correct mount → recovered to active
+    CHECK(ctx.persisted_[0].state == "active");
+}
+
+TEST_CASE("ARCH-009 startup reconcile error mount preserved") {
+    StartupReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_error_mount(1, 1, "test", "/srv/containercp/sites/test/public/",
+                        "/srv/containercp/users/au-dev/sites/test");
+    // No mount present — error preserved
+    auto r = ctx.provider.reconcile_startup_mounts();
+    CHECK(r.success);
+    CHECK(ctx.persisted_.size() == 1);
+    CHECK(ctx.persisted_[0].state == "error");
+    CHECK(ctx.persisted_[0].last_error == "previous error");
+}
+
+TEST_CASE("ARCH-009 startup reconcile persistence failure") {
+    StartupReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_active_mount(1, 1, "test", "/srv/containercp/sites/test/public/",
+                         "/srv/containercp/users/au-dev/sites/test");
+    ctx.persist_fail_next_ = true;
+    auto r = ctx.provider.reconcile_startup_mounts();
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("persist") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 startup reconcile idempotent") {
+    StartupReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_active_mount(1, 1, "test", "/srv/containercp/sites/test/public/",
+                         "/srv/containercp/users/au-dev/sites/test");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/srv/containercp/sites/test/public/");
+    // First run — no changes needed
+    auto r1 = ctx.provider.reconcile_startup_mounts();
+    CHECK(r1.success);
+    size_t count_after_first = ctx.persisted_.size();
+    // Second run — same state
+    auto r2 = ctx.provider.reconcile_startup_mounts();
+    CHECK(r2.success);
+    CHECK(ctx.persisted_.size() == count_after_first);
+    CHECK(ctx.persisted_[0].state == "active");
 }
