@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-25 | `this commit` | ARCH-009 Task 22 — Enforce full idempotent bind identity
+
+**Summary:** Enhanced the existing-mount pre-check in `bind_mount_site()` to verify all 8 identity fields before returning idempotent success: MountStatus Ok, mounted true, exact canonical target, exact canonical source/root, bind semantics confirmed (is_bind && fstype non-empty), device/filesystem identity consistent (device non-empty), required mount options (rw present, ro absent), and persisted grant belongs to the same user and site. If any field differs, returns `foreign_or_mismatched_mount:<reason>` error without mutating state. Post-mount verification also uses the same thorough comparison. Added 10 regression tests covering: exact match (idempotent success), source mismatch, target mismatch, non-bind regular mount, device mismatch, mount option mismatch (ro), another user's grant, another site's grant, inspector failure, and malformed mount state (empty fstype).
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Repeated `bind_mount_site` calls now return idempotent success only when the observed mount exactly matches all expected identity fields. Any field mismatch returns a specific `foreign_or_mismatched_mount:<reason>` error instead of proceeding with mount/unmount.
+
+**Validation:** Full doctest suite passed (1035 cases, 7096 assertions). All 17 ARCH-009 bind mount tests pass (7 rollback + 10 idempotent). All 6 Phase3c tests pass. All 41 access tests pass. `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
 ## 2026-07-25 | `this commit` | ARCH-009 Task 21 — Complete bind-mount rollback verification
 
 **Summary:** Rewrote the rollback in `bind_mount_site()` to perform full verified cleanup after mount verification failure. The new rollback sequence: (1) prove the mount was created by the current operation via pre-mount check, (2) `umount()` with result check, (3) re-inspect via `MountInspector` to confirm unmounted, (4) `rmdir()` only if directory was created by this operation (tracked via `fs_inspector_` pre-check), (5) re-inspect via `FilesystemPermissionInspector` to confirm removal. Returns distinct stable error tokens: `"mount rollback umount failure"`, `"mount rollback still mounted"`, `"mount rollback rmdir failure"`, `"mount rollback target still exists"`, `"mount verification failed"` (clean rollback). Added `FakeLiveMountInspector` and `FakeLiveFsInspector` that share state with `FakeCommandRunner` for realistic rollback testing. Added `bind_sources_` map to `FakeInspector::MountState` for target→source tracking. Added 7 regression tests covering: clean rollback, umount failure, still-mounted after rollback, rmdir failure, target-still-exists, pre-existing directory (no rmdir), and success path.

@@ -789,13 +789,61 @@ core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id
     std::string source = site_root + "/public/";
     std::string target = managed_home_root_ + "/" + username + "/sites/" + domain;
 
-    // Check if exact expected bind already exists (idempotent)
+    // Check if exact expected managed bind already exists (idempotent).
+    // All of the following must match to consider this an existing managed bind:
+    // 1. MountStatus is Ok
+    // 2. mounted is true
+    // 3. exact canonical target
+    // 4. exact canonical source/root
+    // 5. bind semantics confirmed (is_bind && fstype non-empty)
+    // 6. device/filesystem identity is consistent (device non-empty)
+    // 7. required mount options match (rw present, ro absent)
+    // 8. persisted grant belongs to same user and site
     auto existing = mount_inspector_->inspect(target);
-    if (existing.mounted && existing.is_bind && existing.bind_root == source) {
-        out.success = true; out.message = "mount already exists"; return out;
-    }
-    if (existing.mounted && (!existing.is_bind || existing.bind_root != source)) {
-        out.success = false; out.message = "foreign mount at target"; return out;
+    if (existing.mounted) {
+        bool match = true;
+        std::string mismatch_reason;
+        auto note = [&](const char* reason) { if (mismatch_reason.empty()) mismatch_reason = reason; match = false; };
+
+        if (existing.status != MountStatus::Ok) note("status");
+        if (!existing.is_bind)                 note("no_bind");
+        if (existing.target != target)         note("target");
+        if (existing.bind_root != source)      note("source");
+        if (existing.fstype.empty())           note("fstype");
+        if (existing.device.empty())           note("device");
+        // Required mount options: must have rw, must not have ro
+        {
+            bool has_rw = false, has_ro = false;
+            std::string opts = existing.options;
+            std::string::size_type pos = 0;
+            while (pos < opts.size()) {
+                auto comma = opts.find(',', pos);
+                std::string opt = (comma == std::string::npos) ? opts.substr(pos) : opts.substr(pos, comma - pos);
+                if (opt == "rw") has_rw = true;
+                if (opt == "ro") has_ro = true;
+                if (comma == std::string::npos) break;
+                pos = comma + 1;
+            }
+            if (!has_rw || has_ro) note("options");
+        }
+        // Verify a persisted grant exists for this user+site
+        {
+            bool has_grant = false;
+            if (grants_loader_) {
+                auto all_grants = grants_loader_(access_user_id);
+                for (const auto& g : all_grants) {
+                    if (g.site_id == site_id) { has_grant = true; break; }
+                }
+            }
+            if (!has_grant) note("no_grant");
+        }
+
+        if (match) {
+            out.success = true; out.message = "mount already exists"; return out;
+        }
+        out.success = false;
+        out.message = std::string("foreign_or_mismatched_mount:") + mismatch_reason;
+        return out;
     }
 
     // Track whether we create the target directory (for rollback)
@@ -824,9 +872,32 @@ core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id
         return out;
     }
 
-    // Verify exact identity
+    // Verify exact identity — same criteria as the pre-mount check
     auto post = mount_inspector_->inspect(target);
-    if (!post.mounted || post.bind_root != source) {
+    bool post_ok = true;
+    if (post.status != MountStatus::Ok)                             post_ok = false;
+    if (!post.mounted)                                              post_ok = false;
+    if (post.target != target)                                      post_ok = false;
+    if (!post.is_bind)                                              post_ok = false;
+    if (post.bind_root != source)                                   post_ok = false;
+    if (post.fstype.empty())                                        post_ok = false;
+    if (post.device.empty())                                        post_ok = false;
+    {
+        bool has_rw = false, has_ro = false;
+        std::string opts = post.options;
+        std::string::size_type pos = 0;
+        while (pos < opts.size()) {
+            auto comma = opts.find(',', pos);
+            std::string opt = (comma == std::string::npos) ? opts.substr(pos) : opts.substr(pos, comma - pos);
+            if (opt == "rw") has_rw = true;
+            if (opt == "ro") has_ro = true;
+            if (comma == std::string::npos) break;
+            pos = comma + 1;
+        }
+        if (!has_rw || has_ro) post_ok = false;
+    }
+
+    if (!post_ok) {
         // The mount was created by this operation — we verified no valid mount
         // existed before the mount_bind call above.
 

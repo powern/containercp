@@ -702,6 +702,9 @@ public:
         s.mounted = true;
         s.is_bind = true;
         s.target = path;
+        s.fstype = "ext4";
+        s.device = "0:30";
+        s.options = "rw";
         auto it = mount_state_->bind_sources_.find(path);
         s.bind_root = (it != mount_state_->bind_sources_.end()) ? it->second : "";
         s.status = containercp::access::MountStatus::Ok;
@@ -4029,6 +4032,13 @@ struct BindMountTestContext {
                 stored.push_back(m); return true;
             },
             [](const std::string&, uint64_t) { return true; });
+        provider.set_grants_loader([](uint64_t uid) {
+            std::vector<containercp::access::LocalSftpProvider::GrantInfo> grants;
+            if (uid == 1) {
+                grants.push_back({1, "test", "read_write"});
+            }
+            return grants;
+        });
     }
 };
 
@@ -4235,4 +4245,361 @@ TEST_CASE("ARCH-009 bind mount verification failure mounts correctly") {
     // Verify mount was recorded
     CHECK(ctx.inspector->mount_state_->mounted_paths_.count(
         "/srv/containercp/users/au-dev/sites/test") > 0);
+}
+
+// --- Idempotent bind identity tests ---
+
+TEST_CASE("ARCH-009 bind mount idempotent exact match") {
+    BindMountTestContext ctx;
+    auto target = "/srv/containercp/users/au-dev/sites/test";
+    auto source = "/srv/containercp/sites/test/public/";
+
+    // Pre-populate mount state as if the mount already exists
+    ctx.inspector->mount_state_->mounted_paths_.insert(target);
+    ctx.inspector->mount_state_->bind_sources_[target] = source;
+
+    auto r = ctx.provider.bind_mount_site(1, 1);
+    CHECK(r.success);
+    CHECK(r.message == "mount already exists");
+}
+
+TEST_CASE("ARCH-009 bind mount idempotent target mismatch") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+    stored.push_back(um);
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+
+    auto mount_insp = std::make_shared<FakeMountInspector>();
+    mount_insp->state_.mounted = true;
+    mount_insp->state_.is_bind = true;
+    mount_insp->state_.target = "/wrong/target";  // mismatched target
+    mount_insp->state_.bind_root = "/srv/containercp/sites/test/public/";
+    mount_insp->state_.fstype = "ext4";
+    mount_insp->state_.device = "0:30";
+    mount_insp->state_.options = "rw";
+    mount_insp->state_.status = containercp::access::MountStatus::Ok;
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_mount_inspector(mount_insp);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) {
+        containercp::access::LocalSftpProvider::SiteInfo info;
+        info.valid = true; info.site_id = id;
+        info.domain = "test"; info.root = "/srv/containercp/sites/test";
+        return info;
+    });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [](const std::string&, uint64_t) { return true; });
+    provider.set_grants_loader([](uint64_t uid) {
+        std::vector<containercp::access::LocalSftpProvider::GrantInfo> grants;
+        if (uid == 1) grants.push_back({1, "test", "read_write"});
+        return grants;
+    });
+
+    auto r = provider.bind_mount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("foreign_or_mismatched_mount:target") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 bind mount idempotent source mismatch") {
+    BindMountTestContext ctx;
+    auto target = "/srv/containercp/users/au-dev/sites/test";
+
+    // Mount exists but with wrong source
+    ctx.inspector->mount_state_->mounted_paths_.insert(target);
+    ctx.inspector->mount_state_->bind_sources_[target] = "/wrong/source";
+
+    auto r = ctx.provider.bind_mount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("foreign_or_mismatched_mount:source") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 bind mount idempotent non-bind regular mount") {
+    // Use static FakeMountInspector to return a non-bind mount
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+    stored.push_back(um);
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+
+    auto mount_insp = std::make_shared<FakeMountInspector>();
+    mount_insp->state_.mounted = true;
+    mount_insp->state_.is_bind = false;
+    mount_insp->state_.target = "/srv/containercp/users/au-dev/sites/test";
+    mount_insp->state_.bind_root = "/";
+    mount_insp->state_.fstype = "ext4";
+    mount_insp->state_.device = "8:2";
+    mount_insp->state_.options = "rw";
+    mount_insp->state_.status = containercp::access::MountStatus::Ok;
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_mount_inspector(mount_insp);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) {
+        containercp::access::LocalSftpProvider::SiteInfo info;
+        info.valid = true; info.site_id = id;
+        info.domain = "test"; info.root = "/srv/containercp/sites/test";
+        return info;
+    });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [](const std::string&, uint64_t) { return true; });
+    provider.set_grants_loader([](uint64_t uid) {
+        std::vector<containercp::access::LocalSftpProvider::GrantInfo> grants;
+        if (uid == 1) grants.push_back({1, "test", "read_write"});
+        return grants;
+    });
+
+    auto r = provider.bind_mount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("foreign_or_mismatched_mount:no_bind") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 bind mount idempotent device mismatch") {
+    BindMountTestContext ctx;
+    auto target = "/srv/containercp/users/au-dev/sites/test";
+    auto source = "/srv/containercp/sites/test/public/";
+
+    ctx.inspector->mount_state_->mounted_paths_.insert(target);
+    ctx.inspector->mount_state_->bind_sources_[target] = source;
+    // Device will be "0:30" from FakeLiveMountInspector defaults — we need it empty to fail
+    // We can't override individual fields via shared state, so use a static inspector
+    auto mount_insp = std::make_shared<FakeMountInspector>();
+    mount_insp->state_.mounted = true;
+    mount_insp->state_.is_bind = true;
+    mount_insp->state_.target = target;
+    mount_insp->state_.bind_root = source;
+    mount_insp->state_.fstype = "ext4";
+    mount_insp->state_.device = "";
+    mount_insp->state_.options = "rw";
+    mount_insp->state_.status = containercp::access::MountStatus::Ok;
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(ctx.inspector);
+    provider.set_mount_inspector(mount_insp);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return ctx.fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) {
+        containercp::access::LocalSftpProvider::SiteInfo info;
+        info.valid = true; info.site_id = id;
+        info.domain = "test"; info.root = "/srv/containercp/sites/test";
+        return info;
+    });
+    provider.set_mapping_persistence(
+        [&ctx]() { return ctx.stored; },
+        [&ctx](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : ctx.stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            ctx.stored.push_back(m); return true;
+        },
+        [](const std::string&, uint64_t) { return true; });
+    provider.set_grants_loader([](uint64_t uid) {
+        std::vector<containercp::access::LocalSftpProvider::GrantInfo> grants;
+        if (uid == 1) grants.push_back({1, "test", "read_write"});
+        return grants;
+    });
+
+    auto r = provider.bind_mount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("foreign_or_mismatched_mount:device") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 bind mount idempotent mount option mismatch") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+    stored.push_back(um);
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+
+    auto mount_insp = std::make_shared<FakeMountInspector>();
+    mount_insp->state_.mounted = true;
+    mount_insp->state_.is_bind = true;
+    mount_insp->state_.target = "/srv/containercp/users/au-dev/sites/test";
+    mount_insp->state_.bind_root = "/srv/containercp/sites/test/public/";
+    mount_insp->state_.fstype = "ext4";
+    mount_insp->state_.device = "0:30";
+    mount_insp->state_.options = "ro";  // read-only — not expected
+    mount_insp->state_.status = containercp::access::MountStatus::Ok;
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_mount_inspector(mount_insp);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) {
+        containercp::access::LocalSftpProvider::SiteInfo info;
+        info.valid = true; info.site_id = id;
+        info.domain = "test"; info.root = "/srv/containercp/sites/test";
+        return info;
+    });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [](const std::string&, uint64_t) { return true; });
+    provider.set_grants_loader([](uint64_t uid) {
+        std::vector<containercp::access::LocalSftpProvider::GrantInfo> grants;
+        if (uid == 1) grants.push_back({1, "test", "read_write"});
+        return grants;
+    });
+
+    auto r = provider.bind_mount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("foreign_or_mismatched_mount:options") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 bind mount idempotent another user grant") {
+    BindMountTestContext ctx;
+    auto target = "/srv/containercp/users/au-dev/sites/test";
+    auto source = "/srv/containercp/sites/test/public/";
+
+    ctx.inspector->mount_state_->mounted_paths_.insert(target);
+    ctx.inspector->mount_state_->bind_sources_[target] = source;
+
+    // Override grants_loader to return no grants for user 1
+    ctx.provider.set_grants_loader([](uint64_t) {
+        return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
+    });
+
+    auto r = ctx.provider.bind_mount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("foreign_or_mismatched_mount:no_grant") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 bind mount idempotent another site grant") {
+    BindMountTestContext ctx;
+    auto target = "/srv/containercp/users/au-dev/sites/test";
+    auto source = "/srv/containercp/sites/test/public/";
+
+    ctx.inspector->mount_state_->mounted_paths_.insert(target);
+    ctx.inspector->mount_state_->bind_sources_[target] = source;
+
+    // Override grants_loader to return a grant for a different site
+    ctx.provider.set_grants_loader([](uint64_t uid) {
+        std::vector<containercp::access::LocalSftpProvider::GrantInfo> grants;
+        if (uid == 1) grants.push_back({999, "other-site", "read_write"});
+        return grants;
+    });
+
+    auto r = ctx.provider.bind_mount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("foreign_or_mismatched_mount:no_grant") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 bind mount idempotent inspector failure") {
+    BindMountTestContext ctx;
+    auto target = "/srv/containercp/users/au-dev/sites/test";
+    auto source = "/srv/containercp/sites/test/public/";
+
+    ctx.inspector->mount_state_->mounted_paths_.insert(target);
+    ctx.inspector->mount_state_->bind_sources_[target] = source;
+
+    // Override mount inspector to return InspectionFailed
+    auto fail_insp = std::make_shared<FakeMountInspector>();
+    fail_insp->state_.mounted = true;
+    fail_insp->state_.status = containercp::access::MountStatus::InspectionFailed;
+    fail_insp->state_.error_detail = "mock failure";
+    ctx.provider.set_mount_inspector(fail_insp);
+
+    auto r = ctx.provider.bind_mount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("foreign_or_mismatched_mount:status") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 bind mount idempotent malformed mount state") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+    stored.push_back(um);
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+
+    auto mount_insp = std::make_shared<FakeMountInspector>();
+    mount_insp->state_.mounted = true;
+    mount_insp->state_.is_bind = true;
+    mount_insp->state_.target = "/srv/containercp/users/au-dev/sites/test";
+    mount_insp->state_.bind_root = "/srv/containercp/sites/test/public/";
+    mount_insp->state_.fstype = "";  // empty fstype = malformed
+    mount_insp->state_.device = "0:30";
+    mount_insp->state_.options = "rw";
+    mount_insp->state_.status = containercp::access::MountStatus::Ok;
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_mount_inspector(mount_insp);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) {
+        containercp::access::LocalSftpProvider::SiteInfo info;
+        info.valid = true; info.site_id = id;
+        info.domain = "test"; info.root = "/srv/containercp/sites/test";
+        return info;
+    });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [](const std::string&, uint64_t) { return true; });
+    provider.set_grants_loader([](uint64_t uid) {
+        std::vector<containercp::access::LocalSftpProvider::GrantInfo> grants;
+        if (uid == 1) grants.push_back({1, "test", "read_write"});
+        return grants;
+    });
+
+    auto r = provider.bind_mount_site(1, 1);
+    CHECK_FALSE(r.success);
+    // Empty fstype checked before device in the code, so expect fstype error
+    CHECK(r.message.find("foreign_or_mismatched_mount:fstype") != std::string::npos);
 }
