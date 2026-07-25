@@ -13,6 +13,7 @@
 #include "logger/Logger.h"
 
 #include <algorithm>
+#include <set>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -471,12 +472,21 @@ class FakeCommandRunner {
 
     containercp::core::OperationResult run(const containercp::access::SystemAccountCommandRunner::Command& cmd) {
         cmds_.push_back(cmd);
-        if (fail_next_) { fail_next_ = false; return {false, "injected failure"}; }
+        if (fail_next_) { fail_next_ = false; return {false, "injected failure", ""}; }
+        // Handle ls -A for dir_is_empty check
+        if (cmd.args.size() >= 3 && cmd.args[0] == "ls" && cmd.args[1] == "-A") {
+            const auto& path = cmd.args[2];
+            if (non_empty_dirs_.count(path)) {
+                return {false, "directory not empty", "file1\nfile2\n"};
+            }
+            return {true, "", ""};
+        }
         apply_to_inspector(cmd);
-        return {true, "ok"};
+        return {true, "ok", ""};
     }
     std::vector<containercp::access::SystemAccountCommandRunner::Command> cmds_;
     bool fail_next_ = false;
+    std::set<std::string> non_empty_dirs_;
 
 private:
     void apply_to_inspector(const containercp::access::SystemAccountCommandRunner::Command& cmd) {
@@ -4164,10 +4174,10 @@ TEST_CASE("ARCH-009 bind mount rollback rmdir failure") {
 
     auto r = ctx.provider.bind_mount_site(1, 1);
     CHECK_FALSE(r.success);
-    CHECK(r.message == "mount rollback rmdir failure");
+    CHECK(r.message.find("rmdir_safety:rmdir_failed") != std::string::npos);
 }
 
-TEST_CASE("ARCH-009 bind mount rollback target still exists") {
+TEST_CASE("ARCH-009 bind mount rollback target still present") {
     BindMountTestContext ctx;
 
     auto wrapper = std::make_unique<containercp::access::SystemAccountCommandRunner>(
@@ -4199,7 +4209,7 @@ TEST_CASE("ARCH-009 bind mount rollback target still exists") {
 
     auto r = ctx.provider.bind_mount_site(1, 1);
     CHECK_FALSE(r.success);
-    CHECK(r.message == "mount rollback target still exists");
+    CHECK(r.message.find("rmdir_safety:still_present") != std::string::npos);
 }
 
 TEST_CASE("ARCH-009 bind mount rollback with pre-existing directory") {
@@ -4668,8 +4678,7 @@ struct UnmountTestContext {
 };
 
 // Set up a manager mapping so resolve_username finds the user
-static void setup_manager_for_unmount(containercp::access::LocalSftpProvider& provider,
-                                       std::shared_ptr<FakeInspector> inspector) {
+static void setup_manager_for_unmount(containercp::access::LocalSftpProvider& provider) {
     containercp::access::SystemAccountMapping um;
     um.entity_type = "access_user"; um.entity_id = 1;
     um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
@@ -4706,7 +4715,7 @@ TEST_CASE("ARCH-009 unmount expected mount present") {
         info.domain = "test"; info.root = "/srv/containercp/sites/test";
         return info;
     });
-    setup_manager_for_unmount(provider, inspector);
+    setup_manager_for_unmount(provider);
 
     auto r = provider.unmount_site(1, 1);
     CHECK(r.success);
@@ -4715,7 +4724,7 @@ TEST_CASE("ARCH-009 unmount expected mount present") {
 
 TEST_CASE("ARCH-009 unmount mount absent") {
     UnmountTestContext ctx;
-    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    setup_manager_for_unmount(ctx.provider);
     ctx.set_mount_state(false, false, "",
                         containercp::access::MountStatus::Absent);
     auto r = ctx.provider.unmount_site(1, 1);
@@ -4726,7 +4735,7 @@ TEST_CASE("ARCH-009 unmount mount absent") {
 
 TEST_CASE("ARCH-009 unmount foreign mount source mismatch") {
     UnmountTestContext ctx;
-    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    setup_manager_for_unmount(ctx.provider);
     ctx.set_mount_state(true, true, "/wrong/source",
                         containercp::access::MountStatus::Ok);
     auto r = ctx.provider.unmount_site(1, 1);
@@ -4737,7 +4746,7 @@ TEST_CASE("ARCH-009 unmount foreign mount source mismatch") {
 
 TEST_CASE("ARCH-009 unmount non-bind mount") {
     UnmountTestContext ctx;
-    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    setup_manager_for_unmount(ctx.provider);
     ctx.set_mount_state(true, false, "/",
                         containercp::access::MountStatus::Ok);
     auto r = ctx.provider.unmount_site(1, 1);
@@ -4748,7 +4757,7 @@ TEST_CASE("ARCH-009 unmount non-bind mount") {
 
 TEST_CASE("ARCH-009 unmount device mismatch") {
     UnmountTestContext ctx;
-    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    setup_manager_for_unmount(ctx.provider);
     ctx.set_mount_state(true, true, "/srv/containercp/sites/test/public/",
                         containercp::access::MountStatus::Ok,
                         "/srv/containercp/users/au-dev/sites/test",
@@ -4761,7 +4770,7 @@ TEST_CASE("ARCH-009 unmount device mismatch") {
 
 TEST_CASE("ARCH-009 unmount options mismatch ro") {
     UnmountTestContext ctx;
-    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    setup_manager_for_unmount(ctx.provider);
     ctx.set_mount_state(true, true, "/srv/containercp/sites/test/public/",
                         containercp::access::MountStatus::Ok,
                         "/srv/containercp/users/au-dev/sites/test",
@@ -4774,7 +4783,7 @@ TEST_CASE("ARCH-009 unmount options mismatch ro") {
 
 TEST_CASE("ARCH-009 unmount TargetMissing") {
     UnmountTestContext ctx;
-    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    setup_manager_for_unmount(ctx.provider);
     ctx.set_mount_state(false, false, "",
                         containercp::access::MountStatus::TargetMissing);
     auto r = ctx.provider.unmount_site(1, 1);
@@ -4785,7 +4794,7 @@ TEST_CASE("ARCH-009 unmount TargetMissing") {
 
 TEST_CASE("ARCH-009 unmount PermissionDenied") {
     UnmountTestContext ctx;
-    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    setup_manager_for_unmount(ctx.provider);
     ctx.set_mount_state(false, false, "",
                         containercp::access::MountStatus::PermissionDenied);
     auto r = ctx.provider.unmount_site(1, 1);
@@ -4796,7 +4805,7 @@ TEST_CASE("ARCH-009 unmount PermissionDenied") {
 
 TEST_CASE("ARCH-009 unmount InspectionFailed") {
     UnmountTestContext ctx;
-    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    setup_manager_for_unmount(ctx.provider);
     ctx.set_mount_state(false, false, "",
                         containercp::access::MountStatus::InspectionFailed);
     auto r = ctx.provider.unmount_site(1, 1);
@@ -4807,7 +4816,7 @@ TEST_CASE("ARCH-009 unmount InspectionFailed") {
 
 TEST_CASE("ARCH-009 unmount DependencyUnavailable") {
     UnmountTestContext ctx;
-    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    setup_manager_for_unmount(ctx.provider);
     ctx.set_mount_state(false, false, "",
                         containercp::access::MountStatus::DependencyUnavailable);
     auto r = ctx.provider.unmount_site(1, 1);
@@ -4818,7 +4827,7 @@ TEST_CASE("ARCH-009 unmount DependencyUnavailable") {
 
 TEST_CASE("ARCH-009 unmount ambiguous state Ok not mounted") {
     UnmountTestContext ctx;
-    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    setup_manager_for_unmount(ctx.provider);
     ctx.set_mount_state(false, false, "",
                         containercp::access::MountStatus::Ok);
     auto r = ctx.provider.unmount_site(1, 1);
@@ -4855,7 +4864,7 @@ TEST_CASE("ARCH-009 unmount post still mounted") {
     // Post: same — still mounted, identity matches
     two->second = two->first;
 
-    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    setup_manager_for_unmount(ctx.provider);
     auto r = ctx.provider.unmount_site(1, 1);
     CHECK_FALSE(r.success);
     CHECK(r.message == "umount_verify:still_mounted");
@@ -4881,7 +4890,7 @@ TEST_CASE("ARCH-009 unmount post foreign mount") {
     two->second.fstype = "ext4"; two->second.device = "0:42"; two->second.options = "ro";
     two->second.status = containercp::access::MountStatus::Ok;
 
-    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    setup_manager_for_unmount(ctx.provider);
     auto r = ctx.provider.unmount_site(1, 1);
     CHECK_FALSE(r.success);
     CHECK(r.message == "umount_verify:foreign_mount");
@@ -4904,7 +4913,7 @@ TEST_CASE("ARCH-009 unmount post ambiguous") {
     two->second.mounted = false; two->second.is_bind = false;
     two->second.status = containercp::access::MountStatus::Ok;
 
-    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    setup_manager_for_unmount(ctx.provider);
     auto r = ctx.provider.unmount_site(1, 1);
     CHECK_FALSE(r.success);
     CHECK(r.message == "umount_verify:ambiguous");
@@ -4927,8 +4936,165 @@ TEST_CASE("ARCH-009 unmount post inspection failed") {
     two->second.mounted = false;
     two->second.status = containercp::access::MountStatus::InspectionFailed;
 
-    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    setup_manager_for_unmount(ctx.provider);
     auto r = ctx.provider.unmount_site(1, 1);
     CHECK_FALSE(r.success);
     CHECK(r.message == "umount_verify:inspection_failed");
+}
+
+// --- ARCH-009 Task 25: Safe Managed Mount-Target Removal ---
+
+struct SafeRmDirContext {
+    std::shared_ptr<FakeInspector> inspector;
+    FakeCommandRunner fake_commands;
+    std::shared_ptr<FakeLiveFsInspector> fs_insp;
+    std::shared_ptr<FakeMountInspector> mount_insp;
+    containercp::access::LocalSftpProvider provider;
+    std::string target = "/srv/containercp/users/au-dev/sites/test";
+    std::string username = "au-dev";
+    std::string domain = "test";
+
+    SafeRmDirContext()
+        : inspector(std::make_shared<FakeInspector>())
+        , fake_commands(inspector)
+        , fs_insp(std::make_shared<FakeLiveFsInspector>(inspector->fs_state_))
+        , mount_insp(std::make_shared<FakeMountInspector>())
+        , provider(containercp::logger::Logger::instance())
+    {
+        provider.set_filesystem_inspector(fs_insp);
+        provider.set_mount_inspector(mount_insp);
+        provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+            [this](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+                return fake_commands.run(cmd);
+            }));
+        provider.set_enabled(true);
+        provider.set_managed_home_root("/srv/containercp/users");
+
+        // Default: target is a normal directory, empty, not mounted
+        containercp::access::FsPermissionState dir;
+        dir.exists = true; dir.is_symlink = false; dir.mode = 0755; dir.group_gid = 0;
+        inspector->fs_state_->state_[target] = dir;
+
+        mount_insp->state_.mounted = false;
+        mount_insp->state_.status = containercp::access::MountStatus::Absent;
+    }
+};
+
+TEST_CASE("ARCH-009 safe rmdir managed empty target") {
+    SafeRmDirContext ctx;
+    auto r = ctx.provider.safe_rmdir(ctx.target, true, ctx.username, ctx.domain);
+    CHECK(r.success);
+    // Verify directory was removed
+    auto post = ctx.fs_insp->inspect(ctx.target);
+    CHECK_FALSE(post.exists);
+}
+
+TEST_CASE("ARCH-009 safe rmdir symlink target") {
+    SafeRmDirContext ctx;
+    ctx.inspector->fs_state_->state_[ctx.target].is_symlink = true;
+    auto r = ctx.provider.safe_rmdir(ctx.target, true, ctx.username, ctx.domain);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "rmdir_safety:symlink");
+    // Directory still exists
+    auto post = ctx.fs_insp->inspect(ctx.target);
+    CHECK(post.exists);
+}
+
+TEST_CASE("ARCH-009 safe rmdir not found target") {
+    SafeRmDirContext ctx;
+    ctx.inspector->fs_state_->state_.erase(ctx.target);
+    auto r = ctx.provider.safe_rmdir(ctx.target, true, ctx.username, ctx.domain);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "rmdir_safety:not_found");
+}
+
+TEST_CASE("ARCH-009 safe rmdir non-empty target") {
+    SafeRmDirContext ctx;
+    // Make dir_is_empty return false — fake returns non-empty output for paths in non_empty_dirs
+    ctx.fake_commands.non_empty_dirs_.insert(ctx.target);
+    auto r = ctx.provider.safe_rmdir(ctx.target, true, ctx.username, ctx.domain);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "rmdir_safety:not_empty");
+    // Directory still exists (no deletion)
+    auto post = ctx.fs_insp->inspect(ctx.target);
+    CHECK(post.exists);
+}
+
+TEST_CASE("ARCH-009 safe rmdir outside root target") {
+    SafeRmDirContext ctx;
+    std::string bad_target = "/tmp/evil";
+    auto r = ctx.provider.safe_rmdir(bad_target, true, ctx.username, ctx.domain);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "rmdir_safety:unsafe_path");
+}
+
+TEST_CASE("ARCH-009 safe rmdir path mismatch") {
+    SafeRmDirContext ctx;
+    std::string wrong_path = "/srv/containercp/users/au-dev/sites/wrong-domain";
+    auto r = ctx.provider.safe_rmdir(wrong_path, true, ctx.username, ctx.domain);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "rmdir_safety:path_mismatch");
+}
+
+TEST_CASE("ARCH-009 safe rmdir pre-existing unmanaged target") {
+    SafeRmDirContext ctx;
+    auto r = ctx.provider.safe_rmdir(ctx.target, false, ctx.username, ctx.domain);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "rmdir_safety:unmanaged_target");
+    // Directory was NOT deleted
+    auto post = ctx.fs_insp->inspect(ctx.target);
+    CHECK(post.exists);
+}
+
+TEST_CASE("ARCH-009 safe rmdir command failure") {
+    SafeRmDirContext ctx;
+    ctx.fake_commands.fail_next_ = true; // Will fail the rmdir command
+    // Need to count commands: dir_is_empty (ls -A) happens before rmdir.
+    // Set fail_next_ after the first ls -A command
+    int call_count = 0;
+    ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx, &call_count](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "ls" && cmd.args[1] == "-A") {
+                auto result = ctx.fake_commands.run(cmd);
+                return result;
+            }
+            call_count++;
+            if (call_count == 1 && cmd.args[0] == "rmdir") {
+                return containercp::core::OperationResult{false, "rmdir failed", ""};
+            }
+            return ctx.fake_commands.run(cmd);
+        }));
+    auto r = ctx.provider.safe_rmdir(ctx.target, true, ctx.username, ctx.domain);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "rmdir_safety:rmdir_failed");
+    // Directory still exists because rmdir failed
+    auto post = ctx.fs_insp->inspect(ctx.target);
+    CHECK(post.exists);
+}
+
+TEST_CASE("ARCH-009 safe rmdir target still present after rmdir") {
+    SafeRmDirContext ctx;
+    ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            auto result = ctx.fake_commands.run(cmd);
+            // After rmdir removes from fs_state_, re-add so postcondition check sees it
+            if (cmd.args[0] == "rmdir" && result.success) {
+                containercp::access::FsPermissionState s;
+                s.exists = true; s.is_symlink = false; s.mode = 0755; s.group_gid = 0;
+                ctx.inspector->fs_state_->state_[cmd.args.back()] = s;
+            }
+            return result;
+        }));
+    auto r = ctx.provider.safe_rmdir(ctx.target, true, ctx.username, ctx.domain);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "rmdir_safety:still_present");
+}
+
+TEST_CASE("ARCH-009 safe rmdir still mounted") {
+    SafeRmDirContext ctx;
+    ctx.mount_insp->state_.mounted = true;
+    ctx.mount_insp->state_.status = containercp::access::MountStatus::Ok;
+    auto r = ctx.provider.safe_rmdir(ctx.target, true, ctx.username, ctx.domain);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "rmdir_safety:still_mounted");
 }

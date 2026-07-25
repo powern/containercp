@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-25 | `this commit` | ARCH-009 Task 25 — Safe Managed Mount-Target Removal
+
+**Summary:** Introduced `safe_rmdir()` — a guarded directory removal method that proves 8 preconditions before calling `rmdir`: path inside managed chroot, exact domain directory match, exists and is directory, not symlink, not a mountpoint, empty, managed by ContainerCP, created by us or persisted. Returns bounded error tokens (`rmdir_safety:unsafe_path`, `:path_mismatch`, `:not_found`, `:symlink`, `:still_mounted`, `:not_empty`, `:unmanaged_target`, `:rmdir_failed`, `:still_present`). Postcondition verifies directory absent. Wired into `unmount_site()` (always created_by_us=true for persisted managed targets) and both `bind_mount_site()` rollback paths (guarded by `dir_created`). Added `dir_is_empty` to `SystemAccountCommandRunner` (via `ls -A`). Added `output` field to `OperationResult` for command stdout. Added `non_empty_dirs_` to `FakeCommandRunner`. 10 direct tests cover every precondition and failure branch.
+
+**Files changed:** `libs/core/OperationResult.h`, `libs/access/SystemAccountCommandRunner.{h,cpp}`, `libs/access/LocalSftpProvider.{h,cpp}`, `tests/test_access.cpp`, `tests/test_runtime_sync.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** `unmount_site` and bind-mount rollback now perform full safety validation before any `rmdir`. All failure modes produce distinct bounded error tokens. Pre-existing unmanaged directories are never deleted.
+
+**Validation:** Full doctest suite passed (1060 cases, 7160 assertions). 10 new ARCH-009 safe_rmdir tests pass. `git diff --check` passed. Zero compiler warnings.
+
+**Known risks:** None.
+
+---
+
 ## 2026-07-25 | `this commit` | ARCH-009 Task 24 — Verify Complete Unmount Postcondition
 
 **Summary:** Enhanced post-umount verification with proper MountStatus classification and safety checks. After `runner_->umount()` succeeds, re-inspection result is classified: Absent → safe path check → rmdir; Ok + mounted + identity match → `umount_verify:still_mounted`; Ok + mounted + mismatch → `umount_verify:foreign_mount`; Ok + not mounted → `umount_verify:ambiguous`; any failure status → `umount_verify:inspection_failed`. Added path safety check before rmdir (rejects `..` traversal and targets outside `managed_home_root_`, returning `umount_verify:unsafe_target`). Introduced `FakeTwoPhaseMountInspector` for testing distinct pre/post states. 4 new tests cover still-mounted, foreign mount, ambiguous post-state, and inspection failure.

@@ -863,9 +863,12 @@ core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id
     auto r2 = runner_->mount_bind(source, target);
     if (!r2.success) {
         if (dir_created) {
-            auto rb = runner_->rmdir(target);
+            auto rm_r = safe_rmdir(target, true, username, domain);
             out.success = false;
-            out.message = rb.success ? "mount failed" : "mount failed, rmdir also failed";
+            if (!rm_r.success)
+                out.message = "mount failed: " + rm_r.message;
+            else
+                out.message = "mount failed";
         } else {
             out.success = false; out.message = "mount failed";
         }
@@ -913,14 +916,8 @@ core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id
 
         // 3. Rmdir only if we created it
         if (dir_created) {
-            auto rd = runner_->rmdir(target);
-            if (!rd.success) { out.success = false; out.message = "mount rollback rmdir failure"; return out; }
-
-            // 4. Verify removal via fs_inspector
-            if (fs_inspector_) {
-                auto check = fs_inspector_->inspect(target);
-                if (check.exists) { out.success = false; out.message = "mount rollback target still exists"; return out; }
-            }
+            auto rm_r = safe_rmdir(target, true, username, domain);
+            if (!rm_r.success) { out = rm_r; return out; }
         }
 
         out.success = false; out.message = "mount verification failed"; return out;
@@ -1036,13 +1033,9 @@ core::OperationResult LocalSftpProvider::unmount_site(uint64_t access_user_id, u
         }
     }
 
-    // Verify target path is safe before directory cleanup
-    if (target.find("..") != std::string::npos || target.substr(0, managed_home_root_.size()) != managed_home_root_) {
-        out.success = false; out.message = "umount_verify:unsafe_target"; return out;
-    }
-
-    auto r2 = runner_->rmdir(target);
-    if (!r2.success) { out.success = false; out.message = "rmdir failed"; return out; }
+    // Verify all preconditions and remove the mount target directory
+    auto rmdir_result = safe_rmdir(target, true, username, domain);
+    if (!rmdir_result.success) { out = rmdir_result; return out; }
 
     out.success = true; out.message = "unmounted: " + domain; return out;
 }
@@ -1280,6 +1273,62 @@ void LocalSftpProvider::rollback_chroot_rmdir(const std::string& path, bool crea
     auto rd = runner_->rmdir(path);
     out.success = false;
     out.message = rd.success ? "chroot operation failed, rolled back" : "chroot operation failed, rmdir rollback also failed";
+}
+
+core::OperationResult LocalSftpProvider::safe_rmdir(const std::string& target,
+                                                      bool created_by_us,
+                                                      const std::string& username,
+                                                      const std::string& domain) {
+    core::OperationResult out;
+    if (!managed_path_safe(target, managed_home_root_)) {
+        out.success = false; out.message = "rmdir_safety:unsafe_path"; return out;
+    }
+
+    // 2: Target must equal the exact expected site domain directory
+    std::string expected = managed_home_root_ + "/" + username + "/sites/" + domain;
+    if (target != expected) {
+        out.success = false; out.message = "rmdir_safety:path_mismatch"; return out;
+    }
+
+    // 3&4: Target must be a directory and not a symlink
+    bool is_dir_check = false;
+    bool is_not_symlink = false;
+    if (fs_inspector_) {
+        auto st = fs_inspector_->inspect(target);
+        if (!st.exists) { out.success = false; out.message = "rmdir_safety:not_found"; return out; }
+        if (st.is_symlink) { out.success = false; out.message = "rmdir_safety:symlink"; return out; }
+    }
+
+    // Directory type is verified implicitly: rmdir only works on directories.
+
+    // 5: Target must not be a mountpoint
+    if (mount_inspector_) {
+        auto ms = mount_inspector_->inspect(target);
+        if (ms.mounted) { out.success = false; out.message = "rmdir_safety:still_mounted"; return out; }
+        if (ms.status != MountStatus::Absent) { out.success = false; out.message = "rmdir_safety:mount_check_failed"; return out; }
+    }
+
+    // 6: Target must be empty
+    if (runner_) {
+        auto empty_check = runner_->dir_is_empty(target);
+        if (!empty_check.success) { out.success = false; out.message = "rmdir_safety:not_empty"; return out; }
+    }
+
+    // 7: Managed by ContainerCP — already implied by managed_path_safe + path match
+    // 8: Must be created by current operation or persisted managed target
+    if (!created_by_us) { out.success = false; out.message = "rmdir_safety:unmanaged_target"; return out; }
+
+    // All preconditions pass — proceed with removal
+    auto rd = runner_->rmdir(target);
+    if (!rd.success) { out.success = false; out.message = "rmdir_safety:rmdir_failed"; return out; }
+
+    // Postcondition: verify directory is absent
+    if (fs_inspector_) {
+        auto post = fs_inspector_->inspect(target);
+        if (post.exists) { out.success = false; out.message = "rmdir_safety:still_present"; return out; }
+    }
+
+    out.success = true; return out;
 }
 
 // --- lifecycle ---

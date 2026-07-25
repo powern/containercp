@@ -122,6 +122,14 @@ public:
     core::OperationResult list_users() override;
     core::OperationResult show_user(const AccessUser& user) override;
 
+    // Verify all preconditions before removing a managed mount target directory,
+    // call runner_->rmdir(), and verify postcondition (directory is absent).
+    // Checks: inside managed chroot, exact domain dir, is dir, not symlink,
+    // not a mountpoint, empty, managed by ContainerCP, created by us or persisted.
+    core::OperationResult safe_rmdir(const std::string& target, bool created_by_us,
+                                      const std::string& username,
+                                      const std::string& domain);
+
 private:
     bool disabled_result(core::OperationResult& out, const char* op) const;
 

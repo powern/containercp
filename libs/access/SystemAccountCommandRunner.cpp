@@ -98,4 +98,12 @@ core::OperationResult SystemAccountCommandRunner::chown_root(const std::string& 
     return run_({{"chown", "root:root", path}});
 }
 
+core::OperationResult SystemAccountCommandRunner::dir_is_empty(const std::string& path) {
+    auto result = run_({{"ls", "-A", path}});
+    // ls -A exits 0 regardless; check stdout instead
+    result.success = result.output.empty();
+    if (!result.success) result.message = "directory not empty";
+    return result;
+}
+
 } // namespace containercp::access

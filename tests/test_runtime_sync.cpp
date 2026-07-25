@@ -8,7 +8,7 @@ TEST_CASE("RuntimeSynchronizer register and sync") {
     int call_count = 0;
     sync.register_handler("test", [&call_count]() -> containercp::core::OperationResult {
         call_count++;
-        return {true, "ok"};
+        return {true, "ok", ""};
     });
 
     auto r1 = sync.sync("test");
@@ -32,11 +32,11 @@ TEST_CASE("RuntimeSynchronizer re-register replaces handler") {
     containercp::runtime::RuntimeSynchronizer sync;
 
     sync.register_handler("x", []() -> containercp::core::OperationResult {
-        return {false, "old"};
+        return {false, "old", ""};
     });
 
     sync.register_handler("x", []() -> containercp::core::OperationResult {
-        return {true, "new"};
+        return {true, "new", ""};
     });
 
     auto r = sync.sync("x");
@@ -48,7 +48,7 @@ TEST_CASE("RuntimeSynchronizer handler failure propagates") {
     containercp::runtime::RuntimeSynchronizer sync;
 
     sync.register_handler("fail", []() -> containercp::core::OperationResult {
-        return {false, "something broke"};
+        return {false, "something broke", ""};
     });
 
     auto r = sync.sync("fail");
@@ -64,12 +64,12 @@ TEST_CASE("RuntimeSynchronizer multiple independent handlers") {
 
     sync.register_handler("mail", [&mail_count]() -> containercp::core::OperationResult {
         mail_count++;
-        return {true, "mail synced"};
+        return {true, "mail synced", ""};
     });
 
     sync.register_handler("dns", [&dns_count]() -> containercp::core::OperationResult {
         dns_count++;
-        return {true, "dns synced"};
+        return {true, "dns synced", ""};
     });
 
     sync.sync("mail");

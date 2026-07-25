@@ -8,6 +8,7 @@ namespace containercp::core {
 struct OperationResult {
     bool success = false;
     std::string message;
+    std::string output;
 };
 
 } // namespace containercp::core

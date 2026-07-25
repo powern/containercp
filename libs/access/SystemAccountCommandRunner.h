@@ -50,6 +50,7 @@ public:
     core::OperationResult mountpoint_check(const std::string& path);
     core::OperationResult rmdir(const std::string& path);
     core::OperationResult chown_root(const std::string& path);
+    core::OperationResult dir_is_empty(const std::string& path);
 
 private:
     RunFn run_;
