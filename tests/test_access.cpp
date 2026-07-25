@@ -11,6 +11,7 @@
 #include "access/UsernameMapper.h"
 #include "core/OperationResult.h"
 #include "logger/Logger.h"
+#include "storage/GrantLifecycleState.h"
 #include "storage/ManagedMountState.h"
 
 #include <algorithm>
@@ -5173,6 +5174,7 @@ struct GrantDepTestContext {
     std::shared_ptr<FakeLiveFsInspector> fs_insp;
     std::shared_ptr<FakeLiveMountInspector> mount_insp;
     containercp::access::LocalSftpProvider provider;
+    std::vector<containercp::storage::GrantLifecycleState> grant_lifecycle_;
 
     GrantDepTestContext()
         : inspector(std::make_shared<FakeInspector>())
@@ -5203,18 +5205,35 @@ struct GrantDepTestContext {
             [](const containercp::access::SystemAccountMapping&) { return true; },
             [](const std::string&, uint64_t) { return true; });
 
-        // Set a grants_loader by default; tests can override by setting null
         provider.set_grants_loader([](uint64_t) {
             return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
         });
 
-        // Set site_resolver by default
         provider.set_site_resolver([](uint64_t id) {
             containercp::access::LocalSftpProvider::SiteInfo info;
             info.valid = true; info.site_id = id;
             info.domain = "test"; info.root = "/srv/containercp/sites/test";
             return info;
         });
+
+        provider.set_grant_lifecycle_storage(
+            [this]() -> std::vector<containercp::storage::GrantLifecycleState> { return grant_lifecycle_; },
+            [this](const containercp::storage::GrantLifecycleState& s) -> bool {
+                for (auto& p : grant_lifecycle_) {
+                    if (p.access_user_id == s.access_user_id && p.site_id == s.site_id) {
+                        p = s; return true;
+                    }
+                }
+                grant_lifecycle_.push_back(s); return true;
+            },
+            [this](uint64_t uid, uint64_t sid) -> bool {
+                for (auto it = grant_lifecycle_.begin(); it != grant_lifecycle_.end(); ++it) {
+                    if (it->access_user_id == uid && it->site_id == sid) {
+                        grant_lifecycle_.erase(it); return true;
+                    }
+                }
+                return false;
+            });
     }
 
     size_t mutation_count() const {

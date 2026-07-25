@@ -6,7 +6,21 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-25 | `this commit` | ARCH-009 Task 31 — Persist Grant Lifecycle State
+## 2026-07-25 | `this commit` | ARCH-009 Task 32 — Drive apply_grant from Persisted Grant State
+
+**Summary:** Rewrote `apply_grant()` to be driven by persisted grant lifecycle state instead of caller-provided permission. Loads the `GrantLifecycleState` record by `(access_user_id, site_id)`. If no record exists, creates one in `pending` state using the caller's permission (after validation). Handles each lifecycle state: `pending` → transitions to `applying`; `applying` → crash recovery (inspects mount state, recovers if mount exists); `active` → verifies mount and returns idempotent success, or reconciles if mount is missing; `revoking` → rejects with stable transition error; `error` → recovers only if mount exists and is correct, otherwise preserves error with the stored `last_error`. Every persistence transition is checked. If final "active" save fails, executes deterministic rollback (unmount, revert membership, delete group) and persists error. Lifecycle storage callbacks are optional — if not configured, falls back to old behavior without state tracking (backward compatibility). Added 1119 passing tests.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** `apply_grant()` now uses the persisted lifecycle state as the source of truth for permission and state transitions. Crash recovery during grant application is handled deterministically. Error states are preserved unless the mount is verified correct.
+
+**Validation:** Full doctest suite passed (1119 cases, 7428 assertions). `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
+## 2026-07-25 | `c743d34` | ARCH-009 Task 31 — Persist Grant Lifecycle State
 
 **Summary:** Added persisted lifecycle state for each SFTP grant via `grant_lifecycle` table (schema v6). Created `GrantLifecycleState` struct with composite key `(access_user_id, site_id)`. Lifecycle: `pending` → `applying` → `active` → `revoking` → deletion (or → `error` from any state). State values and permission values are validated centrally — invalid values cannot be persisted. Schema migration v6 adds the table plus `idx_grant_lifecycle_user` and `idx_grant_lifecycle_site`. Storage CRUD: `load_grant_lifecycle`, `list_grant_lifecycle_by_user`, `list_grant_lifecycle_by_site`, `list_all_grant_lifecycle`, `save_grant_lifecycle` (validates state and permission), `delete_grant_lifecycle`. Updated `kExpectedSchemaVersion` to 6 everywhere. Wired into `LocalSftpProvider.apply_grant()` (saves "applying" → "active"/"error") and `revoke_grant()` (saves "revoking" → delete on success/"error" on failure). Uses storage callbacks, preserving the existing pattern. Added 11 storage tests covering: schema upgrade, pending insert, transitions (pending→applying→active→revoking, active→error), invalid state rejection, invalid permission rejection, unique conflict, load by identity, list by user, list by site, transaction success.
 

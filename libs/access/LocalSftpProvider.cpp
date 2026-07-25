@@ -792,8 +792,11 @@ core::OperationResult LocalSftpProvider::ensure_chroot_layout(uint64_t access_us
 core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id, uint64_t site_id) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "bind_mount_site"), out;
-    if (!runner_ || !mount_inspector_ || !site_resolver_) {
+    if (!runner_ || !site_resolver_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
+    }
+    if (!mount_inspector_) {
+        out.success = false; out.message = "mount_inspector not configured"; return out;
     }
     if (site_id == 0) { out.success = false; out.message = "admin_panel_sftp_access_forbidden"; return out; }
 
@@ -1391,7 +1394,7 @@ std::string LocalSftpProvider::resolve_username(uint64_t access_user_id) {
 }
 
 core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, uint64_t site_id,
-                                                       const std::string& permission) {
+                                                       const std::string& caller_permission) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "apply_grant"), out;
     if (!site_resolver_ || !inspector_) {
@@ -1402,22 +1405,136 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     std::string username = resolve_username(access_user_id);
     if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
 
-    // Persist applying state
-    auto persist_lifecycle = [&](const std::string& state, const std::string& err) {
-        if (!save_grant_lifecycle_) return;
-        storage::GrantLifecycleState ls;
-        ls.access_user_id = access_user_id;
-        ls.site_id = site_id;
-        ls.permission = permission;
+    // 1. Load or create persisted grant lifecycle state.
+    // If lifecycle storage is not configured, fall back to caller permission
+    // (backward compatibility without lifecycle tracking).
+    std::string permission = caller_permission;
+    storage::GrantLifecycleState ls;
+    bool lifecycle_active = (save_grant_lifecycle_ && load_all_grant_lifecycle_);
+    if (lifecycle_active) {
+        auto all = load_all_grant_lifecycle_();
+        bool found = false;
+        for (const auto& l : all) {
+            if (l.access_user_id == access_user_id && l.site_id == site_id) {
+                ls = l; found = true; break;
+            }
+        }
+        if (found) {
+            permission = ls.permission;
+        } else {
+            if (!storage::valid_grant_permission(caller_permission)) {
+                out.success = false; out.message = "invalid permission: " + caller_permission; return out;
+            }
+            ls.access_user_id = access_user_id;
+            ls.site_id = site_id;
+            ls.permission = caller_permission;
+            ls.state = "pending";
+            if (!save_grant_lifecycle_(ls)) {
+                out.success = false; out.message = "grant_lifecycle:persist_failed"; return out;
+            }
+        }
+    }
+
+    // Helper to persist lifecycle state (no-op if lifecycle not active)
+    auto persist = [&](const std::string& state, const std::string& err) -> bool {
+        if (!lifecycle_active) return true;
         ls.state = state;
         ls.last_error = err;
-        save_grant_lifecycle_(ls);
+        return save_grant_lifecycle_(ls);
     };
-    persist_lifecycle("applying", "");
 
-    // Track which steps actually changed state (vs. were already present)
+    // 2. Handle lifecycle state
+    if (lifecycle_active) {
+        if (ls.state == "pending") {
+        if (!persist("applying", "")) {
+            out.success = false; out.message = "grant_lifecycle:applying_persist_failed"; return out;
+        }
+    } else if (ls.state == "applying") {
+        // Crash recovery: inspect observed state, continue deterministically.
+        // Check if mount already exists correctly
+        if (mount_inspector_) {
+            std::string target = managed_home_root_ + "/" + username + "/sites/"
+                + [&]() -> std::string {
+                    auto si = site_resolver_(site_id);
+                    if (!si.valid) return "";
+                    std::string d = si.root;
+                    while (!d.empty() && d.back() == '/') d.pop_back();
+                    auto p = d.rfind('/');
+                    return (p != std::string::npos) ? d.substr(p + 1) : d;
+                }();
+            if (!target.empty()) {
+                auto ms = mount_inspector_->inspect(target);
+                if (ms.status == MountStatus::Ok && ms.mounted) {
+                    // Mount exists — everything was likely completed before crash
+                    if (!persist("active", "")) {
+                        out.success = false; out.message = "grant_lifecycle:active_persist_failed"; return out;
+                    }
+                    out.success = true; out.message = "grant applied (recovered)"; return out;
+                }
+            }
+        }
+        // Otherwise, continue applying from the start
+    } else if (ls.state == "active") {
+        // Verify complete observed state
+        bool ok = true;
+        if (mount_inspector_) {
+            std::string target = managed_home_root_ + "/" + username + "/sites/"
+                + [&]() -> std::string {
+                    auto si = site_resolver_(site_id);
+                    if (!si.valid) return "";
+                    std::string d = si.root;
+                    while (!d.empty() && d.back() == '/') d.pop_back();
+                    auto p = d.rfind('/');
+                    return (p != std::string::npos) ? d.substr(p + 1) : d;
+                }();
+            if (!target.empty()) {
+                auto ms = mount_inspector_->inspect(target);
+                ok = (ms.status == MountStatus::Ok && ms.mounted && ms.is_bind);
+            }
+        }
+        if (ok) {
+            out.success = true; out.message = "grant already applied"; return out;
+        }
+        // Active record but mount missing — reconcile by continuing apply
+        if (!persist("applying", "recovering active -> applying")) {
+            out.success = false; out.message = "grant_lifecycle:recover_persist_failed"; return out;
+        }
+    } else if (ls.state == "revoking") {
+        out.success = false; out.message = "grant_lifecycle:revoking_cannot_apply"; return out;
+    } else if (ls.state == "error") {
+        // Only approved recovery: verify mount exists and is correct
+        bool recovered = false;
+        if (mount_inspector_) {
+            std::string target = managed_home_root_ + "/" + username + "/sites/"
+                + [&]() -> std::string {
+                    auto si = site_resolver_(site_id);
+                    if (!si.valid) return "";
+                    std::string d = si.root;
+                    while (!d.empty() && d.back() == '/') d.pop_back();
+                    auto p = d.rfind('/');
+                    return (p != std::string::npos) ? d.substr(p + 1) : d;
+                }();
+            if (!target.empty()) {
+                auto ms = mount_inspector_->inspect(target);
+                if (ms.status == MountStatus::Ok && ms.mounted && ms.is_bind) {
+                    recovered = true;
+                }
+            }
+        }
+        if (recovered) {
+            if (!persist("active", "")) {
+                out.success = false; out.message = "grant_lifecycle:error_recover_persist_failed"; return out;
+            }
+            out.success = true; out.message = "grant error recovered"; return out;
+        }
+        out.success = false; out.message = "grant_lifecycle:error_state:" + ls.last_error; return out;
+        }
+    }
+
+    // 3. Continue apply from observed state (for pending/applying)
+    // Track which steps actually changed state
     bool group_created   = !find_mapping(site_group_entity_type(permission), site_id).has_value();
-    bool membership_added = true;  // assume change unless proven otherwise
+    bool membership_added = true;
     bool perms_changed   = false;
     bool acl_changed     = false;
     int  original_gid    = -1;
@@ -1425,7 +1542,6 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     AclState original_acl_state;
     bool acl_captured = false;
 
-    // Helper: convert integer mode (e.g., 0755 octal = 493 decimal) to chmod-compatible octal string "755"
     auto mode_to_octal = [](int mode) -> std::string {
         if (mode <= 0) return "755";
         char buf[16];
@@ -1434,13 +1550,24 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     };
 
     // Step 1: Ensure site group
-    auto r1 = ensure_site_group(site_id, permission);
-    if (!r1.success) return r1;
+    {
+        auto r1 = ensure_site_group(site_id, permission);
+        if (!r1.success) {
+            persist("error", r1.message);
+            out = r1; return out;
+        }
+    }
 
     // Step 2: Add membership
     membership_added = !inspector_->user_in_group(username, site_group_name(site_id, permission));
-    auto r2 = add_user_to_site_group(username, site_id, permission);
-    if (!r2.success) { if (group_created) (void)delete_site_group_if_unused(site_id, permission); return r2; }
+    {
+        auto r2 = add_user_to_site_group(username, site_id, permission);
+        if (!r2.success) {
+            persist("error", r2.message);
+            if (group_created) (void)delete_site_group_if_unused(site_id, permission);
+            out = r2; return out;
+        }
+    }
 
     // Step 3: Directory permissions (RW only)
     if (permission != "read_only") {
@@ -1451,16 +1578,16 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
         }
         auto r3 = apply_directory_permissions(site_id, permission);
         if (!r3.success) {
+            persist("error", r3.message);
             if (membership_added) { auto rb = remove_user_from_site_group(username, site_id, permission); if (!rb.success) { out.success = false; out.message = "grant_rollback_membership_failed"; return out; } }
             if (group_created) { auto dg = delete_site_group_if_unused(site_id, permission); if (!dg.success) { out.success = false; out.message = "grant_rollback_group_delete_failed"; return out; } }
-            return r3;
+            out = r3; return out;
         }
         perms_changed = true;
     }
 
     // Step 4: ACL (RO only)
     if (permission == "read_only") {
-        // Capture original ACL state before modification
         if (fs_inspector_) {
             std::string pub = site_resolver_(site_id).root + "/public/";
             auto ro_mapping = find_mapping("site_group_ro", site_id);
@@ -1474,76 +1601,85 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
         }
         auto r4 = apply_read_only_acl(site_id);
         if (!r4.success) {
+            persist("error", r4.message);
             if (membership_added) { auto rb = remove_user_from_site_group(username, site_id, permission); if (!rb.success) { out.success = false; out.message = "grant_rollback_membership_failed"; return out; } }
             if (group_created) { auto dg = delete_site_group_if_unused(site_id, permission); if (!dg.success) { out.success = false; out.message = "grant_rollback_group_delete_failed"; return out; } }
-            return r4;
+            out = r4; return out;
         }
         acl_changed = true;
     }
 
     // Step 5: Bind mount
-    auto r5 = bind_mount_site(access_user_id, site_id);
-    if (!r5.success) {
-        // Reverse-order rollback: attempt all safe compensations, collect errors.
-        // Order: 5(mount) → 4(acl) → 3(perms) → 2(membership) → 1(group)
-        std::string rollback_errors;
-        auto note = [&](const char* step) { if (!rollback_errors.empty()) rollback_errors += ","; rollback_errors += step; };
+    {
+        auto r5 = bind_mount_site(access_user_id, site_id);
+        if (!r5.success) {
+            std::string rollback_errors;
+            auto note = [&](const char* step) { if (!rollback_errors.empty()) rollback_errors += ","; rollback_errors += step; };
 
-        if (acl_changed && acl_captured && runner_ && fs_inspector_) {
-            std::string pub = site_resolver_(site_id).root + "/public/";
-            auto ro_mapping = find_mapping("site_group_ro", site_id);
-            if (ro_mapping.has_value()) {
-                auto acl_rb = restore_acl_state(original_acl_state, pub, ro_mapping->groupname);
-                if (!acl_rb.success) {
-                    note(acl_rb.message.c_str());
+            if (acl_changed && acl_captured && runner_ && fs_inspector_) {
+                std::string pub = site_resolver_(site_id).root + "/public/";
+                auto ro_mapping = find_mapping("site_group_ro", site_id);
+                if (ro_mapping.has_value()) {
+                    auto acl_rb = restore_acl_state(original_acl_state, pub, ro_mapping->groupname);
+                    if (!acl_rb.success) note(acl_rb.message.c_str());
+                } else { note("acl:mapping"); }
+            }
+            if (perms_changed && original_gid > 0 && runner_) {
+                std::string pub = site_resolver_(site_id).root + "/public/";
+                auto gid_rb = runner_->chgrp(std::to_string(original_gid), pub);
+                if (!gid_rb.success) { note("perms:gid"); }
+                else if (fs_inspector_) {
+                    auto post = fs_inspector_->inspect(pub);
+                    if (!post.exists || post.group_gid != original_gid) note("perms:gid:postcondition");
                 }
+                std::string octal_mode = mode_to_octal(original_mode);
+                auto mode_rb = runner_->chmod(octal_mode, pub);
+                if (!mode_rb.success) { note("perms:mode"); }
+                else if (fs_inspector_) {
+                    auto post = fs_inspector_->inspect(pub);
+                    if (!post.exists || post.mode != original_mode) note("perms:mode:postcondition");
+                }
+            }
+            if (membership_added) {
+                auto rb2 = remove_user_from_site_group(username, site_id, permission);
+                if (!rb2.success) note("membership");
+            }
+            if (group_created) {
+                auto dg = delete_site_group_if_unused(site_id, permission);
+                if (!dg.success) note("group");
+            }
+
+            if (rollback_errors.empty()) {
+                persist("error", "grant apply failed, fully rolled back");
+                out.success = false; out.message = "grant apply failed, fully rolled back";
             } else {
-                note("acl:mapping");
+                persist("error", "grant_rollback_incomplete: " + rollback_errors);
+                out.success = false;
+                out.message = "grant_rollback_incomplete: " + rollback_errors;
             }
+            return out;
         }
-        if (perms_changed && original_gid > 0 && runner_) {
-            std::string pub = site_resolver_(site_id).root + "/public/";
-            auto gid_rb = runner_->chgrp(std::to_string(original_gid), pub);
-            if (!gid_rb.success) {
-                note("perms:gid");
-            } else if (fs_inspector_) {
-                auto post = fs_inspector_->inspect(pub);
-                if (!post.exists || post.group_gid != original_gid) {
-                    note("perms:gid:postcondition");
-                }
-            }
-            std::string octal_mode = mode_to_octal(original_mode);
-            auto mode_rb = runner_->chmod(octal_mode, pub);
-            if (!mode_rb.success) {
-                note("perms:mode");
-            } else if (fs_inspector_) {
-                auto post = fs_inspector_->inspect(pub);
-                if (!post.exists || post.mode != original_mode) {
-                    note("perms:mode:postcondition");
-                }
-            }
-        }
-        if (membership_added) {
-            auto rb2 = remove_user_from_site_group(username, site_id, permission);
-            if (!rb2.success) note("membership");
-        }
-        if (group_created) {
-            auto dg = delete_site_group_if_unused(site_id, permission);
-            if (!dg.success) note("group");
-        }
-
-        if (rollback_errors.empty()) {
-            persist_lifecycle("error", "grant apply failed, fully rolled back");
-            out.success = false; out.message = "grant apply failed, fully rolled back";
-        } else {
-            persist_lifecycle("error", "grant_rollback_incomplete: " + rollback_errors);
-            out.success = false;
-            out.message = "grant_rollback_incomplete: " + rollback_errors;
-        }
-        return out;
     }
 
-    persist_lifecycle("active", "");
+    // 4. Persist active only after all postconditions pass
+    if (!persist("active", "")) {
+        // Final active save failed: rollback mount and persist error
+        auto err_target = [&]() -> std::string {
+            auto si = site_resolver_(site_id);
+            if (!si.valid) return "";
+            std::string d = si.root;
+            while (!d.empty() && d.back() == '/') d.pop_back();
+            auto p = d.rfind('/');
+            std::string domain = (p != std::string::npos) ? d.substr(p + 1) : d;
+            return managed_home_root_ + "/" + username + "/sites/" + domain;
+        }();
+        (void)runner_->umount(err_target);
+        if (membership_added) (void)remove_user_from_site_group(username, site_id, permission);
+        if (group_created) (void)delete_site_group_if_unused(site_id, permission);
+        persist("error", "grant_lifecycle:active_persist_failed_rolled_back");
+        out.success = false; out.message = "grant_lifecycle:active_persist_failed_rolled_back"; return out;
+    }
+
     out.success = true; out.message = "grant applied"; return out;
 }
 
