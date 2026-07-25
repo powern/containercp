@@ -6,7 +6,21 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-25 | `this commit` | ARCH-009 Task 30 — Implement Startup Mount Reconciliation
+## 2026-07-25 | `this commit` | ARCH-009 Task 31 — Persist Grant Lifecycle State
+
+**Summary:** Added persisted lifecycle state for each SFTP grant via `grant_lifecycle` table (schema v6). Created `GrantLifecycleState` struct with composite key `(access_user_id, site_id)`. Lifecycle: `pending` → `applying` → `active` → `revoking` → deletion (or → `error` from any state). State values and permission values are validated centrally — invalid values cannot be persisted. Schema migration v6 adds the table plus `idx_grant_lifecycle_user` and `idx_grant_lifecycle_site`. Storage CRUD: `load_grant_lifecycle`, `list_grant_lifecycle_by_user`, `list_grant_lifecycle_by_site`, `list_all_grant_lifecycle`, `save_grant_lifecycle` (validates state and permission), `delete_grant_lifecycle`. Updated `kExpectedSchemaVersion` to 6 everywhere. Wired into `LocalSftpProvider.apply_grant()` (saves "applying" → "active"/"error") and `revoke_grant()` (saves "revoking" → delete on success/"error" on failure). Uses storage callbacks, preserving the existing pattern. Added 11 storage tests covering: schema upgrade, pending insert, transitions (pending→applying→active→revoking, active→error), invalid state rejection, invalid permission rejection, unique conflict, load by identity, list by user, list by site, transaction success.
+
+**Files changed:** `libs/storage/GrantLifecycleState.h`, `libs/storage/SchemaMigrations.{h,cpp}`, `libs/storage/SQLiteStorage.{h,cpp}`, `libs/storage/Storage.cpp`, `libs/storage/MigrationOrchestrator.cpp`, `libs/access/LocalSftpProvider.{h,cpp}`, `tests/test_schema.cpp`, `tests/test_sqlite_storage.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Every SFTP grant application and revocation now persists its lifecycle state to SQLite. Crash during grant apply leaves `error` state with the failure reason. Crash during revoke leaves `revoking` state for startup reconciliation. Invalid state/permission values are rejected at the storage layer.
+
+**Validation:** Full doctest suite passed (1119 cases, 7428 assertions). 11 new grant lifecycle storage tests pass (schema upgrade, insert, all state transitions, invalid state/permission rejection, unique conflict, load, list by user, list by site, transaction). `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
+## 2026-07-25 | `5e17182` | ARCH-009 Task 30 — Implement Startup Mount Reconciliation
 
 **Summary:** Implemented `reconcile_startup_mounts()` in `LocalSftpProvider` — a deterministic startup reconciliation process for persisted managed mounts. Reads all mounts from storage, classifies by lifecycle state, and takes action: `active` → verify/recreate/reject foreign; `removing` → unmount and delete record; `applying` → complete/rollback/retry; `pending` → apply; `error` → recover if mount is actually correct, otherwise preserve. Added `set_managed_mount_storage()` callbacks for persistence. Added `sqlite()` accessor to `Storage`. Wired into `ServiceRegistry::start()` after all Phase 3 dependencies. Added command runner configuration. Each persistence result checked; failures remain retryable and visible. Added 13 tests covering every lifecycle state and crash scenario: active present, active missing (recreated), active foreign (rejected), removing (unmounted), removing already absent, pending applied, applying completed, applying crash after mkdir (retry), applying crash after mount (completed), error recovered, error preserved, persistence failure, repeated startup idempotency.
 

@@ -1,6 +1,7 @@
 #include "access/LocalSftpProvider.h"
 
 #include "access/UsernameMapper.h"
+#include "storage/GrantLifecycleState.h"
 #include "storage/ManagedMountState.h"
 
 #include <algorithm>
@@ -103,6 +104,14 @@ void LocalSftpProvider::set_managed_mount_storage(LoadAllManagedMountsFn load_al
     load_all_managed_mounts_ = std::move(load_all);
     save_managed_mount_ = std::move(save);
     delete_managed_mount_ = std::move(remove);
+}
+
+void LocalSftpProvider::set_grant_lifecycle_storage(LoadAllGrantLifecycleFn load_all,
+                                                     SaveGrantLifecycleFn save,
+                                                     DeleteGrantLifecycleFn remove) {
+    load_all_grant_lifecycle_ = std::move(load_all);
+    save_grant_lifecycle_ = std::move(save);
+    delete_grant_lifecycle_ = std::move(remove);
 }
 
 // --- helpers ---
@@ -1393,6 +1402,19 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     std::string username = resolve_username(access_user_id);
     if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
 
+    // Persist applying state
+    auto persist_lifecycle = [&](const std::string& state, const std::string& err) {
+        if (!save_grant_lifecycle_) return;
+        storage::GrantLifecycleState ls;
+        ls.access_user_id = access_user_id;
+        ls.site_id = site_id;
+        ls.permission = permission;
+        ls.state = state;
+        ls.last_error = err;
+        save_grant_lifecycle_(ls);
+    };
+    persist_lifecycle("applying", "");
+
     // Track which steps actually changed state (vs. were already present)
     bool group_created   = !find_mapping(site_group_entity_type(permission), site_id).has_value();
     bool membership_added = true;  // assume change unless proven otherwise
@@ -1511,14 +1533,17 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
         }
 
         if (rollback_errors.empty()) {
+            persist_lifecycle("error", "grant apply failed, fully rolled back");
             out.success = false; out.message = "grant apply failed, fully rolled back";
         } else {
+            persist_lifecycle("error", "grant_rollback_incomplete: " + rollback_errors);
             out.success = false;
             out.message = "grant_rollback_incomplete: " + rollback_errors;
         }
         return out;
     }
 
+    persist_lifecycle("active", "");
     out.success = true; out.message = "grant applied"; return out;
 }
 
@@ -1530,15 +1555,28 @@ core::OperationResult LocalSftpProvider::revoke_grant(uint64_t access_user_id, u
     std::string username = resolve_username(access_user_id);
     if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
 
+    auto persist_lifecycle = [&](const std::string& state, const std::string& err) {
+        if (!save_grant_lifecycle_) return;
+        storage::GrantLifecycleState ls;
+        ls.access_user_id = access_user_id;
+        ls.site_id = site_id;
+        ls.permission = permission;
+        ls.state = state;
+        ls.last_error = err;
+        save_grant_lifecycle_(ls);
+    };
+    persist_lifecycle("revoking", "");
+
     auto r1 = unmount_site(access_user_id, site_id);
-    if (!r1.success) return r1;
+    if (!r1.success) { persist_lifecycle("error", r1.message); return r1; }
     auto r2 = remove_user_from_site_group(username, site_id, permission);
-    if (!r2.success) return r2;
+    if (!r2.success) { persist_lifecycle("error", r2.message); return r2; }
     if (permission == "read_only") {
         auto r3 = remove_read_only_acl(site_id);
-        if (!r3.success) return r3;
+        if (!r3.success) { persist_lifecycle("error", r3.message); return r3; }
     }
 
+    if (delete_grant_lifecycle_) delete_grant_lifecycle_(access_user_id, site_id);
     out.success = true; out.message = "grant revoked"; return out;
 }
 

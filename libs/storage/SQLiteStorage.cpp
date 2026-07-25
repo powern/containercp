@@ -902,6 +902,123 @@ bool SQLiteStorage::delete_managed_mount(uint64_t access_user_id, uint64_t site_
     return txn.commit();
 }
 
+// --- Grant lifecycle state ---
+
+std::optional<GrantLifecycleState> SQLiteStorage::load_grant_lifecycle(uint64_t access_user_id, uint64_t site_id) {
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return std::nullopt;
+    if (!rl->prepare("SELECT access_user_id, site_id, permission, state, last_error, created_at, updated_at "
+                      "FROM grant_lifecycle WHERE access_user_id=? AND site_id=?")) return std::nullopt;
+    if (!rl->bind_int(1, static_cast<int64_t>(access_user_id))) return std::nullopt;
+    if (!rl->bind_int(2, static_cast<int64_t>(site_id))) return std::nullopt;
+    if (!rl->step()) return std::nullopt;
+    GrantLifecycleState s;
+    s.access_user_id = static_cast<uint64_t>(rl->column_int(0));
+    s.site_id        = static_cast<uint64_t>(rl->column_int(1));
+    s.permission     = rl->column_text(2);
+    s.state          = rl->column_text(3);
+    s.last_error     = rl->column_text(4);
+    s.created_at     = rl->column_text(5);
+    s.updated_at     = rl->column_text(6);
+    return s;
+}
+
+std::vector<GrantLifecycleState> SQLiteStorage::list_grant_lifecycle_by_user(uint64_t access_user_id) {
+    std::vector<GrantLifecycleState> result;
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return result;
+    if (!rl->prepare("SELECT access_user_id, site_id, permission, state, last_error, created_at, updated_at "
+                      "FROM grant_lifecycle WHERE access_user_id=? ORDER BY site_id")) return result;
+    if (!rl->bind_int(1, static_cast<int64_t>(access_user_id))) return result;
+    while (rl->step()) {
+        GrantLifecycleState s;
+        s.access_user_id = static_cast<uint64_t>(rl->column_int(0));
+        s.site_id        = static_cast<uint64_t>(rl->column_int(1));
+        s.permission     = rl->column_text(2);
+        s.state          = rl->column_text(3);
+        s.last_error     = rl->column_text(4);
+        s.created_at     = rl->column_text(5);
+        s.updated_at     = rl->column_text(6);
+        result.push_back(std::move(s));
+    }
+    return result;
+}
+
+std::vector<GrantLifecycleState> SQLiteStorage::list_grant_lifecycle_by_site(uint64_t site_id) {
+    std::vector<GrantLifecycleState> result;
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return result;
+    if (!rl->prepare("SELECT access_user_id, site_id, permission, state, last_error, created_at, updated_at "
+                      "FROM grant_lifecycle WHERE site_id=? ORDER BY access_user_id")) return result;
+    if (!rl->bind_int(1, static_cast<int64_t>(site_id))) return result;
+    while (rl->step()) {
+        GrantLifecycleState s;
+        s.access_user_id = static_cast<uint64_t>(rl->column_int(0));
+        s.site_id        = static_cast<uint64_t>(rl->column_int(1));
+        s.permission     = rl->column_text(2);
+        s.state          = rl->column_text(3);
+        s.last_error     = rl->column_text(4);
+        s.created_at     = rl->column_text(5);
+        s.updated_at     = rl->column_text(6);
+        result.push_back(std::move(s));
+    }
+    return result;
+}
+
+std::vector<GrantLifecycleState> SQLiteStorage::list_all_grant_lifecycle() {
+    std::vector<GrantLifecycleState> result;
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return result;
+    if (!rl->prepare("SELECT access_user_id, site_id, permission, state, last_error, created_at, updated_at "
+                      "FROM grant_lifecycle ORDER BY access_user_id, site_id")) return result;
+    while (rl->step()) {
+        GrantLifecycleState s;
+        s.access_user_id = static_cast<uint64_t>(rl->column_int(0));
+        s.site_id        = static_cast<uint64_t>(rl->column_int(1));
+        s.permission     = rl->column_text(2);
+        s.state          = rl->column_text(3);
+        s.last_error     = rl->column_text(4);
+        s.created_at     = rl->column_text(5);
+        s.updated_at     = rl->column_text(6);
+        result.push_back(std::move(s));
+    }
+    return result;
+}
+
+bool SQLiteStorage::save_grant_lifecycle(const GrantLifecycleState& state) {
+    if (!valid_grant_state(state.state)) return false;
+    if (!valid_grant_permission(state.permission)) return false;
+    TransactionGuard txn(pool_);
+    if (!txn.is_active()) return false;
+    const char* sql = "INSERT OR REPLACE INTO grant_lifecycle "
+        "(access_user_id, site_id, permission, state, last_error, "
+        "created_at, updated_at) VALUES ("
+        "?, ?, ?, ?, ?, "
+        "COALESCE((SELECT created_at FROM grant_lifecycle WHERE access_user_id=? AND site_id=?), "
+        "strftime('%Y-%m-%dT%H:%M:%SZ','now')), "
+        "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
+    if (!txn.db().prepare(sql)) return false;
+    if (!txn.db().bind_int(1, static_cast<int64_t>(state.access_user_id))) return false;
+    if (!txn.db().bind_int(2, static_cast<int64_t>(state.site_id))) return false;
+    if (!txn.db().bind_text(3, state.permission)) return false;
+    if (!txn.db().bind_text(4, state.state)) return false;
+    if (!txn.db().bind_text(5, state.last_error)) return false;
+    if (!txn.db().bind_int(6, static_cast<int64_t>(state.access_user_id))) return false;
+    if (!txn.db().bind_int(7, static_cast<int64_t>(state.site_id))) return false;
+    if (txn.db().step() == false && txn.db().error_code() != 0) return false;
+    return txn.commit();
+}
+
+bool SQLiteStorage::delete_grant_lifecycle(uint64_t access_user_id, uint64_t site_id) {
+    TransactionGuard txn(pool_);
+    if (!txn.is_active()) return false;
+    if (!txn.db().prepare("DELETE FROM grant_lifecycle WHERE access_user_id=? AND site_id=?")) return false;
+    if (!txn.db().bind_int(1, static_cast<int64_t>(access_user_id))) return false;
+    if (!txn.db().bind_int(2, static_cast<int64_t>(site_id))) return false;
+    if (txn.db().step() == false && txn.db().error_code() != 0) return false;
+    return txn.commit();
+}
+
 // --- Auth users ---
 
 bool SQLiteStorage::try_save_auth_users(const std::vector<auth::AuthUser>& users) {

@@ -14,6 +14,7 @@ namespace containercp::storage {
 //   v3 — System account mappings (system_accounts)
 //   v4 — System accounts home column
 //   v5 — Managed mount lifecycle state (managed_mounts)
+//   v6 — Grant lifecycle state (grant_lifecycle)
 void register_all_schema_migrations(MigrationEngine& engine);
 
 } // namespace containercp::storage

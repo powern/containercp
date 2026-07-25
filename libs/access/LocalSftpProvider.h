@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-namespace containercp::storage { struct ManagedMountState; }
+namespace containercp::storage { struct GrantLifecycleState; struct ManagedMountState; }
 
 namespace containercp::access {
 
@@ -121,6 +121,14 @@ public:
     // Must only be called after all provider dependencies are configured.
     core::OperationResult reconcile_startup_mounts();
 
+    // Grant lifecycle storage callbacks.
+    using LoadAllGrantLifecycleFn = std::function<std::vector<storage::GrantLifecycleState>()>;
+    using SaveGrantLifecycleFn = std::function<bool(const storage::GrantLifecycleState&)>;
+    using DeleteGrantLifecycleFn = std::function<bool(uint64_t, uint64_t)>;
+    void set_grant_lifecycle_storage(LoadAllGrantLifecycleFn load_all,
+                                     SaveGrantLifecycleFn save,
+                                     DeleteGrantLifecycleFn remove);
+
     // --- Phase 3d: Grant Lifecycle Integration ---
 
     struct GrantInfo { uint64_t site_id; std::string domain; std::string permission; };
@@ -198,6 +206,10 @@ private:
     LoadAllManagedMountsFn load_all_managed_mounts_;
     SaveManagedMountFn save_managed_mount_;
     DeleteManagedMountFn delete_managed_mount_;
+
+    LoadAllGrantLifecycleFn load_all_grant_lifecycle_;
+    SaveGrantLifecycleFn save_grant_lifecycle_;
+    DeleteGrantLifecycleFn delete_grant_lifecycle_;
 
     bool enabled_ = false;
     std::string managed_home_root_ = "/srv/containercp/users";

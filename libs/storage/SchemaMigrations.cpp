@@ -292,6 +292,21 @@ CREATE TABLE IF NOT EXISTS managed_mounts (
 CREATE INDEX IF NOT EXISTS idx_managed_mounts_user ON managed_mounts(access_user_id);
 )SQL";
 
+const char* kSchemaV6GrantLifecycle = R"SQL(
+CREATE TABLE IF NOT EXISTS grant_lifecycle (
+    access_user_id  INTEGER NOT NULL,
+    site_id         INTEGER NOT NULL,
+    permission      TEXT NOT NULL,
+    state           TEXT NOT NULL DEFAULT 'pending',
+    last_error      TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    PRIMARY KEY (access_user_id, site_id)
+);
+CREATE INDEX IF NOT EXISTS idx_grant_lifecycle_user ON grant_lifecycle(access_user_id);
+CREATE INDEX IF NOT EXISTS idx_grant_lifecycle_site ON grant_lifecycle(site_id);
+)SQL";
+
 // Storage metadata values set by this migration.
 // These describe the schema state, NOT the active backend.
 // TXT remains the active Storage backend until Phase 11.
@@ -410,6 +425,25 @@ void register_all_schema_migrations(MigrationEngine& engine) {
     };
 
     engine.register_migration(std::move(v5));
+
+    Migration v6;
+    v6.version = 6;
+    v6.name = "grant_lifecycle";
+    v6.descriptor = kSchemaV6GrantLifecycle;
+    v6.up = [](SQLiteDB& db, std::string& diagnostics) -> bool {
+        if (!db.exec(kSchemaV6GrantLifecycle)) {
+            diagnostics = "grant_lifecycle table creation failed: " + db.error_message();
+            return false;
+        }
+        std::string set_version = "INSERT OR REPLACE INTO storage_meta (key, value) VALUES ('schema_version', '6')";
+        if (!db.exec(set_version)) {
+            diagnostics = "Failed to update schema_version: " + db.error_message();
+            return false;
+        }
+        return true;
+    };
+
+    engine.register_migration(std::move(v6));
 }
 
 } // namespace containercp::storage

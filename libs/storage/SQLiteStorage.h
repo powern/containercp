@@ -13,6 +13,7 @@
 #include "mail/MailAlias.h"
 #include "mail/MailDomain.h"
 #include "mail/Mailbox.h"
+#include "GrantLifecycleState.h"
 #include "ManagedMountState.h"
 #include "node/Node.h"
 #include "php/PhpVersion.h"
@@ -130,6 +131,14 @@ public:
     std::vector<ManagedMountState> list_all_managed_mounts();
     bool save_managed_mount(const ManagedMountState& mount);
     bool delete_managed_mount(uint64_t access_user_id, uint64_t site_id);
+
+    // Grant lifecycle state
+    std::optional<GrantLifecycleState> load_grant_lifecycle(uint64_t access_user_id, uint64_t site_id);
+    std::vector<GrantLifecycleState> list_grant_lifecycle_by_user(uint64_t access_user_id);
+    std::vector<GrantLifecycleState> list_grant_lifecycle_by_site(uint64_t site_id);
+    std::vector<GrantLifecycleState> list_all_grant_lifecycle();
+    bool save_grant_lifecycle(const GrantLifecycleState& state);
+    bool delete_grant_lifecycle(uint64_t access_user_id, uint64_t site_id);
 
     // Auth users
     void save_auth_users(const std::vector<auth::AuthUser>& users);

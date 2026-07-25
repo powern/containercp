@@ -1,5 +1,6 @@
 #include "storage/Storage.h"
 #include "storage/LegacyArchive.h"
+#include "storage/GrantLifecycleState.h"
 #include "storage/ManagedMountState.h"
 #include "storage/SQLiteStorage.h"
 #include "storage/SchemaMigrations.h"
@@ -2505,7 +2506,7 @@ static std::string valid_state_json(const std::string& backend,
                                     const std::string& db_path,
                                     const std::string& archive_path = "/srv/containercp/migrations/archive/11111111-2222-4333-8444-555555555555",
                                     const std::string& migration_id = kActivationTestMigrationId,
-                                    int schema_version = 5) {
+                                    int schema_version = 6) {
     std::ostringstream json;
     json << "{\n";
     json << "  \"state_version\": 1,\n";
@@ -2856,9 +2857,9 @@ TEST_CASE("P11-R2 strict activation state parser rejects wrong value types") {
     init_storage_schema(dir);
 
     std::string json = valid_state_json("sqlite", dir + "containercp.db");
-    auto pos = json.find("\"schema_version\": 5");
+    auto pos = json.find("\"schema_version\": 6");
     REQUIRE(pos != std::string::npos);
-    json.replace(pos, std::string("\"schema_version\": 5").size(), "\"schema_version\": \"4\"");
+    json.replace(pos, std::string("\"schema_version\": 6").size(), "\"schema_version\": \"4\"");
     expect_p11r2_state_rejected(dir, json);
     tclean(dir);
 }
@@ -4119,7 +4120,7 @@ TEST_CASE("Managed mount schema upgrade") {
     REQUIRE(db.open(dir + "containercp.db"));
     REQUIRE(db.prepare("SELECT value FROM storage_meta WHERE key='schema_version'"));
     REQUIRE(db.step());
-    CHECK(db.column_text(0) == "5");
+    CHECK(db.column_text(0) == "6");
     // Verify table exists
     REQUIRE(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='managed_mounts'"));
     REQUIRE(db.step());
@@ -4290,6 +4291,247 @@ TEST_CASE("Managed mount transaction rollback on failure") {
         CHECK(store.save_managed_mount(m));
         CHECK(store.delete_managed_mount(1, 10));
         CHECK_FALSE(store.load_managed_mount(1, 10).has_value());
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+// --- Grant lifecycle state ---
+
+TEST_CASE("Grant lifecycle schema upgrade") {
+    auto dir = tdir("gl_schema");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    containercp::storage::SQLiteDB db;
+    REQUIRE(db.open(dir + "containercp.db"));
+    REQUIRE(db.prepare("SELECT value FROM storage_meta WHERE key='schema_version'"));
+    REQUIRE(db.step());
+    CHECK(db.column_text(0) == "6");
+    REQUIRE(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='grant_lifecycle'"));
+    REQUIRE(db.step());
+    db.close();
+    tclean(dir);
+}
+
+TEST_CASE("Grant lifecycle pending insert") {
+    auto dir = tdir("gl_insert");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::GrantLifecycleState s;
+        s.access_user_id = 1; s.site_id = 10;
+        s.permission = "read_write"; s.state = "pending";
+        CHECK(store.save_grant_lifecycle(s));
+
+        auto loaded = store.load_grant_lifecycle(1, 10);
+        REQUIRE(loaded.has_value());
+        CHECK(loaded->access_user_id == 1);
+        CHECK(loaded->site_id == 10);
+        CHECK(loaded->permission == "read_write");
+        CHECK(loaded->state == "pending");
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("Grant lifecycle transition pending applying") {
+    auto dir = tdir("gl_trans");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::GrantLifecycleState s;
+        s.access_user_id = 1; s.site_id = 10;
+        s.permission = "read_write"; s.state = "pending";
+        CHECK(store.save_grant_lifecycle(s));
+
+        s.state = "applying";
+        CHECK(store.save_grant_lifecycle(s));
+        auto loaded = store.load_grant_lifecycle(1, 10);
+        REQUIRE(loaded.has_value());
+        CHECK(loaded->state == "applying");
+
+        s.state = "active";
+        CHECK(store.save_grant_lifecycle(s));
+        loaded = store.load_grant_lifecycle(1, 10);
+        REQUIRE(loaded.has_value());
+        CHECK(loaded->state == "active");
+
+        s.state = "revoking";
+        CHECK(store.save_grant_lifecycle(s));
+        loaded = store.load_grant_lifecycle(1, 10);
+        REQUIRE(loaded.has_value());
+        CHECK(loaded->state == "revoking");
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("Grant lifecycle transition to error") {
+    auto dir = tdir("gl_err");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::GrantLifecycleState s;
+        s.access_user_id = 1; s.site_id = 10;
+        s.permission = "read_only"; s.state = "active";
+        s.last_error = "";
+        CHECK(store.save_grant_lifecycle(s));
+
+        s.state = "error";
+        s.last_error = "something broke";
+        CHECK(store.save_grant_lifecycle(s));
+        auto loaded = store.load_grant_lifecycle(1, 10);
+        REQUIRE(loaded.has_value());
+        CHECK(loaded->state == "error");
+        CHECK(loaded->last_error == "something broke");
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("Grant lifecycle invalid state rejection") {
+    auto dir = tdir("gl_invst");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::GrantLifecycleState s;
+        s.access_user_id = 1; s.site_id = 10;
+        s.permission = "read_write"; s.state = "bogus";
+        CHECK_FALSE(store.save_grant_lifecycle(s));
+        CHECK_FALSE(store.load_grant_lifecycle(1, 10).has_value());
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("Grant lifecycle invalid permission rejection") {
+    auto dir = tdir("gl_invperm");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::GrantLifecycleState s;
+        s.access_user_id = 1; s.site_id = 10;
+        s.permission = "invalid_perm"; s.state = "pending";
+        CHECK_FALSE(store.save_grant_lifecycle(s));
+        CHECK_FALSE(store.load_grant_lifecycle(1, 10).has_value());
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("Grant lifecycle unique conflict") {
+    auto dir = tdir("gl_uniq");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::GrantLifecycleState s;
+        s.access_user_id = 1; s.site_id = 10;
+        s.permission = "read_write"; s.state = "pending";
+        CHECK(store.save_grant_lifecycle(s));
+
+        s.state = "active";
+        CHECK(store.save_grant_lifecycle(s));
+        auto loaded = store.load_grant_lifecycle(1, 10);
+        REQUIRE(loaded.has_value());
+        CHECK(loaded->state == "active");
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("Grant lifecycle load by identity") {
+    auto dir = tdir("gl_loadid");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::GrantLifecycleState s;
+        s.access_user_id = 1; s.site_id = 10;
+        s.permission = "deploy"; s.state = "error";
+        s.last_error = "fail";
+        CHECK(store.save_grant_lifecycle(s));
+
+        auto loaded = store.load_grant_lifecycle(1, 10);
+        REQUIRE(loaded.has_value());
+        CHECK(loaded->permission == "deploy");
+        CHECK(loaded->last_error == "fail");
+
+        CHECK_FALSE(store.load_grant_lifecycle(1, 99).has_value());
+        CHECK_FALSE(store.load_grant_lifecycle(2, 10).has_value());
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("Grant lifecycle list by user") {
+    auto dir = tdir("gl_listu");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::GrantLifecycleState s1, s2, s3;
+        s1.access_user_id=1; s1.site_id=10; s1.permission="read_write"; s1.state="active";
+        s2.access_user_id=1; s2.site_id=20; s2.permission="read_only"; s2.state="pending";
+        s3.access_user_id=2; s3.site_id=30; s3.permission="deploy"; s3.state="error";
+        CHECK(store.save_grant_lifecycle(s1));
+        CHECK(store.save_grant_lifecycle(s2));
+        CHECK(store.save_grant_lifecycle(s3));
+
+        auto by_user = store.list_grant_lifecycle_by_user(1);
+        CHECK(by_user.size() == 2);
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("Grant lifecycle list by site") {
+    auto dir = tdir("gl_lists");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::GrantLifecycleState s1, s2;
+        s1.access_user_id=1; s1.site_id=10; s1.permission="read_write"; s1.state="active";
+        s2.access_user_id=2; s2.site_id=10; s2.permission="read_only"; s2.state="error";
+        CHECK(store.save_grant_lifecycle(s1));
+        CHECK(store.save_grant_lifecycle(s2));
+
+        auto by_site = store.list_grant_lifecycle_by_site(10);
+        CHECK(by_site.size() == 2);
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("Grant lifecycle persistence transaction rollback") {
+    auto dir = tdir("gl_roll");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::GrantLifecycleState s;
+        s.access_user_id = 1; s.site_id = 10;
+        s.permission = "read_write"; s.state = "active";
+        CHECK(store.save_grant_lifecycle(s));
+        CHECK(store.load_grant_lifecycle(1, 10).has_value());
+        CHECK(store.delete_grant_lifecycle(1, 10));
+        CHECK_FALSE(store.load_grant_lifecycle(1, 10).has_value());
     }
     pool.shutdown();
     tclean(dir);
