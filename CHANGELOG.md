@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-25 | `this commit` | ARCH-009 Task 24 — Verify Complete Unmount Postcondition
+
+**Summary:** Enhanced post-umount verification with proper MountStatus classification and safety checks. After `runner_->umount()` succeeds, re-inspection result is classified: Absent → safe path check → rmdir; Ok + mounted + identity match → `umount_verify:still_mounted`; Ok + mounted + mismatch → `umount_verify:foreign_mount`; Ok + not mounted → `umount_verify:ambiguous`; any failure status → `umount_verify:inspection_failed`. Added path safety check before rmdir (rejects `..` traversal and targets outside `managed_home_root_`, returning `umount_verify:unsafe_target`). Introduced `FakeTwoPhaseMountInspector` for testing distinct pre/post states. 4 new tests cover still-mounted, foreign mount, ambiguous post-state, and inspection failure.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** `unmount_site` now returns distinct bounded error tokens for each post-umount verification failure mode instead of the generic `umount verification failed`. Path safety check prevents rmdir on unsafe targets.
+
+**Validation:** Full doctest suite passed (1050 cases, 7136 assertions). 4 new post-umount verification tests pass. `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
 ## 2026-07-25 | `this commit` | ARCH-009 Task 23 — Fail closed on unmount inspection errors
 
 **Summary:** Rewrote `unmount_site()` to correctly classify mount inspection results. MountStatus::Absent → idempotent success. MountStatus::Ok + mounted + full identity match → safe unmount. MountStatus::Ok + any field mismatch → `foreign_or_mismatched_mount:<reason>` with zero mutation. MountStatus::Ok + not mounted → `unmount_inspection:ambiguous`. MountStatus::TargetMissing → `unmount_inspection:invalid_target`. MountStatus::PermissionDenied → `unmount_inspection:permission_denied`. MountStatus::InspectionFailed → `unmount_inspection:io_error`. MountStatus::DependencyUnavailable → `unmount_inspection:dependency_unavailable`. Post-umount verification now checks for inspection failures. Added 11 direct tests covering every MountStatus value and field mismatch, with zero-mutation assertions on all rejected states.

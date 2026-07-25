@@ -1015,11 +1015,31 @@ core::OperationResult LocalSftpProvider::unmount_site(uint64_t access_user_id, u
     auto r1 = runner_->umount(target);
     if (!r1.success) { out.success = false; out.message = "umount failed"; return out; }
 
-    auto post = mount_inspector_->inspect(target);
-    if (post.status != MountStatus::Absent && post.status != MountStatus::Ok) {
-        out.success = false; out.message = "umount verification inspection failed"; return out;
+    {   // Scope for post-umount verification
+        auto post = mount_inspector_->inspect(target);
+        switch (post.status) {
+        case MountStatus::Absent:
+            break; // Good — proceed to directory cleanup
+
+        case MountStatus::Ok:
+            if (!post.mounted) {
+                out.success = false; out.message = "umount_verify:ambiguous"; return out;
+            }
+            // Mount still present — check if it's still our bind
+            if (post.is_bind && post.bind_root == expected_source && post.target == target && !post.fstype.empty() && !post.device.empty()) {
+                out.success = false; out.message = "umount_verify:still_mounted"; return out;
+            }
+            out.success = false; out.message = "umount_verify:foreign_mount"; return out;
+
+        default:
+            out.success = false; out.message = "umount_verify:inspection_failed"; return out;
+        }
     }
-    if (post.mounted) { out.success = false; out.message = "umount verification failed"; return out; }
+
+    // Verify target path is safe before directory cleanup
+    if (target.find("..") != std::string::npos || target.substr(0, managed_home_root_.size()) != managed_home_root_) {
+        out.success = false; out.message = "umount_verify:unsafe_target"; return out;
+    }
 
     auto r2 = runner_->rmdir(target);
     if (!r2.success) { out.success = false; out.message = "rmdir failed"; return out; }

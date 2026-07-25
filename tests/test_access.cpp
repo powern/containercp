@@ -4826,3 +4826,109 @@ TEST_CASE("ARCH-009 unmount ambiguous state Ok not mounted") {
     CHECK(r.message == "unmount_inspection:ambiguous");
     CHECK_FALSE(ctx.has_mutation_commands());
 }
+
+// Mount inspector that returns a configured state on each successive call.
+class FakeTwoPhaseMountInspector : public containercp::access::MountInspector {
+public:
+    containercp::access::MountState first;
+    containercp::access::MountState second;
+    mutable int call_count = 0;
+    containercp::access::MountState inspect(const std::string&) const override {
+        auto& s = (call_count++ == 0) ? first : second;
+        return s;
+    }
+};
+
+TEST_CASE("ARCH-009 unmount post still mounted") {
+    UnmountTestContext ctx;
+    auto two = std::make_shared<FakeTwoPhaseMountInspector>();
+    ctx.mount_insp = two;
+    ctx.provider.set_mount_inspector(two);
+
+    // Pre: status=Ok, mounted, identity matches
+    two->first.mounted = true; two->first.is_bind = true;
+    two->first.target = "/srv/containercp/users/au-dev/sites/test";
+    two->first.bind_root = "/srv/containercp/sites/test/public/";
+    two->first.fstype = "ext4"; two->first.device = "0:30"; two->first.options = "rw";
+    two->first.status = containercp::access::MountStatus::Ok;
+
+    // Post: same — still mounted, identity matches
+    two->second = two->first;
+
+    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    auto r = ctx.provider.unmount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "umount_verify:still_mounted");
+}
+
+TEST_CASE("ARCH-009 unmount post foreign mount") {
+    UnmountTestContext ctx;
+    auto two = std::make_shared<FakeTwoPhaseMountInspector>();
+    ctx.mount_insp = two;
+    ctx.provider.set_mount_inspector(two);
+
+    // Pre: status=Ok, mounted, identity matches
+    two->first.mounted = true; two->first.is_bind = true;
+    two->first.target = "/srv/containercp/users/au-dev/sites/test";
+    two->first.bind_root = "/srv/containercp/sites/test/public/";
+    two->first.fstype = "ext4"; two->first.device = "0:30"; two->first.options = "rw";
+    two->first.status = containercp::access::MountStatus::Ok;
+
+    // Post: different bind_root — foreign mount
+    two->second.mounted = true; two->second.is_bind = true;
+    two->second.target = "/srv/containercp/users/au-dev/sites/test";
+    two->second.bind_root = "/srv/evil/source";
+    two->second.fstype = "ext4"; two->second.device = "0:42"; two->second.options = "ro";
+    two->second.status = containercp::access::MountStatus::Ok;
+
+    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    auto r = ctx.provider.unmount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "umount_verify:foreign_mount");
+}
+
+TEST_CASE("ARCH-009 unmount post ambiguous") {
+    UnmountTestContext ctx;
+    auto two = std::make_shared<FakeTwoPhaseMountInspector>();
+    ctx.mount_insp = two;
+    ctx.provider.set_mount_inspector(two);
+
+    // Pre: status=Ok, mounted, identity matches
+    two->first.mounted = true; two->first.is_bind = true;
+    two->first.target = "/srv/containercp/users/au-dev/sites/test";
+    two->first.bind_root = "/srv/containercp/sites/test/public/";
+    two->first.fstype = "ext4"; two->first.device = "0:30"; two->first.options = "rw";
+    two->first.status = containercp::access::MountStatus::Ok;
+
+    // Post: Ok but not mounted — ambiguous
+    two->second.mounted = false; two->second.is_bind = false;
+    two->second.status = containercp::access::MountStatus::Ok;
+
+    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    auto r = ctx.provider.unmount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "umount_verify:ambiguous");
+}
+
+TEST_CASE("ARCH-009 unmount post inspection failed") {
+    UnmountTestContext ctx;
+    auto two = std::make_shared<FakeTwoPhaseMountInspector>();
+    ctx.mount_insp = two;
+    ctx.provider.set_mount_inspector(two);
+
+    // Pre: status=Ok, mounted, identity matches
+    two->first.mounted = true; two->first.is_bind = true;
+    two->first.target = "/srv/containercp/users/au-dev/sites/test";
+    two->first.bind_root = "/srv/containercp/sites/test/public/";
+    two->first.fstype = "ext4"; two->first.device = "0:30"; two->first.options = "rw";
+    two->first.status = containercp::access::MountStatus::Ok;
+
+    // Post: InspectionFailed
+    two->second.mounted = false;
+    two->second.status = containercp::access::MountStatus::InspectionFailed;
+
+    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    auto r = ctx.provider.unmount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "umount_verify:inspection_failed");
+}
