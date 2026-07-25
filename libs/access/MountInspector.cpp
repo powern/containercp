@@ -3,6 +3,7 @@
 #include "runtime/CommandExecutor.h"
 
 #include <sstream>
+#include <vector>
 
 namespace containercp::access {
 namespace {
@@ -13,28 +14,38 @@ MountState parse_mountinfo(const std::string& output, const std::string& target)
     std::string line;
     while (std::getline(ss, line)) {
         // /proc/self/mountinfo format:
-        // id parent_id dev:dev root mountpoint options ... - fstype source superopts
+        // id parent_id major:minor root mountpoint options [optional_fields] - fstype source superopts
+        // Fields 0-3: id, parent_id, dev:dev, root
+        // Field  4:   mountpoint
+        // Fields 5+:  options + optional fields (up to " - ")
+        // After " - ": fstype source superopts
         auto pos = line.find(" - ");
         if (pos == std::string::npos) continue;
-        auto fields = line.substr(0, pos);
-        auto rest = line.substr(pos + 3);
+        auto before = line.substr(0, pos);
+        auto after  = line.substr(pos + 3);
 
-        // Extract mountpoint (5th field)
-        std::istringstream fs(fields);
-        std::string token;
-        for (int i = 0; i < 5; ++i) std::getline(fs, token, ' ');
-        if (token != target) continue;
+        std::vector<std::string> tokens;
+        std::istringstream bs(before);
+        std::string tok;
+        while (bs >> tok) tokens.push_back(tok);
 
-        s.mounted = true;
-        s.target = token;
+        if (tokens.size() < 5) continue;
 
-        // Extract fstype and source from "- fstype source superopts"
-        std::istringstream rs(rest);
+        auto& root       = tokens[3];
+        auto& mountpoint = tokens[4];
+
+        if (mountpoint != target) continue;
+
+        s.mounted   = true;
+        s.target    = mountpoint;
+        s.bind_root = root;
+        s.is_bind   = (root != "/");
+
+        std::istringstream rs(after);
         std::string fstype, source;
         rs >> fstype >> source;
         s.fstype = fstype;
         s.source = source;
-        s.is_bind = (fstype != "proc" && fstype != "sysfs" && fstype != "devtmpfs");
         s.status = MountStatus::Ok;
         return s;
     }

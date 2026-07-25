@@ -12,10 +12,11 @@ enum class MountStatus { Ok, Absent, TargetMissing, PermissionDenied, Inspection
 
 struct MountState {
     bool        mounted = false;
-    std::string source;          // canonical source
+    std::string source;          // device or backing path (after-dash field from mountinfo)
+    std::string bind_root;       // root field from mountinfo — the path within the fs for bind mounts
     std::string target;          // mount point
     std::string fstype;
-    bool        is_bind = false;
+    bool        is_bind = false; // true if root != "/"
     MountStatus status = MountStatus::Absent;
     std::string error_detail;
 };

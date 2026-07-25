@@ -721,10 +721,10 @@ core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id
 
     // Check if exact expected bind already exists (idempotent)
     auto existing = mount_inspector_->inspect(target);
-    if (existing.mounted && existing.is_bind && existing.source == source) {
+    if (existing.mounted && existing.is_bind && existing.bind_root == source) {
         out.success = true; out.message = "mount already exists"; return out;
     }
-    if (existing.mounted && (!existing.is_bind || existing.source != source)) {
+    if (existing.mounted && (!existing.is_bind || existing.bind_root != source)) {
         out.success = false; out.message = "foreign mount at target"; return out;
     }
 
@@ -743,7 +743,7 @@ core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id
 
     // Verify exact identity
     auto post = mount_inspector_->inspect(target);
-    if (!post.mounted || post.source != source) {
+    if (!post.mounted || post.bind_root != source) {
         auto um = runner_->umount(target);
         if (!um.success) { out.success = false; out.message = "mount verify fail, umount rollback fail"; return out; }
         auto rd = runner_->rmdir(target);
@@ -782,7 +782,7 @@ core::OperationResult LocalSftpProvider::unmount_site(uint64_t access_user_id, u
     }
     // Only unmount managed bind mounts pointing to expected source
     std::string expected_source = site_root + "/public/";
-    if (!existing.is_bind || existing.source != expected_source) {
+    if (!existing.is_bind || existing.bind_root != expected_source) {
         out.success = false; out.message = "foreign mount — refusing to unmount"; return out;
     }
 
