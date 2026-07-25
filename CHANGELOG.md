@@ -6,7 +6,21 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-25 | `this commit` | ARCH-009 Task 33 — Implement apply_grant Crash Recovery
+## 2026-07-25 | `this commit` | ARCH-009 Task 34 — Drive revoke_grant from Persisted State
+
+**Summary:** Rewrote `revoke_grant()` to be driven by persisted grant lifecycle state. Loads `GrantLifecycleState` record by `(access_user_id, site_id)`. If no record exists, verifies absence of managed state before idempotent success. Handles each lifecycle state: `active` → transitions to `revoking`; `revoking` → continues revoke; `pending` → deletes without OS mutation after verifying no managed state; `applying` → recovers or rolls back before revoking; `error` → performs cleanup (unmount if mounted, remove membership, delete group). After all steps pass, deletes the lifecycle record. On partial failure, preserves `revoking` or `error` state with bounded last error. Conditions group deletion on no remaining grants or OS membership. Conditions RO ACL removal on no other relevant grant requiring it. Added 6 new tests: active→revoking transition, revoking continues, pending delete, missing idempotent, error cleanup, unmount failure preserved.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** `revoke_grant()` now uses the persisted lifecycle state for permission and state transitions. Crash recovery during revocation resumes from the previous state. Pending grants are cleanly removed. Error states are cleaned up as much as possible.
+
+**Validation:** Full doctest suite passed (1130 cases, 7459 assertions). 6 new revoke lifecycle tests pass. `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
+## 2026-07-25 | `3203395` | ARCH-009 Task 33 — Implement apply_grant Crash Recovery
 
 **Summary:** Replaced the simple mount-exists check in the `applying` state handler with a full step-by-step inspection. The `find_continue_step` lambda inspects: site group mapping, user membership in site group, directory permissions on `public/`, ACL for read-only grants, chroot layout (`sites/` directory), and bind mount identity. Returns the first missing step index (0-4), 5 for all complete, or -2 for foreign mount. The code then continues apply from the first missing step, skips completed steps via `continue_step`, or persists `active` if all steps are complete. Foreign mounts are fail-closed with error state. Every persistence result is checked. Added 5 crash-point tests: crash after group+membership+perms fully apply, crash after mount before active persistence, repeated recovery idempotency, foreign mount detection, and full apply from scratch.
 

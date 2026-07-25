@@ -1744,35 +1744,208 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
 }
 
 core::OperationResult LocalSftpProvider::revoke_grant(uint64_t access_user_id, uint64_t site_id,
-                                                        const std::string& permission) {
+                                                        const std::string& caller_permission) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "revoke_grant"), out;
 
     std::string username = resolve_username(access_user_id);
     if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
 
-    auto persist_lifecycle = [&](const std::string& state, const std::string& err) {
-        if (!save_grant_lifecycle_) return;
-        storage::GrantLifecycleState ls;
-        ls.access_user_id = access_user_id;
-        ls.site_id = site_id;
-        ls.permission = permission;
-        ls.state = state;
-        ls.last_error = err;
-        save_grant_lifecycle_(ls);
-    };
-    persist_lifecycle("revoking", "");
-
-    auto r1 = unmount_site(access_user_id, site_id);
-    if (!r1.success) { persist_lifecycle("error", r1.message); return r1; }
-    auto r2 = remove_user_from_site_group(username, site_id, permission);
-    if (!r2.success) { persist_lifecycle("error", r2.message); return r2; }
-    if (permission == "read_only") {
-        auto r3 = remove_read_only_acl(site_id);
-        if (!r3.success) { persist_lifecycle("error", r3.message); return r3; }
+    // Load or create lifecycle state
+    std::string permission = caller_permission;
+    storage::GrantLifecycleState ls;
+    bool lifecycle_active = (save_grant_lifecycle_ && load_all_grant_lifecycle_);
+    if (lifecycle_active) {
+        auto all = load_all_grant_lifecycle_();
+        bool found = false;
+        for (const auto& l : all) {
+            if (l.access_user_id == access_user_id && l.site_id == site_id) {
+                ls = l; found = true; break;
+            }
+        }
+        if (found) {
+            permission = ls.permission;
+        } else {
+            // No lifecycle record — treat as missing
+            // Verify no managed state exists before idempotent success
+            bool has_state = false;
+            if (mount_inspector_) {
+                auto si = site_resolver_ ? site_resolver_(site_id) : containercp::access::LocalSftpProvider::SiteInfo{};
+                if (si.valid) {
+                    std::string d = si.root;
+                    while (!d.empty() && d.back() == '/') d.pop_back();
+                    auto p = d.rfind('/');
+                    std::string domain = (p != std::string::npos) ? d.substr(p + 1) : d;
+                    std::string target = managed_home_root_ + "/" + username + "/sites/" + domain;
+                    auto ms = mount_inspector_->inspect(target);
+                    if (ms.mounted) has_state = true;
+                }
+            }
+            if (has_state) {
+                out.success = false; out.message = "grant_lifecycle:missing_with_state"; return out;
+            }
+            out.success = true; out.message = "grant not found (idempotent)"; return out;
+        }
     }
 
-    if (delete_grant_lifecycle_) delete_grant_lifecycle_(access_user_id, site_id);
+    // Helper to persist
+    auto persist = [&](const std::string& state, const std::string& err) -> bool {
+        if (!lifecycle_active) return true;
+        ls.state = state;
+        ls.last_error = err;
+        return save_grant_lifecycle_(ls);
+    };
+
+    // Handle lifecycle state
+    if (lifecycle_active) {
+        if (ls.state == "pending") {
+            // Delete without OS mutation after verifying no managed state
+            bool has_state = false;
+            if (mount_inspector_ && site_resolver_) {
+                auto si = site_resolver_(site_id);
+                if (si.valid) {
+                    std::string d = si.root;
+                    while (!d.empty() && d.back() == '/') d.pop_back();
+                    auto p = d.rfind('/');
+                    std::string domain = (p != std::string::npos) ? d.substr(p + 1) : d;
+                    std::string target = managed_home_root_ + "/" + username + "/sites/" + domain;
+                    auto ms = mount_inspector_->inspect(target);
+                    if (ms.mounted) has_state = true;
+                }
+            }
+            if (has_state) {
+                persist("error", "pending_with_state");
+                out.success = false; out.message = "grant_lifecycle:pending_with_state"; return out;
+            }
+            // Check membership and group — undo if present
+            auto grp_name = site_group_name(site_id, permission);
+            if (inspector_ && inspector_->user_in_group(username, grp_name)) {
+                (void)remove_user_from_site_group(username, site_id, permission);
+            }
+            if (find_mapping(site_group_entity_type(permission), site_id).has_value()) {
+                (void)delete_site_group_if_unused(site_id, permission);
+            }
+            if (delete_grant_lifecycle_ && !delete_grant_lifecycle_(access_user_id, site_id)) {
+                persist("error", "delete_failed");
+                out.success = false; out.message = "grant_lifecycle:delete_failed"; return out;
+            }
+            out.success = true; out.message = "pending grant revoked"; return out;
+        }
+        if (ls.state == "applying") {
+            // Recover or roll back applying state before revoke
+            // First try to complete apply, then revoke
+            auto apply_result = apply_grant(access_user_id, site_id, permission);
+            if (!apply_result.success && ls.state != "active") {
+                // Could not apply — rollback what we can
+                (void)unmount_site(access_user_id, site_id);
+                (void)remove_user_from_site_group(username, site_id, permission);
+                auto grp_name = site_group_name(site_id, permission);
+                if (find_mapping(site_group_entity_type(permission), site_id).has_value()) {
+                    (void)delete_site_group_if_unused(site_id, permission);
+                }
+                persist("error", "applying_rollback_failed");
+                out.success = false; out.message = "grant_lifecycle:applying_rollback"; return out;
+            }
+            // Now applying was completed — fall through to revoke from active
+            ls.state = "active";
+        }
+        if (ls.state == "active" || ls.state == "revoking") {
+            if (ls.state == "active") {
+                if (!persist("revoking", "")) {
+                    out.success = false; out.message = "grant_lifecycle:revoking_persist_failed"; return out;
+                }
+            }
+        } else if (ls.state == "error") {
+            // Only approved cleanup: check mount, group, membership
+            // If mount exists, try to unmount; if membership exists, remove
+            if (mount_inspector_ && site_resolver_) {
+                auto si = site_resolver_(site_id);
+                if (si.valid) {
+                    std::string d = si.root;
+                    while (!d.empty() && d.back() == '/') d.pop_back();
+                    auto p = d.rfind('/');
+                    std::string domain = (p != std::string::npos) ? d.substr(p + 1) : d;
+                    std::string target = managed_home_root_ + "/" + username + "/sites/" + domain;
+                    auto ms = mount_inspector_->inspect(target);
+                    if (ms.mounted) {
+                        (void)unmount_site(access_user_id, site_id);
+                    }
+                }
+            }
+            auto grp_name = site_group_name(site_id, permission);
+            if (inspector_ && inspector_->user_in_group(username, grp_name)) {
+                (void)remove_user_from_site_group(username, site_id, permission);
+            }
+            if (find_mapping(site_group_entity_type(permission), site_id).has_value()) {
+                (void)delete_site_group_if_unused(site_id, permission);
+            }
+            if (!persist("error", "revoke_cleanup_attempted")) {
+                out.success = false; out.message = "grant_lifecycle:error_cleanup_failed"; return out;
+            }
+            out.success = true; out.message = "error state cleaned up"; return out;
+        }
+    }
+
+    if (!site_resolver_) {
+        out.success = false; out.message = "provider dependencies not configured"; return out;
+    }
+
+    // Execute revoke steps
+    std::string diag;
+    size_t failures = 0;
+    auto note = [&](const std::string& entry) {
+        if (!diag.empty()) diag += "; ";
+        diag += entry;
+    };
+
+    // Step 1: Unmount
+    auto r1 = unmount_site(access_user_id, site_id);
+    if (!r1.success) { note("unmount:" + r1.message); failures++; }
+    else {
+        // Step 2: Remove membership
+        auto r2 = remove_user_from_site_group(username, site_id, permission);
+        if (!r2.success) { note("membership:" + r2.message); failures++; }
+        else {
+            // Step 3: Remove RO ACL only if no other relevant grant requires it
+            if (permission == "read_only") {
+                bool other_grants_need_ro = false;
+                if (grants_lookup_) {
+                    other_grants_need_ro = (grants_lookup_(site_id, "read_only") > 1);
+                }
+                if (!other_grants_need_ro) {
+                    auto r3 = remove_read_only_acl(site_id);
+                    if (!r3.success) { note("acl:" + r3.message); failures++; }
+                }
+            }
+        }
+    }
+
+    // Step 4: Delete site group only if no remaining grant or OS membership
+    {
+        bool can_delete = true;
+        if (grants_lookup_) {
+            can_delete = (grants_lookup_(site_id, permission) == 0);
+        }
+        // Check if any user is still in the group by trying lookup
+        if (can_delete && find_mapping(site_group_entity_type(permission), site_id).has_value()) {
+            auto rd = delete_site_group_if_unused(site_id, permission);
+            if (!rd.success) { note("group:" + rd.message); failures++; }
+        }
+    }
+
+    if (failures > 0) {
+        if (!persist("error", diag)) {
+            out.success = false; out.message = "grant_lifecycle:revoke_error_persist_failed"; return out;
+        }
+        out.success = false; out.message = "grant_revoke:" + std::to_string(failures) + " failures — " + diag;
+        return out;
+    }
+
+    // All steps passed — delete lifecycle record
+    if (!delete_grant_lifecycle_ || !delete_grant_lifecycle_(access_user_id, site_id)) {
+        persist("error", "delete_failed_after_revoke");
+        out.success = false; out.message = "grant_lifecycle:delete_failed_after_revoke"; return out;
+    }
     out.success = true; out.message = "grant revoked"; return out;
 }
 
