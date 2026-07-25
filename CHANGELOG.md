@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-25 | `this commit` | ARCH-009 Task 18 — Complete ACL rollback verification
+
+**Summary:** Enhanced `apply_grant()` ACL rollback on bind-mount failure to restore the exact original ACL state instead of simply removing it. Added `restore_acl_state()` method with full-state comparison covering all `AclState` fields: access ACL presence, group, permissions, effective permissions, mask; default ACL presence, group, permissions, effective permissions, mask. Original ACL state is captured before `apply_read_only_acl()` is called. Enhanced `restore_acl()` to verify access and default masks. Enhanced `FakeCommandRunner` setfacl handler to properly simulate ACL modifications (parse `-m`/`-x`, `g:`/`d:g:` specs, update `access_present`/`default_present` and all ACL fields). Added 7 regression tests covering: initially absent ACL, existing access ACL, existing default ACL, different masks, rollback command failure, rollback inspection failure, and full-state mismatch.
+
+**Files changed:** `libs/access/LocalSftpProvider.{h,cpp}`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** No user-visible change. ACL rollback now correctly restores the exact previous ACL state (including masks) and reports granular error tokens on failure.
+
+**Validation:** Full doctest suite passed (1000 cases, 7053 assertions). All 7 new ARCH-009 ACL rollback tests pass. All 6 existing ARCH-009 tests pass. `git diff --check` passed.
+
+**Known risks:** The inspection failure test uses a call counter which assumes 3 `inspect_acl` calls before the rollback postcondition. If the implementation adds or removes calls, the counter threshold may need adjustment.
+
+---
+
 ## 2026-07-25 | `this commit` | ARCH-009 Phase 3c — Directory mode rollback with postcondition verification
 
 **Summary:** Added granular rollback error reporting for directory permission restoration in `apply_grant`. Introduced `mode_to_octal` helper for correct octal format conversion. Rollback now reports separate error tokens (`perms:gid`, `perms:mode`, `perms:gid:postcondition`, `perms:mode:postcondition`) instead of a generic `perms` token, and verifies postconditions after each rollback command. MountInspector rewritten to read `/proc/self/mountinfo` directly via C++ file API (removed `cat` subprocess dependency and `CommandExecutor` coupling). Bind mount detection fixed to use `root != "/"` instead of `fstype` check. Added `FakeMountInspector`, `FsState`, `MountState` to test infrastructure. Added `FakeCommandRunner` handlers for `chgrp`, `chmod`, `setfacl`, `mkdir`, `rmdir`, `chown`, `mount`, `umount`, `mountpoint`. `FakeFsInspector` now supports shared state via `shared_` pointer for visibility from `FakeCommandRunner`. Added 6 regression tests covering mode rollback with octal conversion (0755→755, 0770→770, 0700→700), chmod command failure, GID command failure, and postcondition mismatch.

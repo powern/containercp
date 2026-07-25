@@ -542,12 +542,46 @@ private:
             }
         } else if (prog == "setfacl" && cmd.args.size() >= 4) {
             // setfacl -m <acl_spec> <path> or setfacl -x <acl_spec> <path>
-            // Simplified: just mark that ACL was modified
+            std::string op = cmd.args[1];
+            std::string spec = cmd.args[2];
+            std::string path = cmd.args[3];
             if (inspector_->fs_state_) {
-                std::string path = cmd.args.back();
-                auto it = inspector_->fs_state_->state_.find(path);
-                if (it != inspector_->fs_state_->state_.end()) {
-                    it->second.acl_status = containercp::access::InspectionStatus::Ok;
+                // Parse the group name from the ACL spec
+                // Format: "g:group:perms", "g:group", "d:g:group:perms", "d:g:group"
+                bool is_default = (spec.rfind("d:", 0) == 0);
+                std::string rest = is_default ? spec.substr(2) : spec;
+                // rest: "g:group:perms" or "g:group"
+                if (rest.rfind("g:", 0) == 0) {
+                    std::string sub = rest.substr(2);
+                    size_t colon = sub.find(':');
+                    std::string group = (colon != std::string::npos) ? sub.substr(0, colon) : sub;
+                    std::string perms = (colon != std::string::npos) ? sub.substr(colon + 1) : "";
+                    std::string acl_key = path + "::" + group;
+                    if (op == "-m" && !perms.empty()) {
+                        auto& s = inspector_->fs_state_->state_[acl_key];
+                        s.exists = true;
+                        s.acl_status = containercp::access::InspectionStatus::Ok;
+                        if (is_default) {
+                            s.acl.default_present = true;
+                            s.acl.default_group = group;
+                            s.acl.default_perms = perms;
+                            s.acl.default_effective = perms;
+                        } else {
+                            s.acl.access_present = true;
+                            s.acl.access_group = group;
+                            s.acl.access_perms = perms;
+                            s.acl.effective_perms = perms;
+                        }
+                    } else if (op == "-x") {
+                        auto it = inspector_->fs_state_->state_.find(acl_key);
+                        if (it != inspector_->fs_state_->state_.end()) {
+                            if (is_default) {
+                                it->second.acl.default_present = false;
+                            } else {
+                                it->second.acl.access_present = false;
+                            }
+                        }
+                    }
                 }
             }
         } else if ((prog == "mkdir" || prog == "mkdir_p") && cmd.args.size() >= 2) {
@@ -3005,4 +3039,521 @@ TEST_CASE("ARCH-009 directory permission rollback postcondition mismatch") {
     if (!has_gid_post && !has_mode_post) {
         FAIL("Expected either perms:gid:postcondition or perms:mode:postcondition in: " << r.message);
     }
+}
+
+// --- ARCH-009 Task 18: ACL rollback verification tests ---
+
+TEST_CASE("ARCH-009 ACL rollback initially absent access/default ACL") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    auto mount_inspector = std::make_shared<FakeMountInspector>();
+    mount_inspector->state_.mounted = false;
+    mount_inspector->state_.status = containercp::access::MountStatus::Absent;
+
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active"; um.uid = 10000; um.gid = 20000;
+    stored.push_back(um);
+    containercp::access::SystemAccountMapping grp;
+    grp.entity_type = "site_group_ro"; grp.entity_id = 1;
+    grp.gid = 21000; grp.username = "site-1-ro"; grp.groupname = "site-1-ro"; grp.state = "active";
+    stored.push_back(grp);
+
+    std::string pub = "/srv/containercp/sites/test/public/";
+    // Initially no ACL for site-1-ro — both access and default are absent
+    containercp::access::FsPermissionState init_acl;
+    init_acl.exists = true; init_acl.mode = 0755; init_acl.group_gid = 20001;
+    init_acl.acl_status = containercp::access::InspectionStatus::Ok;
+    init_acl.acl.access_present = false;
+    init_acl.acl.default_present = false;
+    inspector->fs_state_->state_[pub + "::site-1-ro"] = init_acl;
+
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    inspector->groups_["site-1-ro"] = {true, "site-1-ro", 21000};
+
+    auto fs = std::make_shared<FakeFsInspector>(
+        std::shared_ptr<std::map<std::string, containercp::access::FsPermissionState>>(
+            inspector->fs_state_, &inspector->fs_state_->state_));
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(fs);
+    provider.set_mount_inspector(mount_inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    fake_commands.cmds_.clear();
+    auto r = provider.apply_grant(1, 1, "read_only");
+    CHECK_FALSE(r.success);
+
+    // After rollback, both access and default ACL should be absent
+    auto post = fs->inspect_acl(pub, "site-1-ro");
+    CHECK(post.acl_status == containercp::access::InspectionStatus::Ok);
+    CHECK_FALSE(post.acl.access_present);
+    CHECK_FALSE(post.acl.default_present);
+}
+
+TEST_CASE("ARCH-009 ACL rollback restores existing access ACL") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    auto mount_inspector = std::make_shared<FakeMountInspector>();
+    mount_inspector->state_.mounted = false;
+    mount_inspector->state_.status = containercp::access::MountStatus::Absent;
+
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active"; um.uid = 10000; um.gid = 20000;
+    stored.push_back(um);
+    containercp::access::SystemAccountMapping grp;
+    grp.entity_type = "site_group_ro"; grp.entity_id = 1;
+    grp.gid = 21000; grp.username = "site-1-ro"; grp.groupname = "site-1-ro"; grp.state = "active";
+    stored.push_back(grp);
+
+    std::string pub = "/srv/containercp/sites/test/public/";
+    // Pre-existing access ACL for site-1-ro with r-x perms
+    containercp::access::FsPermissionState init_acl;
+    init_acl.exists = true; init_acl.mode = 0755; init_acl.group_gid = 20001;
+    init_acl.acl_status = containercp::access::InspectionStatus::Ok;
+    init_acl.acl.access_present = true;
+    init_acl.acl.access_group = "site-1-ro";
+    init_acl.acl.access_perms = "r-x";
+    init_acl.acl.effective_perms = "r-x";
+    init_acl.acl.access_mask = "rwx";
+    init_acl.acl.default_present = false;
+    inspector->fs_state_->state_[pub + "::site-1-ro"] = init_acl;
+
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    inspector->groups_["site-1-ro"] = {true, "site-1-ro", 21000};
+
+    auto fs = std::make_shared<FakeFsInspector>(
+        std::shared_ptr<std::map<std::string, containercp::access::FsPermissionState>>(
+            inspector->fs_state_, &inspector->fs_state_->state_));
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(fs);
+    provider.set_mount_inspector(mount_inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    fake_commands.cmds_.clear();
+    auto r = provider.apply_grant(1, 1, "read_only");
+    CHECK_FALSE(r.success);
+
+    // Verify the original access ACL is restored
+    auto post = fs->inspect_acl(pub, "site-1-ro");
+    CHECK(post.acl_status == containercp::access::InspectionStatus::Ok);
+    CHECK(post.acl.access_present);
+    CHECK(post.acl.access_group == "site-1-ro");
+    CHECK(post.acl.access_perms == "r-x");
+    CHECK(post.acl.effective_perms == "r-x");
+    CHECK(post.acl.access_mask == "rwx");
+    CHECK_FALSE(post.acl.default_present);
+}
+
+TEST_CASE("ARCH-009 ACL rollback restores existing default ACL") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    auto mount_inspector = std::make_shared<FakeMountInspector>();
+    mount_inspector->state_.mounted = false;
+    mount_inspector->state_.status = containercp::access::MountStatus::Absent;
+
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active"; um.uid = 10000; um.gid = 20000;
+    stored.push_back(um);
+    containercp::access::SystemAccountMapping grp;
+    grp.entity_type = "site_group_ro"; grp.entity_id = 1;
+    grp.gid = 21000; grp.username = "site-1-ro"; grp.groupname = "site-1-ro"; grp.state = "active";
+    stored.push_back(grp);
+
+    std::string pub = "/srv/containercp/sites/test/public/";
+    // Pre-existing default ACL, no access ACL
+    containercp::access::FsPermissionState init_acl;
+    init_acl.exists = true; init_acl.mode = 0755; init_acl.group_gid = 20001;
+    init_acl.acl_status = containercp::access::InspectionStatus::Ok;
+    init_acl.acl.access_present = false;
+    init_acl.acl.default_present = true;
+    init_acl.acl.default_group = "site-1-ro";
+    init_acl.acl.default_perms = "r--";
+    init_acl.acl.default_effective = "r--";
+    init_acl.acl.default_mask = "rwx";
+    inspector->fs_state_->state_[pub + "::site-1-ro"] = init_acl;
+
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    inspector->groups_["site-1-ro"] = {true, "site-1-ro", 21000};
+
+    auto fs = std::make_shared<FakeFsInspector>(
+        std::shared_ptr<std::map<std::string, containercp::access::FsPermissionState>>(
+            inspector->fs_state_, &inspector->fs_state_->state_));
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(fs);
+    provider.set_mount_inspector(mount_inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    fake_commands.cmds_.clear();
+    auto r = provider.apply_grant(1, 1, "read_only");
+    CHECK_FALSE(r.success);
+
+    // Verify the original default ACL is restored
+    auto post = fs->inspect_acl(pub, "site-1-ro");
+    CHECK(post.acl_status == containercp::access::InspectionStatus::Ok);
+    CHECK(post.acl.default_present);
+    CHECK(post.acl.default_group == "site-1-ro");
+    CHECK(post.acl.default_perms == "r--");
+    CHECK(post.acl.default_effective == "r--");
+    CHECK(post.acl.default_mask == "rwx");
+    CHECK_FALSE(post.acl.access_present);
+}
+
+TEST_CASE("ARCH-009 ACL rollback restores different masks") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    auto mount_inspector = std::make_shared<FakeMountInspector>();
+    mount_inspector->state_.mounted = false;
+    mount_inspector->state_.status = containercp::access::MountStatus::Absent;
+
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active"; um.uid = 10000; um.gid = 20000;
+    stored.push_back(um);
+    containercp::access::SystemAccountMapping grp;
+    grp.entity_type = "site_group_ro"; grp.entity_id = 1;
+    grp.gid = 21000; grp.username = "site-1-ro"; grp.groupname = "site-1-ro"; grp.state = "active";
+    stored.push_back(grp);
+
+    std::string pub = "/srv/containercp/sites/test/public/";
+    // Access + default ACLs with non-default masks
+    containercp::access::FsPermissionState init_acl;
+    init_acl.exists = true; init_acl.mode = 0755; init_acl.group_gid = 20001;
+    init_acl.acl_status = containercp::access::InspectionStatus::Ok;
+    init_acl.acl.access_present = true;
+    init_acl.acl.access_group = "site-1-ro";
+    init_acl.acl.access_perms = "r--";
+    init_acl.acl.effective_perms = "r--";
+    init_acl.acl.access_mask = "r--";
+    init_acl.acl.default_present = true;
+    init_acl.acl.default_group = "site-1-ro";
+    init_acl.acl.default_perms = "r-x";
+    init_acl.acl.default_effective = "r-x";
+    init_acl.acl.default_mask = "rwx";
+    inspector->fs_state_->state_[pub + "::site-1-ro"] = init_acl;
+
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    inspector->groups_["site-1-ro"] = {true, "site-1-ro", 21000};
+
+    auto fs = std::make_shared<FakeFsInspector>(
+        std::shared_ptr<std::map<std::string, containercp::access::FsPermissionState>>(
+            inspector->fs_state_, &inspector->fs_state_->state_));
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(fs);
+    provider.set_mount_inspector(mount_inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    fake_commands.cmds_.clear();
+    auto r = provider.apply_grant(1, 1, "read_only");
+    CHECK_FALSE(r.success);
+
+    // Verify masks are restored
+    auto post = fs->inspect_acl(pub, "site-1-ro");
+    CHECK(post.acl.access_mask == "r--");
+    CHECK(post.acl.default_mask == "rwx");
+}
+
+TEST_CASE("ARCH-009 ACL rollback command failure") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    auto mount_inspector = std::make_shared<FakeMountInspector>();
+    mount_inspector->state_.mounted = false;
+    mount_inspector->state_.status = containercp::access::MountStatus::Absent;
+
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active"; um.uid = 10000; um.gid = 20000;
+    stored.push_back(um);
+    containercp::access::SystemAccountMapping grp;
+    grp.entity_type = "site_group_ro"; grp.entity_id = 1;
+    grp.gid = 21000; grp.username = "site-1-ro"; grp.groupname = "site-1-ro"; grp.state = "active";
+    stored.push_back(grp);
+
+    std::string pub = "/srv/containercp/sites/test/public/";
+    // Originally absent ACL — rollback needs to call setfacl -x
+    containercp::access::FsPermissionState init_acl;
+    init_acl.exists = true; init_acl.mode = 0755; init_acl.group_gid = 20001;
+    init_acl.acl_status = containercp::access::InspectionStatus::Ok;
+    init_acl.acl.access_present = false;
+    init_acl.acl.default_present = false;
+    inspector->fs_state_->state_[pub + "::site-1-ro"] = init_acl;
+
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    inspector->groups_["site-1-ro"] = {true, "site-1-ro", 21000};
+
+    auto fs = std::make_shared<FakeFsInspector>(
+        std::shared_ptr<std::map<std::string, containercp::access::FsPermissionState>>(
+            inspector->fs_state_, &inspector->fs_state_->state_));
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(fs);
+    provider.set_mount_inspector(mount_inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            // Only fail setfacl -x (remove) — these are used during rollback restore
+            // when the original ACL was absent. The -m (modify) commands during apply
+            // phase must succeed.
+            if (cmd.args[0] == "setfacl" && cmd.args[1] == "-x") return containercp::core::OperationResult{false, "setfacl -x failed"};
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    fake_commands.cmds_.clear();
+    auto r = provider.apply_grant(1, 1, "read_only");
+    CHECK_FALSE(r.success);
+    // setfacl -x during rollback failed → should include "acl:restore:access"
+    CHECK(r.message.find("acl:restore:access") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 ACL rollback inspection failure") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    auto mount_inspector = std::make_shared<FakeMountInspector>();
+    mount_inspector->state_.mounted = false;
+    mount_inspector->state_.status = containercp::access::MountStatus::Absent;
+
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active"; um.uid = 10000; um.gid = 20000;
+    stored.push_back(um);
+    containercp::access::SystemAccountMapping grp;
+    grp.entity_type = "site_group_ro"; grp.entity_id = 1;
+    grp.gid = 21000; grp.username = "site-1-ro"; grp.groupname = "site-1-ro"; grp.state = "active";
+    stored.push_back(grp);
+
+    std::string pub = "/srv/containercp/sites/test/public/";
+    // Originally absent ACL
+    containercp::access::FsPermissionState init_acl;
+    init_acl.exists = true; init_acl.mode = 0755; init_acl.group_gid = 20001;
+    init_acl.acl_status = containercp::access::InspectionStatus::Ok;
+    init_acl.acl.access_present = false;
+    init_acl.acl.default_present = false;
+    inspector->fs_state_->state_[pub + "::site-1-ro"] = init_acl;
+
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    inspector->groups_["site-1-ro"] = {true, "site-1-ro", 21000};
+
+    // Custom inspector that delegates to shared state but returns failure on
+    // the postcondition call during rollback (4th call = index 3).
+    struct FailOnPostInspect : FakeFsInspector {
+        using FakeFsInspector::FakeFsInspector;
+        mutable int call_count_ = 0;
+        containercp::access::FsPermissionState inspect_acl(
+            const std::string& path, const std::string& groupname) const override {
+            auto s = FakeFsInspector::inspect_acl(path, groupname);
+            if (call_count_++ >= 3) s.acl_status = containercp::access::InspectionStatus::PathInspectionFailed;
+            return s;
+        }
+    };
+
+    auto fs = std::make_shared<FailOnPostInspect>(
+        std::shared_ptr<std::map<std::string, containercp::access::FsPermissionState>>(
+            inspector->fs_state_, &inspector->fs_state_->state_));
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(fs);
+    provider.set_mount_inspector(mount_inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    fake_commands.cmds_.clear();
+    auto r = provider.apply_grant(1, 1, "read_only");
+    CHECK_FALSE(r.success);
+    // Inspection after rollback restore failed → should include "acl:postcondition:inspect"
+    CHECK(r.message.find("acl:postcondition:inspect") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 ACL rollback full-state mismatch") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    auto mount_inspector = std::make_shared<FakeMountInspector>();
+    mount_inspector->state_.mounted = false;
+    mount_inspector->state_.status = containercp::access::MountStatus::Absent;
+
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active"; um.uid = 10000; um.gid = 20000;
+    stored.push_back(um);
+    containercp::access::SystemAccountMapping grp;
+    grp.entity_type = "site_group_ro"; grp.entity_id = 1;
+    grp.gid = 21000; grp.username = "site-1-ro"; grp.groupname = "site-1-ro"; grp.state = "active";
+    stored.push_back(grp);
+
+    std::string pub = "/srv/containercp/sites/test/public/";
+    // Originally absent ACL
+    containercp::access::FsPermissionState init_acl;
+    init_acl.exists = true; init_acl.mode = 0755; init_acl.group_gid = 20001;
+    init_acl.acl_status = containercp::access::InspectionStatus::Ok;
+    init_acl.acl.access_present = false;
+    init_acl.acl.default_present = false;
+    inspector->fs_state_->state_[pub + "::site-1-ro"] = init_acl;
+
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    inspector->groups_["site-1-ro"] = {true, "site-1-ro", 21000};
+
+    auto fs = std::make_shared<FakeFsInspector>(
+        std::shared_ptr<std::map<std::string, containercp::access::FsPermissionState>>(
+            inspector->fs_state_, &inspector->fs_state_->state_));
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(fs);
+    provider.set_mount_inspector(mount_inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            // Intercept rollback setfacl -x: return success but skip state update,
+            // so the postcondition check sees stale data (ACL still present)
+            if (cmd.args[0] == "setfacl" && cmd.args[1] == "-x") return containercp::core::OperationResult{true, "ok"};
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    fake_commands.cmds_.clear();
+    auto r = provider.apply_grant(1, 1, "read_only");
+    CHECK_FALSE(r.success);
+    // The rollback postcondition should find that the ACL is still present
+    // (because setfacl -x was intercepted), causing a state mismatch
+    CHECK(r.message.find("acl:postcondition:mismatch") != std::string::npos);
 }

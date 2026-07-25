@@ -574,7 +574,54 @@ void LocalSftpProvider::restore_acl(const FsPermissionState& prev, const std::st
          post.acl.default_effective != prev.acl.default_effective))) {
         out.success = false; out.message = "rollback state mismatch"; return;
     }
+    // Verify masks if present in previous state
+    if (!prev.acl.access_mask.empty() && post.acl.access_mask != prev.acl.access_mask) {
+        out.success = false; out.message = "rollback state mismatch"; return;
+    }
+    if (!prev.acl.default_mask.empty() && post.acl.default_mask != prev.acl.default_mask) {
+        out.success = false; out.message = "rollback state mismatch"; return;
+    }
     out.success = false; out.message = "ACL operation failed, rolled back";
+}
+
+core::OperationResult LocalSftpProvider::restore_acl_state(
+    const AclState& original, const std::string& path, const std::string& groupname) {
+    core::OperationResult out;
+    // Restore access ACL
+    if (original.access_present && !original.access_perms.empty()) {
+        auto rb = runner_->setfacl_modify("g:" + groupname + ":" + original.access_perms, path);
+        if (!rb.success) { out.message = "acl:restore:access"; return out; }
+    } else {
+        auto rb = runner_->setfacl_remove("g:" + groupname, path);
+        if (!rb.success) { out.message = "acl:restore:access"; return out; }
+    }
+    // Restore default ACL
+    if (original.default_present && !original.default_perms.empty()) {
+        auto rb = runner_->setfacl_modify("d:g:" + groupname + ":" + original.default_perms, path);
+        if (!rb.success) { out.message = "acl:restore:default"; return out; }
+    } else {
+        auto rb = runner_->setfacl_remove("d:g:" + groupname, path);
+        if (!rb.success) { out.message = "acl:restore:default"; return out; }
+    }
+    // Postcondition verification: full AclState comparison including masks
+    auto post = fs_inspector_->inspect_acl(path, groupname);
+    if (post.acl_status != InspectionStatus::Ok) {
+        out.message = "acl:postcondition:inspect"; return out;
+    }
+    if (post.acl.access_present != original.access_present ||
+        post.acl.default_present != original.default_present ||
+        (original.access_present && (post.acl.access_group != original.access_group ||
+         post.acl.access_perms != original.access_perms ||
+         post.acl.effective_perms != original.effective_perms ||
+         post.acl.access_mask != original.access_mask)) ||
+        (original.default_present && (post.acl.default_group != original.default_group ||
+         post.acl.default_perms != original.default_perms ||
+         post.acl.default_effective != original.default_effective ||
+         post.acl.default_mask != original.default_mask))) {
+        out.message = "acl:postcondition:mismatch"; return out;
+    }
+    out.success = true;
+    return out;
 }
 
 
@@ -855,6 +902,8 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     bool acl_changed     = false;
     int  original_gid    = -1;
     int  original_mode   = -1;
+    AclState original_acl_state;
+    bool acl_captured = false;
 
     // Helper: convert integer mode (e.g., 0755 octal = 493 decimal) to chmod-compatible octal string "755"
     auto mode_to_octal = [](int mode) -> std::string {
@@ -891,6 +940,18 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
 
     // Step 4: ACL (RO only)
     if (permission == "read_only") {
+        // Capture original ACL state before modification
+        if (fs_inspector_) {
+            std::string pub = site_resolver_(site_id).root + "/public/";
+            auto ro_mapping = find_mapping("site_group_ro", site_id);
+            if (ro_mapping.has_value()) {
+                auto orig = fs_inspector_->inspect_acl(pub, ro_mapping->groupname);
+                if (orig.acl_status == InspectionStatus::Ok) {
+                    original_acl_state = orig.acl;
+                    acl_captured = true;
+                }
+            }
+        }
         auto r4 = apply_read_only_acl(site_id);
         if (!r4.success) {
             if (membership_added) { auto rb = remove_user_from_site_group(username, site_id, permission); if (!rb.success) { out.success = false; out.message = "grant_rollback_membership_failed"; return out; } }
@@ -908,9 +969,17 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
         std::string rollback_errors;
         auto note = [&](const char* step) { if (!rollback_errors.empty()) rollback_errors += ","; rollback_errors += step; };
 
-        if (acl_changed) {
-            auto rb = remove_read_only_acl(site_id);
-            if (!rb.success) note("acl");
+        if (acl_changed && acl_captured && runner_ && fs_inspector_) {
+            std::string pub = site_resolver_(site_id).root + "/public/";
+            auto ro_mapping = find_mapping("site_group_ro", site_id);
+            if (ro_mapping.has_value()) {
+                auto acl_rb = restore_acl_state(original_acl_state, pub, ro_mapping->groupname);
+                if (!acl_rb.success) {
+                    note(acl_rb.message.c_str());
+                }
+            } else {
+                note("acl:mapping");
+            }
         }
         if (perms_changed && original_gid > 0 && runner_) {
             std::string pub = site_resolver_(site_id).root + "/public/";

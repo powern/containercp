@@ -138,6 +138,12 @@ private:
     void rollback_chroot_rmdir(const std::string& path, bool created_by_us,
                                 core::OperationResult& out);
 
+    // Restore ACL to an exact previous state, return specific error token on failure.
+    // Used by apply_grant rollback to restore original ACL state.
+    core::OperationResult restore_acl_state(const AclState& original,
+                                            const std::string& path,
+                                            const std::string& groupname);
+
     // Resolve entity_type from permission string
     static std::string site_group_entity_type(const std::string& permission);
     // Build site group name: "site-<id>-rw" or "site-<id>-ro"
