@@ -6,7 +6,21 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-25 | `this commit` | ARCH-009 Task 32 — Drive apply_grant from Persisted Grant State
+## 2026-07-25 | `this commit` | ARCH-009 Task 33 — Implement apply_grant Crash Recovery
+
+**Summary:** Replaced the simple mount-exists check in the `applying` state handler with a full step-by-step inspection. The `find_continue_step` lambda inspects: site group mapping, user membership in site group, directory permissions on `public/`, ACL for read-only grants, chroot layout (`sites/` directory), and bind mount identity. Returns the first missing step index (0-4), 5 for all complete, or -2 for foreign mount. The code then continues apply from the first missing step, skips completed steps via `continue_step`, or persists `active` if all steps are complete. Foreign mounts are fail-closed with error state. Every persistence result is checked. Added 5 crash-point tests: crash after group+membership+perms fully apply, crash after mount before active persistence, repeated recovery idempotency, foreign mount detection, and full apply from scratch.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** If the daemon crashes during grant application, the next startup or `apply_grant` call resumes from the exact step where the crash occurred. No work is lost or duplicated. Foreign mounts at the expected target are detected and fail-closed.
+
+**Validation:** Full doctest suite passed (1124 cases, 7442 assertions). 5 new crash recovery tests pass. `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
+## 2026-07-25 | `ea3f762` | ARCH-009 Task 32 — Drive apply_grant from Persisted Grant State
 
 **Summary:** Rewrote `apply_grant()` to be driven by persisted grant lifecycle state instead of caller-provided permission. Loads the `GrantLifecycleState` record by `(access_user_id, site_id)`. If no record exists, creates one in `pending` state using the caller's permission (after validation). Handles each lifecycle state: `pending` → transitions to `applying`; `applying` → crash recovery (inspects mount state, recovers if mount exists); `active` → verifies mount and returns idempotent success, or reconciles if mount is missing; `revoking` → rejects with stable transition error; `error` → recovers only if mount exists and is correct, otherwise preserves error with the stored `last_error`. Every persistence transition is checked. If final "active" save fails, executes deterministic rollback (unmount, revert membership, delete group) and persists error. Lifecycle storage callbacks are optional — if not configured, falls back to old behavior without state tracking (backward compatibility). Added 1119 passing tests.
 

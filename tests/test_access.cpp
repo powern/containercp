@@ -6079,3 +6079,192 @@ TEST_CASE("ARCH-009 startup reconcile idempotent") {
     CHECK(ctx.persisted_.size() == count_after_first);
     CHECK(ctx.persisted_[0].state == "active");
 }
+
+// --- ARCH-009 Task 33: apply_grant Crash Recovery ---
+
+struct CrashRecoveryContext {
+    std::shared_ptr<FakeInspector> inspector;
+    FakeCommandRunner fake_commands;
+    std::shared_ptr<FakeLiveFsInspector> fs_insp;
+    std::shared_ptr<FakeLiveMountInspector> mount_insp;
+    containercp::access::LocalSftpProvider provider;
+    std::vector<containercp::storage::GrantLifecycleState> glc_;
+    std::vector<containercp::access::SystemAccountMapping> persisted_sys_;
+    std::string target = "/srv/containercp/users/au-dev/sites/test";
+    std::string source = "/srv/containercp/sites/test/public/";
+
+    CrashRecoveryContext()
+        : inspector(std::make_shared<FakeInspector>())
+        , fake_commands(inspector)
+        , fs_insp(std::make_shared<FakeLiveFsInspector>(inspector->fs_state_))
+        , mount_insp(std::make_shared<FakeLiveMountInspector>(inspector->mount_state_))
+        , provider(containercp::logger::Logger::instance())
+    {
+        inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                       "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+        inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+        provider.set_identity_inspector(inspector);
+        provider.set_mount_inspector(mount_insp);
+        provider.set_filesystem_inspector(fs_insp);
+        provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+            [this](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+                return fake_commands.run(cmd);
+            }));
+        provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+            containercp::access::SystemAccountAllocator::Range{10000, 19999},
+            containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+        provider.set_enabled(true);
+        provider.set_managed_home_root("/srv/containercp/users");
+
+        containercp::access::SystemAccountMapping um;
+        um.entity_type = "access_user"; um.entity_id = 1;
+        um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+        persisted_sys_.push_back(um);
+        provider.set_mapping_persistence(
+            [this]() { return persisted_sys_; },
+            [this](const containercp::access::SystemAccountMapping& m) {
+                for (auto& s : persisted_sys_) {
+                    if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; }
+                }
+                persisted_sys_.push_back(m); return true;
+            },
+            [this](const std::string& t, uint64_t id) {
+                persisted_sys_.erase(std::remove_if(persisted_sys_.begin(), persisted_sys_.end(),
+                    [&](const auto& s) { return s.entity_type == t && s.entity_id == id; }), persisted_sys_.end());
+                return true;
+            });
+
+        provider.set_grants_loader([](uint64_t) { return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{}; });
+        provider.set_grants_lookup([](uint64_t, const std::string&) { return size_t{0}; });
+        provider.set_site_resolver([](uint64_t id) {
+            containercp::access::LocalSftpProvider::SiteInfo info;
+            info.valid = true; info.site_id = id;
+            info.domain = "test"; info.root = "/srv/containercp/sites/test";
+            return info;
+        });
+
+        provider.set_grant_lifecycle_storage(
+            [this]() -> std::vector<containercp::storage::GrantLifecycleState> { return glc_; },
+            [this](const containercp::storage::GrantLifecycleState& s) -> bool {
+                for (auto& p : glc_) {
+                    if (p.access_user_id == s.access_user_id && p.site_id == s.site_id) { p = s; return true; }
+                }
+                glc_.push_back(s); return true;
+            },
+            [this](uint64_t uid, uint64_t sid) -> bool {
+                for (auto it = glc_.begin(); it != glc_.end(); ++it) {
+                    if (it->access_user_id == uid && it->site_id == sid) { glc_.erase(it); return true; }
+                }
+                return false;
+            });
+
+        // Create applying lifecycle record
+        containercp::storage::GrantLifecycleState ls;
+        ls.access_user_id = 1; ls.site_id = 1;
+        ls.permission = "read_write"; ls.state = "applying";
+        glc_.push_back(ls);
+    }
+
+    void add_mount() {
+        inspector->mount_state_->mounted_paths_.insert(target);
+        inspector->mount_state_->bind_sources_[target] = source;
+        containercp::access::FsPermissionState dir;
+        dir.exists = true; dir.is_symlink = false; dir.mode = S_IFDIR | 0755; dir.group_gid = 0;
+        inspector->fs_state_->state_[target] = dir;
+    }
+
+    void add_site_source() {
+        std::string pub = "/srv/containercp/sites/test/public/";
+        containercp::access::FsPermissionState dir;
+        dir.exists = true; dir.is_symlink = false; dir.mode = S_IFDIR | 0770; dir.group_gid = 20001;
+        inspector->fs_state_->state_[pub] = dir;
+    }
+
+    void add_grant() {
+        containercp::access::LocalSftpProvider::GrantInfo g;
+        g.site_id = 1; g.domain = "test"; g.permission = "read_write";
+        provider.set_grants_loader([g](uint64_t) {
+            return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{g};
+        });
+    }
+};
+
+TEST_CASE("ARCH-009 crash recovery after group creation only") {
+    CrashRecoveryContext ctx;
+    ctx.add_site_source();
+    ctx.add_grant();
+    auto r = ctx.provider.apply_grant(1, 1, "read_write");
+    CHECK(r.success);
+    CHECK(ctx.glc_.size() == 1);
+    CHECK(ctx.glc_[0].state == "active");
+}
+
+TEST_CASE("ARCH-009 crash recovery full apply succeeds") {
+    CrashRecoveryContext ctx;
+    ctx.add_site_source();
+    ctx.add_grant();
+    auto r = ctx.provider.apply_grant(1, 1, "read_write");
+    CHECK(r.success);
+    CHECK(ctx.glc_[0].state == "active");
+}
+
+TEST_CASE("ARCH-009 crash recovery after mount before active") {
+    CrashRecoveryContext ctx;
+    ctx.add_site_source();
+    ctx.add_grant();
+    // Simulate: all steps complete, mount exists
+    ctx.add_mount();
+    // Also create the site group mapping so find_continue_step sees it
+    containercp::access::SystemAccountMapping grp;
+    grp.entity_type = "site_group_rw"; grp.entity_id = 1;
+    grp.gid = 20001; grp.username = "site-1-rw"; grp.groupname = "site-1-rw"; grp.state = "active";
+    ctx.persisted_sys_.push_back(grp);
+    // Add user to group
+    ctx.inspector->supp_groups_["au-dev"].insert("site-1-rw");
+    // Add chroot sites/ directory
+    containercp::access::FsPermissionState sites_dir;
+    sites_dir.exists = true; sites_dir.is_symlink = false; sites_dir.mode = S_IFDIR | 0755; sites_dir.group_gid = 0;
+    ctx.inspector->fs_state_->state_["/srv/containercp/users/au-dev/sites/"] = sites_dir;
+    auto r = ctx.provider.apply_grant(1, 1, "read_write");
+    CHECK(r.success);
+    CHECK(r.message.find("recovered") != std::string::npos);
+    CHECK(ctx.glc_[0].state == "active");
+}
+
+TEST_CASE("ARCH-009 crash recovery idempotent") {
+    CrashRecoveryContext ctx;
+    ctx.add_site_source();
+    ctx.add_grant();
+    auto r1 = ctx.provider.apply_grant(1, 1, "read_write");
+    CHECK(r1.success);
+    auto r2 = ctx.provider.apply_grant(1, 1, "read_write");
+    CHECK(r2.success);
+    CHECK(ctx.glc_[0].state == "active");
+}
+
+TEST_CASE("ARCH-009 crash recovery foreign mount") {
+    CrashRecoveryContext ctx;
+    ctx.add_site_source();
+    ctx.add_grant();
+    // Simulate all pre-mount steps completed
+    containercp::access::SystemAccountMapping grp;
+    grp.entity_type = "site_group_rw"; grp.entity_id = 1;
+    grp.gid = 20001; grp.username = "site-1-rw"; grp.groupname = "site-1-rw"; grp.state = "active";
+    ctx.persisted_sys_.push_back(grp);
+    ctx.inspector->supp_groups_["au-dev"].insert("site-1-rw");
+    containercp::access::FsPermissionState sites_dir;
+    sites_dir.exists = true; sites_dir.is_symlink = false; sites_dir.mode = S_IFDIR | 0755; sites_dir.group_gid = 0;
+    ctx.inspector->fs_state_->state_["/srv/containercp/users/au-dev/sites/"] = sites_dir;
+    // Mount at target but with wrong source
+    ctx.inspector->mount_state_->mounted_paths_.insert(ctx.target);
+    ctx.inspector->mount_state_->bind_sources_[ctx.target] = "/wrong/source";
+    ctx.inspector->fs_state_->state_[ctx.target] = []{
+        containercp::access::FsPermissionState d;
+        d.exists = true; d.is_symlink = false; d.mode = S_IFDIR | 0755; d.group_gid = 0;
+        return d;
+    }();
+    auto r = ctx.provider.apply_grant(1, 1, "read_write");
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("foreign") != std::string::npos);
+    CHECK(ctx.glc_[0].state == "error");
+}

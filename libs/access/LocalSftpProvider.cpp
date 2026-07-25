@@ -1443,6 +1443,8 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
         return save_grant_lifecycle_(ls);
     };
 
+    int continue_step = -1; // -1 = run all steps (fresh apply)
+
     // 2. Handle lifecycle state
     if (lifecycle_active) {
         if (ls.state == "pending") {
@@ -1450,30 +1452,87 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
             out.success = false; out.message = "grant_lifecycle:applying_persist_failed"; return out;
         }
     } else if (ls.state == "applying") {
-        // Crash recovery: inspect observed state, continue deterministically.
-        // Check if mount already exists correctly
-        if (mount_inspector_) {
-            std::string target = managed_home_root_ + "/" + username + "/sites/"
-                + [&]() -> std::string {
-                    auto si = site_resolver_(site_id);
-                    if (!si.valid) return "";
+        // Crash recovery: inspect each step, continue from first missing step.
+        // Returns 0-based step index to continue from, or 5 if all complete.
+        auto find_continue_step = [&]() -> int {
+            // Step 0: site group — check if mapping exists
+            std::string etype = site_group_entity_type(permission);
+            if (!find_mapping(etype, site_id).has_value()) return 0;
+
+            // Step 1: membership
+            if (!inspector_->user_in_group(username, site_group_name(site_id, permission)))
+                return 1;
+
+            // Step 2: directory permissions (RW only)
+            if (permission != "read_only") {
+                if (fs_inspector_) {
+                    std::string pub = site_resolver_(site_id).root + "/public/";
+                    auto st = fs_inspector_->inspect(pub);
+                    if (!st.exists || st.group_gid <= 0) return 2;
+                }
+            }
+
+            // Step 3: ACL (RO only)
+            if (permission == "read_only") {
+                if (fs_inspector_) {
+                    std::string pub = site_resolver_(site_id).root + "/public/";
+                    auto ro_mapping = find_mapping("site_group_ro", site_id);
+                    if (ro_mapping.has_value()) {
+                        auto acl = fs_inspector_->inspect_acl(pub, ro_mapping->groupname);
+                        if (acl.acl_status != InspectionStatus::Ok) return 3;
+                        if (permission == "read_only" && !acl.acl.access_present) return 3;
+                    }
+                }
+            }
+
+            // Step 4: chroot layout — check sites/ dir exists
+            {
+                std::string home = managed_home_root_ + "/" + username;
+                std::string sites_dir = home + "/sites/";
+                if (fs_inspector_) {
+                    auto st = fs_inspector_->inspect(sites_dir);
+                    if (!st.exists) return 4;
+                }
+            }
+
+            // Step 5: bind mount
+            if (mount_inspector_ && site_resolver_) {
+                auto si = site_resolver_(site_id);
+                if (si.valid) {
                     std::string d = si.root;
                     while (!d.empty() && d.back() == '/') d.pop_back();
                     auto p = d.rfind('/');
-                    return (p != std::string::npos) ? d.substr(p + 1) : d;
-                }();
-            if (!target.empty()) {
-                auto ms = mount_inspector_->inspect(target);
-                if (ms.status == MountStatus::Ok && ms.mounted) {
-                    // Mount exists — everything was likely completed before crash
-                    if (!persist("active", "")) {
-                        out.success = false; out.message = "grant_lifecycle:active_persist_failed"; return out;
+                    std::string domain = (p != std::string::npos) ? d.substr(p + 1) : d;
+                    std::string target = managed_home_root_ + "/" + username + "/sites/" + domain;
+                    auto ms = mount_inspector_->inspect(target);
+                    if (ms.status == MountStatus::Ok && ms.mounted && ms.is_bind
+                        && ms.bind_root == si.root + "/public/") {
+                        return 5; // all complete
                     }
-                    out.success = true; out.message = "grant applied (recovered)"; return out;
+                    // Mount exists but is wrong — foreign or mismatched
+                    if (ms.mounted) {
+                        return -2; // foreign mount
+                    }
                 }
             }
+            return -1; // mount step needs redo
+        };
+
+        continue_step = find_continue_step();
+        if (continue_step == 5) {
+            // All steps complete — persist active
+            if (!persist("active", "")) {
+                out.success = false; out.message = "grant_lifecycle:active_persist_failed"; return out;
+            }
+            out.success = true; out.message = "grant applied (recovered)"; return out;
         }
-        // Otherwise, continue applying from the start
+        if (continue_step == -2) {
+            // Foreign mount at target — fail closed
+            persist("error", "foreign_mount_at_target");
+            out.success = false; out.message = "grant_lifecycle:foreign_mount"; return out;
+        }
+        // Otherwise, fall through to section 3 starting from continue_step
+        // continue_step < 0 means restart from step 0
     } else if (ls.state == "active") {
         // Verify complete observed state
         bool ok = true;
@@ -1532,9 +1591,10 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     }
 
     // 3. Continue apply from observed state (for pending/applying)
-    // Track which steps actually changed state
-    bool group_created   = !find_mapping(site_group_entity_type(permission), site_id).has_value();
-    bool membership_added = true;
+    // If applying recovery set continue_step, skip completed steps.
+    // -1 means run all steps (fresh apply)
+    bool group_created   = (continue_step > 0) ? false : !find_mapping(site_group_entity_type(permission), site_id).has_value();
+    bool membership_added = (continue_step > 1) ? false : true;
     bool perms_changed   = false;
     bool acl_changed     = false;
     int  original_gid    = -1;
