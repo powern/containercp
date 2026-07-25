@@ -856,6 +856,14 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     int  original_gid    = -1;
     int  original_mode   = -1;
 
+    // Helper: convert integer mode (e.g., 0755 octal = 493 decimal) to chmod-compatible octal string "755"
+    auto mode_to_octal = [](int mode) -> std::string {
+        if (mode <= 0) return "755";
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%o", mode & 07777);
+        return std::string(buf);
+    };
+
     // Step 1: Ensure site group
     auto r1 = ensure_site_group(site_id, permission);
     if (!r1.success) return r1;
@@ -907,8 +915,24 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
         if (perms_changed && original_gid > 0 && runner_) {
             std::string pub = site_resolver_(site_id).root + "/public/";
             auto gid_rb = runner_->chgrp(std::to_string(original_gid), pub);
-            auto mode_rb = runner_->chmod((original_mode > 0 ? std::to_string(original_mode) : std::string("755")), pub);
-            if (!gid_rb.success || !mode_rb.success) note("perms");
+            if (!gid_rb.success) {
+                note("perms:gid");
+            } else if (fs_inspector_) {
+                auto post = fs_inspector_->inspect(pub);
+                if (!post.exists || post.group_gid != original_gid) {
+                    note("perms:gid:postcondition");
+                }
+            }
+            std::string octal_mode = mode_to_octal(original_mode);
+            auto mode_rb = runner_->chmod(octal_mode, pub);
+            if (!mode_rb.success) {
+                note("perms:mode");
+            } else if (fs_inspector_) {
+                auto post = fs_inspector_->inspect(pub);
+                if (!post.exists || post.mode != original_mode) {
+                    note("perms:mode:postcondition");
+                }
+            }
         }
         if (membership_added) {
             auto rb2 = remove_user_from_site_group(username, site_id, permission);

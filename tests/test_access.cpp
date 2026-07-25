@@ -448,13 +448,22 @@ public:
         return user_in_supplementary_group(username, groupname);
     }
 
+    struct FsState {
+        std::map<std::string, containercp::access::FsPermissionState> state_;
+    };
+    struct MountState {
+        std::set<std::string> mounted_paths_;
+    };
+    std::shared_ptr<FsState> fs_state_ = std::make_shared<FsState>();
+    std::shared_ptr<MountState> mount_state_ = std::make_shared<MountState>();
+
     std::map<std::string, containercp::access::ObservedUser> users_;
     std::map<std::string, containercp::access::ObservedGroup> groups_;
     std::map<std::string, std::set<std::string>> supp_groups_;
 };
 
 class FakeCommandRunner {
-public:
+    public:
     explicit FakeCommandRunner(std::shared_ptr<FakeInspector> inspector = nullptr)
         : inspector_(std::move(inspector)) {}
 
@@ -477,7 +486,6 @@ private:
             containercp::access::ObservedUser u;
             u.exists = true; u.username = name;
             u.shell = "/usr/sbin/nologin"; u.locked = true;
-            // Parse -u UID and -g GID
             for (size_t i = 1; i + 1 < cmd.args.size(); ++i) {
                 if (cmd.args[i] == "-u") u.uid = std::stoi(cmd.args[i + 1]);
                 if (cmd.args[i] == "-g") u.gid = std::stoi(cmd.args[i + 1]);
@@ -488,7 +496,6 @@ private:
             std::string name = cmd.args.back();
             containercp::access::ObservedGroup g;
             g.exists = true; g.name = name;
-            // Parse -g GID
             for (size_t i = 1; i + 1 < cmd.args.size(); ++i) {
                 if (cmd.args[i] == "-g") g.gid = std::stoi(cmd.args[i + 1]);
             }
@@ -498,7 +505,6 @@ private:
         } else if (prog == "groupdel" && cmd.args.size() >= 2) {
             inspector_->groups_.erase(cmd.args.back());
         } else if (prog == "usermod" && cmd.args.size() >= 4) {
-            // usermod -a -G <group> <user>
             for (size_t i = 1; i + 1 < cmd.args.size(); ++i) {
                 if (cmd.args[i] == "-G" || (cmd.args[i] == "-a" && i + 1 < cmd.args.size() && cmd.args[i+1] == "-G")) {
                     std::string grp = cmd.args[i + (cmd.args[i] == "-G" ? 1 : 2)];
@@ -508,13 +514,83 @@ private:
                 }
             }
         } else if (prog == "gpasswd" && cmd.args.size() >= 4) {
-            // gpasswd -d <user> <group>
             std::string usr = cmd.args[2];
             std::string grp = cmd.args[3];
             auto it = inspector_->supp_groups_.find(usr);
-            if (it != inspector_->supp_groups_.end()) {
-                it->second.erase(grp);
+            if (it != inspector_->supp_groups_.end()) it->second.erase(grp);
+        } else if (prog == "chgrp" && cmd.args.size() >= 3) {
+            // chgrp <group> <path>
+            std::string group = cmd.args[1];
+            std::string path = cmd.args[2];
+            if (inspector_->fs_state_) {
+                auto it = inspector_->fs_state_->state_.find(path);
+                if (it != inspector_->fs_state_->state_.end()) {
+                    // Look up GID from group name
+                    auto git = inspector_->groups_.find(group);
+                    if (git != inspector_->groups_.end()) it->second.group_gid = git->second.gid;
+                }
             }
+        } else if (prog == "chmod" && cmd.args.size() >= 3) {
+            // chmod <mode> <path>
+            std::string mode_str = cmd.args[1];
+            std::string path = cmd.args[2];
+            if (inspector_->fs_state_ && !mode_str.empty()) {
+                auto it = inspector_->fs_state_->state_.find(path);
+                if (it != inspector_->fs_state_->state_.end()) {
+                    it->second.mode = std::stoi(mode_str, nullptr, 8);
+                }
+            }
+        } else if (prog == "setfacl" && cmd.args.size() >= 4) {
+            // setfacl -m <acl_spec> <path> or setfacl -x <acl_spec> <path>
+            // Simplified: just mark that ACL was modified
+            if (inspector_->fs_state_) {
+                std::string path = cmd.args.back();
+                auto it = inspector_->fs_state_->state_.find(path);
+                if (it != inspector_->fs_state_->state_.end()) {
+                    it->second.acl_status = containercp::access::InspectionStatus::Ok;
+                }
+            }
+        } else if ((prog == "mkdir" || prog == "mkdir_p") && cmd.args.size() >= 2) {
+            std::string path = cmd.args.back();
+            if (inspector_->fs_state_) {
+                auto it = inspector_->fs_state_->state_.find(path);
+                if (it == inspector_->fs_state_->state_.end()) {
+                    containercp::access::FsPermissionState s;
+                    s.exists = true; s.group_gid = 0; s.mode = 0755; s.acl_status = containercp::access::InspectionStatus::Ok;
+                    inspector_->fs_state_->state_[path] = s;
+                }
+            }
+        } else if (prog == "rmdir" && cmd.args.size() >= 2) {
+            std::string path = cmd.args.back();
+            if (inspector_->fs_state_) inspector_->fs_state_->state_.erase(path);
+        } else if (prog == "chown" && cmd.args.size() >= 3) {
+            // chown <uid:gid> <path>
+            if (inspector_->fs_state_) {
+                std::string path = cmd.args.back();
+                auto it = inspector_->fs_state_->state_.find(path);
+                if (it != inspector_->fs_state_->state_.end()) {
+                    std::string ug = cmd.args[1];
+                    auto pos = ug.find(':');
+                    if (pos != std::string::npos && pos + 1 < ug.size()) {
+                        std::string gid_str = ug.substr(pos + 1);
+                        if (gid_str == "root") it->second.group_gid = 0;
+                        else it->second.group_gid = std::stoi(gid_str);
+                    }
+                }
+            }
+        } else if (prog == "mount" && cmd.args.size() >= 4) {
+            // mount --bind source target
+            // For testing, just record that mount happened
+            if (inspector_->mount_state_) {
+                std::string target = cmd.args.back();
+                inspector_->mount_state_->mounted_paths_.insert(target);
+            }
+        } else if (prog == "umount" && cmd.args.size() >= 2) {
+            std::string target = cmd.args.back();
+            if (inspector_->mount_state_) inspector_->mount_state_->mounted_paths_.erase(target);
+        } else if (prog == "mountpoint" && cmd.args.size() >= 2) {
+            // mountpoint_check
+            // No state change needed for test
         }
     }
 
@@ -522,28 +598,44 @@ private:
 };
 
 struct FakeFsInspector : containercp::access::FilesystemPermissionInspector {
-    mutable std::map<std::string, containercp::access::FsPermissionState> state_;
+    // Shared state: if bound to a FakeInspector's fs_state, mutations from
+    // FakeCommandRunner (chgrp, chmod, etc.) are visible to inspect().
+    std::shared_ptr<std::map<std::string, containercp::access::FsPermissionState>> shared_;
+
+    explicit FakeFsInspector(std::shared_ptr<std::map<std::string, containercp::access::FsPermissionState>> shared = nullptr)
+        : shared_(std::move(shared)) {}
 
     containercp::access::FsPermissionState inspect(const std::string& path) const override {
-        auto it = state_.find(path);
-        if (it != state_.end()) return it->second;
+        auto& state_map = shared_ ? *shared_ : state_;
+        auto it = state_map.find(path);
+        if (it != state_map.end()) return it->second;
         containercp::access::FsPermissionState s;
         s.exists = true; s.group_gid = 20001; s.mode = 0770;
-        state_[path] = s;
+        state_map[path] = s;
         return s;
     }
     containercp::access::FsPermissionState inspect_acl(const std::string& path,
                                                         const std::string& groupname) const override {
         auto key = path + "::" + groupname;
-        auto it = state_.find(key);
-        if (it != state_.end()) return it->second;
+        auto& state_map = shared_ ? *shared_ : state_;
+        auto it = state_map.find(key);
+        if (it != state_map.end()) return it->second;
         containercp::access::FsPermissionState s;
         s.exists = true; s.mode = 0770;
         s.acl_status = containercp::access::InspectionStatus::Ok;
-        // Default: ACL absent for any group
-        state_[key] = s;
+        state_map[key] = s;
         return s;
     }
+
+public:
+    mutable std::map<std::string, containercp::access::FsPermissionState> state_;
+};
+
+// Mock mount inspector for testing: returns pre-configured results.
+class FakeMountInspector : public containercp::access::MountInspector {
+public:
+    containercp::access::MountState state_;
+    containercp::access::MountState inspect(const std::string&) const override { return state_; }
 };
 
 } // namespace
@@ -2505,4 +2597,412 @@ TEST_CASE("Phase3d grant_rollback_incomplete collects multiple errors") {
     CHECK_FALSE(r.success);
     // Mount failed → compound rollback ran. membership rollback also failed → "grant_rollback_incomplete: membership"
     CHECK(r.message.find("grant_rollback_incomplete") != std::string::npos);
+}
+
+// --- ARCH-009 Task 17: Directory mode rollback tests ---
+
+TEST_CASE("ARCH-009 directory permission rollback restores mode 0755") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    auto mount_inspector = std::make_shared<FakeMountInspector>();
+    mount_inspector->state_.mounted = false;
+    mount_inspector->state_.status = containercp::access::MountStatus::Absent;
+
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active"; um.uid = 10000; um.gid = 20000;
+    stored.push_back(um);
+    containercp::access::SystemAccountMapping grp;
+    grp.entity_type = "site_group_rw"; grp.entity_id = 1;
+    grp.gid = 21000; grp.username = "site-1-rw"; grp.groupname = "site-1-rw"; grp.state = "active";
+    stored.push_back(grp);
+
+    // Initial FS state: mode = 0755 octal (493 decimal), GID = 20001
+    std::string pub = "/srv/containercp/sites/test/public/";
+    containercp::access::FsPermissionState init;
+    init.exists = true; init.group_gid = 20001; init.mode = 0755;
+    inspector->fs_state_->state_[pub] = init;
+
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    inspector->groups_["site-1-rw"] = {true, "site-1-rw", 21000};
+
+    // FakeFsInspector shares state with FakeCommandRunner via shared_ptr aliasing
+    auto fs = std::make_shared<FakeFsInspector>(
+        std::shared_ptr<std::map<std::string, containercp::access::FsPermissionState>>(
+            inspector->fs_state_, &inspector->fs_state_->state_));
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(fs);
+    provider.set_mount_inspector(mount_inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    fake_commands.cmds_.clear();
+    auto r = provider.apply_grant(1, 1, "read_write");
+    CHECK_FALSE(r.success);
+
+    // Verify chgrp was called to restore original GID (group name "20001")
+    bool chgrp_found = false;
+    for (const auto& c : fake_commands.cmds_) {
+        if (c.args.size() >= 2 && c.args[0] == "chgrp" && c.args[1] == "20001") chgrp_found = true;
+    }
+    CHECK(chgrp_found);
+
+    // Verify chmod was called with octal "755"
+    bool chmod_found = false;
+    for (const auto& c : fake_commands.cmds_) {
+        if (c.args.size() >= 2 && c.args[0] == "chmod" && c.args[1] == "755") chmod_found = true;
+    }
+    CHECK(chmod_found);
+}
+
+TEST_CASE("ARCH-009 directory permission rollback restores mode 0770") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    auto mount_inspector = std::make_shared<FakeMountInspector>();
+    mount_inspector->state_.mounted = false;
+    mount_inspector->state_.status = containercp::access::MountStatus::Absent;
+
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active"; um.uid = 10000; um.gid = 20000;
+    stored.push_back(um);
+    containercp::access::SystemAccountMapping grp;
+    grp.entity_type = "site_group_rw"; grp.entity_id = 1;
+    grp.gid = 21000; grp.username = "site-1-rw"; grp.groupname = "site-1-rw"; grp.state = "active";
+    stored.push_back(grp);
+
+    std::string pub = "/srv/containercp/sites/test/public/";
+    containercp::access::FsPermissionState init;
+    init.exists = true; init.group_gid = 20001; init.mode = 0770;
+    inspector->fs_state_->state_[pub] = init;
+
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    inspector->groups_["site-1-rw"] = {true, "site-1-rw", 21000};
+
+    auto fs = std::make_shared<FakeFsInspector>(
+        std::shared_ptr<std::map<std::string, containercp::access::FsPermissionState>>(
+            inspector->fs_state_, &inspector->fs_state_->state_));
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(fs);
+    provider.set_mount_inspector(mount_inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    fake_commands.cmds_.clear();
+    auto r = provider.apply_grant(1, 1, "read_write");
+    CHECK_FALSE(r.success);
+
+    bool chmod_found = false;
+    for (const auto& c : fake_commands.cmds_) {
+        if (c.args.size() >= 2 && c.args[0] == "chmod" && c.args[1] == "770") chmod_found = true;
+    }
+    CHECK(chmod_found);
+}
+
+TEST_CASE("ARCH-009 directory permission rollback restores mode 0700") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    auto mount_inspector = std::make_shared<FakeMountInspector>();
+    mount_inspector->state_.mounted = false;
+    mount_inspector->state_.status = containercp::access::MountStatus::Absent;
+
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active"; um.uid = 10000; um.gid = 20000;
+    stored.push_back(um);
+    containercp::access::SystemAccountMapping grp;
+    grp.entity_type = "site_group_rw"; grp.entity_id = 1;
+    grp.gid = 21000; grp.username = "site-1-rw"; grp.groupname = "site-1-rw"; grp.state = "active";
+    stored.push_back(grp);
+
+    // Initial mode 0700 octal (448 decimal)
+    std::string pub = "/srv/containercp/sites/test/public/";
+    containercp::access::FsPermissionState init;
+    init.exists = true; init.group_gid = 20001; init.mode = 0700;
+    inspector->fs_state_->state_[pub] = init;
+
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    inspector->groups_["site-1-rw"] = {true, "site-1-rw", 21000};
+
+    auto fs = std::make_shared<FakeFsInspector>(
+        std::shared_ptr<std::map<std::string, containercp::access::FsPermissionState>>(
+            inspector->fs_state_, &inspector->fs_state_->state_));
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(fs);
+    provider.set_mount_inspector(mount_inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    fake_commands.cmds_.clear();
+    auto r = provider.apply_grant(1, 1, "read_write");
+    CHECK_FALSE(r.success);
+
+    // Verify octal conversion: 0700 → "700"
+    bool chmod_found = false;
+    for (const auto& c : fake_commands.cmds_) {
+        if (c.args.size() >= 2 && c.args[0] == "chmod" && c.args[1] == "700") chmod_found = true;
+    }
+    CHECK(chmod_found);
+}
+
+TEST_CASE("ARCH-009 directory permission rollback chmod command failure") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    auto mount_inspector = std::make_shared<FakeMountInspector>();
+    mount_inspector->state_.mounted = false;
+    mount_inspector->state_.status = containercp::access::MountStatus::Absent;
+
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active"; um.uid = 10000; um.gid = 20000;
+    stored.push_back(um);
+    containercp::access::SystemAccountMapping grp;
+    grp.entity_type = "site_group_rw"; grp.entity_id = 1;
+    grp.gid = 21000; grp.username = "site-1-rw"; grp.groupname = "site-1-rw"; grp.state = "active";
+    stored.push_back(grp);
+
+    std::string pub = "/srv/containercp/sites/test/public/";
+    containercp::access::FsPermissionState init;
+    init.exists = true; init.group_gid = 20001; init.mode = 0755;
+    inspector->fs_state_->state_[pub] = init;
+
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    inspector->groups_["site-1-rw"] = {true, "site-1-rw", 21000};
+
+    int fail_count = 0;
+    auto fs = std::make_shared<FakeFsInspector>(
+        std::shared_ptr<std::map<std::string, containercp::access::FsPermissionState>>(
+            inspector->fs_state_, &inspector->fs_state_->state_));
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(fs);
+    provider.set_mount_inspector(mount_inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands, &fail_count](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            // Fail on chmod during rollback
+            if (cmd.args[0] == "chmod" && fail_count++ > 0) return containercp::core::OperationResult{false, "chmod failed"};
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    fake_commands.cmds_.clear();
+    auto r = provider.apply_grant(1, 1, "read_write");
+    CHECK_FALSE(r.success);
+    // chmod rollback failed → should include "perms:mode"
+    CHECK(r.message.find("perms:mode") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 directory permission rollback GID command failure") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    auto mount_inspector = std::make_shared<FakeMountInspector>();
+    mount_inspector->state_.mounted = false;
+    mount_inspector->state_.status = containercp::access::MountStatus::Absent;
+
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active"; um.uid = 10000; um.gid = 20000;
+    stored.push_back(um);
+    containercp::access::SystemAccountMapping grp;
+    grp.entity_type = "site_group_rw"; grp.entity_id = 1;
+    grp.gid = 21000; grp.username = "site-1-rw"; grp.groupname = "site-1-rw"; grp.state = "active";
+    stored.push_back(grp);
+
+    std::string pub = "/srv/containercp/sites/test/public/";
+    containercp::access::FsPermissionState init;
+    init.exists = true; init.group_gid = 20001; init.mode = 0755;
+    inspector->fs_state_->state_[pub] = init;
+
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    inspector->groups_["site-1-rw"] = {true, "site-1-rw", 21000};
+
+    auto fs = std::make_shared<FakeFsInspector>(
+        std::shared_ptr<std::map<std::string, containercp::access::FsPermissionState>>(
+            inspector->fs_state_, &inspector->fs_state_->state_));
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(fs);
+    provider.set_mount_inspector(mount_inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            // Fail on chgrp during rollback (first chgrp after perms_changed)
+            if (cmd.args[0] == "chgrp" && cmd.args[1] == "20001") return containercp::core::OperationResult{false, "chgrp failed"};
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    fake_commands.cmds_.clear();
+    auto r = provider.apply_grant(1, 1, "read_write");
+    CHECK_FALSE(r.success);
+    // GID rollback failed → should include "perms:gid"
+    CHECK(r.message.find("perms:gid") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 directory permission rollback postcondition mismatch") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    auto mount_inspector = std::make_shared<FakeMountInspector>();
+    mount_inspector->state_.mounted = false;
+    mount_inspector->state_.status = containercp::access::MountStatus::Absent;
+
+    std::vector<containercp::access::SystemAccountMapping> stored;
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.state = "active"; um.uid = 10000; um.gid = 20000;
+    stored.push_back(um);
+    containercp::access::SystemAccountMapping grp;
+    grp.entity_type = "site_group_rw"; grp.entity_id = 1;
+    grp.gid = 21000; grp.username = "site-1-rw"; grp.groupname = "site-1-rw"; grp.state = "active";
+    stored.push_back(grp);
+
+    std::string pub = "/srv/containercp/sites/test/public/";
+    containercp::access::FsPermissionState init;
+    init.exists = true; init.group_gid = 20001; init.mode = 0755;
+    inspector->fs_state_->state_[pub] = init;
+
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+    inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+    inspector->groups_["site-1-rw"] = {true, "site-1-rw", 21000};
+
+    // Use the shared-state FakeFsInspector so apply_directory_permissions passes.
+    // The rollback postcondition is checked by fs_inspector_ after the rollback command runs.
+    // We intercept the rollback chgrp/chmod to return success without updating state,
+    // so the postcondition check sees stale data and reports a postcondition error.
+    auto fs = std::make_shared<FakeFsInspector>(
+        std::shared_ptr<std::map<std::string, containercp::access::FsPermissionState>>(
+            inspector->fs_state_, &inspector->fs_state_->state_));
+
+    auto* log = &containercp::logger::Logger::instance();
+    containercp::access::LocalSftpProvider provider(*log);
+    provider.set_identity_inspector(inspector);
+    provider.set_filesystem_inspector(fs);
+    provider.set_mount_inspector(mount_inspector);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            // Rollback chgrp: return success but skip state update to trigger postcondition mismatch
+            if (cmd.args[0] == "chgrp" && cmd.args[1] == "20001") return containercp::core::OperationResult{true, "ok"};
+            // Rollback chmod: same treatment
+            if (cmd.args[0] == "chmod" && cmd.args[1] == "755") return containercp::core::OperationResult{true, "ok"};
+            return fake_commands.run(cmd);
+        }));
+    provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+        containercp::access::SystemAccountAllocator::Range{10000, 19999},
+        containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
+    provider.set_mapping_persistence(
+        [&stored]() { return stored; },
+        [&stored](const containercp::access::SystemAccountMapping& m) {
+            for (auto& s : stored) { if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; } }
+            stored.push_back(m); return true;
+        },
+        [&stored](const std::string&, uint64_t) { return true; });
+
+    fake_commands.cmds_.clear();
+    auto r = provider.apply_grant(1, 1, "read_write");
+    CHECK_FALSE(r.success);
+    // Postcondition mismatch for GID (group_gid in state is still 21000, not restored to 20001)
+    bool has_gid_post = r.message.find("perms:gid:postcondition") != std::string::npos;
+    bool has_mode_post = r.message.find("perms:mode:postcondition") != std::string::npos;
+    // CHECK does not support || operator, so use separate checks
+    if (!has_gid_post && !has_mode_post) {
+        FAIL("Expected either perms:gid:postcondition or perms:mode:postcondition in: " << r.message);
+    }
 }

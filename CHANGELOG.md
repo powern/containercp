@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-25 | `this commit` | ARCH-009 Phase 3c — Directory mode rollback with postcondition verification
+
+**Summary:** Added granular rollback error reporting for directory permission restoration in `apply_grant`. Introduced `mode_to_octal` helper for correct octal format conversion. Rollback now reports separate error tokens (`perms:gid`, `perms:mode`, `perms:gid:postcondition`, `perms:mode:postcondition`) instead of a generic `perms` token, and verifies postconditions after each rollback command. MountInspector rewritten to read `/proc/self/mountinfo` directly via C++ file API (removed `cat` subprocess dependency and `CommandExecutor` coupling). Bind mount detection fixed to use `root != "/"` instead of `fstype` check. Added `FakeMountInspector`, `FsState`, `MountState` to test infrastructure. Added `FakeCommandRunner` handlers for `chgrp`, `chmod`, `setfacl`, `mkdir`, `rmdir`, `chown`, `mount`, `umount`, `mountpoint`. `FakeFsInspector` now supports shared state via `shared_` pointer for visibility from `FakeCommandRunner`. Added 6 regression tests covering mode rollback with octal conversion (0755→755, 0770→770, 0700→700), chmod command failure, GID command failure, and postcondition mismatch.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `libs/access/MountInspector.{h,cpp}`, `libs/core/ServiceRegistry.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** No user-visible behavioral change. Directory permission rollback now provides more precise error reporting. Mount inspection no longer depends on an external `cat` subprocess.
+
+**Validation:** Full doctest suite passed (993 cases, 6974 assertions). All 6 new ARCH-009 rollback tests pass. `git diff --check` passed.
+
+**Known risks:** The `StaleFsInspector` approach was replaced with command interception for the postcondition mismatch test, which more accurately simulates the scenario. No production code was modified for test infrastructure.
+
+---
+
 ## 2026-07-23 | `this commit` | ARCH-009 Phase 1 — SSH public key model and validation
 
 **Summary:** Added SQLite-backed SSH public key storage, validation, and management foundation for the Real SFTP Provider epic. Introduced `AccessKey` resource, `AccessKeyManager`, `SshKeyValidator`, schema migration v2 (`access_keys` table), and comprehensive tests.

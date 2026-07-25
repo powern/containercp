@@ -1,7 +1,6 @@
 #include "access/MountInspector.h"
 
-#include "runtime/CommandExecutor.h"
-
+#include <fstream>
 #include <sstream>
 #include <vector>
 
@@ -57,26 +56,31 @@ MountState parse_mountinfo(const std::string& output, const std::string& target)
 
 class RealMountInspector : public MountInspector {
 public:
-    explicit RealMountInspector(runtime::CommandExecutor& executor) : executor_(executor) {}
+    RealMountInspector() = default;
 
     MountState inspect(const std::string& path) const override {
-        auto result = executor_.run({"cat", "/proc/self/mountinfo"});
-        if (result.exit_code != 0) {
+        std::ifstream file("/proc/self/mountinfo");
+        if (!file) {
             MountState s;
             s.status = MountStatus::InspectionFailed;
-            s.error_detail = "cannot read mountinfo";
+            s.error_detail = "cannot open /proc/self/mountinfo";
             return s;
         }
-        return parse_mountinfo(result.out, path);
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        if (!file) {
+            MountState s;
+            s.status = MountStatus::InspectionFailed;
+            s.error_detail = "cannot read /proc/self/mountinfo";
+            return s;
+        }
+        return parse_mountinfo(buffer.str(), path);
     }
-
-private:
-    runtime::CommandExecutor& executor_;
 };
 
 std::shared_ptr<MountInspector>
-make_real_mount_inspector(runtime::CommandExecutor& executor) {
-    return std::make_shared<RealMountInspector>(executor);
+make_real_mount_inspector() {
+    return std::make_shared<RealMountInspector>();
 }
 
 } // namespace containercp::access

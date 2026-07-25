@@ -4,8 +4,6 @@
 #include <memory>
 #include <string>
 
-namespace containercp::runtime { class CommandExecutor; }
-
 namespace containercp::access {
 
 enum class MountStatus { Ok, Absent, TargetMissing, PermissionDenied, InspectionFailed, DependencyUnavailable };
@@ -31,7 +29,7 @@ public:
 };
 
 // Production implementation using /proc/self/mountinfo
-std::shared_ptr<MountInspector> make_real_mount_inspector(runtime::CommandExecutor& executor);
+std::shared_ptr<MountInspector> make_real_mount_inspector();
 
 } // namespace containercp::access
 

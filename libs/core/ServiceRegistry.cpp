@@ -638,7 +638,7 @@ void ServiceRegistry::start() {
         access::make_real_filesystem_inspector(credential_command_executor_));
     // ARCH-009 Phase 3c: inject mount inspector.
     access_provider_.set_mount_inspector(
-        access::make_real_mount_inspector(credential_command_executor_));
+        access::make_real_mount_inspector());
     // Site root resolver for bind mount targets.
     access_provider_.set_site_resolver([this](uint64_t site_id) -> containercp::access::LocalSftpProvider::SiteInfo {
         containercp::access::LocalSftpProvider::SiteInfo info; info.site_id = site_id;
