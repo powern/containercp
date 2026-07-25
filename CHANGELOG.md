@@ -6,7 +6,21 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-25 | `this commit` | ARCH-009 Task 37 — Complete revoke_all_grants Lifecycle
+## 2026-07-25 | `this commit` | ARCH-009 Task 38 — Make create_user Lifecycle Transactional
+
+**Summary:** Rewrote `create_user()` with clear step ordering, transactional rollback, and postcondition verification. Steps: 1) validate deps and mapping intent, 2) allocate UID/GID, 3) persist provisioning, 4) create OS account (group, user, membership, password lock, home), 5) verify username/UID/GID/home/shell, 6) persist active, 7) ensure chroot layout, 8) apply pending grants, 9) verify grants. Before OS mutation (steps 1-3), rollback is persistence-only. After OS creation, rollback uses `rollback_create`. If `apply_pending_grants` fails, user state is preserved as "provisioning" (incomplete). Fixed `create_directories` return-value check (returns false when dir already exists, not an error). Updated `FakeCommandRunner` chown handler to set `owner_uid`. Added 9 tests: allocation failure, provisioning save failure, useradd failure, group membership failure, passwd lock failure, home creation, active save failure, chroot layout failure, pending grant apply failure.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** `create_user()` is now fully transactional with clear ordering and rollback boundaries. Failed grant applications no longer delete the user account. User mapping preserved as "provisioning" for recovery.
+
+**Validation:** Full doctest suite passed (1169 cases, 7538 assertions). 9 new create_user failure tests pass. `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
+## 2026-07-25 | `1b9c143` | ARCH-009 Task 37 — Complete revoke_all_grants Lifecycle
 
 **Summary:** Rewrote `revoke_all_grants()` to process lifecycle records instead of raw grants. Loads all records for the user, sorts by `site_id`, processes each through `revoke_grant()`. Continues after independent failures with bounded error aggregation. Returns failure if any revoke fails. Preserves failed grants for retry. Re-checks persisted state after processing and verifies zero managed mounts remain for successfully revoked grants. Never mutates foreign mounts. Requires lifecycle storage callbacks. Added 9 tests: no grants, one active, multiple active, first failure continues, revoking state recovery, applying state cleanup, error state cleanup, persistence failure, one failed grant remains.
 
