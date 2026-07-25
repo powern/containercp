@@ -6,7 +6,21 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-25 | `this commit` | ARCH-009 Task 25 — Safe Managed Mount-Target Removal
+## 2026-07-25 | `this commit` | ARCH-009 Task 26 — Fail Closed When Grant Storage Is Not Configured
+
+**Summary:** Fixed 5 methods that silently treated missing grant storage dependencies as idempotent success or empty results. `cleanup_all_mounts()` now fails with `grant_loader_not_configured` when `grants_loader_` is missing (previously returned "0 mounts cleaned"). `apply_pending_grants()` and `revoke_all_grants()` fail with the same token instead of returning "no grants loader" as success. `apply_grant()` now validates `site_resolver_` and `inspector_` upfront (previously would crash). All failing paths perform zero filesystem mutation. Added `mount_inspector_` and `runner_` dependency checks to `cleanup_all_mounts()`. Updated 4 existing tests to set `grants_loader_` where lifecycle methods now require it. Added 8 direct dependency-missing tests verifying failure, exact error token, zero command mutations, and zero persisted-state changes.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** All grant lifecycle methods now fail closed with bounded error tokens when their storage dependencies are missing. `grant_loader_not_configured` is the stable error token for a missing `grants_loader_`. No silent success, no empty-reset fallback, no mutation on missing dependencies.
+
+**Validation:** Full doctest suite passed (1069 cases, 7187 assertions). 8 new dependency-missing tests pass. `git diff --check` passed. Zero compiler warnings.
+
+**Known risks:** None.
+
+---
+
+## 2026-07-25 | ARCH-009 Task 25 — Safe Managed Mount-Target Removal
 
 **Summary:** Introduced `safe_rmdir()` — a guarded directory removal method that proves 8 preconditions before calling `rmdir`: path inside managed chroot, exact domain directory match, exists and is directory, not symlink, not a mountpoint, empty, managed by ContainerCP, created by us or persisted. Returns bounded error tokens (`rmdir_safety:unsafe_path`, `:path_mismatch`, `:not_found`, `:symlink`, `:still_mounted`, `:not_empty`, `:unmanaged_target`, `:rmdir_failed`, `:still_present`). Postcondition verifies directory absent. Wired into `unmount_site()` (always created_by_us=true for persisted managed targets) and both `bind_mount_site()` rollback paths (guarded by `dir_created`). Added `dir_is_empty` to `SystemAccountCommandRunner` (via `ls -A`). Added `output` field to `OperationResult` for command stdout. Added `non_empty_dirs_` to `FakeCommandRunner`. 10 direct tests cover every precondition and failure branch.
 

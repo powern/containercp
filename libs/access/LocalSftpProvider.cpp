@@ -1043,22 +1043,22 @@ core::OperationResult LocalSftpProvider::unmount_site(uint64_t access_user_id, u
 core::OperationResult LocalSftpProvider::cleanup_all_mounts(uint64_t access_user_id) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "cleanup_all_mounts"), out;
-    if (!runner_) { out.success = false; out.message = "provider dependencies not configured"; return out; }
+    if (!runner_ || !mount_inspector_) {
+        out.success = false; out.message = "provider dependencies not configured"; return out;
+    }
+    if (!grants_loader_) { out.success = false; out.message = "grant_loader_not_configured"; return out; }
 
     std::string username = resolve_username(access_user_id);
     if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
-
 
     // Enumerate all mounts within the user's sites/ using mount inspector via known domains.
     // We iterate persisted grants to know which domains to check.
     size_t cleaned = 0;
     size_t failed = 0;
-    if (grants_loader_) {
-        auto grants = grants_loader_(access_user_id);
-        for (const auto& g : grants) {
-            auto r = unmount_site(access_user_id, g.site_id);
-            if (r.success) cleaned++; else failed++;
-        }
+    auto grants = grants_loader_(access_user_id);
+    for (const auto& g : grants) {
+        auto r = unmount_site(access_user_id, g.site_id);
+        if (r.success) cleaned++; else failed++;
     }
 
     if (failed > 0) { out.success = false; out.message = std::to_string(cleaned) + " cleaned, " + std::to_string(failed) + " failed"; return out; }
@@ -1085,6 +1085,9 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
                                                        const std::string& permission) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "apply_grant"), out;
+    if (!site_resolver_ || !inspector_) {
+        out.success = false; out.message = "provider dependencies not configured"; return out;
+    }
     if (site_id == 0) { out.success = false; out.message = "admin_panel_sftp_access_forbidden"; return out; }
 
     std::string username = resolve_username(access_user_id);
@@ -1242,7 +1245,7 @@ core::OperationResult LocalSftpProvider::revoke_grant(uint64_t access_user_id, u
 core::OperationResult LocalSftpProvider::apply_pending_grants(uint64_t access_user_id) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "apply_pending_grants"), out;
-    if (!grants_loader_) { out.success = true; out.message = "no grants loader"; return out; }
+    if (!grants_loader_) { out.success = false; out.message = "grant_loader_not_configured"; return out; }
 
     auto grants = grants_loader_(access_user_id);
     for (const auto& g : grants) {
@@ -1255,7 +1258,7 @@ core::OperationResult LocalSftpProvider::apply_pending_grants(uint64_t access_us
 core::OperationResult LocalSftpProvider::revoke_all_grants(uint64_t access_user_id) {
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "revoke_all_grants"), out;
-    if (!grants_loader_) { out.success = true; out.message = "no grants loader"; return out; }
+    if (!grants_loader_) { out.success = false; out.message = "grant_loader_not_configured"; return out; }
 
     auto grants = grants_loader_(access_user_id);
     size_t failed = 0;

@@ -846,6 +846,9 @@ TEST_CASE("Provider create_user lifecycle") {
                 [&](const auto& s) { return s.entity_type == t && s.entity_id == id; }), stored.end());
             return true;
         });
+    provider.set_grants_loader([](uint64_t) {
+        return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
+    });
 
     containercp::access::AccessUser user;
     user.id = 1; user.username = "testdev";
@@ -1014,6 +1017,9 @@ TEST_CASE("Provider remove_user fails closed when home cleanup fails") {
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
         [&stored](const std::string&, uint64_t) { stored.clear(); return true; });
+    provider.set_grants_loader([](uint64_t) {
+        return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
+    });
 
     containercp::access::AccessUser user;
     user.id = 1; user.username = "cleanup";
@@ -1055,6 +1061,9 @@ TEST_CASE("Provider remove_user fails closed when managed_path_safe detects unsa
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
         [&mapping_deleted](const std::string&, uint64_t) { mapping_deleted = true; return true; });
+    provider.set_grants_loader([](uint64_t) {
+        return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
+    });
 
     containercp::access::AccessUser user;
     user.id = 1; user.username = "unsafe";
@@ -1118,6 +1127,9 @@ TEST_CASE("Provider stale provisioning cleanup and retry succeeds") {
                 [&](const auto& s) { return s.entity_type == t && s.entity_id == id; }), stored.end());
             return true;
         });
+    provider.set_grants_loader([](uint64_t) {
+        return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
+    });
 
     // --- Test 1: First create recovers from stale state ---
     containercp::access::AccessUser user;
@@ -2827,6 +2839,7 @@ TEST_CASE("Phase3c cleanup_all_mounts fails on partial failure") {
     auto* log = &containercp::logger::Logger::instance();
     containercp::access::LocalSftpProvider provider(*log);
     provider.set_identity_inspector(inspector);
+    provider.set_mount_inspector(std::make_shared<FakeLiveMountInspector>(inspector->mount_state_));
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
             if (cmd.args[0] == "umount") return containercp::core::OperationResult{false, "busy"};
@@ -2844,6 +2857,12 @@ TEST_CASE("Phase3c cleanup_all_mounts fails on partial failure") {
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
         [&stored](const std::string&, uint64_t) { return true; });
+
+    // Create mounts so unmount_site has something to work on
+    inspector->mount_state_->mounted_paths_.insert("/srv/containercp/users/au-dev/sites/test");
+    inspector->mount_state_->bind_sources_["/srv/containercp/users/au-dev/sites/test"] = "/srv/containercp/sites/test/public/";
+    inspector->mount_state_->mounted_paths_.insert("/srv/containercp/users/au-dev/sites/test2");
+    inspector->mount_state_->bind_sources_["/srv/containercp/users/au-dev/sites/test2"] = "/srv/containercp/sites/test2/public/";
 
     auto r = provider.cleanup_all_mounts(1);
     CHECK_FALSE(r.success);
@@ -5111,4 +5130,145 @@ TEST_CASE("ARCH-009 safe rmdir still mounted") {
     auto r = ctx.provider.safe_rmdir(ctx.target, true, ctx.username, ctx.domain);
     CHECK_FALSE(r.success);
     CHECK(r.message == "rmdir_safety:still_mounted");
+}
+
+// --- ARCH-009 Task 26: Fail Closed When Grant Storage Is Not Configured ---
+
+struct GrantDepTestContext {
+    std::shared_ptr<FakeInspector> inspector;
+    FakeCommandRunner fake_commands;
+    std::shared_ptr<FakeLiveFsInspector> fs_insp;
+    std::shared_ptr<FakeLiveMountInspector> mount_insp;
+    containercp::access::LocalSftpProvider provider;
+
+    GrantDepTestContext()
+        : inspector(std::make_shared<FakeInspector>())
+        , fake_commands(inspector)
+        , fs_insp(std::make_shared<FakeLiveFsInspector>(inspector->fs_state_))
+        , mount_insp(std::make_shared<FakeLiveMountInspector>(inspector->mount_state_))
+        , provider(containercp::logger::Logger::instance())
+    {
+        inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                       "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+
+        provider.set_identity_inspector(inspector);
+        provider.set_mount_inspector(mount_insp);
+        provider.set_filesystem_inspector(fs_insp);
+        provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+            [this](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+                return fake_commands.run(cmd);
+            }));
+        provider.set_enabled(true);
+
+        // Set a valid mapping so resolve_username works
+        containercp::access::SystemAccountMapping um;
+        um.entity_type = "access_user"; um.entity_id = 1;
+        um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+        std::vector<containercp::access::SystemAccountMapping> stored = {um};
+        provider.set_mapping_persistence(
+            [stored]() { return stored; },
+            [](const containercp::access::SystemAccountMapping&) { return true; },
+            [](const std::string&, uint64_t) { return true; });
+
+        // Set a grants_loader by default; tests can override by setting null
+        provider.set_grants_loader([](uint64_t) {
+            return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
+        });
+
+        // Set site_resolver by default
+        provider.set_site_resolver([](uint64_t id) {
+            containercp::access::LocalSftpProvider::SiteInfo info;
+            info.valid = true; info.site_id = id;
+            info.domain = "test"; info.root = "/srv/containercp/sites/test";
+            return info;
+        });
+    }
+
+    size_t mutation_count() const {
+        return fake_commands.cmds_.size();
+    }
+};
+
+// --- cleanup_all_mounts ---
+
+TEST_CASE("ARCH-009 cleanup_all_mounts missing grants_loader") {
+    GrantDepTestContext ctx;
+    // Unset grants_loader by overriding with null
+    ctx.provider.set_grants_loader(nullptr);
+    auto r = ctx.provider.cleanup_all_mounts(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "grant_loader_not_configured");
+    CHECK(ctx.mutation_count() == 0);
+}
+
+TEST_CASE("ARCH-009 cleanup_all_mounts missing runner") {
+    GrantDepTestContext ctx;
+    ctx.provider.set_command_runner(nullptr);
+    auto r = ctx.provider.cleanup_all_mounts(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "provider dependencies not configured");
+    CHECK(ctx.mutation_count() == 0);
+}
+
+TEST_CASE("ARCH-009 cleanup_all_mounts missing mount_inspector") {
+    GrantDepTestContext ctx;
+    ctx.provider.set_mount_inspector(nullptr);
+    auto r = ctx.provider.cleanup_all_mounts(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "provider dependencies not configured");
+    CHECK(ctx.mutation_count() == 0);
+}
+
+// --- apply_pending_grants ---
+
+TEST_CASE("ARCH-009 apply_pending_grants missing grants_loader") {
+    GrantDepTestContext ctx;
+    ctx.provider.set_grants_loader(nullptr);
+    auto r = ctx.provider.apply_pending_grants(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "grant_loader_not_configured");
+    CHECK(ctx.mutation_count() == 0);
+}
+
+// --- revoke_all_grants ---
+
+TEST_CASE("ARCH-009 revoke_all_grants missing grants_loader") {
+    GrantDepTestContext ctx;
+    ctx.provider.set_grants_loader(nullptr);
+    auto r = ctx.provider.revoke_all_grants(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "grant_loader_not_configured");
+    CHECK(ctx.mutation_count() == 0);
+}
+
+// --- apply_grant ---
+
+TEST_CASE("ARCH-009 apply_grant missing site_resolver") {
+    GrantDepTestContext ctx;
+    ctx.provider.set_site_resolver(nullptr);
+    auto r = ctx.provider.apply_grant(1, 1, "read_write");
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "provider dependencies not configured");
+    CHECK(ctx.mutation_count() == 0);
+}
+
+TEST_CASE("ARCH-009 apply_grant missing inspector") {
+    GrantDepTestContext ctx;
+    ctx.provider.set_identity_inspector(nullptr);
+    auto r = ctx.provider.apply_grant(1, 1, "read_write");
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "provider dependencies not configured");
+    CHECK(ctx.mutation_count() == 0);
+}
+
+// --- revoke_grant ---
+
+TEST_CASE("ARCH-009 revoke_grant missing mount_inspector") {
+    GrantDepTestContext ctx;
+    ctx.provider.set_mount_inspector(nullptr);
+    auto r = ctx.provider.revoke_grant(1, 1, "read_write");
+    CHECK_FALSE(r.success);
+    // revoke_grant calls unmount_site which reports the missing dep
+    CHECK(r.message == "provider dependencies not configured");
+    CHECK(ctx.mutation_count() == 0);
 }
