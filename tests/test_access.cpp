@@ -4603,3 +4603,226 @@ TEST_CASE("ARCH-009 bind mount idempotent malformed mount state") {
     // Empty fstype checked before device in the code, so expect fstype error
     CHECK(r.message.find("foreign_or_mismatched_mount:fstype") != std::string::npos);
 }
+
+// --- ARCH-009 Task 23: Fail closed on unmount inspection errors ---
+
+struct UnmountTestContext {
+    std::shared_ptr<FakeInspector> inspector;
+    FakeCommandRunner fake_commands;
+    std::shared_ptr<containercp::access::MountInspector> mount_insp;
+    containercp::access::LocalSftpProvider provider;
+
+    UnmountTestContext()
+        : inspector(std::make_shared<FakeInspector>())
+        , fake_commands(inspector)
+        , mount_insp(std::make_shared<FakeMountInspector>())
+        , provider(containercp::logger::Logger::instance())
+    {
+        inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                       "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+        provider.set_identity_inspector(inspector);
+        provider.set_mount_inspector(mount_insp);
+        provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+            [this](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+                return fake_commands.run(cmd);
+            }));
+        provider.set_enabled(true);
+        provider.set_site_resolver([](uint64_t id) {
+            containercp::access::LocalSftpProvider::SiteInfo info;
+            info.valid = true; info.site_id = id;
+            info.domain = "test"; info.root = "/srv/containercp/sites/test";
+            return info;
+        });
+        provider.set_mapping_persistence(
+            []() { return std::vector<containercp::access::SystemAccountMapping>{}; },
+            [](const containercp::access::SystemAccountMapping&) { return true; },
+            [](const std::string&, uint64_t) { return true; });
+    }
+
+    void set_mount_state(bool mounted, bool is_bind, const std::string& bind_root,
+                         containercp::access::MountStatus status,
+                         const std::string& target = "/srv/containercp/users/au-dev/sites/test",
+                         const std::string& fstype = "ext4",
+                         const std::string& device = "0:30",
+                         const std::string& options = "rw")
+    {
+        auto ms = std::dynamic_pointer_cast<FakeMountInspector>(mount_insp);
+        if (ms) {
+            ms->state_.mounted = mounted;
+            ms->state_.is_bind = is_bind;
+            ms->state_.target = target;
+            ms->state_.bind_root = bind_root;
+            ms->state_.fstype = fstype;
+            ms->state_.device = device;
+            ms->state_.options = options;
+            ms->state_.status = status;
+        }
+    }
+
+    bool has_mutation_commands() const {
+        for (const auto& c : fake_commands.cmds_) {
+            if (c.args[0] == "umount" || c.args[0] == "rmdir") return true;
+        }
+        return false;
+    }
+};
+
+// Set up a manager mapping so resolve_username finds the user
+static void setup_manager_for_unmount(containercp::access::LocalSftpProvider& provider,
+                                       std::shared_ptr<FakeInspector> inspector) {
+    containercp::access::SystemAccountMapping um;
+    um.entity_type = "access_user"; um.entity_id = 1;
+    um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+    std::vector<containercp::access::SystemAccountMapping> stored = {um};
+    provider.set_mapping_persistence(
+        [stored]() { return stored; },
+        [](const containercp::access::SystemAccountMapping&) { return true; },
+        [](const std::string&, uint64_t) { return true; });
+}
+
+TEST_CASE("ARCH-009 unmount expected mount present") {
+    auto inspector = std::make_shared<FakeInspector>();
+    FakeCommandRunner fake_commands(inspector);
+    inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                   "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+
+    auto mount_insp = std::make_shared<FakeLiveMountInspector>(inspector->mount_state_);
+    auto target = "/srv/containercp/users/au-dev/sites/test";
+    auto source = "/srv/containercp/sites/test/public/";
+    inspector->mount_state_->mounted_paths_.insert(target);
+    inspector->mount_state_->bind_sources_[target] = source;
+
+    containercp::access::LocalSftpProvider provider(containercp::logger::Logger::instance());
+    provider.set_identity_inspector(inspector);
+    provider.set_mount_inspector(mount_insp);
+    provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            return fake_commands.run(cmd);
+        }));
+    provider.set_enabled(true);
+    provider.set_site_resolver([](uint64_t id) {
+        containercp::access::LocalSftpProvider::SiteInfo info;
+        info.valid = true; info.site_id = id;
+        info.domain = "test"; info.root = "/srv/containercp/sites/test";
+        return info;
+    });
+    setup_manager_for_unmount(provider, inspector);
+
+    auto r = provider.unmount_site(1, 1);
+    CHECK(r.success);
+    CHECK(r.message == "unmounted: test");
+}
+
+TEST_CASE("ARCH-009 unmount mount absent") {
+    UnmountTestContext ctx;
+    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    ctx.set_mount_state(false, false, "",
+                        containercp::access::MountStatus::Absent);
+    auto r = ctx.provider.unmount_site(1, 1);
+    CHECK(r.success);
+    CHECK(r.message == "already unmounted");
+    CHECK_FALSE(ctx.has_mutation_commands());
+}
+
+TEST_CASE("ARCH-009 unmount foreign mount source mismatch") {
+    UnmountTestContext ctx;
+    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    ctx.set_mount_state(true, true, "/wrong/source",
+                        containercp::access::MountStatus::Ok);
+    auto r = ctx.provider.unmount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("foreign_or_mismatched_mount:source") != std::string::npos);
+    CHECK_FALSE(ctx.has_mutation_commands());
+}
+
+TEST_CASE("ARCH-009 unmount non-bind mount") {
+    UnmountTestContext ctx;
+    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    ctx.set_mount_state(true, false, "/",
+                        containercp::access::MountStatus::Ok);
+    auto r = ctx.provider.unmount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("foreign_or_mismatched_mount:no_bind") != std::string::npos);
+    CHECK_FALSE(ctx.has_mutation_commands());
+}
+
+TEST_CASE("ARCH-009 unmount device mismatch") {
+    UnmountTestContext ctx;
+    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    ctx.set_mount_state(true, true, "/srv/containercp/sites/test/public/",
+                        containercp::access::MountStatus::Ok,
+                        "/srv/containercp/users/au-dev/sites/test",
+                        "ext4", "");  // empty device
+    auto r = ctx.provider.unmount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("foreign_or_mismatched_mount:device") != std::string::npos);
+    CHECK_FALSE(ctx.has_mutation_commands());
+}
+
+TEST_CASE("ARCH-009 unmount options mismatch ro") {
+    UnmountTestContext ctx;
+    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    ctx.set_mount_state(true, true, "/srv/containercp/sites/test/public/",
+                        containercp::access::MountStatus::Ok,
+                        "/srv/containercp/users/au-dev/sites/test",
+                        "ext4", "0:30", "ro");
+    auto r = ctx.provider.unmount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("foreign_or_mismatched_mount:options") != std::string::npos);
+    CHECK_FALSE(ctx.has_mutation_commands());
+}
+
+TEST_CASE("ARCH-009 unmount TargetMissing") {
+    UnmountTestContext ctx;
+    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    ctx.set_mount_state(false, false, "",
+                        containercp::access::MountStatus::TargetMissing);
+    auto r = ctx.provider.unmount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "unmount_inspection:invalid_target");
+    CHECK_FALSE(ctx.has_mutation_commands());
+}
+
+TEST_CASE("ARCH-009 unmount PermissionDenied") {
+    UnmountTestContext ctx;
+    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    ctx.set_mount_state(false, false, "",
+                        containercp::access::MountStatus::PermissionDenied);
+    auto r = ctx.provider.unmount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "unmount_inspection:permission_denied");
+    CHECK_FALSE(ctx.has_mutation_commands());
+}
+
+TEST_CASE("ARCH-009 unmount InspectionFailed") {
+    UnmountTestContext ctx;
+    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    ctx.set_mount_state(false, false, "",
+                        containercp::access::MountStatus::InspectionFailed);
+    auto r = ctx.provider.unmount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "unmount_inspection:io_error");
+    CHECK_FALSE(ctx.has_mutation_commands());
+}
+
+TEST_CASE("ARCH-009 unmount DependencyUnavailable") {
+    UnmountTestContext ctx;
+    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    ctx.set_mount_state(false, false, "",
+                        containercp::access::MountStatus::DependencyUnavailable);
+    auto r = ctx.provider.unmount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "unmount_inspection:dependency_unavailable");
+    CHECK_FALSE(ctx.has_mutation_commands());
+}
+
+TEST_CASE("ARCH-009 unmount ambiguous state Ok not mounted") {
+    UnmountTestContext ctx;
+    setup_manager_for_unmount(ctx.provider, ctx.inspector);
+    ctx.set_mount_state(false, false, "",
+                        containercp::access::MountStatus::Ok);
+    auto r = ctx.provider.unmount_site(1, 1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "unmount_inspection:ambiguous");
+    CHECK_FALSE(ctx.has_mutation_commands());
+}

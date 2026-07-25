@@ -951,19 +951,74 @@ core::OperationResult LocalSftpProvider::unmount_site(uint64_t access_user_id, u
     std::string target = managed_home_root_ + "/" + username + "/sites/" + domain;
 
     auto existing = mount_inspector_->inspect(target);
-    if (!existing.mounted) {
+
+    // Classify mount state
+    switch (existing.status) {
+    case MountStatus::Absent:
+        // Already unmounted — idempotent success
         out.success = true; out.message = "already unmounted"; return out;
+
+    case MountStatus::Ok:
+        // Mount present — check if it matches our managed bind
+        break;
+
+    case MountStatus::TargetMissing:
+        out.success = false; out.message = "unmount_inspection:invalid_target"; return out;
+
+    case MountStatus::PermissionDenied:
+        out.success = false; out.message = "unmount_inspection:permission_denied"; return out;
+
+    case MountStatus::InspectionFailed:
+        out.success = false; out.message = "unmount_inspection:io_error"; return out;
+
+    case MountStatus::DependencyUnavailable:
+        out.success = false; out.message = "unmount_inspection:dependency_unavailable"; return out;
     }
-    // Only unmount managed bind mounts pointing to expected source
+
+    // MountStatus::Ok — verify it's our managed bind mount
+    if (!existing.mounted) {
+        // Not mounted despite Ok status — ambiguous state, fail closed
+        out.success = false; out.message = "unmount_inspection:ambiguous"; return out;
+    }
+
     std::string expected_source = site_root + "/public/";
-    if (!existing.is_bind || existing.bind_root != expected_source) {
-        out.success = false; out.message = "foreign mount — refusing to unmount"; return out;
+    bool match = true;
+    std::string mismatch_reason;
+    auto note = [&](const char* reason) { if (mismatch_reason.empty()) mismatch_reason = reason; match = false; };
+
+    if (!existing.is_bind)                 note("no_bind");
+    if (existing.target != target)         note("target");
+    if (existing.bind_root != expected_source) note("source");
+    if (existing.fstype.empty())           note("fstype");
+    if (existing.device.empty())           note("device");
+    {
+        bool has_rw = false, has_ro = false;
+        std::string opts = existing.options;
+        std::string::size_type pos = 0;
+        while (pos < opts.size()) {
+            auto comma = opts.find(',', pos);
+            std::string opt = (comma == std::string::npos) ? opts.substr(pos) : opts.substr(pos, comma - pos);
+            if (opt == "rw") has_rw = true;
+            if (opt == "ro") has_ro = true;
+            if (comma == std::string::npos) break;
+            pos = comma + 1;
+        }
+        if (!has_rw || has_ro) note("options");
+    }
+
+    if (!match) {
+        out.success = false;
+        out.message = std::string("foreign_or_mismatched_mount:") + mismatch_reason;
+        return out;
     }
 
     auto r1 = runner_->umount(target);
     if (!r1.success) { out.success = false; out.message = "umount failed"; return out; }
 
     auto post = mount_inspector_->inspect(target);
+    if (post.status != MountStatus::Absent && post.status != MountStatus::Ok) {
+        out.success = false; out.message = "umount verification inspection failed"; return out;
+    }
     if (post.mounted) { out.success = false; out.message = "umount verification failed"; return out; }
 
     auto r2 = runner_->rmdir(target);

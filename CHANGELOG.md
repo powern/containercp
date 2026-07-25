@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-25 | `this commit` | ARCH-009 Task 23 — Fail closed on unmount inspection errors
+
+**Summary:** Rewrote `unmount_site()` to correctly classify mount inspection results. MountStatus::Absent → idempotent success. MountStatus::Ok + mounted + full identity match → safe unmount. MountStatus::Ok + any field mismatch → `foreign_or_mismatched_mount:<reason>` with zero mutation. MountStatus::Ok + not mounted → `unmount_inspection:ambiguous`. MountStatus::TargetMissing → `unmount_inspection:invalid_target`. MountStatus::PermissionDenied → `unmount_inspection:permission_denied`. MountStatus::InspectionFailed → `unmount_inspection:io_error`. MountStatus::DependencyUnavailable → `unmount_inspection:dependency_unavailable`. Post-umount verification now checks for inspection failures. Added 11 direct tests covering every MountStatus value and field mismatch, with zero-mutation assertions on all rejected states.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** `unmount_site` no longer treats inspection failures as "not mounted". Every MountStatus and field mismatch produces a distinct stable error token. Rejected states perform zero filesystem mutation.
+
+**Validation:** Full doctest suite passed (1046 cases, 7128 assertions). All 11 new ARCH-009 unmount tests pass. `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
 ## 2026-07-25 | `this commit` | ARCH-009 Task 22 — Enforce full idempotent bind identity
 
 **Summary:** Enhanced the existing-mount pre-check in `bind_mount_site()` to verify all 8 identity fields before returning idempotent success: MountStatus Ok, mounted true, exact canonical target, exact canonical source/root, bind semantics confirmed (is_bind && fstype non-empty), device/filesystem identity consistent (device non-empty), required mount options (rw present, ro absent), and persisted grant belongs to the same user and site. If any field differs, returns `foreign_or_mismatched_mount:<reason>` error without mutating state. Post-mount verification also uses the same thorough comparison. Added 10 regression tests covering: exact match (idempotent success), source mismatch, target mismatch, non-bind regular mount, device mismatch, mount option mismatch (ro), another user's grant, another site's grant, inspector failure, and malformed mount state (empty fstype).
