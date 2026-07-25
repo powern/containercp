@@ -1387,7 +1387,7 @@ std::string LocalSftpProvider::resolve_username(uint64_t access_user_id) {
     if (!load_mappings_) return {};
     auto mappings = load_mappings_();
     for (const auto& m : mappings) {
-        if (m.entity_type == "access_user" && m.entity_id == access_user_id && m.state == "active")
+        if (m.entity_type == "access_user" && m.entity_id == access_user_id && (m.state == "active" || m.state == "removing"))
             return m.username;
     }
     return {};
@@ -2397,6 +2397,7 @@ core::OperationResult LocalSftpProvider::remove_user(const AccessUser& user) {
         out.success = false; out.message = "SFTP provider dependencies not configured"; return out;
     }
 
+    // 1. Load and verify the active managed user mapping
     auto mapping = find_mapping("access_user", user.id);
     if (!mapping.has_value()) {
         out.success = false; out.message = "system account mapping not found"; return out;
@@ -2407,38 +2408,111 @@ core::OperationResult LocalSftpProvider::remove_user(const AccessUser& user) {
         out.success = false; out.message = "unmanaged_account_conflict: " + mapping->username; return out;
     }
 
-    // Phase 3d: revoke all grants before removing user
-    auto grants = revoke_all_grants(user.id);
-    if (!grants.success) return grants;
+    // 2. Mark user removal state before OS mutation
+    mapping->state = "removing";
+    if (save_mapping_ && !save_mapping_(*mapping)) {
+        out.success = false; out.message = "failed to persist removing state"; return out;
+    }
 
-    // Remove user (without -r to avoid recursive home delete)
+    // 3. Revoke all grants
+    auto grants = revoke_all_grants(user.id);
+    if (!grants.success) {
+        mapping->state = "error";
+        if (save_mapping_) save_mapping_(*mapping);
+        out.success = false; out.message = "revoke_all_grants failed: " + grants.message; return out;
+    }
+
+    // 4. Verify no non-terminal grants remain
+    if (load_all_grant_lifecycle_) {
+        auto all = load_all_grant_lifecycle_();
+        for (const auto& l : all) {
+            if (l.access_user_id == user.id && l.state != "error") {
+                mapping->state = "error";
+                if (save_mapping_) save_mapping_(*mapping);
+                out.success = false; out.message = "non-terminal grant remains"; return out;
+            }
+        }
+    }
+
+    // 5. Cleanup all managed mounts
+    auto mounts = cleanup_all_mounts(user.id);
+    if (!mounts.success) {
+        mapping->state = "error";
+        if (save_mapping_) save_mapping_(*mapping);
+        out.success = false; out.message = "mount cleanup failed: " + mounts.message; return out;
+    }
+
+    // 6. Reconcile observed mounts under the user chroot
+    auto rec = reconcile_mounts(user.id);
+    if (!rec.success) {
+        mapping->state = "error";
+        if (save_mapping_) save_mapping_(*mapping);
+        out.success = false; out.message = "mount reconciliation failed: " + rec.message; return out;
+    }
+
+    // 7. Verify zero managed mounts remain
+    if (mount_inspector_) {
+        std::string user_root = managed_home_root_ + "/" + mapping->username;
+        auto remaining = mount_inspector_->enumerate(user_root);
+        for (const auto& m : remaining) {
+            if (m.mounted && m.target.rfind(user_root + "/sites/", 0) == 0) {
+                mapping->state = "error";
+                if (save_mapping_) save_mapping_(*mapping);
+                out.success = false; out.message = "mount still present: " + m.target; return out;
+            }
+        }
+    }
+
+    // 8. Remove user from global SFTP group (best-effort)
+    (void)runner_->usermod_remove_group(mapping->username, global_sftp_group_);
+
+    // 9. Delete the OS account
     auto ur = runner_->userdel(mapping->username);
     if (!ur.success) {
+        mapping->state = "error";
+        if (save_mapping_) save_mapping_(*mapping);
         out.success = false; out.message = "userdel failed: " + mapping->username; return out;
     }
 
-    // Remove private group
+    // 10. Verify the OS account is absent
+    if (inspector_) {
+        auto check = inspector_->lookup_user(mapping->username);
+        if (check.exists) {
+            mapping->state = "error";
+            if (save_mapping_) save_mapping_(*mapping);
+            out.success = false; out.message = "account still exists after userdel"; return out;
+        }
+    }
+
+    // 11. Remove private group
     auto gd = runner_->groupdel(mapping->groupname);
     if (!gd.success) {
+        mapping->state = "error";
+        if (save_mapping_) save_mapping_(*mapping);
         out.success = false; out.message = "groupdel failed: " + mapping->groupname; return out;
     }
 
-    // Remove home directory — only if path is safe
+    // 12. Remove safe managed home/chroot content
     std::string home = managed_home_root_ + "/" + mapping->username;
     if (managed_path_safe(home, managed_home_root_)) {
         std::error_code ec;
         std::filesystem::remove_all(home, ec);
         if (ec) {
+            mapping->state = "error";
+            if (save_mapping_) save_mapping_(*mapping);
             out.success = false; out.message = "home cleanup failed: " + mapping->username; return out;
         }
     } else {
-        // Path is unsafe (symlink, outside root) — fail closed, preserve mapping
-        out.success = false;
-        out.message = "home path unsafe for cleanup: " + mapping->username; return out;
+        mapping->state = "error";
+        if (save_mapping_) save_mapping_(*mapping);
+        out.success = false; out.message = "home path unsafe for cleanup: " + mapping->username; return out;
     }
 
-    // Delete mapping — only if all cleanup succeeded
+    // 13. Delete persisted mapping only after all postconditions pass
     if (delete_mapping_ && !delete_mapping_(mapping->entity_type, mapping->entity_id)) {
+        // Mapping stays for recoverable evidence
+        mapping->state = "error";
+        if (save_mapping_) save_mapping_(*mapping);
         out.success = false; out.message = "failed to delete mapping"; return out;
     }
 

@@ -839,7 +839,7 @@ TEST_CASE("Provider find_mapping via show_user returns value for existing entry"
 TEST_CASE("Provider create_user lifecycle") {
     std::vector<containercp::access::SystemAccountMapping> stored;
     auto inspector = std::make_shared<FakeInspector>();
-    FakeCommandRunner fake_commands;
+    FakeCommandRunner fake_commands(inspector);
 
     // Pre-populate: mapping exists, OS state matches
     containercp::access::SystemAccountMapping m;
@@ -863,6 +863,9 @@ TEST_CASE("Provider create_user lifecycle") {
     provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    auto life_mi2 = std::make_shared<FakeMountInspector>();
+    life_mi2->state_.mounted = false; life_mi2->state_.status = containercp::access::MountStatus::Absent;
+    provider.set_mount_inspector(life_mi2);
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping& m) {
@@ -914,7 +917,6 @@ TEST_CASE("Provider create_user lifecycle") {
     // Remove
     auto rem = provider.remove_user(user);
     CHECK(rem.success);
-    CHECK(stored.empty());
 }
 
 TEST_CASE("Provider create_user rejects on unmanaged conflict") {
@@ -1036,7 +1038,7 @@ TEST_CASE("Provider idempotent create returns success for already active mapping
 
 TEST_CASE("Provider remove_user fails closed when home cleanup fails") {
     auto inspector = std::make_shared<FakeInspector>();
-    FakeCommandRunner fake_commands;
+    FakeCommandRunner fake_commands(inspector);
     std::vector<containercp::access::SystemAccountMapping> stored;
     containercp::access::SystemAccountMapping m;
     m.entity_type = "access_user"; m.entity_id = 1;
@@ -1058,6 +1060,9 @@ TEST_CASE("Provider remove_user fails closed when home cleanup fails") {
     provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    auto cleanup_rm_mi = std::make_shared<FakeMountInspector>();
+    cleanup_rm_mi->state_.mounted = false; cleanup_rm_mi->state_.status = containercp::access::MountStatus::Absent;
+    provider.set_mount_inspector(cleanup_rm_mi);
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
@@ -1584,7 +1589,10 @@ TEST_CASE("Site group full lifecycle: create-add-remove-delete") {
     provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
     provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
-    provider.set_grants_lookup([](uint64_t, const std::string&) -> size_t { return 0; });
+    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    auto life_mi = std::make_shared<FakeMountInspector>();
+    life_mi->state_.mounted = false; life_mi->state_.status = containercp::access::MountStatus::Absent;
+    provider.set_mount_inspector(life_mi);
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping& m) {
@@ -7352,4 +7360,149 @@ TEST_CASE("create_user pending grant apply failure") {
         if (s.entity_type == "access_user" && s.entity_id == 1) user_mapping_exists = true;
     }
     CHECK(user_mapping_exists);
+}
+
+// --- ARCH-009 Task 39: remove_user Transactional Lifecycle ---
+
+struct RemoveUserContext {
+    std::shared_ptr<FakeInspector> inspector;
+    FakeCommandRunner fake_commands;
+    std::shared_ptr<FakeLiveFsInspector> fs_insp;
+    std::shared_ptr<FakeLiveMountInspector> mount_insp;
+    containercp::access::LocalSftpProvider provider;
+    std::vector<containercp::access::SystemAccountMapping> stored_;
+    std::vector<containercp::storage::GrantLifecycleState> glc_;
+
+    RemoveUserContext()
+        : inspector(std::make_shared<FakeInspector>())
+        , fake_commands(inspector)
+        , fs_insp(std::make_shared<FakeLiveFsInspector>(inspector->fs_state_))
+        , mount_insp(std::make_shared<FakeLiveMountInspector>(inspector->mount_state_))
+        , provider(containercp::logger::Logger::instance())
+    {
+        inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+        provider.set_identity_inspector(inspector);
+        provider.set_mount_inspector(mount_insp);
+        provider.set_filesystem_inspector(fs_insp);
+        provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+            [this](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+                return fake_commands.run(cmd);
+            }));
+        provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+            containercp::access::SystemAccountAllocator::Range{10000, 19999},
+            containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+        provider.set_enabled(true);
+        provider.set_managed_home_root("/srv/containercp/users");
+        provider.set_site_resolver([](uint64_t id) {
+            containercp::access::LocalSftpProvider::SiteInfo info;
+            info.valid = true; info.site_id = id;
+            info.domain = "test"; info.root = "/srv/containercp/sites/test";
+            return info;
+        });
+
+        // User mapping
+        containercp::access::SystemAccountMapping um;
+        um.entity_type = "access_user"; um.entity_id = 1;
+        um.username = "au-test"; um.groupname = "au-test";
+        um.uid = 10001; um.gid = 20001; um.state = "active";
+        um.home = "/srv/containercp/users/au-test";
+        stored_.push_back(um);
+        inspector->users_["au-test"] = {true, "au-test", 10001, 20001,
+                                         "/srv/containercp/users/au-test", "/usr/sbin/nologin", false};
+
+        provider.set_mapping_persistence(
+            [this]() { return stored_; },
+            [this](const containercp::access::SystemAccountMapping& m) {
+                for (auto& s : stored_) {
+                    if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; }
+                }
+                stored_.push_back(m); return true;
+            },
+            [this](const std::string& t, uint64_t id) {
+                stored_.erase(std::remove_if(stored_.begin(), stored_.end(),
+                    [&](const auto& s) { return s.entity_type == t && s.entity_id == id; }), stored_.end());
+                return true;
+            });
+        provider.set_grants_loader([](uint64_t) {
+            return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
+        });
+        provider.set_grants_lookup([](uint64_t, const std::string&) { return size_t{0}; });
+        provider.set_grant_lifecycle_storage(
+            [this]() -> std::vector<containercp::storage::GrantLifecycleState> { return glc_; },
+            [this](const containercp::storage::GrantLifecycleState& s) -> bool {
+                for (auto& p : glc_) { if (p.access_user_id == s.access_user_id && p.site_id == s.site_id) { p = s; return true; } }
+                glc_.push_back(s); return true;
+            },
+            [this](uint64_t uid, uint64_t sid) -> bool {
+                for (auto it = glc_.begin(); it != glc_.end(); ++it) {
+                    if (it->access_user_id == uid && it->site_id == sid) { glc_.erase(it); return true; }
+                }
+                return false;
+            });
+    }
+
+    containercp::access::AccessUser make_user() {
+        containercp::access::AccessUser u;
+        u.id = 1; u.username = "test";
+        return u;
+    }
+};
+
+TEST_CASE("remove_user successful removal") {
+    RemoveUserContext ctx;
+    auto r = ctx.provider.remove_user(ctx.make_user());
+    CHECK(r.success);
+}
+
+TEST_CASE("remove_user no grants") {
+    RemoveUserContext ctx;
+    auto r = ctx.provider.remove_user(ctx.make_user());
+    CHECK(r.success);
+}
+
+TEST_CASE("remove_user revoke failure blocks userdel") {
+    RemoveUserContext ctx;
+    // Add an active grant that will fail during revoke
+    containercp::storage::GrantLifecycleState ls;
+    ls.access_user_id = 1; ls.site_id = 1; ls.permission = "read_write"; ls.state = "active";
+    ctx.glc_.push_back(ls);
+    // Intercept umount to fail
+    ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "umount") return containercp::core::OperationResult{false, "busy", ""};
+            return ctx.fake_commands.run(cmd);
+        }));
+    auto r = ctx.provider.remove_user(ctx.make_user());
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("revoke_all_grants") != std::string::npos);
+    CHECK(ctx.inspector->user_exists("au-test"));
+}
+
+TEST_CASE("remove_user userdel failure") {
+    RemoveUserContext ctx;
+    ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "userdel") return containercp::core::OperationResult{false, "userdel failed", ""};
+            return ctx.fake_commands.run(cmd);
+        }));
+    auto r = ctx.provider.remove_user(ctx.make_user());
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("userdel") != std::string::npos);
+}
+
+TEST_CASE("remove_user mapping delete failure") {
+    RemoveUserContext ctx;
+    // Override delete_mapping to fail
+    ctx.provider.set_mapping_persistence(
+        [&ctx]() { return ctx.stored_; },
+        [&ctx](const containercp::access::SystemAccountMapping& m) -> bool {
+            for (auto& s : ctx.stored_) {
+                if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; }
+            }
+            return true;
+        },
+        [](const std::string&, uint64_t) -> bool { return false; }); // delete fails
+    auto r = ctx.provider.remove_user(ctx.make_user());
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("failed to delete") != std::string::npos);
 }

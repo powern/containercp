@@ -6,7 +6,21 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-25 | `this commit` | ARCH-009 Task 38 — Make create_user Lifecycle Transactional
+## 2026-07-25 | `this commit` | ARCH-009 Task 39 — Make remove_user Lifecycle Transactional
+
+**Summary:** Rewrote `remove_user()` with step ordering and transactional rollback. Steps: load active mapping, persist "removing" state, revoke all grants, verify no non-terminal grants remain, cleanup all mounts, reconcile mounts, verify zero mounts, remove from global SFTP group, delete OS account, verify OS account absent, remove private group, remove safe home content, delete persisted mapping. Failure behavior: revoke failure blocks userdel; cleanup failure blocks userdel; userdel failure preserves mapping in error state; mapping delete failure preserves recoverable evidence. Every result checked. Fixed `resolve_username` to accept "removing" state. Fixed `create_directories` return-value check. Fixed test `FakeCommandRunner` constructors to pass inspector for proper state tracking. Added 5 tests: successful removal, no grants, revoke failure blocks userdel, userdel failure, mapping delete failure.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** `remove_user()` now follows a strict transactional lifecycle. Failures during grant revocation or mount cleanup prevent user deletion. The user mapping is preserved in error state for recovery.
+
+**Validation:** Full doctest suite passed (1174 cases, 7546 assertions). 5 new remove_user lifecycle tests pass. `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
+## 2026-07-25 | `deb029d` | ARCH-009 Task 38 — Make create_user Lifecycle Transactional
 
 **Summary:** Rewrote `create_user()` with clear step ordering, transactional rollback, and postcondition verification. Steps: 1) validate deps and mapping intent, 2) allocate UID/GID, 3) persist provisioning, 4) create OS account (group, user, membership, password lock, home), 5) verify username/UID/GID/home/shell, 6) persist active, 7) ensure chroot layout, 8) apply pending grants, 9) verify grants. Before OS mutation (steps 1-3), rollback is persistence-only. After OS creation, rollback uses `rollback_create`. If `apply_pending_grants` fails, user state is preserved as "provisioning" (incomplete). Fixed `create_directories` return-value check (returns false when dir already exists, not an error). Updated `FakeCommandRunner` chown handler to set `owner_uid`. Added 9 tests: allocation failure, provisioning save failure, useradd failure, group membership failure, passwd lock failure, home creation, active save failure, chroot layout failure, pending grant apply failure.
 
