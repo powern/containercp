@@ -36,12 +36,20 @@ MountState parse_mountinfo_line(const std::string& line, const std::string& targ
 // Parse full /proc/self/mountinfo content for a given target.
 MountState parse_mountinfo(const std::string& content, const std::string& target);
 
+// Parse full /proc/self/mountinfo content and return all mounts whose
+// target starts with root_prefix.
+std::vector<MountState> enumerate_mountinfo(const std::string& content, const std::string& root_prefix);
+
 // Testable abstraction for inspecting mount state.
 class MountInspector {
 public:
     virtual ~MountInspector() = default;
 
     virtual MountState inspect(const std::string& path) const = 0;
+
+    // Enumerate all mounts whose target path starts with `root_prefix`.
+    // Returns a vector of MountState for each matching mount.
+    virtual std::vector<MountState> enumerate(const std::string& root_prefix) const = 0;
 };
 
 // Production implementation using /proc/self/mountinfo

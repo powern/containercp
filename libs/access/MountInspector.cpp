@@ -165,6 +165,19 @@ MountState parse_mountinfo(const std::string& content, const std::string& target
     return s;
 }
 
+std::vector<MountState> enumerate_mountinfo(const std::string& content, const std::string& root_prefix) {
+    std::vector<MountState> result;
+    std::istringstream ss(content);
+    std::string line;
+    while (std::getline(ss, line)) {
+        auto s = parse_mountinfo_line(line);
+        if (s.status == MountStatus::Ok && s.target.rfind(root_prefix, 0) == 0) {
+            result.push_back(std::move(s));
+        }
+    }
+    return result;
+}
+
 class RealMountInspector : public MountInspector {
 public:
     RealMountInspector() = default;
@@ -186,6 +199,15 @@ public:
             return s;
         }
         return parse_mountinfo(buffer.str(), path);
+    }
+
+    std::vector<MountState> enumerate(const std::string& root_prefix) const override {
+        std::ifstream file("/proc/self/mountinfo");
+        if (!file) return {};
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        if (!file) return {};
+        return enumerate_mountinfo(buffer.str(), root_prefix);
     }
 };
 

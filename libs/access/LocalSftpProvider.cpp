@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <map>
 #include <set>
 #include <sys/stat.h>
 #include <system_error>
@@ -1074,6 +1075,133 @@ core::OperationResult LocalSftpProvider::cleanup_all_mounts(uint64_t access_user
     }
     out.success = true;
     out.message = std::to_string(cleaned) + " mounts cleaned";
+    return out;
+}
+
+core::OperationResult LocalSftpProvider::reconcile_mounts(uint64_t access_user_id) {
+    core::OperationResult out;
+    if (!enabled_) return disabled_result(out, "reconcile_mounts"), out;
+    if (!runner_ || !mount_inspector_ || !site_resolver_ || !grants_loader_) {
+        out.success = false; out.message = "provider dependencies not configured"; return out;
+    }
+
+    std::string username = resolve_username(access_user_id);
+    if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
+
+    std::string user_root = managed_home_root_ + "/" + username;
+    std::string sites_prefix = user_root + "/sites/";
+
+    // 1. Build expected mounts from grants
+    struct Expected { uint64_t site_id; std::string target; std::string source; };
+    std::vector<Expected> expected;
+    auto grants = grants_loader_(access_user_id);
+    for (const auto& g : grants) {
+        auto si = site_resolver_(g.site_id);
+        if (!si.valid) continue;
+        std::string domain = si.root;
+        while (!domain.empty() && domain.back() == '/') domain.pop_back();
+        auto p = domain.rfind('/');
+        domain = (p != std::string::npos) ? domain.substr(p + 1) : domain;
+        expected.push_back({g.site_id, user_root + "/sites/" + domain, si.root + "/public/"});
+    }
+
+    // 2. Enumerate observed mounts
+    auto observed = mount_inspector_->enumerate(user_root);
+
+    // 3. Index observed by target
+    std::map<std::string, const containercp::access::MountState*> obs_map;
+    for (const auto& m : observed) {
+        obs_map[m.target] = &m;
+    }
+
+    // 4. Classify and reconcile
+    std::string diag;
+    size_t reconciled = 0;
+    size_t failures = 0;
+
+    auto note = [&](const std::string& entry) {
+        if (!diag.empty()) diag += "; ";
+        diag += entry;
+    };
+
+    for (const auto& exp : expected) {
+        auto it = obs_map.find(exp.target);
+        if (it == obs_map.end()) {
+            note("missing:site_" + std::to_string(exp.site_id));
+            failures++;
+            continue;
+        }
+        const auto& obs = *it->second;
+        bool ok = obs.mounted && obs.is_bind && obs.bind_root == exp.source
+                  && !obs.fstype.empty() && !obs.device.empty();
+        {
+            bool has_rw = false, has_ro = false;
+            std::string opts = obs.options;
+            std::string::size_type pos = 0;
+            while (pos < opts.size()) {
+                auto comma = opts.find(',', pos);
+                std::string opt = (comma == std::string::npos) ? opts.substr(pos) : opts.substr(pos, comma - pos);
+                if (opt == "rw") has_rw = true;
+                if (opt == "ro") has_ro = true;
+                if (comma == std::string::npos) break;
+                pos = comma + 1;
+            }
+            if (!has_rw || has_ro) ok = false;
+        }
+        if (ok) {
+            obs_map.erase(it);
+            continue; // expected managed mount — present and correct
+        }
+        // Stale managed mount — identity mismatch
+        auto ur = unmount_site(access_user_id, exp.site_id);
+        if (ur.success) {
+            reconciled++;
+            note("fixed:site_" + std::to_string(exp.site_id));
+        } else {
+            failures++;
+            note("stale:site_" + std::to_string(exp.site_id) + ":" + ur.message);
+        }
+        obs_map.erase(it);
+    }
+
+    // Remaining observed mounts — orphans, foreign, ambiguous
+    for (const auto& pair : obs_map) {
+        const auto& m = *pair.second;
+        const std::string& target = pair.first;
+
+        // Foreign: not under sites/ but under user_root
+        if (target.rfind(sites_prefix, 0) != 0) {
+            note("foreign:" + target);
+            continue;
+        }
+
+        // Ambiguous: not a proper bind mount
+        if (!m.mounted || !m.is_bind || m.fstype.empty() || m.device.empty()) {
+            note("ambiguous:" + target);
+            continue;
+        }
+
+        // Orphan managed mount — we can prove ownership by target+source identity
+        // under sites/ with bind mount identity → safe to remove
+        auto um = runner_->umount(target);
+        if (um.success) {
+            reconciled++;
+            note("orphan_removed:" + target);
+        } else {
+            failures++;
+            note("orphan_failed:" + target + ":" + um.message);
+        }
+    }
+
+    if (failures > 0) {
+        out.success = false;
+        out.message = "reconcile_mounts:" + std::to_string(failures) + " failures, "
+                      + std::to_string(reconciled) + " fixed — " + diag;
+        return out;
+    }
+    out.message = "reconcile_mounts:" + std::to_string(reconciled) + " fixed";
+    if (reconciled > 0 || !diag.empty()) out.message += " — " + diag;
+    out.success = true;
     return out;
 }
 

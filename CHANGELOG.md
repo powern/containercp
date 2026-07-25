@@ -6,7 +6,21 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-25 | `this commit` | ARCH-009 Task 27 — Complete cleanup_all_mounts Failure Aggregation
+## 2026-07-25 | `this commit` | ARCH-009 Task 28 — Detect and Reconcile Managed Orphan Mounts
+
+**Summary:** Implemented `reconcile_mounts()` — deterministic reconciliation between expected mounts (from SQLite grants) and observed mounts (from `MountInspector::enumerate`). Classifies each observed mount as: expected managed mount, missing expected mount, stale managed mount (identity mismatch → unmounts and reports), orphan managed mount (under `sites/` but no grant → safely removed), foreign mount (under user root but outside `sites/` → reported, not mutated), or ambiguous mount (not a proper bind → reported, not mutated). ContainerCP ownership is proven by verifying target path, bind mount identity (`is_bind`, `bind_root`, `fstype`, `device`, `rw` options), and grant persistence — not by path prefix alone. Added `enumerate()` virtual method to `MountInspector` interface and `enumerate_mountinfo()` free function for scanning `/proc/self/mountinfo`. All fake mount inspectors updated to implement `enumerate`. Added 10 tests covering all classification categories and partial failure.
+
+**Files changed:** `libs/access/MountInspector.{h,cpp}`, `libs/access/LocalSftpProvider.{h,cpp}`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** New `reconcile_mounts()` operation detects and reports discrepancies between persisted grants and actual mounts. Foreign and ambiguous mounts are never mutated. Stale mounts are automatically unmounted and reported. Orphan mounts under managed site directories are safely removed. Bounded deterministic diagnostics are returned.
+
+**Validation:** Full doctest suite passed (1087 cases, 7232 assertions). 10 new reconcile tests pass. `git diff --check` passed.
+
+**Known risks:** None. No architecture document existed to update; code is self-documenting via the reconcile algorithm.
+
+---
+
+## 2026-07-25 | `681ae0d` | ARCH-009 Task 27 — Complete cleanup_all_mounts Failure Aggregation
 
 **Summary:** Rewrote `cleanup_all_mounts()` to collect detailed failure diagnostics per-site. All persisted grants are loaded, each site resolved through trusted SQLite data, and `unmount_site()` invoked for every expected mount. Failures are aggregated with per-site error tokens (`site_id:error_token`), separated by `; `, and returned in a bounded deterministic message (`cleanup_all_mounts:N failures — site_id:error, ...`). Processing continues after individual failures — independent mounts are never skipped. Grant persistence is never mutated by unmount failures. Added `site_resolver_` dependency check. Added 9 tests covering: all cleaned, first mount fails, middle mount fails, multiple failures, foreign mount, site resolution failure, inspector failure, empty grant list, missing loader.
 

@@ -99,6 +99,12 @@ public:
     // Unmount all managed bind mounts for a user (before remove_user).
     core::OperationResult cleanup_all_mounts(uint64_t access_user_id);
 
+    // Reconcile observed mounts under the managed user's chroot with expected
+    // mounts derived from persisted grants. Returns a structured diagnostic
+    // with one entry per discrepancy found. Never mutates foreign or ambiguous
+    // mounts.
+    core::OperationResult reconcile_mounts(uint64_t access_user_id);
+
     // --- Phase 3d: Grant Lifecycle Integration ---
 
     struct GrantInfo { uint64_t site_id; std::string domain; std::string permission; };

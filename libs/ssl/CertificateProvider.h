@@ -24,7 +24,7 @@ public:
     virtual bool supports_dns_challenge() const { return false; }
     virtual core::OperationResult request_dns(const std::string& domain) {
         (void)domain;
-        return {false, "DNS challenge not supported by this provider"};
+        return {false, "DNS challenge not supported by this provider", ""};
     }
 
     virtual std::string certificate_path(const std::string& domain) const = 0;

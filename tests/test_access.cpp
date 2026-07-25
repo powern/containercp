@@ -457,6 +457,7 @@ public:
     struct MountState {
         std::set<std::string> mounted_paths_;
         std::map<std::string, std::string> bind_sources_; // target → source
+        std::set<std::string> empty_fstype_paths_; // paths whose fstype should be empty
     };
     std::shared_ptr<FsState> fs_state_ = std::make_shared<FsState>();
     std::shared_ptr<MountState> mount_state_ = std::make_shared<MountState>();
@@ -687,6 +688,12 @@ class FakeMountInspector : public containercp::access::MountInspector {
 public:
     containercp::access::MountState state_;
     containercp::access::MountState inspect(const std::string&) const override { return state_; }
+    std::vector<containercp::access::MountState> enumerate(const std::string& root_prefix) const override {
+        std::vector<containercp::access::MountState> result;
+        if (state_.mounted && state_.target.rfind(root_prefix, 0) == 0)
+            result.push_back(state_);
+        return result;
+    }
 };
 
 // Live mount inspector that reads from shared FakeInspector mount state.
@@ -720,6 +727,24 @@ public:
         s.bind_root = (it != mount_state_->bind_sources_.end()) ? it->second : "";
         s.status = containercp::access::MountStatus::Ok;
         return s;
+    }
+
+    std::vector<containercp::access::MountState> enumerate(const std::string& root_prefix) const override {
+        std::vector<containercp::access::MountState> result;
+        if (!mount_state_) return result;
+        for (const auto& path : mount_state_->mounted_paths_) {
+            if (path.rfind(root_prefix, 0) != 0) continue;
+            containercp::access::MountState s;
+            s.mounted = true; s.is_bind = true;
+            s.target = path; s.fstype = "ext4";
+            s.device = "0:30"; s.options = "rw";
+            if (mount_state_->empty_fstype_paths_.count(path)) s.fstype = "";
+            auto it = mount_state_->bind_sources_.find(path);
+            s.bind_root = (it != mount_state_->bind_sources_.end()) ? it->second : "";
+            s.status = containercp::access::MountStatus::Ok;
+            result.push_back(std::move(s));
+        }
+        return result;
     }
 
 private:
@@ -4866,6 +4891,13 @@ public:
         auto& s = (call_count++ == 0) ? first : second;
         return s;
     }
+    std::vector<containercp::access::MountState> enumerate(const std::string& root_prefix) const override {
+        std::vector<containercp::access::MountState> result;
+        auto& s = (call_count++ == 0) ? first : second;
+        if (s.mounted && s.target.rfind(root_prefix, 0) == 0)
+            result.push_back(s);
+        return result;
+    }
 };
 
 TEST_CASE("ARCH-009 unmount post still mounted") {
@@ -5505,6 +5537,11 @@ TEST_CASE("ARCH-009 cleanup_all_mounts inspector failure") {
             s.status = containercp::access::MountStatus::InspectionFailed;
             return s;
         }
+        std::vector<containercp::access::MountState> enumerate(const std::string&) const override {
+            containercp::access::MountState s;
+            s.status = containercp::access::MountStatus::InspectionFailed;
+            return {s};
+        }
     };
     ctx.provider.set_mount_inspector(std::make_shared<FailMountInspector>());
 
@@ -5528,4 +5565,182 @@ TEST_CASE("ARCH-009 cleanup_all_mounts missing loader") {
     CHECK_FALSE(r.success);
     CHECK(r.message == "grant_loader_not_configured");
     CHECK(ctx.mutation_count() == 0);
+}
+
+// --- ARCH-009 Task 28: Detect and Reconcile Managed Orphan Mounts ---
+
+struct ReconcileContext {
+    std::shared_ptr<FakeInspector> inspector;
+    FakeCommandRunner fake_commands;
+    std::shared_ptr<FakeLiveFsInspector> fs_insp;
+    std::shared_ptr<FakeLiveMountInspector> mount_insp;
+    containercp::access::LocalSftpProvider provider;
+    std::map<uint64_t, std::pair<std::string, std::string>> sites_;
+    std::vector<containercp::access::LocalSftpProvider::GrantInfo> grants_;
+
+    ReconcileContext()
+        : inspector(std::make_shared<FakeInspector>())
+        , fake_commands(inspector)
+        , fs_insp(std::make_shared<FakeLiveFsInspector>(inspector->fs_state_))
+        , mount_insp(std::make_shared<FakeLiveMountInspector>(inspector->mount_state_))
+        , provider(containercp::logger::Logger::instance())
+    {
+        inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                       "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+        provider.set_identity_inspector(inspector);
+        provider.set_mount_inspector(mount_insp);
+        provider.set_filesystem_inspector(fs_insp);
+        provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+            [this](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+                return fake_commands.run(cmd);
+            }));
+        provider.set_enabled(true);
+
+        containercp::access::SystemAccountMapping um;
+        um.entity_type = "access_user"; um.entity_id = 1;
+        um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+        std::vector<containercp::access::SystemAccountMapping> stored = {um};
+        provider.set_mapping_persistence(
+            [stored]() { return stored; },
+            [](const containercp::access::SystemAccountMapping&) { return true; },
+            [](const std::string&, uint64_t) { return true; });
+        provider.set_grants_loader([this](uint64_t) { return grants_; });
+        provider.set_site_resolver([this](uint64_t id) {
+            containercp::access::LocalSftpProvider::SiteInfo info;
+            auto it = sites_.find(id);
+            if (it != sites_.end()) {
+                info.valid = true; info.site_id = id;
+                info.domain = it->second.first;
+                info.root = it->second.second;
+            }
+            return info;
+        });
+    }
+
+    void add_site(uint64_t site_id, const std::string& domain, const std::string& root) {
+        sites_[site_id] = {domain, root};
+    }
+
+    void add_grant(uint64_t site_id, const std::string& domain, const std::string& perm) {
+        grants_.push_back({site_id, domain, perm});
+    }
+
+    void add_mount(const std::string& target, const std::string& source) {
+        inspector->mount_state_->mounted_paths_.insert(target);
+        inspector->mount_state_->bind_sources_[target] = source;
+        containercp::access::FsPermissionState dir;
+        dir.exists = true; dir.is_symlink = false; dir.mode = S_IFDIR | 0755; dir.group_gid = 0;
+        inspector->fs_state_->state_[target] = dir;
+    }
+
+    size_t mutation_count() const { return fake_commands.cmds_.size(); }
+};
+
+TEST_CASE("ARCH-009 reconcile expected mount present") {
+    ReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_grant(1, "test", "read_write");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/srv/containercp/sites/test/public/");
+    auto r = ctx.provider.reconcile_mounts(1);
+    CHECK(r.success);
+    CHECK(r.message == "reconcile_mounts:0 fixed");
+}
+
+TEST_CASE("ARCH-009 reconcile expected mount missing") {
+    ReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_grant(1, "test", "read_write");
+    auto r = ctx.provider.reconcile_mounts(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("missing:site_1") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 reconcile stale managed mount") {
+    ReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_grant(1, "test", "read_write");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/wrong/source");
+    auto r = ctx.provider.reconcile_mounts(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("stale:site_1") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 reconcile orphan managed mount") {
+    ReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_grant(1, "test", "read_write");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/srv/containercp/sites/test/public/");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/orphan", "/srv/containercp/sites/orphan/public/");
+    auto r = ctx.provider.reconcile_mounts(1);
+    CHECK(r.success);
+    CHECK(r.message.find("orphan_removed:/srv/containercp/users/au-dev/sites/orphan") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 reconcile foreign mount below managed root") {
+    ReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_grant(1, "test", "read_write");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/srv/containercp/sites/test/public/");
+    ctx.add_mount("/srv/containercp/users/au-dev/foreign", "/some/other/source");
+    auto r = ctx.provider.reconcile_mounts(1);
+    CHECK(r.success);
+    CHECK(r.message.find("foreign:") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 reconcile ambiguous mount") {
+    ReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_grant(1, "test", "read_write");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/srv/containercp/sites/test/public/");
+    // Ambiguous: mount exists but not a proper bind (no bind_root bound)
+    ctx.inspector->mount_state_->mounted_paths_.insert("/srv/containercp/users/au-dev/sites/ambig");
+    ctx.inspector->mount_state_->bind_sources_["/srv/containercp/users/au-dev/sites/ambig"] = "";
+    // Make fstype empty so it's treated as ambiguous (not a proper managed mount)
+    // We need a way to influence the enumerate output. Use a map of overrides.
+    ctx.inspector->mount_state_->empty_fstype_paths_.insert("/srv/containercp/users/au-dev/sites/ambig");
+    auto r = ctx.provider.reconcile_mounts(1);
+    CHECK(r.success);
+    CHECK(r.message.find("ambiguous:") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 reconcile cross-user mount") {
+    ReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_grant(1, "test", "read_write");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/srv/containercp/sites/test/public/");
+    ctx.inspector->mount_state_->mounted_paths_.insert("/srv/containercp/users/other-user/sites/test");
+    ctx.inspector->mount_state_->bind_sources_["/srv/containercp/users/other-user/sites/test"] = "/srv/containercp/sites/test/public/";
+    auto r = ctx.provider.reconcile_mounts(1);
+    CHECK(r.success);
+    CHECK(r.message == "reconcile_mounts:0 fixed");
+    CHECK(ctx.inspector->mount_state_->mounted_paths_.count("/srv/containercp/users/other-user/sites/test") == 1);
+}
+
+TEST_CASE("ARCH-009 reconcile cross-site mount") {
+    ReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_site(2, "other", "/srv/containercp/sites/other");
+    ctx.add_grant(1, "test", "read_write");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/srv/containercp/sites/other/public/");
+    auto r = ctx.provider.reconcile_mounts(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("stale:site_1") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 reconcile partial failure") {
+    ReconcileContext ctx;
+    ctx.add_site(1, "test", "/srv/containercp/sites/test");
+    ctx.add_site(2, "a", "/srv/containercp/sites/a");
+    ctx.add_site(3, "b", "/srv/containercp/sites/b");
+    ctx.add_grant(1, "test", "read_write");
+    ctx.add_grant(2, "a", "read_write");
+    ctx.add_grant(3, "b", "read_write");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/test", "/srv/containercp/sites/test/public/");
+    ctx.add_mount("/srv/containercp/users/au-dev/sites/a", "/wrong/source");
+    // Site 3 has no mount (missing)
+    auto r = ctx.provider.reconcile_mounts(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("stale:site_2") != std::string::npos);
+    CHECK(r.message.find("missing:site_3") != std::string::npos);
+    CHECK(r.message.find("reconcile_mounts:2 failures") != std::string::npos);
 }
