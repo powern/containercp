@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <set>
+#include <sys/stat.h>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -602,7 +603,7 @@ private:
                 auto it = inspector_->fs_state_->state_.find(path);
                 if (it == inspector_->fs_state_->state_.end()) {
                     containercp::access::FsPermissionState s;
-                    s.exists = true; s.group_gid = 0; s.mode = 0755; s.acl_status = containercp::access::InspectionStatus::Ok;
+                    s.exists = true; s.group_gid = 0; s.mode = S_IFDIR | 0755; s.acl_status = containercp::access::InspectionStatus::Ok;
                     inspector_->fs_state_->state_[path] = s;
                 }
             }
@@ -4197,7 +4198,7 @@ TEST_CASE("ARCH-009 bind mount rollback target still present") {
                 if (result.success) {
                     std::string target = cmd.args.back();
                     containercp::access::FsPermissionState s;
-                    s.exists = true; s.group_gid = 0; s.mode = 0755;
+                    s.exists = true; s.group_gid = 0; s.mode = S_IFDIR | 0755;
                     s.acl_status = containercp::access::InspectionStatus::Ok;
                     ctx.inspector->fs_state_->state_[target] = s;
                 }
@@ -4972,7 +4973,8 @@ struct SafeRmDirContext {
 
         // Default: target is a normal directory, empty, not mounted
         containercp::access::FsPermissionState dir;
-        dir.exists = true; dir.is_symlink = false; dir.mode = 0755; dir.group_gid = 0;
+        dir.exists = true; dir.is_symlink = false;
+        dir.mode = S_IFDIR | 0755; dir.group_gid = 0;
         inspector->fs_state_->state_[target] = dir;
 
         mount_insp->state_.mounted = false;
@@ -5006,6 +5008,18 @@ TEST_CASE("ARCH-009 safe rmdir not found target") {
     auto r = ctx.provider.safe_rmdir(ctx.target, true, ctx.username, ctx.domain);
     CHECK_FALSE(r.success);
     CHECK(r.message == "rmdir_safety:not_found");
+}
+
+TEST_CASE("ARCH-009 safe rmdir non-directory target") {
+    SafeRmDirContext ctx;
+    // Set mode to regular file (no S_IFDIR)
+    ctx.inspector->fs_state_->state_[ctx.target].mode = S_IFREG | 0644;
+    auto r = ctx.provider.safe_rmdir(ctx.target, true, ctx.username, ctx.domain);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "rmdir_safety:not_directory");
+    // Target still exists (not deleted)
+    auto post = ctx.fs_insp->inspect(ctx.target);
+    CHECK(post.exists);
 }
 
 TEST_CASE("ARCH-009 safe rmdir non-empty target") {
@@ -5080,7 +5094,7 @@ TEST_CASE("ARCH-009 safe rmdir target still present after rmdir") {
             // After rmdir removes from fs_state_, re-add so postcondition check sees it
             if (cmd.args[0] == "rmdir" && result.success) {
                 containercp::access::FsPermissionState s;
-                s.exists = true; s.is_symlink = false; s.mode = 0755; s.group_gid = 0;
+                s.exists = true; s.is_symlink = false; s.mode = S_IFDIR | 0755; s.group_gid = 0;
                 ctx.inspector->fs_state_->state_[cmd.args.back()] = s;
             }
             return result;

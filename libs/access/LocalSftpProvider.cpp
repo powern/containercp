@@ -1291,15 +1291,12 @@ core::OperationResult LocalSftpProvider::safe_rmdir(const std::string& target,
     }
 
     // 3&4: Target must be a directory and not a symlink
-    bool is_dir_check = false;
-    bool is_not_symlink = false;
     if (fs_inspector_) {
         auto st = fs_inspector_->inspect(target);
         if (!st.exists) { out.success = false; out.message = "rmdir_safety:not_found"; return out; }
         if (st.is_symlink) { out.success = false; out.message = "rmdir_safety:symlink"; return out; }
+        if (!S_ISDIR(st.mode)) { out.success = false; out.message = "rmdir_safety:not_directory"; return out; }
     }
-
-    // Directory type is verified implicitly: rmdir only works on directories.
 
     // 5: Target must not be a mountpoint
     if (mount_inspector_) {
