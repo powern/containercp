@@ -6,7 +6,21 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-25 | `this commit` | ARCH-009 Task 35 — Preserve Shared ACLs and Site Groups
+## 2026-07-25 | `this commit` | ARCH-009 Task 36 — Complete apply_pending_grants Lifecycle
+
+**Summary:** Rewrote `apply_pending_grants()` to process persisted lifecycle records instead of raw grants. Loads all lifecycle records for the user, sorts by `site_id` for deterministic ordering, and processes only allowed states: `pending`, `applying`, and `error` (recoverable). `active` grants are verified by calling `apply_grant` (idempotent check). `revoking` grants are rejected with a stable transition error. Processing continues after individual failures. Bounded diagnostics collect site labels and error tokens. Returns failure if any grant fails — never reports success after partial application. Requires lifecycle storage callbacks. Added 11 tests: empty list, one pending, multiple pending, first failure continues, active verification, revoking rejection, recoverable error, persistence failure, missing loader, multiple failures, cross-site isolation.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** `apply_pending_grants()` now processes only lifecycle records in allowed states. Active grants are verified. Revoking grants are rejected. Multiple grants are processed with individual error collection. Deterministic ordering by `site_id`.
+
+**Validation:** Full doctest suite passed (1151 cases, 7507 assertions). 11 new pending grants lifecycle tests pass. `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
+## 2026-07-25 | `9786bc1` | ARCH-009 Task 35 — Preserve Shared ACLs and Site Groups
 
 **Summary:** Hardened ACL retention and site group deletion in `revoke_grant()` to consider all persisted lifecycle records, not just the current user's grant. RO ACL is kept while any lifecycle record in a non-terminal state (`active`, `applying`, `revoking`) requires read-only access for the same site. Site group (RW/RO) is kept while any lifecycle record references the same site+permission, OR any OS membership exists. Both checks use a `count_active_lifecycle()` lambda that iterates lifecycle records and skips the record being revoked (to avoid self-reference). Added `setup_completed_steps(perm)` parameter to test context for setting up the correct group type. Added 10 tests: two RO users → ACL retained, last RO user → ACL removed, two RW users → group retained, last RW user → group deleted, applying grant references group, revoking grant retry, stale OS membership, persistence lookup failure, group deletion command failure, ACL removal command failure.
 

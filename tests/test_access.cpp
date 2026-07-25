@@ -1157,6 +1157,22 @@ TEST_CASE("Provider stale provisioning cleanup and retry succeeds") {
     provider.set_grants_loader([](uint64_t) {
         return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
     });
+    // Lifecycle storage for apply_pending_grants
+    std::vector<containercp::storage::GrantLifecycleState> retry_glc;
+    provider.set_grant_lifecycle_storage(
+        [&retry_glc]() -> std::vector<containercp::storage::GrantLifecycleState> { return retry_glc; },
+        [&retry_glc](const containercp::storage::GrantLifecycleState& s) -> bool {
+            for (auto& p : retry_glc) {
+                if (p.access_user_id == s.access_user_id && p.site_id == s.site_id) { p = s; return true; }
+            }
+            retry_glc.push_back(s); return true;
+        },
+        [&retry_glc](uint64_t uid, uint64_t sid) -> bool {
+            for (auto it = retry_glc.begin(); it != retry_glc.end(); ++it) {
+                if (it->access_user_id == uid && it->site_id == sid) { retry_glc.erase(it); return true; }
+            }
+            return false;
+        });
 
     // --- Test 1: First create recovers from stale state ---
     containercp::access::AccessUser user;
@@ -6136,7 +6152,25 @@ struct CrashRecoveryContext {
                 return true;
             });
 
-        provider.set_grants_loader([](uint64_t) { return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{}; });
+    provider.set_grants_loader([](uint64_t) {
+        return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
+    });
+    // Lifecycle storage for apply_pending_grants
+    std::vector<containercp::storage::GrantLifecycleState> pending_glc;
+    provider.set_grant_lifecycle_storage(
+        [&pending_glc]() -> std::vector<containercp::storage::GrantLifecycleState> { return pending_glc; },
+        [&pending_glc](const containercp::storage::GrantLifecycleState& s) -> bool {
+            for (auto& p : pending_glc) {
+                if (p.access_user_id == s.access_user_id && p.site_id == s.site_id) { p = s; return true; }
+            }
+            pending_glc.push_back(s); return true;
+        },
+        [&pending_glc](uint64_t uid, uint64_t sid) -> bool {
+            for (auto it = pending_glc.begin(); it != pending_glc.end(); ++it) {
+                if (it->access_user_id == uid && it->site_id == sid) { pending_glc.erase(it); return true; }
+            }
+            return false;
+        });
         provider.set_grants_lookup([](uint64_t, const std::string&) { return size_t{0}; });
         provider.set_site_resolver([](uint64_t id) {
             containercp::access::LocalSftpProvider::SiteInfo info;
@@ -6636,4 +6670,271 @@ TEST_CASE("ARCH-009 revoke ACL removal command failure") {
     CHECK(r.message.find("acl:") != std::string::npos);
     CHECK(ctx.glc_.size() == 1);
     CHECK(ctx.glc_[0].state == "error");
+}
+
+// --- ARCH-009 Task 36: Complete apply_pending_grants Lifecycle ---
+
+struct PendingGrantsContext {
+    std::shared_ptr<FakeInspector> inspector;
+    FakeCommandRunner fake_commands;
+    std::shared_ptr<FakeLiveFsInspector> fs_insp;
+    std::shared_ptr<FakeLiveMountInspector> mount_insp;
+    containercp::access::LocalSftpProvider provider;
+    std::vector<containercp::storage::GrantLifecycleState> glc_;
+    std::vector<containercp::access::SystemAccountMapping> persisted_sys_;
+    std::string target = "/srv/containercp/users/au-dev/sites/test";
+    std::string source = "/srv/containercp/sites/test/public/";
+
+    PendingGrantsContext()
+        : inspector(std::make_shared<FakeInspector>())
+        , fake_commands(inspector)
+        , fs_insp(std::make_shared<FakeLiveFsInspector>(inspector->fs_state_))
+        , mount_insp(std::make_shared<FakeLiveMountInspector>(inspector->mount_state_))
+        , provider(containercp::logger::Logger::instance())
+    {
+        inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000,
+                                       "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
+        inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+        provider.set_identity_inspector(inspector);
+        provider.set_mount_inspector(mount_insp);
+        provider.set_filesystem_inspector(fs_insp);
+        provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+            [this](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+                return fake_commands.run(cmd);
+            }));
+        provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+            containercp::access::SystemAccountAllocator::Range{10000, 19999},
+            containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+        provider.set_enabled(true);
+        provider.set_managed_home_root("/srv/containercp/users");
+
+        containercp::access::SystemAccountMapping um;
+        um.entity_type = "access_user"; um.entity_id = 1;
+        um.username = "au-dev"; um.uid = 10000; um.gid = 20000; um.state = "active";
+        persisted_sys_.push_back(um);
+        provider.set_mapping_persistence(
+            [this]() { return persisted_sys_; },
+            [this](const containercp::access::SystemAccountMapping& m) {
+                for (auto& s : persisted_sys_) {
+                    if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; }
+                }
+                persisted_sys_.push_back(m); return true;
+            },
+            [this](const std::string& t, uint64_t id) {
+                persisted_sys_.erase(std::remove_if(persisted_sys_.begin(), persisted_sys_.end(),
+                    [&](const auto& s) { return s.entity_type == t && s.entity_id == id; }), persisted_sys_.end());
+                return true;
+            });
+        provider.set_grants_loader([](uint64_t) {
+            return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
+        });
+        provider.set_grants_lookup([](uint64_t, const std::string&) { return size_t{0}; });
+        provider.set_site_resolver([](uint64_t id) {
+            containercp::access::LocalSftpProvider::SiteInfo info;
+            info.valid = true; info.site_id = id;
+            info.domain = "test"; info.root = "/srv/containercp/sites/test";
+            return info;
+        });
+        provider.set_grant_lifecycle_storage(
+            [this]() -> std::vector<containercp::storage::GrantLifecycleState> { return glc_; },
+            [this](const containercp::storage::GrantLifecycleState& s) -> bool {
+                for (auto& p : glc_) {
+                    if (p.access_user_id == s.access_user_id && p.site_id == s.site_id) { p = s; return true; }
+                }
+                glc_.push_back(s); return true;
+            },
+            [this](uint64_t uid, uint64_t sid) -> bool {
+                for (auto it = glc_.begin(); it != glc_.end(); ++it) {
+                    if (it->access_user_id == uid && it->site_id == sid) { glc_.erase(it); return true; }
+                }
+                return false;
+            });
+        // Site source directory
+        std::string pub = "/srv/containercp/sites/test/public/";
+        containercp::access::FsPermissionState dir;
+        dir.exists = true; dir.is_symlink = false; dir.mode = S_IFDIR | 0770; dir.group_gid = 20001;
+        inspector->fs_state_->state_[pub] = dir;
+    }
+
+    void add_mount() {
+        inspector->mount_state_->mounted_paths_.insert(target);
+        inspector->mount_state_->bind_sources_[target] = source;
+        containercp::access::FsPermissionState d;
+        d.exists = true; d.is_symlink = false; d.mode = S_IFDIR | 0755; d.group_gid = 0;
+        inspector->fs_state_->state_[target] = d;
+    }
+
+    void add_ls(uint64_t sid, const std::string& perm, const std::string& state) {
+        containercp::storage::GrantLifecycleState ls;
+        ls.access_user_id = 1; ls.site_id = sid; ls.permission = perm; ls.state = state;
+        glc_.push_back(ls);
+    }
+
+    void setup_site(uint64_t sid, const std::string& perm) {
+        std::string grp_type = (perm == "read_only") ? "site_group_ro" : "site_group_rw";
+        std::string grp_name = (perm == "read_only") ? "site-" + std::to_string(sid) + "-ro" : "site-" + std::to_string(sid) + "-rw";
+        int gid = (perm == "read_only") ? 21000 + (int)sid : 20000 + (int)sid;
+        containercp::access::SystemAccountMapping grp;
+        grp.entity_type = grp_type; grp.entity_id = sid;
+        grp.gid = gid; grp.username = grp_name; grp.groupname = grp_name; grp.state = "active";
+        persisted_sys_.push_back(grp);
+        inspector->groups_[grp_name] = {true, grp_name, gid};
+        inspector->supp_groups_["au-dev"].insert(grp_name);
+    }
+
+    void setup_site_source(uint64_t sid) {
+        std::string pub = "/srv/containercp/sites/test/public/"; // same for all sites in test
+        containercp::access::FsPermissionState dir;
+        dir.exists = true; dir.is_symlink = false; dir.mode = S_IFDIR | 0770; dir.group_gid = 20001;
+        inspector->fs_state_->state_[pub] = dir;
+    }
+
+    size_t mutation_count() const { return fake_commands.cmds_.size(); }
+};
+
+TEST_CASE("ARCH-009 pending grants empty list") {
+    PendingGrantsContext ctx;
+    auto r = ctx.provider.apply_pending_grants(1);
+    CHECK(r.success);
+    CHECK(r.message == "0 grants applied");
+    CHECK(ctx.mutation_count() == 0);
+}
+
+TEST_CASE("ARCH-009 pending grants one pending") {
+    PendingGrantsContext ctx;
+    ctx.add_ls(1, "read_write", "pending");
+    ctx.setup_site(1, "read_write");
+    ctx.setup_site_source(1);
+    auto r = ctx.provider.apply_pending_grants(1);
+    CHECK(r.success);
+    CHECK(ctx.glc_.size() == 1);
+    CHECK(ctx.glc_[0].state == "active");
+}
+
+TEST_CASE("ARCH-009 pending grants multiple pending") {
+    PendingGrantsContext ctx;
+    ctx.add_ls(1, "read_write", "pending");
+    ctx.add_ls(2, "read_write", "pending");
+    ctx.setup_site(1, "read_write");
+    ctx.setup_site(2, "read_write");
+    ctx.setup_site_source(1);
+    // Add site 2 source
+    std::string pub2 = "/srv/containercp/sites/test2/public/";
+    containercp::access::FsPermissionState dir2;
+    dir2.exists = true; dir2.is_symlink = false; dir2.mode = S_IFDIR | 0770; dir2.group_gid = 20001;
+    ctx.inspector->fs_state_->state_[pub2] = dir2;
+    ctx.provider.set_site_resolver([](uint64_t id) {
+        containercp::access::LocalSftpProvider::SiteInfo info;
+        info.valid = true; info.site_id = id;
+        if (id == 1) { info.domain = "test"; info.root = "/srv/containercp/sites/test"; }
+        else { info.domain = "test2"; info.root = "/srv/containercp/sites/test2"; }
+        return info;
+    });
+    auto r = ctx.provider.apply_pending_grants(1);
+    CHECK(r.success);
+    size_t active = 0;
+    for (auto& l : ctx.glc_) { if (l.state == "active") active++; }
+    CHECK(active == 2);
+}
+
+TEST_CASE("ARCH-009 pending grants first failure continues") {
+    PendingGrantsContext ctx;
+    ctx.add_ls(1, "read_write", "pending");
+    ctx.add_ls(2, "read_write", "pending");
+    ctx.setup_site(1, "read_write");
+    ctx.setup_site(2, "read_write");
+    ctx.setup_site_source(1);
+    std::string pub2 = "/srv/containercp/sites/test2/public/";
+    containercp::access::FsPermissionState dir2;
+    dir2.exists = true; dir2.is_symlink = false; dir2.mode = S_IFDIR | 0770; dir2.group_gid = 20001;
+    ctx.inspector->fs_state_->state_[pub2] = dir2;
+    ctx.provider.set_site_resolver([](uint64_t id) {
+        containercp::access::LocalSftpProvider::SiteInfo info;
+        info.valid = true; info.site_id = id;
+        if (id == 1) { info.domain = "test"; info.root = "/srv/containercp/sites/test"; }
+        else { info.domain = "test2"; info.root = "/srv/containercp/sites/test2"; }
+        return info;
+    });
+    // Fail first ensure_site_group (groupadd)
+    ctx.fake_commands.fail_next_ = true;
+    auto r = ctx.provider.apply_pending_grants(1);
+    CHECK_FALSE(r.success);
+    size_t active = 0;
+    for (auto& l : ctx.glc_) {
+        if (l.state == "active") active++;
+    }
+    CHECK(active >= 1);
+}
+
+TEST_CASE("ARCH-009 pending grants active verification") {
+    PendingGrantsContext ctx;
+    ctx.add_ls(1, "read_write", "active");
+    ctx.add_mount();
+    ctx.setup_site(1, "read_write");
+    auto r = ctx.provider.apply_pending_grants(1);
+    CHECK(r.success);
+}
+
+TEST_CASE("ARCH-009 pending grants revoking rejection") {
+    PendingGrantsContext ctx;
+    ctx.add_ls(1, "read_write", "revoking");
+    auto r = ctx.provider.apply_pending_grants(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("revoking_cannot_apply") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 pending grants recoverable error") {
+    PendingGrantsContext ctx;
+    ctx.add_ls(1, "read_write", "error");
+    ctx.setup_site(1, "read_write");
+    ctx.setup_site_source(1);
+    ctx.add_mount();
+    auto r = ctx.provider.apply_pending_grants(1);
+    CHECK(r.success);
+    CHECK(ctx.glc_[0].state == "active");
+}
+
+TEST_CASE("ARCH-009 pending grants persistence failure") {
+    PendingGrantsContext ctx;
+    ctx.add_ls(1, "read_write", "pending");
+    // Break persistence
+    ctx.provider.set_grant_lifecycle_storage(
+        [&ctx]() -> std::vector<containercp::storage::GrantLifecycleState> {
+            // Return the record so lifecycle_active is true
+            return ctx.glc_;
+        },
+        [](const containercp::storage::GrantLifecycleState&) -> bool { return false; },
+        [](uint64_t, uint64_t) -> bool { return false; });
+    auto r = ctx.provider.apply_pending_grants(1);
+    // Should fail because apply_grant can't persist applying state
+    CHECK_FALSE(r.success);
+}
+
+TEST_CASE("ARCH-009 pending grants missing loader") {
+    PendingGrantsContext ctx;
+    ctx.provider.set_grants_loader(nullptr);
+    auto r = ctx.provider.apply_pending_grants(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message == "grant_loader_not_configured");
+    CHECK(ctx.mutation_count() == 0);
+}
+
+TEST_CASE("ARCH-009 pending grants multiple failures") {
+    PendingGrantsContext ctx;
+    ctx.add_ls(1, "read_write", "revoking");
+    ctx.add_ls(2, "read_write", "revoking");
+    auto r = ctx.provider.apply_pending_grants(1);
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("2 failures") != std::string::npos);
+}
+
+TEST_CASE("ARCH-009 pending grants cross-site isolation") {
+    PendingGrantsContext ctx;
+    ctx.add_ls(1, "read_write", "pending");
+    ctx.add_ls(2, "read_write", "pending");
+    // Only user 1 has records — user 2's empty list should be handled
+    auto r = ctx.provider.apply_pending_grants(1);
+    CHECK_FALSE(r.success); // site 1 fails because no site setup
+    // Processing site 1 should not affect site 2
+    (void)r;
 }

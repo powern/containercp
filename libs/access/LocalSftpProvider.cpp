@@ -1971,13 +1971,79 @@ core::OperationResult LocalSftpProvider::apply_pending_grants(uint64_t access_us
     core::OperationResult out;
     if (!enabled_) return disabled_result(out, "apply_pending_grants"), out;
     if (!grants_loader_) { out.success = false; out.message = "grant_loader_not_configured"; return out; }
-
-    auto grants = grants_loader_(access_user_id);
-    for (const auto& g : grants) {
-        auto r = apply_grant(access_user_id, g.site_id, g.permission);
-        if (!r.success) return r;
+    if (!save_grant_lifecycle_ || !load_all_grant_lifecycle_) {
+        out.success = false; out.message = "provider dependencies not configured"; return out;
     }
-    out.success = true; out.message = std::to_string(grants.size()) + " grants applied"; return out;
+
+    // 1. Load all lifecycle records for this user
+    auto all_lifecycle = load_all_grant_lifecycle_();
+    std::vector<storage::GrantLifecycleState> user_records;
+    for (const auto& l : all_lifecycle) {
+        if (l.access_user_id == access_user_id) {
+            user_records.push_back(l);
+        }
+    }
+
+    // Sort by site_id for deterministic ordering
+    std::sort(user_records.begin(), user_records.end(),
+        [](const auto& a, const auto& b) { return a.site_id < b.site_id; });
+
+    // 2. Process each record
+    std::string diag;
+    size_t applied = 0;
+    size_t failures = 0;
+    auto note = [&](const std::string& entry) {
+        if (!diag.empty()) diag += "; ";
+        diag += entry;
+    };
+
+    for (auto& ls : user_records) {
+        std::string label = "s" + std::to_string(ls.site_id);
+
+        if (ls.state == "active") {
+            // Verify observed state is complete by calling apply_grant (idempotent)
+            auto r = apply_grant(access_user_id, ls.site_id, ls.permission);
+            if (r.success) {
+                applied++;
+            } else {
+                note(label + ":active_verify_failed:" + r.message);
+                failures++;
+            }
+            continue;
+        }
+
+        if (ls.state == "pending" || ls.state == "applying" || ls.state == "error") {
+            // Process allowed states
+            auto r = apply_grant(access_user_id, ls.site_id, ls.permission);
+            if (r.success) {
+                applied++;
+            } else {
+                note(label + ":" + r.message);
+                failures++;
+            }
+            continue;
+        }
+
+        if (ls.state == "revoking") {
+            note(label + ":revoking_cannot_apply");
+            failures++;
+            continue;
+        }
+
+        // Unknown state
+        note(label + ":unknown_state:" + ls.state);
+        failures++;
+    }
+
+    if (failures > 0) {
+        out.success = false;
+        out.message = "apply_pending_grants:" + std::to_string(failures) + " failures, "
+                      + std::to_string(applied) + " applied — " + diag;
+        return out;
+    }
+    out.success = true;
+    out.message = std::to_string(applied) + " grants applied";
+    return out;
 }
 
 core::OperationResult LocalSftpProvider::revoke_all_grants(uint64_t access_user_id) {
