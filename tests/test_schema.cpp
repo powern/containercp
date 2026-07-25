@@ -33,7 +33,7 @@ static containercp::storage::SQLiteDB make_db(const std::string& path) {
 // Table inventory
 // ============================================================
 
-TEST_CASE("Schema v3 application tables = 19") {
+TEST_CASE("Schema v5 application tables = 20") {
     auto path = sdb("sc_apptables.db");
     clean(path);
     {
@@ -42,7 +42,7 @@ TEST_CASE("Schema v3 application tables = 19") {
             "nodes","sites","users","domains","php_versions","databases",
             "backups","ssl_certificates","mail_domains","mail_mailboxes",
             "mail_aliases","access_users","access_grants","access_keys",
-            "system_accounts","reverse_proxies","profiles","auth_users","mail_config"
+            "managed_mounts","system_accounts","reverse_proxies","profiles","auth_users","mail_config"
         };
         REQUIRE(db.prepare("SELECT name FROM sqlite_master WHERE type='table' "
                            "AND name NOT IN ('schema_migrations','storage_meta') "
@@ -52,7 +52,7 @@ TEST_CASE("Schema v3 application tables = 19") {
             ++n;
             CHECK(app.count(db.column_text(0)));
         }
-        CHECK(n == 19);
+        CHECK(n == 20);
     }
     clean(path);
 }
@@ -73,7 +73,7 @@ TEST_CASE("Schema v1 metadata tables = schema_migrations + storage_meta") {
     clean(path);
 }
 
-TEST_CASE("Schema v1 total project tables = 19") {
+TEST_CASE("Schema v5 total project tables = 22") {
     auto path = sdb("sc_total.db");
     clean(path);
     {
@@ -81,7 +81,7 @@ TEST_CASE("Schema v1 total project tables = 19") {
         REQUIRE(db.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
                            "AND name NOT LIKE 'sqlite_%'"));
         REQUIRE(db.step());
-        CHECK(db.column_int(0) == 21);
+        CHECK(db.column_int(0) == 22);
     }
     clean(path);
 }
@@ -272,7 +272,7 @@ TEST_CASE("Schema v1 approved no-FK sentinel 0 values succeed") {
 // Indices
 // ============================================================
 
-TEST_CASE("Schema v3 creates all 17 approved indices") {
+TEST_CASE("Schema v5 creates all 18 approved indices") {
     auto path = sdb("sc_indices.db");
     clean(path);
     {
@@ -281,7 +281,7 @@ TEST_CASE("Schema v3 creates all 17 approved indices") {
                            "AND name LIKE 'idx_%' ORDER BY name"));
         int n = 0;
         while (db.step()) ++n;
-        CHECK(n == 17);
+        CHECK(n == 18);
     }
     clean(path);
 }
@@ -317,12 +317,12 @@ TEST_CASE("Schema v1 PRAGMA foreign_key_check returns no violations") {
 // Migration Engine behaviour
 // ============================================================
 
-TEST_CASE("Schema v3 re-running migration is no-op") {
+TEST_CASE("Schema v5 re-running migration is no-op") {
     auto path = sdb("sc_rerun.db");
     clean(path);
     {
         auto db = make_db(path);
-        CHECK(containercp::storage::MigrationEngine().current_version(db) == 4);
+        CHECK(containercp::storage::MigrationEngine().current_version(db) == 5);
         // Second run
         containercp::storage::MigrationEngine eng2;
         containercp::storage::register_all_schema_migrations(eng2);

@@ -13,6 +13,7 @@
 #include "mail/MailAlias.h"
 #include "mail/MailDomain.h"
 #include "mail/Mailbox.h"
+#include "ManagedMountState.h"
 #include "node/Node.h"
 #include "php/PhpVersion.h"
 #include "profile/Profile.h"
@@ -21,6 +22,7 @@
 #include "ssl/SslCertificate.h"
 #include "user/User.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -121,6 +123,13 @@ public:
     void save_system_accounts(const std::vector<access::SystemAccountMapping>& mappings);
     std::vector<access::SystemAccountMapping> load_system_accounts();
     bool try_save_system_accounts(const std::vector<access::SystemAccountMapping>& mappings);
+
+    // Managed mount lifecycle state (persistent mount records)
+    std::optional<ManagedMountState> load_managed_mount(uint64_t access_user_id, uint64_t site_id);
+    std::vector<ManagedMountState> list_managed_mounts_by_user(uint64_t access_user_id);
+    std::vector<ManagedMountState> list_all_managed_mounts();
+    bool save_managed_mount(const ManagedMountState& mount);
+    bool delete_managed_mount(uint64_t access_user_id, uint64_t site_id);
 
     // Auth users
     void save_auth_users(const std::vector<auth::AuthUser>& users);

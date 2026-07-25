@@ -6,7 +6,21 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-25 | `this commit` | ARCH-009 Task 28 — Detect and Reconcile Managed Orphan Mounts
+## 2026-07-25 | `this commit` | ARCH-009 Task 29 — Add Persisted Mount Lifecycle State
+
+**Summary:** Added `managed_mounts` table as the source of truth for expected managed SFTP mounts. Created `ManagedMountState` struct with composite key `(access_user_id, site_id)`. Lifecycle states: pending, applying, active, removing, error (validated via `valid_mount_state()`). Schema migration v5 adds the table and `idx_managed_mounts_user` index. Storage CRUD operations: `load_managed_mount`, `list_managed_mounts_by_user`, `list_all_managed_mounts`, `save_managed_mount` (INSERT OR REPLACE with state validation), `delete_managed_mount`. Updated `kExpectedSchemaVersion` from 4 to 5 in `Storage.cpp` and `MigrationOrchestrator.cpp`. Updated all schema tests (20 app tables, 22 total tables, 18 indices). Updated `valid_state_json` default to version 5. Added 10 storage tests covering: schema upgrade, insert, update, unique conflict, list by user, list all, delete, load missing, invalid state rejection, transaction success.
+
+**Files changed:** `libs/storage/ManagedMountState.h`, `libs/storage/SchemaMigrations.{h,cpp}`, `libs/storage/SQLiteStorage.{h,cpp}`, `libs/storage/Storage.cpp`, `libs/storage/MigrationOrchestrator.cpp`, `tests/test_schema.cpp`, `tests/test_sqlite_storage.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** New `managed_mounts` table records every managed bind mount with its lifecycle state, source/target identity, and error tracking. Schema v5 is deployed during migration. Invalid states are rejected at the storage layer.
+
+**Validation:** Full doctest suite passed (1095 cases, 7299 assertions). 10 new storage tests pass. `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
+## 2026-07-25 | `83a94f3` | ARCH-009 Task 28 — Detect and Reconcile Managed Orphan Mounts
 
 **Summary:** Implemented `reconcile_mounts()` — deterministic reconciliation between expected mounts (from SQLite grants) and observed mounts (from `MountInspector::enumerate`). Classifies each observed mount as: expected managed mount, missing expected mount, stale managed mount (identity mismatch → unmounts and reports), orphan managed mount (under `sites/` but no grant → safely removed), foreign mount (under user root but outside `sites/` → reported, not mutated), or ambiguous mount (not a proper bind → reported, not mutated). ContainerCP ownership is proven by verifying target path, bind mount identity (`is_bind`, `bind_root`, `fstype`, `device`, `rw` options), and grant persistence — not by path prefix alone. Added `enumerate()` virtual method to `MountInspector` interface and `enumerate_mountinfo()` free function for scanning `/proc/self/mountinfo`. All fake mount inspectors updated to implement `enumerate`. Added 10 tests covering all classification categories and partial failure.
 

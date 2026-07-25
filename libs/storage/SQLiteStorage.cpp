@@ -4,6 +4,7 @@
 #include "profile/ProfileType.h"
 
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <set>
 #include <string>
@@ -793,6 +794,112 @@ std::vector<access::SystemAccountMapping> SQLiteStorage::load_system_accounts() 
         mappings.push_back(std::move(m));
     }
     return mappings;
+}
+
+// --- Managed mount lifecycle state ---
+
+std::optional<ManagedMountState> SQLiteStorage::load_managed_mount(uint64_t access_user_id, uint64_t site_id) {
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return std::nullopt;
+    if (!rl->prepare("SELECT access_user_id, site_id, domain, source_path, target_path, "
+                      "state, last_error, created_at, updated_at "
+                      "FROM managed_mounts WHERE access_user_id=? AND site_id=?")) return std::nullopt;
+    if (!rl->bind_int(1, static_cast<int64_t>(access_user_id))) return std::nullopt;
+    if (!rl->bind_int(2, static_cast<int64_t>(site_id))) return std::nullopt;
+    if (!rl->step()) return std::nullopt;
+    ManagedMountState m;
+    m.access_user_id = static_cast<uint64_t>(rl->column_int(0));
+    m.site_id        = static_cast<uint64_t>(rl->column_int(1));
+    m.domain         = rl->column_text(2);
+    m.source_path    = rl->column_text(3);
+    m.target_path    = rl->column_text(4);
+    m.state          = rl->column_text(5);
+    m.last_error     = rl->column_text(6);
+    m.created_at     = rl->column_text(7);
+    m.updated_at     = rl->column_text(8);
+    return m;
+}
+
+std::vector<ManagedMountState> SQLiteStorage::list_managed_mounts_by_user(uint64_t access_user_id) {
+    std::vector<ManagedMountState> result;
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return result;
+    if (!rl->prepare("SELECT access_user_id, site_id, domain, source_path, target_path, "
+                      "state, last_error, created_at, updated_at "
+                      "FROM managed_mounts WHERE access_user_id=? ORDER BY site_id")) return result;
+    if (!rl->bind_int(1, static_cast<int64_t>(access_user_id))) return result;
+    while (rl->step()) {
+        ManagedMountState m;
+        m.access_user_id = static_cast<uint64_t>(rl->column_int(0));
+        m.site_id        = static_cast<uint64_t>(rl->column_int(1));
+        m.domain         = rl->column_text(2);
+        m.source_path    = rl->column_text(3);
+        m.target_path    = rl->column_text(4);
+        m.state          = rl->column_text(5);
+        m.last_error     = rl->column_text(6);
+        m.created_at     = rl->column_text(7);
+        m.updated_at     = rl->column_text(8);
+        result.push_back(std::move(m));
+    }
+    return result;
+}
+
+std::vector<ManagedMountState> SQLiteStorage::list_all_managed_mounts() {
+    std::vector<ManagedMountState> result;
+    ReadLease rl(pool_);
+    if (!rl.is_valid()) return result;
+    if (!rl->prepare("SELECT access_user_id, site_id, domain, source_path, target_path, "
+                      "state, last_error, created_at, updated_at "
+                      "FROM managed_mounts ORDER BY access_user_id, site_id")) return result;
+    while (rl->step()) {
+        ManagedMountState m;
+        m.access_user_id = static_cast<uint64_t>(rl->column_int(0));
+        m.site_id        = static_cast<uint64_t>(rl->column_int(1));
+        m.domain         = rl->column_text(2);
+        m.source_path    = rl->column_text(3);
+        m.target_path    = rl->column_text(4);
+        m.state          = rl->column_text(5);
+        m.last_error     = rl->column_text(6);
+        m.created_at     = rl->column_text(7);
+        m.updated_at     = rl->column_text(8);
+        result.push_back(std::move(m));
+    }
+    return result;
+}
+
+bool SQLiteStorage::save_managed_mount(const ManagedMountState& mount) {
+    if (!valid_mount_state(mount.state)) return false;
+    TransactionGuard txn(pool_);
+    if (!txn.is_active()) return false;
+    const char* sql = "INSERT OR REPLACE INTO managed_mounts "
+        "(access_user_id, site_id, domain, source_path, target_path, state, last_error, "
+        "created_at, updated_at) VALUES ("
+        "?, ?, ?, ?, ?, ?, ?, "
+        "COALESCE((SELECT created_at FROM managed_mounts WHERE access_user_id=? AND site_id=?), "
+        "strftime('%Y-%m-%dT%H:%M:%SZ','now')), "
+        "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
+    if (!txn.db().prepare(sql)) return false;
+    if (!txn.db().bind_int(1, static_cast<int64_t>(mount.access_user_id))) return false;
+    if (!txn.db().bind_int(2, static_cast<int64_t>(mount.site_id))) return false;
+    if (!txn.db().bind_text(3, mount.domain)) return false;
+    if (!txn.db().bind_text(4, mount.source_path)) return false;
+    if (!txn.db().bind_text(5, mount.target_path)) return false;
+    if (!txn.db().bind_text(6, mount.state)) return false;
+    if (!txn.db().bind_text(7, mount.last_error)) return false;
+    if (!txn.db().bind_int(8, static_cast<int64_t>(mount.access_user_id))) return false;
+    if (!txn.db().bind_int(9, static_cast<int64_t>(mount.site_id))) return false;
+    if (txn.db().step() == false && txn.db().error_code() != 0) return false;
+    return txn.commit();
+}
+
+bool SQLiteStorage::delete_managed_mount(uint64_t access_user_id, uint64_t site_id) {
+    TransactionGuard txn(pool_);
+    if (!txn.is_active()) return false;
+    if (!txn.db().prepare("DELETE FROM managed_mounts WHERE access_user_id=? AND site_id=?")) return false;
+    if (!txn.db().bind_int(1, static_cast<int64_t>(access_user_id))) return false;
+    if (!txn.db().bind_int(2, static_cast<int64_t>(site_id))) return false;
+    if (txn.db().step() == false && txn.db().error_code() != 0) return false;
+    return txn.commit();
 }
 
 // --- Auth users ---

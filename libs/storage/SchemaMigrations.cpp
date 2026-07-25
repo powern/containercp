@@ -276,6 +276,22 @@ const char* kSchemaV4Home = R"SQL(
 ALTER TABLE system_accounts ADD COLUMN home TEXT NOT NULL DEFAULT '';
 )SQL";
 
+const char* kSchemaV5ManagedMounts = R"SQL(
+CREATE TABLE IF NOT EXISTS managed_mounts (
+    access_user_id  INTEGER NOT NULL,
+    site_id         INTEGER NOT NULL,
+    domain          TEXT NOT NULL,
+    source_path     TEXT NOT NULL,
+    target_path     TEXT NOT NULL,
+    state           TEXT NOT NULL DEFAULT 'pending',
+    last_error      TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    PRIMARY KEY (access_user_id, site_id)
+);
+CREATE INDEX IF NOT EXISTS idx_managed_mounts_user ON managed_mounts(access_user_id);
+)SQL";
+
 // Storage metadata values set by this migration.
 // These describe the schema state, NOT the active backend.
 // TXT remains the active Storage backend until Phase 11.
@@ -375,6 +391,25 @@ void register_all_schema_migrations(MigrationEngine& engine) {
     };
 
     engine.register_migration(std::move(v4));
+
+    Migration v5;
+    v5.version = 5;
+    v5.name = "managed_mounts";
+    v5.descriptor = kSchemaV5ManagedMounts;
+    v5.up = [](SQLiteDB& db, std::string& diagnostics) -> bool {
+        if (!db.exec(kSchemaV5ManagedMounts)) {
+            diagnostics = "managed_mounts table creation failed: " + db.error_message();
+            return false;
+        }
+        std::string set_version = "INSERT OR REPLACE INTO storage_meta (key, value) VALUES ('schema_version', '5')";
+        if (!db.exec(set_version)) {
+            diagnostics = "Failed to update schema_version: " + db.error_message();
+            return false;
+        }
+        return true;
+    };
+
+    engine.register_migration(std::move(v5));
 }
 
 } // namespace containercp::storage

@@ -1,5 +1,6 @@
 #include "storage/Storage.h"
 #include "storage/LegacyArchive.h"
+#include "storage/ManagedMountState.h"
 #include "storage/SQLiteStorage.h"
 #include "storage/SchemaMigrations.h"
 
@@ -2504,7 +2505,7 @@ static std::string valid_state_json(const std::string& backend,
                                     const std::string& db_path,
                                     const std::string& archive_path = "/srv/containercp/migrations/archive/11111111-2222-4333-8444-555555555555",
                                     const std::string& migration_id = kActivationTestMigrationId,
-                                    int schema_version = 4) {
+                                    int schema_version = 5) {
     std::ostringstream json;
     json << "{\n";
     json << "  \"state_version\": 1,\n";
@@ -2855,9 +2856,9 @@ TEST_CASE("P11-R2 strict activation state parser rejects wrong value types") {
     init_storage_schema(dir);
 
     std::string json = valid_state_json("sqlite", dir + "containercp.db");
-    auto pos = json.find("\"schema_version\": 4");
+    auto pos = json.find("\"schema_version\": 5");
     REQUIRE(pos != std::string::npos);
-    json.replace(pos, std::string("\"schema_version\": 4").size(), "\"schema_version\": \"4\"");
+    json.replace(pos, std::string("\"schema_version\": 5").size(), "\"schema_version\": \"4\"");
     expect_p11r2_state_rejected(dir, json);
     tclean(dir);
 }
@@ -4105,5 +4106,191 @@ TEST_CASE("P11-18 SQLite runtime preserves approved site_id zero sentinels after
         REQUIRE(certs.success); REQUIRE(certs.records.size() == 1);
         CHECK(certs.records[0].domain_id == 0);
     }
+    tclean(dir);
+}
+
+// --- Managed mount lifecycle state ---
+
+TEST_CASE("Managed mount schema upgrade") {
+    auto dir = tdir("mm_schema");
+    tclean(dir); fs::create_directories(dir);
+    init_storage_schema(dir);
+    containercp::storage::SQLiteDB db;
+    REQUIRE(db.open(dir + "containercp.db"));
+    REQUIRE(db.prepare("SELECT value FROM storage_meta WHERE key='schema_version'"));
+    REQUIRE(db.step());
+    CHECK(db.column_text(0) == "5");
+    // Verify table exists
+    REQUIRE(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='managed_mounts'"));
+    REQUIRE(db.step());
+    db.close();
+    tclean(dir);
+}
+
+TEST_CASE("Managed mount insert and load") {
+    auto dir = tdir("mm_insert");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::ManagedMountState m;
+        m.access_user_id = 1; m.site_id = 10;
+        m.domain = "test.com"; m.source_path = "/srv/sites/test/public/";
+        m.target_path = "/srv/users/au-dev/sites/test"; m.state = "active";
+        m.last_error = "";
+        CHECK(store.save_managed_mount(m));
+
+        auto loaded = store.load_managed_mount(1, 10);
+        REQUIRE(loaded.has_value());
+        CHECK(loaded->access_user_id == 1);
+        CHECK(loaded->site_id == 10);
+        CHECK(loaded->domain == "test.com");
+        CHECK(loaded->source_path == "/srv/sites/test/public/");
+        CHECK(loaded->target_path == "/srv/users/au-dev/sites/test");
+        CHECK(loaded->state == "active");
+        CHECK(loaded->last_error == "");
+        CHECK_FALSE(loaded->created_at.empty());
+        CHECK_FALSE(loaded->updated_at.empty());
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("Managed mount update preserves created_at") {
+    auto dir = tdir("mm_update");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::ManagedMountState m;
+        m.access_user_id = 1; m.site_id = 10;
+        m.domain = "test.com"; m.source_path = "/src"; m.target_path = "/tgt";
+        m.state = "pending";
+        CHECK(store.save_managed_mount(m));
+
+        auto loaded = store.load_managed_mount(1, 10);
+        REQUIRE(loaded.has_value());
+        std::string created = loaded->created_at;
+
+        m.state = "active";
+        m.last_error = "";
+        CHECK(store.save_managed_mount(m));
+
+        loaded = store.load_managed_mount(1, 10);
+        REQUIRE(loaded.has_value());
+        CHECK(loaded->state == "active");
+        CHECK(loaded->created_at == created);
+        CHECK_FALSE(loaded->updated_at.empty());
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("Managed mount unique conflict") {
+    auto dir = tdir("mm_unique");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::ManagedMountState m;
+        m.access_user_id = 1; m.site_id = 10;
+        m.domain = "a"; m.source_path = "/a"; m.target_path = "/b";
+        m.state = "active";
+        CHECK(store.save_managed_mount(m));
+
+        m.domain = "replaced";
+        CHECK(store.save_managed_mount(m));
+
+        auto loaded = store.load_managed_mount(1, 10);
+        REQUIRE(loaded.has_value());
+        CHECK(loaded->domain == "replaced");
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("Managed mount list by user and list all") {
+    auto dir = tdir("mm_list");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::ManagedMountState m1, m2, m3;
+        m1.access_user_id = 1; m1.site_id = 10; m1.domain = "a"; m1.source_path="/a"; m1.target_path="/b"; m1.state="active";
+        m2.access_user_id = 1; m2.site_id = 20; m2.domain = "b"; m2.source_path="/c"; m2.target_path="/d"; m2.state="pending";
+        m3.access_user_id = 2; m3.site_id = 30; m3.domain = "c"; m3.source_path="/e"; m3.target_path="/f"; m3.state="error";
+        CHECK(store.save_managed_mount(m1));
+        CHECK(store.save_managed_mount(m2));
+        CHECK(store.save_managed_mount(m3));
+
+        auto by_user = store.list_managed_mounts_by_user(1);
+        CHECK(by_user.size() == 2);
+
+        auto all = store.list_all_managed_mounts();
+        CHECK(all.size() == 3);
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("Managed mount delete and load missing") {
+    auto dir = tdir("mm_delete");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::ManagedMountState m;
+        m.access_user_id = 1; m.site_id = 10;
+        m.domain = "x"; m.source_path = "/x"; m.target_path = "/y";
+        m.state = "active";
+        CHECK(store.save_managed_mount(m));
+        CHECK(store.load_managed_mount(1, 10).has_value());
+
+        CHECK(store.delete_managed_mount(1, 10));
+        CHECK_FALSE(store.load_managed_mount(1, 10).has_value());
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("Managed mount invalid state rejection") {
+    auto dir = tdir("mm_state");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::ManagedMountState m;
+        m.access_user_id = 1; m.site_id = 10;
+        m.domain = "x"; m.source_path = "/x"; m.target_path = "/y";
+        m.state = "invalid_state";
+        CHECK_FALSE(store.save_managed_mount(m));
+        CHECK_FALSE(store.load_managed_mount(1, 10).has_value());
+    }
+    pool.shutdown();
+    tclean(dir);
+}
+
+TEST_CASE("Managed mount transaction rollback on failure") {
+    auto dir = tdir("mm_rollback");
+    tclean(dir); fs::create_directories(dir);
+    containercp::storage::ConnectionPool pool;
+    init_pool(pool, dir);
+    {
+        containercp::storage::SQLiteStorage store(pool);
+        containercp::storage::ManagedMountState m;
+        m.access_user_id = 1; m.site_id = 10;
+        m.domain = "x"; m.source_path = "/x"; m.target_path = "/y";
+        m.state = "active";
+        CHECK(store.save_managed_mount(m));
+        CHECK(store.delete_managed_mount(1, 10));
+        CHECK_FALSE(store.load_managed_mount(1, 10).has_value());
+    }
+    pool.shutdown();
     tclean(dir);
 }
