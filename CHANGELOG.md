@@ -12,11 +12,25 @@ Format: date | commit | summary
 
 **Files changed:** `libs/access/LocalSftpProvider.cpp`, `libs/access/ManagedPathValidator.cpp`, `libs/access/MountInspector.cpp`, `libs/access/SystemAccountCommandRunner.h`, `libs/access/SystemAccountCommandRunner.cpp`, `libs/core/ServiceRegistry.cpp`, `tests/CMakeLists.txt`, `tests/arch009_linux_integration.cpp` (new), `tests/test_access.cpp`, `docs/arch009-linux-integration-runbook.md` (new), `CHANGELOG.md`
 
-**User-visible behavior:** Normal test runs now expose an explicit ARCH-009 privileged integration target that safely skips unless all opt-in safety prerequisites are present. Disposable validation hosts can now verify the real account lifecycle path creates and removes a Linux SFTP user through `execve()` and actual system tools. Production no longer applies a global command-runner managed root that could block legitimate `/srv/containercp/sites/...` permission operations.
+**User-visible behavior:** Normal test runs now expose an explicit ARCH-009 privileged integration target that safely skips unless all opt-in safety precautions are present. Disposable validation hosts can now verify the real account lifecycle path creates and removes a Linux SFTP user through `execve()` and actual system tools. Production no longer applies a global command-runner managed root that could block legitimate `/srv/containercp/sites/...` permission operations.
 
 **Validation:** Build passed for `containercp_tests` and `arch009_linux_integration`. Full unit suite passed via `ctest --test-dir build2 -R '^containercp_tests$' --output-on-failure`. Privileged integration label passed with explicit skip via `ctest --test-dir build2 -L arch009_linux_integration --output-on-failure` because opt-in prerequisites were absent. Full CTest passed via `ctest --test-dir build2 --output-on-failure` with `containercp_tests` passed and `arch009_linux_integration` skipped. Cleanup verification confirmed no `au-arch46it` passwd entry, no `au-arch46it` group, no `ccp-arch009-it` group, and no `/srv/containercp/arch009-linux-integration` path. `git diff --check` passed.
 
 **Known risks:** The privileged integration test mutates real `/etc/passwd`, `/etc/group`, `/etc/shadow`, and `/srv/containercp/arch009-linux-integration` state when explicitly enabled. It must only run on disposable hosts.
+
+---
+
+## 2026-07-26 | `d38e677` | ARCH-009 Task 47 — Execute Privileged Integration Suite, Fix USERGROUPS_ENAB Regressions
+
+**Summary:** Executed the privileged ARCH-009 Linux integration suite on a disposable Debian 13 container. The test initially failed because `remove_user()` unconditionally called `groupdel` after `userdel`, but Debian's `/etc/login.defs` default `USERGROUPS_ENAB=yes` causes `userdel` to auto-remove the user's private group. Fixed `LocalSftpProvider::remove_user()` to check `inspector_->group_exists()` before attempting `groupdel`, skipping it when `userdel` already removed the group. Added regression test `remove_user handles USERGROUPS_ENAB group auto-removal by userdel` (verified via fake inspector: after userdel succeeds the private group is removed from state, and remove_user still succeeds). Installed `acl` and `sqlite3` system packages. Full pre-flight passed (no test identities, free UID/GID ranges). Full privileged suite passed (1 test, 0.34s). Full unit suite passed (1246+ tests). Full CTest passed (2 tests). Post-run cleanup proved all test identities, paths, marker, mounts, and processes absent. `git diff --check` passed.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Account removal now gracefully handles systems where `userdel` automatically removes the private group (Debian default). Permissions tasks that use `/srv/containercp/sites/...` paths are no longer incorrectly blocked by the command runner's managed-root check. The privileged integration suite is validated as exercisable and passing on disposable hosts.
+
+**Validation:** Full CTest: `containercp_tests` passed, `arch009_linux_integration` passed (with opt-in) or skipped (without opt-in). Cleanup verification: 8 checks all passing.
+
+**Known risks:** The privileged integration test only exercises the create_user/remove_user path; grant, mount, and ACL scenarios require extending the test binary.
 
 ---
 
