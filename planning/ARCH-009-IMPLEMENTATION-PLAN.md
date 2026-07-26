@@ -57,16 +57,21 @@
 
 **Objective:** Generate OpenSSH config, manage `authorized_keys`, validate with `sshd -t`.
 
-**Code areas:** `libs/access/`
+**Code areas:** `libs/access/`, `libs/core/ServiceRegistry.cpp`
+
+**Design document:** `planning/ARCH-009-PHASE4-DESIGN.md` (Task 49)
 
 | Step | Action | File |
 |------|--------|------|
-| 4.1 | Add `SshdConfigWriter` (atomic temp-file write, `sshd -t`, reload) | `libs/access/SshdConfigWriter.{h,cpp}` |
-| 4.2 | Wire key add/remove/revoke to authorized_keys rebuild | `LocalSftpProvider` |
-| 4.3 | Wire user create/remove to sshd config update | `LocalSftpProvider` |
-| 4.4 | Tests | `tests/test_sftp_provider.cpp` |
+| 4.1 | Add `SshdDiscovery` struct + detection runtime | `libs/access/SshdDiscovery.{h,cpp}` |
+| 4.2 | Add `SshdConfigWriter` (atomic temp-file write, `sshd -t`, reload, rollback) | `libs/access/SshdConfigWriter.{h,cpp}` |
+| 4.3 | Add `SshdAuthorizedKeysWriter` (per-user key file outside chroot, atomic, `restrict` prefix) | `libs/access/SshdAuthorizedKeysWriter.{h,cpp}` |
+| 4.4 | Wire `LocalSftpProvider`: key add/remove → authorized_keys rebuild; user create/remove → sshd config ensure | `LocalSftpProvider.{h,cpp}` |
+| 4.5 | Wire `ServiceRegistry`: inject Phase 4 discovery + writers | `ServiceRegistry.cpp` |
+| 4.6 | Tests: fake-state unit for config writer, key writer, discovery | `tests/test_sshd_config_writer.cpp`, `tests/test_sshd_authorized_keys.cpp`, `tests/test_sshd_discovery.cpp` |
+| 4.7 | Privileged integration: add privileged sshd validation scenarios to `arch009_linux_integration` | `tests/arch009_linux_integration.cpp` |
 
-**Acceptance:** sshd config generated atomically. `sshd -t` validation before reload. authorized_keys correct permissions and content. Multiple keys per user. Key revocation prevents auth.
+**Acceptance:** sshd config generated atomically. `sshd -t` validation before reload. authorized_keys outside chroot with correct permissions and content. `restrict` prefix on every key. Config rollback on reload failure. Key revocation prevents auth. Provider enters Degraded when Phase 4 deps missing.
 
 ## Phase 5 — Reconciliation
 

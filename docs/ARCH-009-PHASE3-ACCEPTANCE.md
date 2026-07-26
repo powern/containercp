@@ -12,7 +12,7 @@
 
 **Scope:** Local SFTP Phase 3 account, grant, mount, persistence, runtime reconciliation, and privileged command hardening.
 
-**Phase 4 status:** Not started. SSHD config and `authorized_keys` management remain out of scope.
+**Phase 4 status:** Design phase (Task 49). Design document at `planning/ARCH-009-PHASE4-DESIGN.md`. Implementation not started.
 
 ## Architecture Summary
 

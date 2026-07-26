@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-26 | `pending` | ARCH-009 Task 49 — Phase 4 OpenSSH Integration Design and Safety Contract
+
+**Summary:** Began ARCH-009 Phase 4 with design-only task. Produced `planning/ARCH-009-PHASE4-DESIGN.md` covering: sshd integration model (dedicated include file `90-containercp-sftp.conf` via `Match Group containercp-sftp`), chroot contract (Phase 3 layout confirmed consistent with OpenSSH ChrootDirectory requirements), authorized_keys model (outside chroot via `AuthorizedKeysFile`, `restrict` prefix, root-owned 0600, atomic), config transaction (render → sshd -T → atomic replace → reload → health check → rollback), sshd discovery (binary path, service name, include support, internal-sftp availability), fail-closed policy, migration plan, and comprehensive test plan. Updated implementation plan Phase 4 steps from high-level to detailed file/class assignments. Updated project status to Phase 4 design phase. Updated Phase 3 acceptance report status.
+
+**Files changed:** `planning/ARCH-009-PHASE4-DESIGN.md` (new), `planning/ARCH-009-IMPLEMENTATION-PLAN.md`, `planning/project-status.md`, `docs/ARCH-009-PHASE3-ACCEPTANCE.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No user-visible changes. Phase 4 design is documented and ready for implementation. The design does not modify sshd configuration.
+
+**Validation:** Full unit suite passed. Full CTest passed with privileged integration PASS (not skipped). Cleanup verification: no test identities, paths, mounts, marker, or processes remain. `git diff --check` passed.
+
+**Known risks:** No implementation risks. Design review may identify adjustments before coding begins. Phase 4 implementation will not expose real SFTP login before privileged grant/mount/ACL integration coverage is added.
+
+---
+
 ## 2026-07-26 | `pending` | ARCH-009 Task 48 — Final Phase 3 Acceptance and Evidence Report
 
 **Summary:** Completed final ARCH-009 Phase 3 acceptance audit and produced `docs/ARCH-009-PHASE3-ACCEPTANCE.md`. Acceptance decision: Phase 3 ACCEPTED WITH RESIDUAL RISKS. Verified schema version 7, migrations through `system_accounts.last_error`, ServiceRegistry production wiring, runtime state machine, dependency verification, public/internal reconciliation split, grant lifecycle persistence, managed mount lifecycle persistence, startup/user reconciliation, privileged command hardening, integration target, and runbook. Privileged integration honesty: Task47/48 real Linux execution covers account lifecycle only; ACL, bind mount, unmount, grant lifecycle, and SQLite lifecycle are implemented and unit/fake-state validated but not privileged-executed. During acceptance audit, fixed two concrete lifecycle defects: internal applying-grant revoke recovery called public `apply_grant()` during `Starting`; pending grant revoke ignored failed stale membership/group cleanup and could report success after partial cleanup failure. Added regression tests for both. Updated project status, implementation plan, and Phase 3 design status.
