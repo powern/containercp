@@ -4871,9 +4871,16 @@ bool ApiServer::start() {
                 r.body = api_error("sftp_user_provision_failed", pr.message);
                 return r;
             }
-            // Write authorized_keys if keys exist
-            if (!s.access_keys().list().empty()) {
-                (void)lsp->write_authorized_keys(id);
+            // Sync authorized_keys if this user has enabled keys (no global check)
+            bool has_user_keys = false;
+            for (const auto& ak : s.access_keys().list()) {
+                if (ak.access_user_id == id && ak.enabled) { has_user_keys = true; break; }
+            }
+            if (has_user_keys) {
+                auto kw = lsp->write_authorized_keys(id);
+                if (!kw.success) {
+                    r.status_code = 500; r.body = api_error("sftp_key_sync_failed", kw.message); return r;
+                }
             }
         }
 
@@ -4897,21 +4904,24 @@ bool ApiServer::start() {
         if (!u) { r.status_code = 404; r.body = api_error("sftp_user_not_found", ""); return r; }
 
         bool has_enabled = json_has_key(req.body, "enabled");
-        if (has_enabled) {
-            bool enable = json_extract(req.body, "enabled") != "false";
-            u->enabled = enable;
-            if (enable) {
-                containercp::access::AccessUser au;
-                au.id = uid; au.username = u->username; au.enabled = true;
-                auto pr = lsp->create_user(au);
-                if (!pr.success) {
-                    r.status_code = 500; r.body = api_error("sftp_user_provision_failed", pr.message); return r;
-                }
-            } else {
-                containercp::access::AccessUser au;
-                au.id = uid; au.username = u->username; au.enabled = false;
-                (void)lsp->disable_user(au);
-            }
+        if (!has_enabled) { r.status_code = 422; r.body = api_error("sftp_user_invalid", "enabled field required"); return r; }
+        bool new_enabled = json_extract(req.body, "enabled") != "false";
+        if (new_enabled == u->enabled) {
+            // Idempotent: already in target state
+        } else if (new_enabled) {
+            // Enable: call provider, then persist
+            containercp::access::AccessUser au;
+            au.id = uid; au.username = u->username; au.enabled = true;
+            auto pr = lsp->create_user(au);
+            if (!pr.success) { r.status_code = 500; r.body = api_error("sftp_user_provision_failed", pr.message); return r; }
+            u->enabled = true;
+        } else {
+            // Disable: call provider, check result, then persist
+            containercp::access::AccessUser au;
+            au.id = uid; au.username = u->username; au.enabled = false;
+            auto dr = lsp->disable_user(au);
+            if (!dr.success) { r.status_code = 500; r.body = api_error("sftp_backend_failure", dr.message); return r; }
+            u->enabled = false;
         }
 
         r.body = api_success("{\"id\":" + std::to_string(uid) + ",\"enabled\":" + (u->enabled ? "true" : "false") + "}");
