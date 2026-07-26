@@ -486,7 +486,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | RC1 pass | 128/137 (9 stability deferred) |
 | RC2 validation | All items verified on real Debian 13 |
 | Bugs discovered during RC1 | 13 (all fixed) |
-| Current Epic | ARCH-010 SFTP Admin API (Task 1) — REST API for SFTP user, key, grant, and status management. See `docs/api/sftp-administration-api.md`. |
+| Current Epic | ARCH-010 SFTP Admin GUI MVP (Task 5) — SFTP Access page with runtime status, users table, detail panel, keys and grants tabs, navigation. |
 
 ---
 
