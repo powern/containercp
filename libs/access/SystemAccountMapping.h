@@ -18,6 +18,7 @@ struct SystemAccountMapping {
     std::string groupname;     // canonical primary group name
     std::string state;         // "active", "provisioning", "removing", "error"
     std::string home;          // persisted trusted home directory path
+    std::string last_error;    // last error message for error state
     std::string created_at;
     std::string updated_at;
 };

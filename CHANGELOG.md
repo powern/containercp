@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-26 | `this commit` | ARCH-009 Task 40 — User Lifecycle Restart Reconciliation
+
+**Summary:** Implemented `reconcile_user_lifecycle()` for deterministic startup reconciliation of SystemAccountMapping states (provisioning, active, removing, error). Behavior per state: provisioning — verify OS account identity, complete chroot/pending grants if safe, otherwise persist error; active — verify identity, chroot, reconcile grants/mounts, detect drift; removing — continue revoke/cleanup/userdel/groupdel/home cleanup/mapping delete idempotently; error — recover to active if OS account exists and matches, otherwise preserve last_error. Added schema v7 migration for `system_accounts.last_error` column. Updated SQLiteStorage to persist/load `last_error`. Wired `set_grants_lookup`, `set_grant_lifecycle_storage`, `set_mapping_persistence`, `set_grants_loader` into ServiceRegistry::start(). Added 17 tests: provisioning no OS, provisioning OS exists, provisioning OS mismatch, active ok, active ownership mismatch, active foreign mount, removing completes, removing no OS, removing userdel failure, error recoverable, error not recoverable, idempotent, provisioning crash after useradd, removing crash before userdel, removing crash after userdel, unmanaged conflict, persistence failure.
+
+**Files changed:** `libs/access/LocalSftpProvider.h`, `libs/access/LocalSftpProvider.cpp`, `libs/access/SystemAccountMapping.h`, `libs/storage/SchemaMigrations.h`, `libs/storage/SchemaMigrations.cpp`, `libs/storage/SQLiteStorage.cpp`, `libs/storage/Storage.cpp`, `libs/storage/MigrationOrchestrator.cpp`, `libs/core/ServiceRegistry.cpp`, `tests/test_access.cpp`, `tests/test_schema.cpp`, `tests/test_sqlite_storage.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Daemon now systematically recovers user lifecycle states on startup. Crashed provisioning, active, removing, and error states are reconciled deterministically. No mutation of unmanaged users or foreign mounts.
+
+**Validation:** Full doctest suite passed (1191 cases, 7591 assertions). 17 new reconcile_user_lifecycle tests pass. Schema v7 migration tested. `git diff --check` passed. Zero compiler warnings.
+
+**Known risks:** None.
+
+---
+
 ## 2026-07-25 | `this commit` | ARCH-009 Task 39 — Make remove_user Lifecycle Transactional
 
 **Summary:** Rewrote `remove_user()` with step ordering and transactional rollback. Steps: load active mapping, persist "removing" state, revoke all grants, verify no non-terminal grants remain, cleanup all mounts, reconcile mounts, verify zero mounts, remove from global SFTP group, delete OS account, verify OS account absent, remove private group, remove safe home content, delete persisted mapping. Failure behavior: revoke failure blocks userdel; cleanup failure blocks userdel; userdel failure preserves mapping in error state; mapping delete failure preserves recoverable evidence. Every result checked. Fixed `resolve_username` to accept "removing" state. Fixed `create_directories` return-value check. Fixed test `FakeCommandRunner` constructors to pass inspector for proper state tracking. Added 5 tests: successful removal, no grants, revoke failure blocks userdel, userdel failure, mapping delete failure.

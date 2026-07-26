@@ -751,8 +751,9 @@ bool SQLiteStorage::try_save_system_accounts(const std::vector<access::SystemAcc
         [&](SQLiteDB& db) -> bool {
             const char* sql = "INSERT INTO system_accounts "
                 "(entity_type, entity_id, uid, gid, username, groupname, state, home, "
-                "created_at, updated_at) VALUES ("
+                "last_error, created_at, updated_at) VALUES ("
                 "?, ?, ?, ?, ?, ?, ?, ?, "
+                "?, "
                 "strftime('%Y-%m-%dT%H:%M:%SZ','now'), "
                 "strftime('%Y-%m-%dT%H:%M:%SZ','now'))";
             for (const auto& m : mappings) {
@@ -765,6 +766,7 @@ bool SQLiteStorage::try_save_system_accounts(const std::vector<access::SystemAcc
                 if (!db.bind_text(6, m.groupname)) return false;
                 if (!db.bind_text(7, m.state)) return false;
                 if (!db.bind_text(8, m.home)) return false;
+                if (!db.bind_text(9, m.last_error)) return false;
                 if (db.step() == false && db.error_code() != 0) return false;
             }
             return true;
@@ -779,7 +781,7 @@ std::vector<access::SystemAccountMapping> SQLiteStorage::load_system_accounts() 
     std::vector<access::SystemAccountMapping> mappings;
     ReadLease rl(pool_);
     if (!rl.is_valid()) return mappings;
-    if (!rl->prepare("SELECT entity_type, entity_id, uid, gid, username, groupname, state, home "
+    if (!rl->prepare("SELECT entity_type, entity_id, uid, gid, username, groupname, state, home, last_error "
                       "FROM system_accounts ORDER BY entity_type, entity_id")) return mappings;
     while (rl->step()) {
         access::SystemAccountMapping m;
@@ -791,6 +793,7 @@ std::vector<access::SystemAccountMapping> SQLiteStorage::load_system_accounts() 
         m.groupname   = rl->column_text(5);
         m.state       = rl->column_text(6);
         m.home        = rl->column_text(7);
+        m.last_error  = rl->column_text(8);
         mappings.push_back(std::move(m));
     }
     return mappings;

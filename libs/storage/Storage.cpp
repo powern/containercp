@@ -17,7 +17,7 @@
 namespace containercp::storage {
 
 namespace {
-constexpr int kExpectedSchemaVersion = 6;
+constexpr int kExpectedSchemaVersion = 7;
 
 struct ActivationState {
     int64_t state_version = 0;

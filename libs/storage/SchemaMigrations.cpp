@@ -276,6 +276,10 @@ const char* kSchemaV4Home = R"SQL(
 ALTER TABLE system_accounts ADD COLUMN home TEXT NOT NULL DEFAULT '';
 )SQL";
 
+const char* kSchemaV7LastError = R"SQL(
+ALTER TABLE system_accounts ADD COLUMN last_error TEXT NOT NULL DEFAULT '';
+)SQL";
+
 const char* kSchemaV5ManagedMounts = R"SQL(
 CREATE TABLE IF NOT EXISTS managed_mounts (
     access_user_id  INTEGER NOT NULL,
@@ -444,6 +448,25 @@ void register_all_schema_migrations(MigrationEngine& engine) {
     };
 
     engine.register_migration(std::move(v6));
+
+    Migration v7;
+    v7.version = 7;
+    v7.name = "system_accounts_last_error";
+    v7.descriptor = kSchemaV7LastError;
+    v7.up = [](SQLiteDB& db, std::string& diagnostics) -> bool {
+        if (!db.exec(kSchemaV7LastError)) {
+            diagnostics = "system_accounts.last_error column add failed: " + db.error_message();
+            return false;
+        }
+        std::string set_version = "INSERT OR REPLACE INTO storage_meta (key, value) VALUES ('schema_version', '7')";
+        if (!db.exec(set_version)) {
+            diagnostics = "Failed to update schema_version: " + db.error_message();
+            return false;
+        }
+        return true;
+    };
+
+    engine.register_migration(std::move(v7));
 }
 
 } // namespace containercp::storage

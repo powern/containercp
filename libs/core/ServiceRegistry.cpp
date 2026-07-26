@@ -664,12 +664,81 @@ void ServiceRegistry::start() {
                 return {result.exit_code == 0, result.err, result.out};
             }));
 
+    // ARCH-009 Task 38/39: mapping persistence for user lifecycle
+    access_provider_.set_mapping_persistence(
+        [this]() -> std::vector<access::SystemAccountMapping> {
+            return storage_.sqlite().load_system_accounts();
+        },
+        [this](const access::SystemAccountMapping& m) -> bool {
+            auto all = storage_.sqlite().load_system_accounts();
+            for (auto& existing : all) {
+                if (existing.entity_type == m.entity_type && existing.entity_id == m.entity_id) {
+                    existing = m;
+                    return storage_.sqlite().try_save_system_accounts(all);
+                }
+            }
+            all.push_back(m);
+            return storage_.sqlite().try_save_system_accounts(all);
+        },
+        [this](const std::string& entity_type, uint64_t entity_id) -> bool {
+            auto all = storage_.sqlite().load_system_accounts();
+            auto it = std::remove_if(all.begin(), all.end(),
+                [&](const auto& s) { return s.entity_type == entity_type && s.entity_id == entity_id; });
+            if (it == all.end()) return true;
+            all.erase(it, all.end());
+            return storage_.sqlite().try_save_system_accounts(all);
+        }
+    );
+
+    // Grant lifecycle storage for apply/revoke persistence
+    access_provider_.set_grant_lifecycle_storage(
+        [this]() -> std::vector<storage::GrantLifecycleState> {
+            return storage_.sqlite().list_all_grant_lifecycle();
+        },
+        [this](const storage::GrantLifecycleState& s) -> bool {
+            return storage_.sqlite().save_grant_lifecycle(s);
+        },
+        [this](uint64_t uid, uint64_t sid) -> bool {
+            return storage_.sqlite().delete_grant_lifecycle(uid, sid);
+        }
+    );
+
+    // Grant loader for mount/apply operations
+    access_provider_.set_grants_loader(
+        [this](uint64_t access_user_id) -> std::vector<containercp::access::LocalSftpProvider::GrantInfo> {
+            std::vector<containercp::access::LocalSftpProvider::GrantInfo> grants;
+            // Load from grant_lifecycle table for this user
+            auto all = storage_.sqlite().list_all_grant_lifecycle();
+            for (const auto& l : all) {
+                if (l.access_user_id == access_user_id) {
+                    containercp::access::LocalSftpProvider::GrantInfo gi;
+                    gi.site_id = l.site_id;
+                    gi.permission = l.permission;
+                    auto* site = sites_.find_by_id(l.site_id);
+                    gi.domain = site ? site->domain : "";
+                    grants.push_back(gi);
+                }
+            }
+            return grants;
+        }
+    );
+
     // ARCH-009 Task 30: reconcile persisted managed mounts at startup
     auto mount_reconcile = access_provider_.reconcile_startup_mounts();
     if (!mount_reconcile.success) {
         logger_.warning("SFTP", "Startup mount reconciliation: " + mount_reconcile.message);
     } else if (mount_reconcile.message.find("0 fixed") == std::string::npos) {
         logger_.info("SFTP", "Startup mount reconciliation: " + mount_reconcile.message);
+    }
+
+    // ARCH-009 Task 40: reconcile user lifecycle states at startup
+    // Must run after all provider dependencies, grant lifecycle storage,
+    // and managed mount storage are configured.
+    auto user_reconcile = access_provider_.reconcile_user_lifecycle();
+    if (!user_reconcile.success) {
+        logger_.warning("SFTP", "Startup user lifecycle reconciliation: " + user_reconcile.message);
+    } else if (user_reconcile.message.find("0 fixed") == std::string::npos) {
+        logger_.info("SFTP", "Startup user lifecycle reconciliation: " + user_reconcile.message);
     }
 }
 

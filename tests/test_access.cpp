@@ -7506,3 +7506,338 @@ TEST_CASE("remove_user mapping delete failure") {
     CHECK_FALSE(r.success);
     CHECK(r.message.find("failed to delete") != std::string::npos);
 }
+
+// --- ARCH-009 Task 40: User Lifecycle Restart Reconciliation ---
+
+struct ReconcileUserContext {
+    std::shared_ptr<FakeInspector> inspector;
+    FakeCommandRunner fake_commands;
+    std::shared_ptr<FakeLiveFsInspector> fs_insp;
+    std::shared_ptr<FakeLiveMountInspector> mount_insp;
+    containercp::access::LocalSftpProvider provider;
+    std::vector<containercp::access::SystemAccountMapping> stored_;
+    std::vector<containercp::storage::GrantLifecycleState> glc_;
+    std::vector<containercp::storage::ManagedMountState> mms_;
+
+    ReconcileUserContext()
+        : inspector(std::make_shared<FakeInspector>())
+        , fake_commands(inspector)
+        , fs_insp(std::make_shared<FakeLiveFsInspector>(inspector->fs_state_))
+        , mount_insp(std::make_shared<FakeLiveMountInspector>(inspector->mount_state_))
+        , provider(containercp::logger::Logger::instance())
+    {
+        inspector->groups_["containercp-sftp"] = {true, "containercp-sftp", 30000};
+        inspector->groups_["site-1-rw"] = {true, "site-1-rw", 20001};
+        inspector->groups_["site-1-ro"] = {true, "site-1-ro", 20002};
+        inspector->groups_["site-2-rw"] = {true, "site-2-rw", 20003};
+        provider.set_identity_inspector(inspector);
+        provider.set_mount_inspector(mount_insp);
+        provider.set_filesystem_inspector(fs_insp);
+        provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+            [this](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+                return fake_commands.run(cmd);
+            }));
+        provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+            containercp::access::SystemAccountAllocator::Range{10000, 19999},
+            containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+        provider.set_enabled(true);
+        provider.set_managed_home_root("/srv/containercp/users");
+        provider.set_site_resolver([](uint64_t id) {
+            containercp::access::LocalSftpProvider::SiteInfo info;
+            info.valid = true; info.site_id = id;
+            info.domain = id == 1 ? "test" : "other";
+            info.root = id == 1 ? "/srv/containercp/sites/test" : "/srv/containercp/sites/other";
+            return info;
+        });
+
+        provider.set_mapping_persistence(
+            [this]() { return stored_; },
+            [this](const containercp::access::SystemAccountMapping& m) {
+                for (auto& s : stored_) {
+                    if (s.entity_type == m.entity_type && s.entity_id == m.entity_id) { s = m; return true; }
+                }
+                stored_.push_back(m); return true;
+            },
+            [this](const std::string& t, uint64_t id) {
+                stored_.erase(std::remove_if(stored_.begin(), stored_.end(),
+                    [&](const auto& s) { return s.entity_type == t && s.entity_id == id; }), stored_.end());
+                return true;
+            });
+        provider.set_grants_lookup([](uint64_t, const std::string&) { return size_t{0}; });
+        provider.set_grant_lifecycle_storage(
+            [this]() -> std::vector<containercp::storage::GrantLifecycleState> { return glc_; },
+            [this](const containercp::storage::GrantLifecycleState& s) -> bool {
+                for (auto& p : glc_) { if (p.access_user_id == s.access_user_id && p.site_id == s.site_id) { p = s; return true; } }
+                glc_.push_back(s); return true;
+            },
+            [this](uint64_t uid, uint64_t sid) -> bool {
+                for (auto it = glc_.begin(); it != glc_.end(); ++it) {
+                    if (it->access_user_id == uid && it->site_id == sid) { glc_.erase(it); return true; }
+                }
+                return false;
+            });
+        provider.set_grants_loader([](uint64_t) {
+            return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
+        });
+        provider.set_managed_mount_storage(
+            [this]() -> std::vector<containercp::storage::ManagedMountState> { return mms_; },
+            [this](const containercp::storage::ManagedMountState& m) -> bool {
+                for (auto& p : mms_) { if (p.access_user_id == m.access_user_id && p.site_id == m.site_id) { p = m; return true; } }
+                mms_.push_back(m); return true;
+            },
+            [this](uint64_t uid, uint64_t sid) -> bool {
+                for (auto it = mms_.begin(); it != mms_.end(); ++it) {
+                    if (it->access_user_id == uid && it->site_id == sid) { mms_.erase(it); return true; }
+                }
+                return false;
+            });
+    }
+
+    // Add a user mapping with given state
+    void add_user(uint64_t id, const std::string& state, const std::string& suffix = "") {
+        std::string s = suffix.empty() ? "" : "_" + suffix;
+        containercp::access::SystemAccountMapping um;
+        um.entity_type = "access_user"; um.entity_id = id;
+        um.username = "au" + s + std::to_string(id);
+        um.groupname = "au" + s + std::to_string(id);
+        um.uid = static_cast<int>(10000 + id);
+        um.gid = static_cast<int>(20000 + id);
+        um.state = state;
+        um.home = "/srv/containercp/users/au" + s + std::to_string(id);
+        stored_.push_back(um);
+    }
+
+    // Add an OS user that matches a mapping
+    void add_os_user(uint64_t id, const std::string& suffix = "") {
+        std::string s = suffix.empty() ? "" : "_" + suffix;
+        std::string uname = "au" + s + std::to_string(id);
+        inspector->users_[uname] = {true, uname,
+            static_cast<int>(10000 + id), static_cast<int>(20000 + id),
+            "/srv/containercp/users/" + uname, "/usr/sbin/nologin", false};
+    }
+
+    // Add a filesystem state entry for a directory
+    void add_fs_entry(const std::string& path, bool exists, mode_t mode,
+                      int owner_uid, int group_gid) {
+        inspector->fs_state_->state_[path] = {
+            exists, false, mode, owner_uid, group_gid
+        };
+    }
+
+    void ensure_chroot_dir(uint64_t id, const std::string& suffix = "") {
+        std::string s = suffix.empty() ? "" : "_" + suffix;
+        std::string home = "/srv/containercp/users/au" + s + std::to_string(id);
+        std::string sites = home + "/sites/";
+        add_fs_entry(home, true, 0755, 0, 0);
+        add_fs_entry(sites, true, 0755, 0, 0);
+    }
+};
+
+TEST_CASE("reconcile_user_lifecycle provisioning_no_os_account") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "provisioning");
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK(r.success);
+    // Mapping should be cleaned up (deleted)
+    CHECK(ctx.stored_.empty());
+}
+
+TEST_CASE("reconcile_user_lifecycle provisioning_os_exists_matches") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "provisioning");
+    ctx.add_os_user(1);
+    ctx.ensure_chroot_dir(1);
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK(r.success);
+    // Mapping should be active
+    REQUIRE(ctx.stored_.size() == 1);
+    CHECK(ctx.stored_[0].state == "active");
+}
+
+TEST_CASE("reconcile_user_lifecycle provisioning_os_mismatch") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "provisioning");
+    // Add OS user with wrong UID
+    ctx.inspector->users_["au1"] = {true, "au1", 9999, 20001,
+        "/srv/containercp/users/au1", "/usr/sbin/nologin", false};
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK_FALSE(r.success);
+    REQUIRE(ctx.stored_.size() == 1);
+    CHECK(ctx.stored_[0].state == "error");
+}
+
+TEST_CASE("reconcile_user_lifecycle active_ok") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "active");
+    ctx.add_os_user(1);
+    ctx.ensure_chroot_dir(1);
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK(r.success);
+    REQUIRE(ctx.stored_.size() == 1);
+    CHECK(ctx.stored_[0].state == "active");
+}
+
+TEST_CASE("reconcile_user_lifecycle active_ownership_mismatch") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "active");
+    // No OS user
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK_FALSE(r.success);
+    REQUIRE(ctx.stored_.size() == 1);
+    CHECK(ctx.stored_[0].state == "error");
+}
+
+TEST_CASE("reconcile_user_lifecycle active_foreign_mount") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "active");
+    ctx.add_os_user(1);
+    ctx.ensure_chroot_dir(1);
+    // Add a foreign mount under the user's chroot
+    ctx.inspector->mount_state_->mounted_paths_.insert(
+        "/srv/containercp/users/au1/sites/foreign");
+    ctx.inspector->mount_state_->bind_sources_[
+        "/srv/containercp/users/au1/sites/foreign"] = "/some/foreign/source";
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    // Should still succeed — reconcile_mounts handles foreign mounts (reports but doesn't fail)
+    CHECK(r.success);
+    CHECK(ctx.stored_[0].state == "active");
+}
+
+TEST_CASE("reconcile_user_lifecycle removing_completes") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "removing");
+    ctx.add_os_user(1);
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK(r.success);
+    // Mapping should be deleted
+    CHECK(ctx.stored_.empty());
+}
+
+TEST_CASE("reconcile_user_lifecycle removing_no_os_account") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "removing");
+    // No OS user — should clean up mapping
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK(r.success);
+    CHECK(ctx.stored_.empty());
+}
+
+TEST_CASE("reconcile_user_lifecycle removing_userdel_fails") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "removing");
+    ctx.add_os_user(1);
+    // Intercept userdel to fail
+    ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == "userdel") return containercp::core::OperationResult{false, "userdel failed", ""};
+            return ctx.fake_commands.run(cmd);
+        }));
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK_FALSE(r.success);
+    // Mapping should stay in error state
+    REQUIRE(ctx.stored_.size() == 1);
+    CHECK(ctx.stored_[0].state == "error");
+}
+
+TEST_CASE("reconcile_user_lifecycle error_recoverable") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "error");
+    ctx.add_os_user(1);
+    ctx.ensure_chroot_dir(1);
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK(r.success);
+    // Should recover to active
+    REQUIRE(ctx.stored_.size() == 1);
+    CHECK(ctx.stored_[0].state == "active");
+}
+
+TEST_CASE("reconcile_user_lifecycle error_not_recoverable") {
+    ReconcileUserContext ctx;
+    auto& m = ctx.stored_.emplace_back();
+    m.entity_type = "access_user"; m.entity_id = 1;
+    m.username = "au1"; m.groupname = "au1";
+    m.uid = 10001; m.gid = 20001;
+    m.state = "error";
+    m.last_error = "unrecoverable";
+    m.home = "/srv/containercp/users/au1";
+    // No OS user — not recoverable, preserve error
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK(r.success); // No failures, just preserved
+    REQUIRE(ctx.stored_.size() == 1);
+    CHECK(ctx.stored_[0].state == "error");
+    CHECK(ctx.stored_[0].last_error == "unrecoverable");
+}
+
+TEST_CASE("reconcile_user_lifecycle idempotent") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "active");
+    ctx.add_os_user(1);
+    ctx.ensure_chroot_dir(1);
+    auto r1 = ctx.provider.reconcile_user_lifecycle();
+    CHECK(r1.success);
+    CHECK(ctx.stored_[0].state == "active");
+    // Run again
+    auto r2 = ctx.provider.reconcile_user_lifecycle();
+    CHECK(r2.success);
+    CHECK(ctx.stored_[0].state == "active");
+}
+
+TEST_CASE("reconcile_user_lifecycle provisioning_crash_after_useradd") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "provisioning");
+    // OS account already exists (useradd completed before crash)
+    ctx.add_os_user(1);
+    ctx.ensure_chroot_dir(1);
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK(r.success);
+    REQUIRE(ctx.stored_.size() == 1);
+    CHECK(ctx.stored_[0].state == "active");
+}
+
+TEST_CASE("reconcile_user_lifecycle removing_crash_before_userdel") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "removing");
+    // Grants revoked, mounts cleaned, OS user still exists (crash before userdel)
+    ctx.add_os_user(1);
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK(r.success);
+    CHECK(ctx.stored_.empty());
+}
+
+TEST_CASE("reconcile_user_lifecycle removing_crash_after_userdel") {
+    ReconcileUserContext ctx;
+    auto& m = ctx.stored_.emplace_back();
+    m.entity_type = "access_user"; m.entity_id = 1;
+    m.username = "au1"; m.groupname = "au1";
+    m.uid = 10001; m.gid = 20001;
+    m.state = "removing";
+    m.home = "/srv/containercp/users/au1";
+    // OS user already deleted — mapping remains
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK(r.success);
+    CHECK(ctx.stored_.empty());
+}
+
+TEST_CASE("reconcile_user_lifecycle unmanaged_conflict") {
+    ReconcileUserContext ctx;
+    // Unmanaged OS user with same username already exists
+    ctx.inspector->users_["au1"] = {true, "au1", 9999, 29999,
+        "/home/au1", "/bin/bash", false};
+    ctx.add_user(1, "provisioning");
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK_FALSE(r.success);
+    REQUIRE(ctx.stored_.size() == 1);
+    CHECK(ctx.stored_[0].state == "error");
+}
+
+TEST_CASE("reconcile_user_lifecycle persistence_failure") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "active");
+    // No OS user — reconcile will try to persist error state
+    ctx.provider.set_mapping_persistence(
+        [&ctx]() { return ctx.stored_; },
+        [](const containercp::access::SystemAccountMapping&) -> bool { return false; },
+        [&ctx](const std::string&, uint64_t) { return true; });
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK_FALSE(r.success);
+}

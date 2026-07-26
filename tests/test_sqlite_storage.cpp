@@ -2506,7 +2506,7 @@ static std::string valid_state_json(const std::string& backend,
                                     const std::string& db_path,
                                     const std::string& archive_path = "/srv/containercp/migrations/archive/11111111-2222-4333-8444-555555555555",
                                     const std::string& migration_id = kActivationTestMigrationId,
-                                    int schema_version = 6) {
+                                    int schema_version = 7) {
     std::ostringstream json;
     json << "{\n";
     json << "  \"state_version\": 1,\n";
@@ -2857,9 +2857,9 @@ TEST_CASE("P11-R2 strict activation state parser rejects wrong value types") {
     init_storage_schema(dir);
 
     std::string json = valid_state_json("sqlite", dir + "containercp.db");
-    auto pos = json.find("\"schema_version\": 6");
+    auto pos = json.find("\"schema_version\": 7");
     REQUIRE(pos != std::string::npos);
-    json.replace(pos, std::string("\"schema_version\": 6").size(), "\"schema_version\": \"4\"");
+    json.replace(pos, std::string("\"schema_version\": 7").size(), "\"schema_version\": \"4\"");
     expect_p11r2_state_rejected(dir, json);
     tclean(dir);
 }
@@ -4120,7 +4120,7 @@ TEST_CASE("Managed mount schema upgrade") {
     REQUIRE(db.open(dir + "containercp.db"));
     REQUIRE(db.prepare("SELECT value FROM storage_meta WHERE key='schema_version'"));
     REQUIRE(db.step());
-    CHECK(db.column_text(0) == "6");
+    CHECK(db.column_text(0) == "7");
     // Verify table exists
     REQUIRE(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='managed_mounts'"));
     REQUIRE(db.step());
@@ -4306,7 +4306,7 @@ TEST_CASE("Grant lifecycle schema upgrade") {
     REQUIRE(db.open(dir + "containercp.db"));
     REQUIRE(db.prepare("SELECT value FROM storage_meta WHERE key='schema_version'"));
     REQUIRE(db.step());
-    CHECK(db.column_text(0) == "6");
+    CHECK(db.column_text(0) == "7");
     REQUIRE(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='grant_lifecycle'"));
     REQUIRE(db.step());
     db.close();

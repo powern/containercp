@@ -33,7 +33,7 @@ static containercp::storage::SQLiteDB make_db(const std::string& path) {
 // Table inventory
 // ============================================================
 
-TEST_CASE("Schema v6 application tables = 21") {
+TEST_CASE("Schema v7 application tables = 21") {
     auto path = sdb("sc_apptables.db");
     clean(path);
     {
@@ -74,7 +74,7 @@ TEST_CASE("Schema v1 metadata tables = schema_migrations + storage_meta") {
     clean(path);
 }
 
-TEST_CASE("Schema v6 total project tables = 23") {
+TEST_CASE("Schema v7 total project tables = 23") {
     auto path = sdb("sc_total.db");
     clean(path);
     {
@@ -318,12 +318,12 @@ TEST_CASE("Schema v1 PRAGMA foreign_key_check returns no violations") {
 // Migration Engine behaviour
 // ============================================================
 
-TEST_CASE("Schema v6 re-running migration is no-op") {
+TEST_CASE("Schema v7 re-running migration is no-op") {
     auto path = sdb("sc_rerun.db");
     clean(path);
     {
         auto db = make_db(path);
-        CHECK(containercp::storage::MigrationEngine().current_version(db) == 6);
+        CHECK(containercp::storage::MigrationEngine().current_version(db) == 7);
         // Second run
         containercp::storage::MigrationEngine eng2;
         containercp::storage::register_all_schema_migrations(eng2);

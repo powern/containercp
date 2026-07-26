@@ -1379,6 +1379,433 @@ core::OperationResult LocalSftpProvider::reconcile_startup_mounts() {
     return out;
 }
 
+core::OperationResult LocalSftpProvider::reconcile_user_lifecycle() {
+    core::OperationResult out;
+    if (!enabled_) return disabled_result(out, "reconcile_user_lifecycle"), out;
+    if (!load_mappings_ || !save_mapping_ || !inspector_ || !runner_) {
+        out.success = false; out.message = "provider dependencies not configured"; return out;
+    }
+
+    auto mappings = load_mappings_();
+    std::string diag;
+    size_t reconciled = 0;
+    size_t failures = 0;
+
+    auto note = [&](const std::string& entry) {
+        if (!diag.empty()) diag += "; ";
+        diag += entry;
+    };
+
+    // Helper to persist a mapping state change, returns false on failure.
+    auto persist = [&](SystemAccountMapping& m, const std::string& state, const std::string& err) -> bool {
+        m.state = state;
+        if (!err.empty()) m.last_error = err;
+        return save_mapping_(m);
+    };
+
+    // Helper to check if chroot sites/ dir is correctly set up
+    auto chroot_ok = [&](const SystemAccountMapping& m) -> bool {
+        if (!fs_inspector_ || m.home.empty()) return false;
+        std::string sites_dir = m.home + "/sites/";
+        auto st = fs_inspector_->inspect(sites_dir);
+        return st.exists && !st.is_symlink && st.owner_uid == 0 && st.group_gid == 0
+               && (st.mode & 0777) == 0755;
+    };
+
+    for (auto& mapping : mappings) {
+        if (mapping.entity_type != "access_user") continue;
+
+        std::string ident = "u" + std::to_string(mapping.entity_id);
+
+        if (mapping.state == "provisioning") {
+            // Inspect whether the OS account exists
+            auto observed = inspector_->lookup_user(mapping.username);
+
+            if (observed.exists) {
+                // OS account exists — verify it matches our mapping
+                if (!verify_ownership(mapping, observed)) {
+                    // Mismatch — unmanaged conflict, persist error
+                    mapping.last_error = "provisioning:os_account_mismatch uid="
+                        + std::to_string(observed.uid) + " home=" + observed.home;
+                    if (!persist(mapping, "error", mapping.last_error)) {
+                        note(ident + ":provisioning:error_persist_failed");
+                        failures++;
+                    } else {
+                        note(ident + ":provisioning:conflict_error");
+                        failures++;
+                    }
+                    continue;
+                }
+
+                // OS account matches — complete chroot layout manually
+                // (cannot call ensure_chroot_layout because mapping is not yet active)
+                bool chroot_complete = false;
+                if (!mapping.home.empty() && managed_path_safe(mapping.home, managed_home_root_)) {
+                    std::string sites_dir = mapping.home + "/sites/";
+                    if (fs_inspector_) {
+                        auto st = fs_inspector_->inspect(sites_dir);
+                        if (st.exists && !st.is_symlink && st.owner_uid == 0) {
+                            chroot_complete = true;
+                        }
+                    }
+                    if (!chroot_complete && runner_) {
+                        auto mk = runner_->mkdir_p(sites_dir);
+                        if (mk.success) {
+                            auto cown = runner_->chown_root(sites_dir);
+                            if (cown.success) {
+                                auto chm = runner_->chmod("755", sites_dir);
+                                chroot_complete = chm.success;
+                            }
+                        }
+                    }
+                }
+
+                // Apply pending grants if possible
+                bool grants_ok = false;
+                if (load_all_grant_lifecycle_ && save_grant_lifecycle_) {
+                    auto grants = apply_pending_grants(mapping.entity_id);
+                    grants_ok = grants.success;
+                } else {
+                    grants_ok = true;
+                }
+
+                if (chroot_complete && grants_ok) {
+                    if (!persist(mapping, "active", "")) {
+                        note(ident + ":provisioning:active_persist_failed");
+                        failures++;
+                    } else {
+                        note(ident + ":provisioning:recovered");
+                        reconciled++;
+                    }
+                } else {
+                    // Partial — persist error with details
+                    std::string err = "provisioning:incomplete chroot="
+                        + std::string(chroot_complete ? "ok" : "failed")
+                        + " grants=" + std::string(grants_ok ? "ok" : "failed");
+                    if (!persist(mapping, "error", err)) {
+                        note(ident + ":provisioning:error_persist_failed");
+                        failures++;
+                    } else {
+                        note(ident + ":provisioning:incomplete");
+                        failures++;
+                    }
+                }
+            } else {
+                // OS account doesn't exist — check for unmanaged conflicts
+                if (inspector_->user_exists(mapping.username) ||
+                    inspector_->group_exists(mapping.groupname)) {
+                    // Unmanaged entity with this name exists
+                    mapping.last_error = "provisioning:unmanaged_conflict";
+                    if (!persist(mapping, "error", mapping.last_error)) {
+                        note(ident + ":provisioning:conflict_persist_failed");
+                        failures++;
+                    } else {
+                        note(ident + ":provisioning:conflict_error");
+                        failures++;
+                    }
+                    continue;
+                }
+
+                // Clean up stale group if it exists but is managed
+                if (inspector_->group_exists(mapping.groupname)) {
+                    auto grp = inspector_->lookup_group(mapping.groupname);
+                    if (grp.gid == mapping.gid) {
+                        (void)runner_->groupdel(mapping.groupname);
+                    }
+                }
+
+                // Clean up provisioning record — it was never completed
+                // Check if home exists (created during create_user step 11)
+                if (!mapping.home.empty() && managed_path_safe(mapping.home, managed_home_root_)) {
+                    std::error_code ec;
+                    std::filesystem::remove_all(mapping.home, ec);
+                }
+
+                if (!delete_mapping_ || !delete_mapping_("access_user", mapping.entity_id)) {
+                    note(ident + ":provisioning:delete_persist_failed");
+                    failures++;
+                } else {
+                    note(ident + ":provisioning:cleaned");
+                    reconciled++;
+                }
+            }
+        } else if (mapping.state == "active") {
+            // Verify account identity
+            auto observed = inspector_->lookup_user(mapping.username);
+            if (!verify_ownership(mapping, observed)) {
+                mapping.last_error = "active:ownership_mismatch";
+                if (!persist(mapping, "error", mapping.last_error)) {
+                    note(ident + ":active:error_persist_failed");
+                    failures++;
+                } else {
+                    note(ident + ":active:ownership_error");
+                    failures++;
+                }
+                continue;
+            }
+
+            // Verify chroot layout
+            if (fs_inspector_) {
+                bool chroot_good = chroot_ok(mapping);
+                if (!chroot_good && !mapping.home.empty()) {
+                    // Attempt to repair chroot layout
+                    auto chroot = ensure_chroot_layout(mapping.entity_id);
+                    if (!chroot.success) {
+                        mapping.last_error = "active:chroot_repair_failed:" + chroot.message;
+                        if (!persist(mapping, "error", mapping.last_error)) {
+                            note(ident + ":active:error_persist_failed");
+                            failures++;
+                        } else {
+                            note(ident + ":active:chroot_error");
+                            failures++;
+                        }
+                        continue;
+                    }
+                    note(ident + ":active:chroot_repaired");
+                    reconciled++;
+                }
+            }
+
+            // Reconcile grants and mounts
+            if (load_all_grant_lifecycle_ && save_grant_lifecycle_) {
+                auto grants = apply_pending_grants(mapping.entity_id);
+                if (!grants.success) {
+                    mapping.last_error = "active:grant_reconcile_failed:" + grants.message;
+                    if (!persist(mapping, "error", mapping.last_error)) {
+                        note(ident + ":active:error_persist_failed");
+                        failures++;
+                    } else {
+                        note(ident + ":active:grant_error");
+                        failures++;
+                    }
+                    continue;
+                }
+                if (grants.message.find("applied") != std::string::npos) {
+                    note(ident + ":active:grants_applied");
+                    reconciled++;
+                }
+            }
+
+            // Reconcile mounts
+            if (mount_inspector_ && site_resolver_ && grants_loader_) {
+                auto mounts = reconcile_mounts(mapping.entity_id);
+                if (!mounts.success) {
+                    mapping.last_error = "active:mount_reconcile_failed:" + mounts.message;
+                    if (!persist(mapping, "error", mapping.last_error)) {
+                        note(ident + ":active:error_persist_failed");
+                        failures++;
+                    } else {
+                        note(ident + ":active:mount_error");
+                        failures++;
+                    }
+                    continue;
+                }
+                if (mounts.message.find("fixed") != std::string::npos) {
+                    note(ident + ":active:mounts_fixed");
+                    reconciled++;
+                }
+            }
+
+            // No drift detected — active is healthy
+            note(ident + ":active:ok");
+
+        } else if (mapping.state == "removing") {
+            // Continue the removal process idempotently
+
+            // 1. Revoke all grants (idempotent)
+            if (load_all_grant_lifecycle_ && save_grant_lifecycle_) {
+                auto revoke = revoke_all_grants(mapping.entity_id);
+                if (!revoke.success) {
+                    mapping.last_error = "removing:revoke_failed:" + revoke.message;
+                    if (!persist(mapping, "error", mapping.last_error)) {
+                        note(ident + ":removing:error_persist_failed");
+                        failures++;
+                    } else {
+                        note(ident + ":removing:revoke_error");
+                        failures++;
+                    }
+                    continue;
+                }
+
+                // Verify no non-terminal grants
+                auto all = load_all_grant_lifecycle_();
+                for (const auto& l : all) {
+                    if (l.access_user_id == mapping.entity_id && l.state != "error") {
+                        mapping.last_error = "removing:non_terminal_grant site="
+                            + std::to_string(l.site_id);
+                        if (!persist(mapping, "error", mapping.last_error)) {
+                            note(ident + ":removing:error_persist_failed");
+                            failures++;
+                        } else {
+                            note(ident + ":removing:grant_remaining");
+                            failures++;
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            // 2. Cleanup mounts (idempotent)
+            if (mount_inspector_ && site_resolver_ && grants_loader_) {
+                auto cleanup = cleanup_all_mounts(mapping.entity_id);
+                if (!cleanup.success) {
+                    mapping.last_error = "removing:cleanup_failed:" + cleanup.message;
+                    if (!persist(mapping, "error", mapping.last_error)) {
+                        note(ident + ":removing:error_persist_failed");
+                        failures++;
+                    } else {
+                        note(ident + ":removing:cleanup_error");
+                        failures++;
+                    }
+                    continue;
+                }
+
+                auto reconcile = reconcile_mounts(mapping.entity_id);
+                if (!reconcile.success) {
+                    mapping.last_error = "removing:reconcile_failed:" + reconcile.message;
+                    if (!persist(mapping, "error", mapping.last_error)) {
+                        note(ident + ":removing:error_persist_failed");
+                        failures++;
+                    } else {
+                        note(ident + ":removing:reconcile_error");
+                        failures++;
+                    }
+                    continue;
+                }
+            }
+
+            // 3. Remove OS account if exists
+            auto observed = inspector_->lookup_user(mapping.username);
+            if (observed.exists) {
+                if (!verify_ownership(mapping, observed)) {
+                    mapping.last_error = "removing:ownership_mismatch";
+                    if (!persist(mapping, "error", mapping.last_error)) {
+                        note(ident + ":removing:error_persist_failed");
+                        failures++;
+                    } else {
+                        note(ident + ":removing:ownership_error");
+                        failures++;
+                    }
+                    continue;
+                }
+
+                // Remove from global SFTP group (best-effort)
+                (void)runner_->usermod_remove_group(mapping.username, global_sftp_group_);
+
+                auto ur = runner_->userdel(mapping.username);
+                if (!ur.success) {
+                    mapping.last_error = "removing:userdel_failed:" + ur.message;
+                    if (!persist(mapping, "error", mapping.last_error)) {
+                        note(ident + ":removing:error_persist_failed");
+                        failures++;
+                    } else {
+                        note(ident + ":removing:userdel_error");
+                        failures++;
+                    }
+                    continue;
+                }
+
+                // Verify absent
+                auto check = inspector_->lookup_user(mapping.username);
+                if (check.exists) {
+                    mapping.last_error = "removing:userdel_verify_failed";
+                    if (!persist(mapping, "error", mapping.last_error)) {
+                        note(ident + ":removing:error_persist_failed");
+                        failures++;
+                    } else {
+                        note(ident + ":removing:userdel_verify_error");
+                        failures++;
+                    }
+                    continue;
+                }
+            }
+
+            // 4. Remove private group if exists
+            if (inspector_->group_exists(mapping.groupname)) {
+                auto gd = runner_->groupdel(mapping.groupname);
+                if (!gd.success) {
+                    mapping.last_error = "removing:groupdel_failed:" + gd.message;
+                    if (!persist(mapping, "error", mapping.last_error)) {
+                        note(ident + ":removing:error_persist_failed");
+                        failures++;
+                    } else {
+                        note(ident + ":removing:groupdel_error");
+                        failures++;
+                    }
+                    continue;
+                }
+            }
+
+            // 5. Clean up home directory if safe
+            if (!mapping.home.empty() && managed_path_safe(mapping.home, managed_home_root_)) {
+                std::error_code ec;
+                std::filesystem::remove_all(mapping.home, ec);
+            }
+
+            // 6. Delete persisted mapping
+            if (!delete_mapping_ || !delete_mapping_("access_user", mapping.entity_id)) {
+                note(ident + ":removing:delete_persist_failed");
+                failures++;
+            } else {
+                note(ident + ":removing:completed");
+                reconciled++;
+            }
+
+        } else if (mapping.state == "error") {
+            // Only perform approved recoverable actions:
+            // If OS account exists and appears correctly provisioned, recover to active.
+            auto observed = inspector_->lookup_user(mapping.username);
+            if (observed.exists && verify_ownership(mapping, observed)) {
+                // Account identity matches — verify chroot and grants
+                bool can_recover = true;
+
+                if (fs_inspector_ && !mapping.home.empty()) {
+                    std::string sites_dir = mapping.home + "/sites/";
+                    auto st = fs_inspector_->inspect(sites_dir);
+                    if (!st.exists || st.is_symlink) can_recover = false;
+                }
+
+                if (can_recover && load_all_grant_lifecycle_) {
+                    auto all = load_all_grant_lifecycle_();
+                    for (const auto& l : all) {
+                        if (l.access_user_id == mapping.entity_id && (l.state == "revoking" || l.state == "applying")) {
+                            can_recover = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (can_recover) {
+                    if (!persist(mapping, "active", "")) {
+                        note(ident + ":error:recover_persist_failed");
+                        failures++;
+                    } else {
+                        note(ident + ":error:recovered");
+                        reconciled++;
+                    }
+                } else {
+                    // Preserve error state with existing last_error
+                    note(ident + ":error:preserved:" + mapping.last_error);
+                }
+            } else {
+                // Account doesn't exist or doesn't match — preserve error
+                note(ident + ":error:preserved:" + mapping.last_error);
+            }
+        }
+    }
+
+    if (failures > 0) {
+        out.success = false;
+        out.message = "reconcile_users:" + std::to_string(failures) + " failures, "
+                      + std::to_string(reconciled) + " fixed — " + diag;
+        return out;
+    }
+    out.success = true;
+    out.message = "reconcile_users:" + std::to_string(reconciled) + " fixed";
+    if (reconciled > 0 || !diag.empty()) out.message += " — " + diag;
+    return out;
+}
+
 // --- Phase 3d: Grant Lifecycle Integration ---
 
 void LocalSftpProvider::set_grants_loader(LoadGrantsFn fn) { grants_loader_ = std::move(fn); }

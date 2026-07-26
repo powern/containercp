@@ -121,6 +121,13 @@ public:
     // Must only be called after all provider dependencies are configured.
     core::OperationResult reconcile_startup_mounts();
 
+    // Reconcile all SystemAccountMapping lifecycle states on daemon startup.
+    // Handles: provisioning, active, removing, error.
+    // Idempotent across repeated daemon starts. Never mutates unmanaged users
+    // or foreign mounts. Every persistence result is checked.
+    // Must only be called after all provider dependencies are configured.
+    core::OperationResult reconcile_user_lifecycle();
+
     // Grant lifecycle storage callbacks.
     using LoadAllGrantLifecycleFn = std::function<std::vector<storage::GrantLifecycleState>()>;
     using SaveGrantLifecycleFn = std::function<bool(const storage::GrantLifecycleState&)>;
