@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-26 | `pending` | ARCH-009 Task 46 — Add Opt-In Privileged Linux Integration Validation
+## 2026-07-26 | `b19f864` | ARCH-009 Task 46 — Add Opt-In Privileged Linux Integration Validation
 
 **Summary:** Added an isolated CTest integration executable for ARCH-009 privileged Linux validation. The test is labeled `arch009_linux_integration`, returns CTest skip code `77` when prerequisites are missing, and requires Linux, root privileges, `CONTAINERCP_ARCH009_LINUX_INTEGRATION=1`, `CONTAINERCP_DISPOSABLE_TEST_HOST=1`, and marker file `/tmp/containercp-allow-arch009-linux-integration`. The integration path uses real production classes (`LocalSftpProvider`, `SystemAccountCommandRunner`, `CommandExecutor::run_safe()`) and real Linux account tools to create and remove one disposable SFTP account on an explicitly disposable host. Added canonical executable identity preflight validation for every allowed privileged executable: path must exist, be a regular non-symlink executable, be root-owned, and not be group/world writable. Fixed managed-path validation to reject only exact `.` and `..` path components (not literal `...`), reject repeated separators, detect final symlinks using the caller-provided path before canonical resolution, and detect parent symlinks before canonical prefix checks. Removed production `SystemAccountCommandRunner` managed-root wiring because a single runner root incorrectly rejected legitimate site paths; semantic user/site path boundaries remain enforced in `LocalSftpProvider`, where trusted identity context exists.
 
@@ -16,7 +16,7 @@ Format: date | commit | summary
 
 **Validation:** Build passed for `containercp_tests` and `arch009_linux_integration`. Full unit suite passed via `ctest --test-dir build2 -R '^containercp_tests$' --output-on-failure`. Privileged integration label passed with explicit skip via `ctest --test-dir build2 -L arch009_linux_integration --output-on-failure` because opt-in prerequisites were absent. Full CTest passed via `ctest --test-dir build2 --output-on-failure` with `containercp_tests` passed and `arch009_linux_integration` skipped. Cleanup verification confirmed no `au-arch46it` passwd entry, no `au-arch46it` group, no `ccp-arch009-it` group, and no `/srv/containercp/arch009-linux-integration` path. `git diff --check` passed.
 
-**Known risks:** The privileged integration test mutates real `/etc/passwd`, `/etc/group`, `/etc/shadow`, and `/srv/containercp/arch009-linux-integration` state when explicitly enabled. It must only run on disposable hosts. The changelog commit field is `pending` to keep this as one logical Task 46 commit instead of adding a separate post-commit changelog-fix commit.
+**Known risks:** The privileged integration test mutates real `/etc/passwd`, `/etc/group`, `/etc/shadow`, and `/srv/containercp/arch009-linux-integration` state when explicitly enabled. It must only run on disposable hosts.
 
 ---
 
