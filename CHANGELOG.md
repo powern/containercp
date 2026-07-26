@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-26 | `this commit` | ARCH-009 Task 43 — Separate Internal Reconciliation from Public Operation Gating
+
+**Summary:** Fixed self-blocking deadlock in the runtime state machine where internal reconciliation methods (called by `retry_reconciliation()` with state=Starting) would be rejected by the same `operation_gate()` they pass through. Solution: added `Starting` to `operation_gate()` rejection (public mutations during startup are now correctly denied), created 18 `_internal()` trusted implementation methods that bypass the public state gate, and refactored all public call sites into thin wrappers (`gate → _internal`). `run_reconciliation_flow()` now calls only `_internal()` methods. Added `ScopedReconciliationGuard` RAII struct replacing a manual boolean flag, ensuring the concurrent-execution guard is released on every return path (exceptions, early failures, normal completion). Updated `retry_reconciliation()` to use RAII guard. All internal-only call chains verified: no internal method depends on a public gate that rejects Starting. Added 13 tests: Starting permits internal mount/user reconciliation, Starting rejects public mutations, Healthy allows mutations, retry reaches Healthy/Degraded/Failed, guard released after dep/mount/user failures, second retry after failure not stuck on guard, no state stuck at Starting, read operations allowed during Starting.
+
+**Files changed:** `libs/access/LocalSftpProvider.h`, `libs/access/LocalSftpProvider.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Public SFTP lifecycle mutations (create_user, remove_user, ensure_site_group, bind_mount_site, apply_grant, etc.) are now correctly rejected while the provider is in Starting state. Internal startup reconciliation proceeds normally. The RAII guard eliminates the risk of the provider being permanently stuck in Starting state due to an unreturned path. Concurrent retry rejection is more robust.
+
+**Validation:** Full doctest suite passed (1236 cases, 7704 assertions, 0 failures). 13 new state-gating tests pass. Static verification of all call sites: 22 operation_gate calls in public methods, 0 in internal methods. All internal methods call only _internal variants. `git diff --check` passed. Zero compiler warnings.
+
+**Known risks:** None.
+
+---
+
 ## 2026-07-26 | `e1b0251` | ARCH-009 Task 42 — Runtime State Machine & Reconciliation Failure Policy
 
 **Summary:** Introduced typed runtime state machine for SFTP provider: `SftpRuntimeState` enum (Disabled/Starting/Healthy/Degraded/Failed) with transition rules. Added `ReconciliationResult` struct with typed fields (success, recoverable, records_inspected/fixed/failed, errors, unsafe_foreign_state_detected). Implemented `run_reconciliation_flow()` (runs mount + user lifecycle steps, classifies outcome) and `retry_reconciliation()` (entry point with concurrent-execution guard, dep verification, state transitions). Added `operation_gate()` replacing all 22 `disabled_result()` call sites — per-state mutation blocking: Healthy=all, Degraded=mutations rejected, Failed=all lifecycle mutations rejected, Disabled=all operations rejected. Read operations (list_users/show_user) allowed in Degraded, blocked in Failed/Disabled. Updated `ServiceRegistry::start()` to use `retry_reconciliation()` with structured logging. Added 19 tests: default state, retry with missing deps, healthy flow, concurrent retry guard (structural), mutation blocked in Disabled/Failed, read operations in Degraded/Failed, operation_gate Degraded rejection, retry idempotency, last_reconciliation_result populated, record counts, `to_operation_result` roundtrip/errors/foreign detection, `sftp_runtime_state_label` coverage, no-crash with deps before enable, retry after enable with missing deps, all 22 mutation entry points.

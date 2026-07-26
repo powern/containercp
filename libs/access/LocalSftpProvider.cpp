@@ -235,6 +235,13 @@ core::OperationResult LocalSftpProvider::ensure_site_group(uint64_t site_id,
                                                             const std::string& permission) {
     core::OperationResult out;
     if (!operation_gate(out, "ensure_site_group")) return out;
+    return ensure_site_group_internal(site_id, permission);
+}
+
+core::OperationResult LocalSftpProvider::ensure_site_group_internal(uint64_t site_id,
+                                                             const std::string& permission) {
+    core::OperationResult out;
+
     if (!inspector_ || !runner_ || !allocator_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
@@ -329,6 +336,14 @@ core::OperationResult LocalSftpProvider::add_user_to_site_group(const std::strin
                                                                  const std::string& permission) {
     core::OperationResult out;
     if (!operation_gate(out, "add_user_to_site_group")) return out;
+    return add_user_to_site_group_internal(username, site_id, permission);
+}
+
+core::OperationResult LocalSftpProvider::add_user_to_site_group_internal(const std::string& username,
+                                                                 uint64_t site_id,
+                                                                 const std::string& permission) {
+    core::OperationResult out;
+
     if (!inspector_ || !runner_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
@@ -367,6 +382,14 @@ core::OperationResult LocalSftpProvider::remove_user_from_site_group(const std::
                                                                       const std::string& permission) {
     core::OperationResult out;
     if (!operation_gate(out, "remove_user_from_site_group")) return out;
+    return remove_user_from_site_group_internal(username, site_id, permission);
+}
+
+core::OperationResult LocalSftpProvider::remove_user_from_site_group_internal(const std::string& username,
+                                                                      uint64_t site_id,
+                                                                      const std::string& permission) {
+    core::OperationResult out;
+
     if (!inspector_ || !runner_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
@@ -412,6 +435,13 @@ core::OperationResult LocalSftpProvider::delete_site_group_if_unused(uint64_t si
                                                                       const std::string& permission) {
     core::OperationResult out;
     if (!operation_gate(out, "delete_site_group")) return out;
+    return delete_site_group_if_unused_internal(site_id, permission);
+}
+
+core::OperationResult LocalSftpProvider::delete_site_group_if_unused_internal(uint64_t site_id,
+                                                                      const std::string& permission) {
+    core::OperationResult out;
+
     if (!inspector_ || !runner_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
@@ -467,6 +497,13 @@ core::OperationResult LocalSftpProvider::apply_directory_permissions(uint64_t si
                                                                        const std::string& permission) {
     core::OperationResult out;
     if (!operation_gate(out, "apply_directory_permissions")) return out;
+    return apply_directory_permissions_internal(site_id, permission);
+}
+
+core::OperationResult LocalSftpProvider::apply_directory_permissions_internal(uint64_t site_id,
+                                                                       const std::string& permission) {
+    core::OperationResult out;
+
     if (!runner_ || !fs_inspector_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
@@ -519,6 +556,12 @@ core::OperationResult LocalSftpProvider::apply_directory_permissions(uint64_t si
 core::OperationResult LocalSftpProvider::apply_read_only_acl(uint64_t site_id) {
     core::OperationResult out;
     if (!operation_gate(out, "apply_read_only_acl")) return out;
+    return apply_read_only_acl_internal(site_id);
+}
+
+core::OperationResult LocalSftpProvider::apply_read_only_acl_internal(uint64_t site_id) {
+    core::OperationResult out;
+
     if (!runner_ || !fs_inspector_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
@@ -569,6 +612,12 @@ core::OperationResult LocalSftpProvider::apply_read_only_acl(uint64_t site_id) {
 core::OperationResult LocalSftpProvider::remove_read_only_acl(uint64_t site_id) {
     core::OperationResult out;
     if (!operation_gate(out, "remove_read_only_acl")) return out;
+    return remove_read_only_acl_internal(site_id);
+}
+
+core::OperationResult LocalSftpProvider::remove_read_only_acl_internal(uint64_t site_id) {
+    core::OperationResult out;
+
     if (!runner_ || !fs_inspector_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
@@ -755,6 +804,12 @@ void LocalSftpProvider::set_mount_inspector(std::shared_ptr<MountInspector> insp
 core::OperationResult LocalSftpProvider::ensure_chroot_layout(uint64_t access_user_id) {
     core::OperationResult out;
     if (!operation_gate(out, "ensure_chroot_layout")) return out;
+    return ensure_chroot_layout_internal(access_user_id);
+}
+
+core::OperationResult LocalSftpProvider::ensure_chroot_layout_internal(uint64_t access_user_id) {
+    core::OperationResult out;
+
     if (!runner_) { out.success = false; out.message = "provider dependencies not configured"; return out; }
 
     auto mapping = find_mapping("access_user", access_user_id);
@@ -820,6 +875,12 @@ core::OperationResult LocalSftpProvider::ensure_chroot_layout(uint64_t access_us
 core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id, uint64_t site_id) {
     core::OperationResult out;
     if (!operation_gate(out, "bind_mount_site")) return out;
+    return bind_mount_site_internal(access_user_id, site_id);
+}
+
+core::OperationResult LocalSftpProvider::bind_mount_site_internal(uint64_t access_user_id, uint64_t site_id) {
+    core::OperationResult out;
+
     if (!runner_ || !site_resolver_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
@@ -979,6 +1040,12 @@ core::OperationResult LocalSftpProvider::bind_mount_site(uint64_t access_user_id
 core::OperationResult LocalSftpProvider::unmount_site(uint64_t access_user_id, uint64_t site_id) {
     core::OperationResult out;
     if (!operation_gate(out, "unmount_site")) return out;
+    return unmount_site_internal(access_user_id, site_id);
+}
+
+core::OperationResult LocalSftpProvider::unmount_site_internal(uint64_t access_user_id, uint64_t site_id) {
+    core::OperationResult out;
+
     if (!runner_ || !mount_inspector_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
@@ -1093,6 +1160,12 @@ core::OperationResult LocalSftpProvider::unmount_site(uint64_t access_user_id, u
 core::OperationResult LocalSftpProvider::cleanup_all_mounts(uint64_t access_user_id) {
     core::OperationResult out;
     if (!operation_gate(out, "cleanup_all_mounts")) return out;
+    return cleanup_all_mounts_internal(access_user_id);
+}
+
+core::OperationResult LocalSftpProvider::cleanup_all_mounts_internal(uint64_t access_user_id) {
+    core::OperationResult out;
+
     if (!runner_ || !mount_inspector_ || !site_resolver_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
@@ -1108,7 +1181,7 @@ core::OperationResult LocalSftpProvider::cleanup_all_mounts(uint64_t access_user
     size_t failed = 0;
     for (const auto& g : grants) {
         std::string site_label = std::to_string(g.site_id);
-        auto r = unmount_site(access_user_id, g.site_id);
+        auto r = unmount_site_internal(access_user_id, g.site_id);
         if (!r.success) {
             if (!failures.empty()) failures += "; ";
             failures += site_label + ":" + r.message;
@@ -1130,6 +1203,12 @@ core::OperationResult LocalSftpProvider::cleanup_all_mounts(uint64_t access_user
 core::OperationResult LocalSftpProvider::reconcile_mounts(uint64_t access_user_id) {
     core::OperationResult out;
     if (!operation_gate(out, "reconcile_mounts")) return out;
+    return reconcile_mounts_internal(access_user_id);
+}
+
+core::OperationResult LocalSftpProvider::reconcile_mounts_internal(uint64_t access_user_id) {
+    core::OperationResult out;
+
     if (!runner_ || !mount_inspector_ || !site_resolver_ || !grants_loader_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
@@ -1202,7 +1281,7 @@ core::OperationResult LocalSftpProvider::reconcile_mounts(uint64_t access_user_i
             continue; // expected managed mount — present and correct
         }
         // Stale managed mount — identity mismatch
-        auto ur = unmount_site(access_user_id, exp.site_id);
+        auto ur = unmount_site_internal(access_user_id, exp.site_id);
         if (ur.success) {
             reconciled++;
             note("fixed:site_" + std::to_string(exp.site_id));
@@ -1257,6 +1336,12 @@ core::OperationResult LocalSftpProvider::reconcile_mounts(uint64_t access_user_i
 core::OperationResult LocalSftpProvider::reconcile_startup_mounts() {
     core::OperationResult out;
     if (!operation_gate(out, "reconcile_startup_mounts")) return out;
+    return reconcile_startup_mounts_internal();
+}
+
+core::OperationResult LocalSftpProvider::reconcile_startup_mounts_internal() {
+    core::OperationResult out;
+
     if (!load_all_managed_mounts_ || !save_managed_mount_) {
         out.success = false; out.message = "managed mount storage not configured"; return out;
     }
@@ -1288,7 +1373,7 @@ core::OperationResult LocalSftpProvider::reconcile_startup_mounts() {
             }
             if (!ms.mounted || ms.status != MountStatus::Ok) {
                 // Mount missing — recreate
-                auto bm = bind_mount_site(mount.access_user_id, mount.site_id);
+                auto bm = bind_mount_site_internal(mount.access_user_id, mount.site_id);
                 if (bm.success) {
                     mount.last_error = "";
                     if (!save_managed_mount_(mount)) { note("active:recreate:persist:" + ident); failures++; }
@@ -1311,7 +1396,7 @@ core::OperationResult LocalSftpProvider::reconcile_startup_mounts() {
                 note("removing:skip:" + ident + ":deps");
                 continue;
             }
-            auto um = unmount_site(mount.access_user_id, mount.site_id);
+            auto um = unmount_site_internal(mount.access_user_id, mount.site_id);
             if (um.success) {
                 if (delete_managed_mount_ && delete_managed_mount_(mount.access_user_id, mount.site_id)) {
                     note("removing:done:" + ident); reconciled++;
@@ -1366,7 +1451,7 @@ core::OperationResult LocalSftpProvider::reconcile_startup_mounts() {
             }
             auto si = site_resolver_(mount.site_id);
             if (!si.valid) { note("pending:skip:" + ident + ":site"); continue; }
-            auto bm = bind_mount_site(mount.access_user_id, mount.site_id);
+            auto bm = bind_mount_site_internal(mount.access_user_id, mount.site_id);
             if (bm.success) {
                 mount.state = "active";
                 mount.last_error = "";
@@ -1410,6 +1495,12 @@ core::OperationResult LocalSftpProvider::reconcile_startup_mounts() {
 core::OperationResult LocalSftpProvider::reconcile_user_lifecycle() {
     core::OperationResult out;
     if (!operation_gate(out, "reconcile_user_lifecycle")) return out;
+    return reconcile_user_lifecycle_internal();
+}
+
+core::OperationResult LocalSftpProvider::reconcile_user_lifecycle_internal() {
+    core::OperationResult out;
+
     if (!load_mappings_ || !save_mapping_ || !inspector_ || !runner_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
@@ -1491,7 +1582,7 @@ core::OperationResult LocalSftpProvider::reconcile_user_lifecycle() {
                 // Apply pending grants if possible
                 bool grants_ok = false;
                 if (load_all_grant_lifecycle_ && save_grant_lifecycle_) {
-                    auto grants = apply_pending_grants(mapping.entity_id);
+                    auto grants = apply_pending_grants_internal(mapping.entity_id);
                     grants_ok = grants.success;
                 } else {
                     grants_ok = true;
@@ -1577,7 +1668,7 @@ core::OperationResult LocalSftpProvider::reconcile_user_lifecycle() {
                 bool chroot_good = chroot_ok(mapping);
                 if (!chroot_good && !mapping.home.empty()) {
                     // Attempt to repair chroot layout
-                    auto chroot = ensure_chroot_layout(mapping.entity_id);
+                    auto chroot = ensure_chroot_layout_internal(mapping.entity_id);
                     if (!chroot.success) {
                         mapping.last_error = "active:chroot_repair_failed:" + chroot.message;
                         if (!persist(mapping, "error", mapping.last_error)) {
@@ -1596,7 +1687,7 @@ core::OperationResult LocalSftpProvider::reconcile_user_lifecycle() {
 
             // Reconcile grants and mounts
             if (load_all_grant_lifecycle_ && save_grant_lifecycle_) {
-                auto grants = apply_pending_grants(mapping.entity_id);
+                auto grants = apply_pending_grants_internal(mapping.entity_id);
                 if (!grants.success) {
                     mapping.last_error = "active:grant_reconcile_failed:" + grants.message;
                     if (!persist(mapping, "error", mapping.last_error)) {
@@ -1616,7 +1707,7 @@ core::OperationResult LocalSftpProvider::reconcile_user_lifecycle() {
 
             // Reconcile mounts
             if (mount_inspector_ && site_resolver_ && grants_loader_) {
-                auto mounts = reconcile_mounts(mapping.entity_id);
+                auto mounts = reconcile_mounts_internal(mapping.entity_id);
                 if (!mounts.success) {
                     mapping.last_error = "active:mount_reconcile_failed:" + mounts.message;
                     if (!persist(mapping, "error", mapping.last_error)) {
@@ -1642,7 +1733,7 @@ core::OperationResult LocalSftpProvider::reconcile_user_lifecycle() {
 
             // 1. Revoke all grants (idempotent)
             if (load_all_grant_lifecycle_ && save_grant_lifecycle_) {
-                auto revoke = revoke_all_grants(mapping.entity_id);
+                auto revoke = revoke_all_grants_internal(mapping.entity_id);
                 if (!revoke.success) {
                     mapping.last_error = "removing:revoke_failed:" + revoke.message;
                     if (!persist(mapping, "error", mapping.last_error)) {
@@ -1675,7 +1766,7 @@ core::OperationResult LocalSftpProvider::reconcile_user_lifecycle() {
 
             // 2. Cleanup mounts (idempotent)
             if (mount_inspector_ && site_resolver_ && grants_loader_) {
-                auto cleanup = cleanup_all_mounts(mapping.entity_id);
+                auto cleanup = cleanup_all_mounts_internal(mapping.entity_id);
                 if (!cleanup.success) {
                     mapping.last_error = "removing:cleanup_failed:" + cleanup.message;
                     if (!persist(mapping, "error", mapping.last_error)) {
@@ -1688,7 +1779,7 @@ core::OperationResult LocalSftpProvider::reconcile_user_lifecycle() {
                     continue;
                 }
 
-                auto reconcile = reconcile_mounts(mapping.entity_id);
+                auto reconcile = reconcile_mounts_internal(mapping.entity_id);
                 if (!reconcile.success) {
                     mapping.last_error = "removing:reconcile_failed:" + reconcile.message;
                     if (!persist(mapping, "error", mapping.last_error)) {
@@ -1852,6 +1943,13 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
                                                        const std::string& caller_permission) {
     core::OperationResult out;
     if (!operation_gate(out, "apply_grant")) return out;
+    return apply_grant_internal(access_user_id, site_id, caller_permission);
+}
+
+core::OperationResult LocalSftpProvider::apply_grant_internal(uint64_t access_user_id, uint64_t site_id,
+                                                       const std::string& caller_permission) {
+    core::OperationResult out;
+
     if (!site_resolver_ || !inspector_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
     }
@@ -2066,7 +2164,7 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
 
     // Step 1: Ensure site group
     {
-        auto r1 = ensure_site_group(site_id, permission);
+        auto r1 = ensure_site_group_internal(site_id, permission);
         if (!r1.success) {
             persist("error", r1.message);
             out = r1; return out;
@@ -2076,10 +2174,10 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
     // Step 2: Add membership
     membership_added = !inspector_->user_in_group(username, site_group_name(site_id, permission));
     {
-        auto r2 = add_user_to_site_group(username, site_id, permission);
+        auto r2 = add_user_to_site_group_internal(username, site_id, permission);
         if (!r2.success) {
             persist("error", r2.message);
-            if (group_created) (void)delete_site_group_if_unused(site_id, permission);
+            if (group_created) (void)delete_site_group_if_unused_internal(site_id, permission);
             out = r2; return out;
         }
     }
@@ -2091,11 +2189,11 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
             auto orig = fs_inspector_->inspect(pub);
             if (orig.exists) { original_gid = orig.group_gid; original_mode = orig.mode; }
         }
-        auto r3 = apply_directory_permissions(site_id, permission);
+        auto r3 = apply_directory_permissions_internal(site_id, permission);
         if (!r3.success) {
             persist("error", r3.message);
-            if (membership_added) { auto rb = remove_user_from_site_group(username, site_id, permission); if (!rb.success) { out.success = false; out.message = "grant_rollback_membership_failed"; return out; } }
-            if (group_created) { auto dg = delete_site_group_if_unused(site_id, permission); if (!dg.success) { out.success = false; out.message = "grant_rollback_group_delete_failed"; return out; } }
+            if (membership_added) { auto rb = remove_user_from_site_group_internal(username, site_id, permission); if (!rb.success) { out.success = false; out.message = "grant_rollback_membership_failed"; return out; } }
+            if (group_created) { auto dg = delete_site_group_if_unused_internal(site_id, permission); if (!dg.success) { out.success = false; out.message = "grant_rollback_group_delete_failed"; return out; } }
             out = r3; return out;
         }
         perms_changed = true;
@@ -2114,11 +2212,11 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
                 }
             }
         }
-        auto r4 = apply_read_only_acl(site_id);
+        auto r4 = apply_read_only_acl_internal(site_id);
         if (!r4.success) {
             persist("error", r4.message);
-            if (membership_added) { auto rb = remove_user_from_site_group(username, site_id, permission); if (!rb.success) { out.success = false; out.message = "grant_rollback_membership_failed"; return out; } }
-            if (group_created) { auto dg = delete_site_group_if_unused(site_id, permission); if (!dg.success) { out.success = false; out.message = "grant_rollback_group_delete_failed"; return out; } }
+            if (membership_added) { auto rb = remove_user_from_site_group_internal(username, site_id, permission); if (!rb.success) { out.success = false; out.message = "grant_rollback_membership_failed"; return out; } }
+            if (group_created) { auto dg = delete_site_group_if_unused_internal(site_id, permission); if (!dg.success) { out.success = false; out.message = "grant_rollback_group_delete_failed"; return out; } }
             out = r4; return out;
         }
         acl_changed = true;
@@ -2126,7 +2224,7 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
 
     // Step 5: Bind mount
     {
-        auto r5 = bind_mount_site(access_user_id, site_id);
+        auto r5 = bind_mount_site_internal(access_user_id, site_id);
         if (!r5.success) {
             std::string rollback_errors;
             auto note = [&](const char* step) { if (!rollback_errors.empty()) rollback_errors += ","; rollback_errors += step; };
@@ -2156,11 +2254,11 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
                 }
             }
             if (membership_added) {
-                auto rb2 = remove_user_from_site_group(username, site_id, permission);
+                auto rb2 = remove_user_from_site_group_internal(username, site_id, permission);
                 if (!rb2.success) note("membership");
             }
             if (group_created) {
-                auto dg = delete_site_group_if_unused(site_id, permission);
+                auto dg = delete_site_group_if_unused_internal(site_id, permission);
                 if (!dg.success) note("group");
             }
 
@@ -2189,8 +2287,8 @@ core::OperationResult LocalSftpProvider::apply_grant(uint64_t access_user_id, ui
             return managed_home_root_ + "/" + username + "/sites/" + domain;
         }();
         (void)runner_->umount(err_target);
-        if (membership_added) (void)remove_user_from_site_group(username, site_id, permission);
-        if (group_created) (void)delete_site_group_if_unused(site_id, permission);
+        if (membership_added) (void)remove_user_from_site_group_internal(username, site_id, permission);
+        if (group_created) (void)delete_site_group_if_unused_internal(site_id, permission);
         persist("error", "grant_lifecycle:active_persist_failed_rolled_back");
         out.success = false; out.message = "grant_lifecycle:active_persist_failed_rolled_back"; return out;
     }
@@ -2202,6 +2300,12 @@ core::OperationResult LocalSftpProvider::revoke_grant(uint64_t access_user_id, u
                                                         const std::string& caller_permission) {
     core::OperationResult out;
     if (!operation_gate(out, "revoke_grant")) return out;
+    return revoke_grant_internal(access_user_id, site_id, caller_permission);
+}
+
+core::OperationResult LocalSftpProvider::revoke_grant_internal(uint64_t access_user_id, uint64_t site_id,
+                                                        const std::string& caller_permission) {
+    core::OperationResult out;
 
     std::string username = resolve_username(access_user_id);
     if (username.empty()) { out.success = false; out.message = "user not provisioned"; return out; }
@@ -2275,10 +2379,10 @@ core::OperationResult LocalSftpProvider::revoke_grant(uint64_t access_user_id, u
             // Check membership and group — undo if present
             auto grp_name = site_group_name(site_id, permission);
             if (inspector_ && inspector_->user_in_group(username, grp_name)) {
-                (void)remove_user_from_site_group(username, site_id, permission);
+                (void)remove_user_from_site_group_internal(username, site_id, permission);
             }
             if (find_mapping(site_group_entity_type(permission), site_id).has_value()) {
-                (void)delete_site_group_if_unused(site_id, permission);
+                (void)delete_site_group_if_unused_internal(site_id, permission);
             }
             if (delete_grant_lifecycle_ && !delete_grant_lifecycle_(access_user_id, site_id)) {
                 persist("error", "delete_failed");
@@ -2292,11 +2396,11 @@ core::OperationResult LocalSftpProvider::revoke_grant(uint64_t access_user_id, u
             auto apply_result = apply_grant(access_user_id, site_id, permission);
             if (!apply_result.success && ls.state != "active") {
                 // Could not apply — rollback what we can
-                (void)unmount_site(access_user_id, site_id);
-                (void)remove_user_from_site_group(username, site_id, permission);
+                (void)unmount_site_internal(access_user_id, site_id);
+                (void)remove_user_from_site_group_internal(username, site_id, permission);
                 auto grp_name = site_group_name(site_id, permission);
                 if (find_mapping(site_group_entity_type(permission), site_id).has_value()) {
-                    (void)delete_site_group_if_unused(site_id, permission);
+                    (void)delete_site_group_if_unused_internal(site_id, permission);
                 }
                 persist("error", "applying_rollback_failed");
                 out.success = false; out.message = "grant_lifecycle:applying_rollback"; return out;
@@ -2323,16 +2427,16 @@ core::OperationResult LocalSftpProvider::revoke_grant(uint64_t access_user_id, u
                     std::string target = managed_home_root_ + "/" + username + "/sites/" + domain;
                     auto ms = mount_inspector_->inspect(target);
                     if (ms.mounted) {
-                        (void)unmount_site(access_user_id, site_id);
+                        (void)unmount_site_internal(access_user_id, site_id);
                     }
                 }
             }
             auto grp_name = site_group_name(site_id, permission);
             if (inspector_ && inspector_->user_in_group(username, grp_name)) {
-                (void)remove_user_from_site_group(username, site_id, permission);
+                (void)remove_user_from_site_group_internal(username, site_id, permission);
             }
             if (find_mapping(site_group_entity_type(permission), site_id).has_value()) {
-                (void)delete_site_group_if_unused(site_id, permission);
+                (void)delete_site_group_if_unused_internal(site_id, permission);
             }
             if (!persist("error", "revoke_cleanup_attempted")) {
                 out.success = false; out.message = "grant_lifecycle:error_cleanup_failed"; return out;
@@ -2370,18 +2474,18 @@ core::OperationResult LocalSftpProvider::revoke_grant(uint64_t access_user_id, u
     };
 
     // Step 1: Unmount
-    auto r1 = unmount_site(access_user_id, site_id);
+    auto r1 = unmount_site_internal(access_user_id, site_id);
     if (!r1.success) { note("unmount:" + r1.message); failures++; }
     else {
         // Step 2: Remove membership
-        auto r2 = remove_user_from_site_group(username, site_id, permission);
+        auto r2 = remove_user_from_site_group_internal(username, site_id, permission);
         if (!r2.success) { note("membership:" + r2.message); failures++; }
         else {
             // Step 3: Remove RO ACL only if no other lifecycle record requires it
             if (permission == "read_only") {
                 bool other_grants_need_ro = (count_active_lifecycle("read_only") > 0);
                 if (!other_grants_need_ro) {
-                    auto r3 = remove_read_only_acl(site_id);
+                    auto r3 = remove_read_only_acl_internal(site_id);
                     if (!r3.success) { note("acl:" + r3.message); failures++; }
                 }
             }
@@ -2401,7 +2505,7 @@ core::OperationResult LocalSftpProvider::revoke_grant(uint64_t access_user_id, u
             }
         }
         if (can_delete && find_mapping(site_group_entity_type(permission), site_id).has_value()) {
-            auto rd = delete_site_group_if_unused(site_id, permission);
+            auto rd = delete_site_group_if_unused_internal(site_id, permission);
             if (!rd.success) { note("group:" + rd.message); failures++; }
         }
     }
@@ -2425,6 +2529,12 @@ core::OperationResult LocalSftpProvider::revoke_grant(uint64_t access_user_id, u
 core::OperationResult LocalSftpProvider::apply_pending_grants(uint64_t access_user_id) {
     core::OperationResult out;
     if (!operation_gate(out, "apply_pending_grants")) return out;
+    return apply_pending_grants_internal(access_user_id);
+}
+
+core::OperationResult LocalSftpProvider::apply_pending_grants_internal(uint64_t access_user_id) {
+    core::OperationResult out;
+
     if (!grants_loader_) { out.success = false; out.message = "grant_loader_not_configured"; return out; }
     if (!save_grant_lifecycle_ || !load_all_grant_lifecycle_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
@@ -2457,7 +2567,7 @@ core::OperationResult LocalSftpProvider::apply_pending_grants(uint64_t access_us
 
         if (ls.state == "active") {
             // Verify observed state is complete by calling apply_grant (idempotent)
-            auto r = apply_grant(access_user_id, ls.site_id, ls.permission);
+            auto r = apply_grant_internal(access_user_id, ls.site_id, ls.permission);
             if (r.success) {
                 applied++;
             } else {
@@ -2469,7 +2579,7 @@ core::OperationResult LocalSftpProvider::apply_pending_grants(uint64_t access_us
 
         if (ls.state == "pending" || ls.state == "applying" || ls.state == "error") {
             // Process allowed states
-            auto r = apply_grant(access_user_id, ls.site_id, ls.permission);
+            auto r = apply_grant_internal(access_user_id, ls.site_id, ls.permission);
             if (r.success) {
                 applied++;
             } else {
@@ -2504,6 +2614,12 @@ core::OperationResult LocalSftpProvider::apply_pending_grants(uint64_t access_us
 core::OperationResult LocalSftpProvider::revoke_all_grants(uint64_t access_user_id) {
     core::OperationResult out;
     if (!operation_gate(out, "revoke_all_grants")) return out;
+    return revoke_all_grants_internal(access_user_id);
+}
+
+core::OperationResult LocalSftpProvider::revoke_all_grants_internal(uint64_t access_user_id) {
+    core::OperationResult out;
+
     if (!grants_loader_) { out.success = false; out.message = "grant_loader_not_configured"; return out; }
     if (!load_all_grant_lifecycle_) {
         out.success = false; out.message = "provider dependencies not configured"; return out;
@@ -2533,7 +2649,7 @@ core::OperationResult LocalSftpProvider::revoke_all_grants(uint64_t access_user_
 
     for (auto& ls : user_records) {
         std::string label = "s" + std::to_string(ls.site_id);
-        auto r = revoke_grant(access_user_id, ls.site_id, ls.permission);
+        auto r = revoke_grant_internal(access_user_id, ls.site_id, ls.permission);
         if (r.success) {
             revoked++;
         } else {
@@ -3067,9 +3183,9 @@ LocalSftpProvider::run_reconciliation_flow() {
     size_t mount_records = 0;
     size_t user_records = 0;
 
-    // Step 1: Mount reconciliation
+    // Step 1: Mount reconciliation (uses internal to bypass state gate)
     {
-        auto r = reconcile_startup_mounts();
+        auto r = reconcile_startup_mounts_internal();
         // Count records from diagnostic — approximation
         if (!r.message.empty()) {
             // Inspected ~ (failures + fixed) from message
@@ -3086,9 +3202,9 @@ LocalSftpProvider::run_reconciliation_flow() {
         }
     }
 
-    // Step 2: User lifecycle reconciliation
+    // Step 2: User lifecycle reconciliation (uses internal to bypass state gate)
     {
-        auto r = reconcile_user_lifecycle();
+        auto r = reconcile_user_lifecycle_internal();
         if (r.success) {
             combined.records_fixed += 1;
         } else {
@@ -3121,21 +3237,15 @@ ReconciliationResult
 LocalSftpProvider::retry_reconciliation() {
     ReconciliationResult result;
 
-    // Guard against concurrent execution
-    if (reconciling_) {
-        result.success = false;
-        result.recoverable = true;
-        result.errors.push_back("concurrent_retry_rejected");
-        return result;
-    }
-    reconciling_ = true;
+    // RAII guard: prevents concurrent execution and ensures release on all paths
+    ScopedReconciliationGuard guard(reconciling_, result);
+    if (!guard.allowed()) return result;
 
     // Fail closed if dependencies missing
     auto dep_check = verify_dependencies();
     if (!dep_check.success) {
         runtime_state_ = SftpRuntimeState::Disabled;
         last_reconciliation_ = result;
-        reconciling_ = false;
         result.success = false;
         result.recoverable = false;
         result.errors.push_back("deps_missing:" + dep_check.message);
@@ -3145,7 +3255,7 @@ LocalSftpProvider::retry_reconciliation() {
     // Set starting state before reconciliation
     runtime_state_ = SftpRuntimeState::Starting;
 
-    // Run both reconciliation steps
+    // Run both reconciliation steps (internal methods bypass state gate)
     result = run_reconciliation_flow();
 
     // Determine final state
@@ -3158,7 +3268,6 @@ LocalSftpProvider::retry_reconciliation() {
     }
 
     last_reconciliation_ = result;
-    reconciling_ = false;
     return result;
 }
 

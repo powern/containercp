@@ -198,12 +198,45 @@ public:
     ReconciliationResult retry_reconciliation();
 
 private:
+    // RAII guard that sets reconciling_ = true on construction and restores
+    // it to false on destruction. Also verifies that another reconciliation
+    // is not already in flight.
+    struct ScopedReconciliationGuard {
+        ScopedReconciliationGuard(bool& flag, ReconciliationResult& out)
+            : flag_(flag), out_(out) {
+            if (flag_) {
+                out_.success = false;
+                out_.recoverable = true;
+                out_.errors.push_back("concurrent_retry_rejected");
+                rejected_ = true;
+                return;
+            }
+            flag_ = true;
+        }
+        ~ScopedReconciliationGuard() {
+            if (!rejected_) flag_ = false;
+        }
+        bool allowed() const { return !rejected_; }
+    private:
+        bool& flag_;
+        ReconciliationResult& out_;
+        bool rejected_ = false;
+    };
+
     // Returns true if mutation operation is allowed. On denial, populates
     // out with fail-closed message and returns false.
+    // Rejects: !enabled_, Starting, Failed, Degraded.
+    // Used by public lifecycle methods to prevent external mutation during
+    // startup reconciliation.
     bool operation_gate(core::OperationResult& out, const char* op) const {
         if (!enabled_) {
             out.success = false;
             out.message = std::string("SFTP provider disabled: ") + op;
+            return false;
+        }
+        if (runtime_state_ == SftpRuntimeState::Starting) {
+            out.success = false;
+            out.message = std::string("SFTP provider starting: ") + op;
             return false;
         }
         if (runtime_state_ == SftpRuntimeState::Failed) {
@@ -219,8 +252,43 @@ private:
         return true;
     }
 
+    // ── Internal (trusted) implementation methods ──
+    // These skip the public operation_gate so they can be called from
+    // retry_reconciliation() while runtime_state_ is Starting.
+    // They differ from their public counterparts only in that they
+    // do NOT call operation_gate() — all other safety checks remain.
+
+    core::OperationResult ensure_site_group_internal(uint64_t site_id,
+                                                      const std::string& permission);
+    core::OperationResult add_user_to_site_group_internal(const std::string& username,
+                                                           uint64_t site_id,
+                                                           const std::string& permission);
+    core::OperationResult remove_user_from_site_group_internal(const std::string& username,
+                                                                uint64_t site_id,
+                                                                const std::string& permission);
+    core::OperationResult delete_site_group_if_unused_internal(uint64_t site_id,
+                                                                const std::string& permission);
+    core::OperationResult apply_directory_permissions_internal(uint64_t site_id,
+                                                                const std::string& permission);
+    core::OperationResult apply_read_only_acl_internal(uint64_t site_id);
+    core::OperationResult remove_read_only_acl_internal(uint64_t site_id);
+    core::OperationResult ensure_chroot_layout_internal(uint64_t access_user_id);
+    core::OperationResult bind_mount_site_internal(uint64_t access_user_id, uint64_t site_id);
+    core::OperationResult unmount_site_internal(uint64_t access_user_id, uint64_t site_id);
+    core::OperationResult cleanup_all_mounts_internal(uint64_t access_user_id);
+    core::OperationResult reconcile_mounts_internal(uint64_t access_user_id);
+    core::OperationResult reconcile_startup_mounts_internal();
+    core::OperationResult reconcile_user_lifecycle_internal();
+    core::OperationResult apply_grant_internal(uint64_t access_user_id, uint64_t site_id,
+                                                const std::string& permission);
+    core::OperationResult revoke_grant_internal(uint64_t access_user_id, uint64_t site_id,
+                                                 const std::string& permission);
+    core::OperationResult apply_pending_grants_internal(uint64_t access_user_id);
+    core::OperationResult revoke_all_grants_internal(uint64_t access_user_id);
+
     // Run both reconciliation steps and classify the combined outcome.
-    // Called by retry_reconciliation.
+    // Called by retry_reconciliation. Uses _internal methods to bypass
+    // the public state gate.
     ReconciliationResult run_reconciliation_flow();
 
     // Returns a value copy — no pointers, no static caches.
