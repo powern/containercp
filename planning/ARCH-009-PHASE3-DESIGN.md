@@ -2,9 +2,10 @@
 
 ## Final Implementation Specification
 
-**Status:** DESIGN — AWAITING IMPLEMENTATION APPROVAL
+**Status:** ACCEPTED WITH RESIDUAL RISKS — see `docs/ARCH-009-PHASE3-ACCEPTANCE.md`
 **Base:** `5779316` fix(arch-009): make fake test infrastructure model real OS state evolution
-**Revision:** 2
+**Revision:** 3
+**Acceptance baseline:** `6966f96e5c378ccff0643c854c2e33077b420b79` plus Task48 acceptance fixes
 
 ---
 
@@ -399,6 +400,9 @@ No new columns needed. The grant row is the SSOT for which user has which permis
 ---
 
 ## 10. Acceptance Checklist
+
+> Final Phase 3 acceptance is documented in `docs/ARCH-009-PHASE3-ACCEPTANCE.md`.
+> The implementation is accepted with residual risks: account lifecycle is privileged-Linux validated, while ACL, bind mount, unmount, and grant lifecycle behavior remains unit/fake-state validated only.
 
 | # | Requirement | Test |
 |---|-----------|------|

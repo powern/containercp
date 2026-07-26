@@ -466,7 +466,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | Docker/Runtime | Stable | |
 | Reverse Proxy | Active | |
 | SSL/Certs | Implemented | ACME HTTP-01, auto-renewal, full GUI |
-| Access/SFTP | Experimental | Placeholder provider |
+| Access/SFTP | Phase 3 accepted with residual risks | Real local provider core implemented through account lifecycle, grant lifecycle, mount lifecycle, startup reconciliation, runtime safety, and privileged command hardening. Privileged validation currently covers account lifecycle only; real ACL/bind/unmount/grant lifecycle integration is deferred before exposing SFTP login. See `docs/ARCH-009-PHASE3-ACCEPTANCE.md`. |
 | Backup | Active | |
 | Profiles | Stable | |
 | Templates | Stable | |
@@ -486,7 +486,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | RC1 pass | 128/137 (9 stability deferred) |
 | RC2 validation | All items verified on real Debian 13 |
 | Bugs discovered during RC1 | 13 (all fixed) |
-| Current Epic | v0.8 Databases DB-5 backup validation completed |
+| Current Epic | ARCH-009 Phase 3 accepted with residual integration risks; Phase 4 not started |
 
 ---
 

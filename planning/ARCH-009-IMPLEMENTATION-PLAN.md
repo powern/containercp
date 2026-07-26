@@ -35,6 +35,10 @@
 
 ## Phase 3 — Chroot, Bind Mounts, and Grants
 
+**Final acceptance:** ACCEPTED WITH RESIDUAL RISKS. See `docs/ARCH-009-PHASE3-ACCEPTANCE.md`.
+
+**Privileged coverage note:** Task 47/48 privileged execution validates real account lifecycle only. Site grants, ACLs, bind mounts, unmounts, stale/orphan/foreign mount reconciliation, and SQLite-backed lifecycle persistence are implemented and unit/fake-state validated, but still need privileged Linux integration coverage before real SFTP login exposure.
+
 **Objective:** Set up per-User chroot home with bind-mounted Site paths. Wire grant lifecycle.
 
 **Code areas:** `libs/access/`, `libs/core/`

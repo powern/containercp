@@ -2325,10 +2325,22 @@ core::OperationResult LocalSftpProvider::revoke_grant_internal(uint64_t access_u
             // Check membership and group — undo if present
             auto grp_name = site_group_name(site_id, permission);
             if (inspector_ && inspector_->user_in_group(username, grp_name)) {
-                (void)remove_user_from_site_group_internal(username, site_id, permission);
+                auto rm = remove_user_from_site_group_internal(username, site_id, permission);
+                if (!rm.success) {
+                    if (!persist("error", "pending_membership_cleanup_failed:" + rm.message)) {
+                        out.success = false; out.message = "grant_lifecycle:pending_membership_cleanup_persist_failed"; return out;
+                    }
+                    out.success = false; out.message = "grant_lifecycle:pending_membership_cleanup_failed"; return out;
+                }
             }
             if (find_mapping(site_group_entity_type(permission), site_id).has_value()) {
-                (void)delete_site_group_if_unused_internal(site_id, permission);
+                auto dg = delete_site_group_if_unused_internal(site_id, permission);
+                if (!dg.success) {
+                    if (!persist("error", "pending_group_cleanup_failed:" + dg.message)) {
+                        out.success = false; out.message = "grant_lifecycle:pending_group_cleanup_persist_failed"; return out;
+                    }
+                    out.success = false; out.message = "grant_lifecycle:pending_group_cleanup_failed"; return out;
+                }
             }
             if (delete_grant_lifecycle_ && !delete_grant_lifecycle_(access_user_id, site_id)) {
                 persist("error", "delete_failed");
@@ -2339,7 +2351,7 @@ core::OperationResult LocalSftpProvider::revoke_grant_internal(uint64_t access_u
         if (ls.state == "applying") {
             // Recover or roll back applying state before revoke
             // First try to complete apply, then revoke
-            auto apply_result = apply_grant(access_user_id, site_id, permission);
+            auto apply_result = apply_grant_internal(access_user_id, site_id, permission);
             if (!apply_result.success && ls.state != "active") {
                 // Could not apply — rollback what we can
                 (void)unmount_site_internal(access_user_id, site_id);

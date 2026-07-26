@@ -6525,6 +6525,25 @@ TEST_CASE("ARCH-009 revoke pending grant deletes without mutation") {
     CHECK(ctx.mutation_count() == 0);
 }
 
+TEST_CASE("ARCH-009 revoke pending grant fails if stale membership cleanup fails") {
+    RevokeLifecycleContext ctx;
+    ctx.add_grant_record("pending");
+    ctx.setup_completed_steps();
+    ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("gpasswd")) {
+                return containercp::core::OperationResult{false, "gpasswd failed", ""};
+            }
+            return ctx.fake_commands.run(cmd);
+        }));
+
+    auto r = ctx.provider.revoke_grant(1, 1, "read_write");
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("pending_membership_cleanup_failed") != std::string::npos);
+    REQUIRE(ctx.glc_.size() == 1);
+    CHECK(ctx.glc_[0].state == "error");
+}
+
 TEST_CASE("ARCH-009 revoke missing grant idempotent") {
     RevokeLifecycleContext ctx;
     // No lifecycle record at all
@@ -8423,6 +8442,58 @@ TEST_CASE("ARCH-009 internal reconciliation does not call public operation_gate 
     CHECK(result.success);
     // If internal methods had been blocked by the Starting gate,
     // reconciliation would have failed with "starting" in errors.
+    for (const auto& e : result.errors) {
+        CHECK(e.find("starting") == std::string::npos);
+    }
+}
+
+TEST_CASE("ARCH-009 removing user with applying grant reconciles during Starting") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "removing");
+    ctx.add_os_user(1);
+    ctx.ensure_chroot_dir(1);
+
+    containercp::access::SystemAccountMapping site_group;
+    site_group.entity_type = "site_group_rw";
+    site_group.entity_id = 1;
+    site_group.gid = 20001;
+    site_group.username = "site-1-rw";
+    site_group.groupname = "site-1-rw";
+    site_group.state = "active";
+    ctx.stored_.push_back(site_group);
+    ctx.inspector->supp_groups_["au1"].insert("site-1-rw");
+
+    containercp::access::FsPermissionState public_dir;
+    public_dir.exists = true;
+    public_dir.is_symlink = false;
+    public_dir.mode = S_IFDIR | 0770;
+    public_dir.owner_uid = 0;
+    public_dir.group_gid = 20001;
+    ctx.inspector->fs_state_->state_["/srv/containercp/sites/test/public/"] = public_dir;
+
+    std::string target = "/srv/containercp/users/au1/sites/test";
+    ctx.inspector->mount_state_->mounted_paths_.insert(target);
+    ctx.inspector->mount_state_->bind_sources_[target] = "/srv/containercp/sites/test/public/";
+    containercp::access::FsPermissionState target_dir;
+    target_dir.exists = true;
+    target_dir.is_symlink = false;
+    target_dir.mode = S_IFDIR | 0755;
+    target_dir.owner_uid = 0;
+    target_dir.group_gid = 0;
+    ctx.inspector->fs_state_->state_[target] = target_dir;
+
+    containercp::storage::GrantLifecycleState grant;
+    grant.access_user_id = 1;
+    grant.site_id = 1;
+    grant.permission = "read_write";
+    grant.state = "applying";
+    ctx.glc_.push_back(grant);
+
+    auto result = ctx.provider.retry_reconciliation();
+    CHECK_MESSAGE(result.success, result.to_operation_result().message);
+    CHECK(ctx.provider.runtime_state() == containercp::access::SftpRuntimeState::Healthy);
+    CHECK(ctx.stored_.empty());
+    CHECK(ctx.glc_.empty());
     for (const auto& e : result.errors) {
         CHECK(e.find("starting") == std::string::npos);
     }
