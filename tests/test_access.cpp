@@ -7521,6 +7521,23 @@ TEST_CASE("remove_user mapping delete failure") {
     CHECK(r.message.find("failed to delete") != std::string::npos);
 }
 
+TEST_CASE("remove_user handles USERGROUPS_ENAB group auto-removal by userdel") {
+    RemoveUserContext ctx;
+    // Simulate USERGROUPS_ENAB=yes: after userdel succeeds, the private group
+    // is also removed from the inspector (as userdel does on Debian by default).
+    ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            auto result = ctx.fake_commands.run(cmd);
+            if (result.success && cmd.args.size() >= 2 &&
+                cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("userdel")) {
+                ctx.inspector->groups_.erase(cmd.args.back());
+            }
+            return result;
+        }));
+    auto r = ctx.provider.remove_user(ctx.make_user());
+    CHECK(r.success);
+}
+
 // --- ARCH-009 Task 40: User Lifecycle Restart Reconciliation ---
 
 struct ReconcileUserContext {

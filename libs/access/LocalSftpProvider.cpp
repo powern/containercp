@@ -2992,12 +2992,15 @@ core::OperationResult LocalSftpProvider::remove_user(const AccessUser& user) {
         }
     }
 
-    // 11. Remove private group
-    auto gd = runner_->groupdel(mapping->groupname);
-    if (!gd.success) {
-        mapping->state = "error";
-        if (save_mapping_) save_mapping_(*mapping);
-        out.success = false; out.message = "groupdel failed: " + mapping->groupname; return out;
+    // 11. Remove private group (may have been auto-removed by userdel
+    //     when USERGROUPS_ENAB=yes in /etc/login.defs)
+    if (!inspector_ || inspector_->group_exists(mapping->groupname)) {
+        auto gd = runner_->groupdel(mapping->groupname);
+        if (!gd.success) {
+            mapping->state = "error";
+            if (save_mapping_) save_mapping_(*mapping);
+            out.success = false; out.message = "groupdel failed: " + mapping->groupname; return out;
+        }
     }
 
     // 12. Remove safe managed home/chroot content
