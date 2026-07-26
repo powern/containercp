@@ -112,6 +112,10 @@ public:
     access::AccessGrantManager& access_grants();
     access::AccessKeyManager& access_keys();
     access::AccessProvider& access_provider();
+
+    // Typed accessor for LocalSftpProvider (Phase 3/4 methods).
+    // Returns nullptr if the provider is not available (dynamic_cast failure).
+    access::LocalSftpProvider* local_sftp_provider();
     proxy::ReverseProxyManager& reverse_proxies();
     proxy::ProxyProvider& proxy_provider();
     proxy::ProxyViewService& proxy_view();

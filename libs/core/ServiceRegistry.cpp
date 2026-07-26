@@ -1176,6 +1176,10 @@ access::AccessProvider& ServiceRegistry::access_provider() {
     return access_provider_;
 }
 
+access::LocalSftpProvider* ServiceRegistry::local_sftp_provider() {
+    return &access_provider_;
+}
+
 proxy::ReverseProxyManager& ServiceRegistry::reverse_proxies() {
     return reverse_proxies_;
 }

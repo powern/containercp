@@ -38,6 +38,7 @@ add_executable(containercp_tests
     test_version.cpp
     test_sshd_discovery.cpp
     test_sshd_writers.cpp
+    test_sftp_api.cpp
     test_wordpress_config_detector.cpp
     test_wordpress_config_service.cpp
     test_wordpress_config_types.cpp
