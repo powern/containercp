@@ -4,8 +4,10 @@
 #include "access/AccessProvider.h"
 #include "access/FilesystemPermissionInspector.h"
 #include "access/MountInspector.h"
+#include "access/SftpRuntimeState.h"
 #include "access/SystemAccountAllocator.h"
 #include "access/SystemAccountCommandRunner.h"
+#include "access/SftpRuntimeState.h"
 #include "access/SystemAccountMapping.h"
 #include "access/SystemIdentityInspector.h"
 #include "logger/Logger.h"
@@ -173,8 +175,55 @@ public:
     // Does NOT check enabled_ — callers use this to gate set_enabled(true).
     core::OperationResult verify_dependencies() const;
 
+    // ── Runtime health state ──
+
+    // Current runtime health state.
+    SftpRuntimeState runtime_state() const { return runtime_state_; }
+
+    // Human-readable label for current state.
+    std::string runtime_state_label() const {
+        return sftp_runtime_state_label(runtime_state_);
+    }
+
+    // Structured reconciliation result from last startup or retry.
+    // Empty (success=true, records=0) if never run.
+    const ReconciliationResult& last_reconciliation_result() const {
+        return last_reconciliation_;
+    }
+
+    // Retry startup reconciliation. Idempotent. Guards against concurrent
+    // execution. Updates runtime_state_ and last_reconciliation_.
+    // Fails closed if dependencies are missing.
+    // Returns the reconciliation result.
+    ReconciliationResult retry_reconciliation();
+
 private:
-    bool disabled_result(core::OperationResult& out, const char* op) const;
+    // Returns true if mutation operation is allowed. On denial, populates
+    // out with fail-closed message and returns false.
+    bool operation_gate(core::OperationResult& out, const char* op) const {
+        if (!enabled_) {
+            out.success = false;
+            out.message = std::string("SFTP provider disabled: ") + op;
+            return false;
+        }
+        if (runtime_state_ == SftpRuntimeState::Failed) {
+            out.success = false;
+            out.message = std::string("SFTP provider failed: ") + op;
+            return false;
+        }
+        if (runtime_state_ == SftpRuntimeState::Degraded) {
+            out.success = false;
+            out.message = std::string("SFTP provider degraded: ") + op;
+            return false;
+        }
+        return true;
+    }
+
+    // Run both reconciliation steps and classify the combined outcome.
+    // Called by retry_reconciliation.
+    ReconciliationResult run_reconciliation_flow();
+
+    // Returns a value copy — no pointers, no static caches.
 
     // Returns a value copy — no pointers, no static caches.
     std::optional<SystemAccountMapping> find_mapping(const std::string& entity_type,
@@ -228,6 +277,11 @@ private:
     std::string managed_home_root_ = "/srv/containercp/users";
     std::string managed_shell_ = "/usr/sbin/nologin";
     std::string global_sftp_group_ = "containercp-sftp";
+
+    // ── Runtime health state ──
+    SftpRuntimeState runtime_state_ = SftpRuntimeState::Disabled;
+    ReconciliationResult last_reconciliation_;
+    bool reconciling_ = false; // guard for concurrent retry
 };
 
 } // namespace containercp::access

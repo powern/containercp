@@ -756,28 +756,26 @@ void ServiceRegistry::start() {
         } else {
             access_provider_.set_enabled(true);
             logger_.info("SFTP", "SFTP provider enabled with all dependencies");
-        }
-    }
 
-    // ── Phase 3c/d reconciliation (only if provider enabled) ──
+            // ── Run reconciliation flow and classify state ──
+            auto result = access_provider_.retry_reconciliation();
 
-    // Mount lifecycle reconciliation at startup
-    {
-        auto mount_reconcile = access_provider_.reconcile_startup_mounts();
-        if (!mount_reconcile.success) {
-            logger_.warning("SFTP", "Startup mount reconciliation: " + mount_reconcile.message);
-        } else if (mount_reconcile.message.find("0 fixed") == std::string::npos) {
-            logger_.info("SFTP", "Startup mount reconciliation: " + mount_reconcile.message);
-        }
-    }
+            // Log one structured summary
+            std::string state_label = access_provider_.runtime_state_label();
+            std::string summary = "SFTP startup state=" + state_label
+                + " inspected=" + std::to_string(result.records_inspected)
+                + " fixed=" + std::to_string(result.records_fixed)
+                + " failed=" + std::to_string(result.records_failed);
+            if (result.unsafe_foreign_state_detected)
+                summary += " foreign=true";
+            for (const auto& e : result.errors)
+                summary += " error=" + e;
 
-    // User lifecycle reconciliation at startup
-    {
-        auto user_reconcile = access_provider_.reconcile_user_lifecycle();
-        if (!user_reconcile.success) {
-            logger_.warning("SFTP", "Startup user lifecycle reconciliation: " + user_reconcile.message);
-        } else if (user_reconcile.message.find("0 fixed") == std::string::npos) {
-            logger_.info("SFTP", "Startup user lifecycle reconciliation: " + user_reconcile.message);
+            if (result.success) {
+                logger_.info("SFTP", summary);
+            } else {
+                logger_.warning("SFTP", summary);
+            }
         }
     }
 }

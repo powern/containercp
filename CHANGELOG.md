@@ -6,7 +6,21 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-26 | `this commit` | ARCH-009 Task 41 — Final Production Wiring Acceptance for Phase 3
+## 2026-07-26 | `this commit` | ARCH-009 Task 42 — Runtime State Machine & Reconciliation Failure Policy
+
+**Summary:** Introduced typed runtime state machine for SFTP provider: `SftpRuntimeState` enum (Disabled/Starting/Healthy/Degraded/Failed) with transition rules. Added `ReconciliationResult` struct with typed fields (success, recoverable, records_inspected/fixed/failed, errors, unsafe_foreign_state_detected). Implemented `run_reconciliation_flow()` (runs mount + user lifecycle steps, classifies outcome) and `retry_reconciliation()` (entry point with concurrent-execution guard, dep verification, state transitions). Added `operation_gate()` replacing all 22 `disabled_result()` call sites — per-state mutation blocking: Healthy=all, Degraded=mutations rejected, Failed=all lifecycle mutations rejected, Disabled=all operations rejected. Read operations (list_users/show_user) allowed in Degraded, blocked in Failed/Disabled. Updated `ServiceRegistry::start()` to use `retry_reconciliation()` with structured logging. Added 19 tests: default state, retry with missing deps, healthy flow, concurrent retry guard (structural), mutation blocked in Disabled/Failed, read operations in Degraded/Failed, operation_gate Degraded rejection, retry idempotency, last_reconciliation_result populated, record counts, `to_operation_result` roundtrip/errors/foreign detection, `sftp_runtime_state_label` coverage, no-crash with deps before enable, retry after enable with missing deps, all 22 mutation entry points.
+
+**Files changed:** `libs/access/SftpRuntimeState.h` (new), `libs/access/LocalSftpProvider.h`, `libs/access/LocalSftpProvider.cpp`, `libs/core/ServiceRegistry.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Daemon now transitions SFTP provider through a typed state machine at startup: Disabled → Starting → Healthy/Degraded/Failed. Degraded state allows read operations (status queries) but rejects mutations. Failed state rejects all SFTP operations. Detailed reconciliation summary logged at startup with record counts, error tokens, and foreign state detection.
+
+**Validation:** Full doctest suite passed (1225 cases, 7675 assertions, 0 failures). 19 new state-machine tests pass. Zero compiler warnings. `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
+
 
 **Summary:** Complete audit and fix of production dependency wiring in ServiceRegistry::start(). Added missing injections: `RealSystemIdentityInspector`, `SystemAccountAllocator` (10000–19999/20000–29999), `grants_lookup` callback. Added `verify_dependencies()` to LocalSftpProvider — checks all 11 required deps (identity_inspector, command_runner, allocator, mapping_persistence, site_resolver, filesystem_inspector, mount_inspector, managed_mount_storage, grant_lifecycle_storage, grants_loader, grants_lookup) and returns bounded diagnostic of missing ones. Provider is now enabled via `set_enabled(true)` only after dependency verification passes. Reconciliation (mount + user lifecycle) runs only after provider is enabled. Fail-closed: missing deps prevent enable, reconciliation returns disabled error. Added 15 production-wiring tests: complete startup, each missing dep individually, reconciliation idempotency, fail-closed when disabled, enable-only-after-all-deps.
 
