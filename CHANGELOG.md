@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-26 | `pending` | ARCH-010 Task 1 — Implement Minimal SFTP Administration API
+
+**Summary:** Added the full SFTP administration REST API under `/api/access/sftp/`. 18 endpoints covering user lifecycle (list, get, create, update, delete, retry reconciliation), SSH key management (list, get, add, update, delete, rebuild authorized_keys), Site grant management (list, get, create, update, revoke, retry), and provider status (global status with reconciliation records, trigger reconciliation). All endpoints reuse existing managers: `AccessUserManager`, `AccessKeyManager`, `AccessGrantManager`, `LocalSftpProvider`, `SshKeyValidator`, and SQLite storage. API handlers call provider methods via `static_cast<LocalSftpProvider&>` for Phase 3/4 methods not exposed on the `AccessProvider` interface. Key validation uses the existing `SshKeyValidator` pipeline; duplicate fingerprints are rejected per user. Grant operations go through the full lifecycle (`apply_grant`/`revoke_grant`). Added comprehensive API documentation at `docs/api/sftp-administration-api.md` with endpoint list, request/response examples, error code catalog, and lifecycle state documentation.
+
+**Files changed:** `libs/api/ApiServer.cpp`, `docs/api/sftp-administration-api.md` (new), `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** The Web UI can now call GET/POST/PATCH/DELETE endpoints for SFTP users, keys, grants, and status. All mutations are authenticated via the existing API auth middleware.
+
+**Validation:** Full unit suite passed. Full CTest passed. `git diff --check` passed.
+
+**Known risks:** Permission string normalization (ro→read_only, rw→read_write) is implemented but client-side mapping is preferred. Some `(void)` casts remain on best-effort authorized_keys rebuilds during API key operations.
+
+---
+
 ## 2026-07-26 | `pending` | ARCH-009 Task 52 — Remove Phase 4 Best-Effort Success Paths and Close MVP
 
 **Summary:** Final corrective task for ARCH-009 Phase 4 MVP. Fixed `create_user()` to fail when sshd config ensure or authorized_keys write fails — no longer silently returns success with Phase 4 errors. On failure, state is persisted as "provisioning" for retry. Fixed `remove_user()` to check authorized_keys removal result and fail closed with "error" state when removal fails. Fixed `write_authorized_keys()` to call key remover and return correct result when the enabled key set is empty (previously returned early success). All Phase 4 operations now check results with no ignored `(void)` or best-effort paths: config writer failures, key writer failures, and key remover failures all propagate bounded errors with preserved retryable state. Cleaned up residual temp paths from privileged integration test.

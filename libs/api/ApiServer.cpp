@@ -1,4 +1,7 @@
 #include "ApiServer.h"
+#include "access/AccessGrant.h"
+#include "access/LocalSftpProvider.h"
+#include "access/SshKeyValidator.h"
 #include "api/JsonFormatter.h"
 #include "api/SitesViewService.h"
 #include "core/Version.h"
@@ -4737,6 +4740,396 @@ bool ApiServer::start() {
         r.body = "{\"success\":true,\"data\":{\"job_id\":" + std::to_string(job_id)
             + ",\"status\":\"pending\",\"status_url\":\"/api/jobs?id=" + std::to_string(job_id)
             + "\",\"message\":\"Migration queued\"}}";
+        return r;
+    });
+
+    // ── SFTP Administration API (ARCH-010) ─────────────────────────────
+
+    auto& sfp = static_cast<containercp::access::LocalSftpProvider&>(s.access_provider());
+
+    auto ebool = [](const std::string& json, const std::string& key) -> bool {
+        return json.find("\"" + key + "\":true") != std::string::npos ||
+               json.find("\"" + key + "\": true") != std::string::npos;
+    };
+
+    auto find_grant = [&s](uint64_t uid, uint64_t sid) -> const containercp::access::AccessGrant* {
+        for (const auto* g : s.access_grants().find_by_user(uid)) {
+            if (g->site_id == sid) return g;
+        }
+        return nullptr;
+    };
+
+    auto pstr = [](containercp::access::Permission p) -> std::string {
+        return containercp::access::permission_to_string(p);
+    };
+
+    // GET /api/access/sftp/users
+    router_.add("GET", "/api/access/sftp/users", [&s](const Request&) {
+        Response r;
+        auto users = s.access_users().list();
+        std::string arr = "[";
+        bool f = true;
+        for (const auto& u : users) {
+            if (!f) arr += ","; f = false;
+            arr += "{\"id\":" + std::to_string(u.id) + ",\"username\":\"" + JsonFormatter::escape(u.username) + "\",\"enabled\":" + (u.enabled ? "true" : "false") + "}";
+        }
+        arr += "]";
+        r.body = "{\"success\":true,\"data\":" + arr + "}";
+        return r;
+    });
+
+    // GET /api/access/sftp/users/<id>
+    router_.add_prefix("GET", "/api/access/sftp/users/", [&s](const Request& req) {
+        Response r;
+        std::string rest = req.path.substr(22);
+        if (rest.empty() || rest.find('/') != std::string::npos) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        char* e = nullptr;
+        unsigned long long v = std::strtoull(rest.c_str(), &e, 10);
+        if (*e != '\0' || v == 0) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        auto* u = s.access_users().find(static_cast<uint64_t>(v));
+        if (!u) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        auto mappings = s.storage().sqlite().load_system_accounts();
+        std::string lu, lc = "none", home, le;
+        for (const auto& m : mappings) {
+            if (m.entity_type == "access_user" && m.entity_id == u->id) { lu = m.username; lc = m.state; home = m.home; le = m.last_error; break; }
+        }
+        int kc = 0;
+        for (const auto& k : s.access_keys().list()) { if (k.access_user_id == u->id) kc++; }
+        int gc = static_cast<int>(s.access_grants().find_by_user(u->id).size());
+        r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(u->id) + ",\"username\":\"" + JsonFormatter::escape(u->username) + "\",\"linuxUsername\":\"" + JsonFormatter::escape(lu) + "\",\"lifecycleState\":\"" + JsonFormatter::escape(lc) + "\",\"home\":\"" + JsonFormatter::escape(home) + "\",\"enabled\":" + (u->enabled ? "true" : "false") + ",\"keyCount\":" + std::to_string(kc) + ",\"grantCount\":" + std::to_string(gc) + ",\"lastError\":\"" + JsonFormatter::escape(le) + "\"}}";
+        return r;
+    });
+
+    // POST /api/access/sftp/users
+    router_.add("POST", "/api/access/sftp/users", [&s, &ebool](const Request& req) {
+        Response r;
+        std::string un = json_extract(req.body, "username");
+        if (un.empty() || un.size() > 64) { r.status_code = 422; r.body = "{\"success\":false,\"error\":\"sftp_user_invalid\",\"details\":\"username required (max 64)\"}"; return r; }
+        if (s.access_users().find(un)) { r.status_code = 409; r.body = "{\"success\":false,\"error\":\"sftp_user_duplicate\"}"; return r; }
+        uint64_t id = s.access_users().create(un);
+        if (id == 0) { r.status_code = 500; r.body = "{\"success\":false,\"error\":\"sftp_backend_failure\"}"; return r; }
+        auto* u = s.access_users().find(id);
+        if (u && ebool(req.body, "enabled")) u->enabled = true;
+        r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(id) + ",\"username\":\"" + JsonFormatter::escape(un) + "\",\"enabled\":" + (u ? (u->enabled ? "true" : "false") : "true") + "}}";
+        return r;
+    });
+
+    // PATCH /api/access/sftp/users/<id>
+    router_.add_prefix("PATCH", "/api/access/sftp/users/", [&s, &ebool](const Request& req) {
+        Response r;
+        std::string rest = req.path.substr(22);
+        if (rest.find('/') != std::string::npos) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        char* e = nullptr;
+        unsigned long long v = std::strtoull(rest.c_str(), &e, 10);
+        if (*e != '\0' || v == 0) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        auto* u = s.access_users().find(static_cast<uint64_t>(v));
+        if (!u) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        if (json_has_key(req.body, "enabled")) u->enabled = ebool(req.body, "enabled");
+        r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(u->id) + ",\"enabled\":" + (u->enabled ? "true" : "false") + "}}";
+        return r;
+    });
+
+    // DELETE /api/access/sftp/users/<id>
+    router_.add_prefix("DELETE", "/api/access/sftp/users/", [&s](const Request& req) {
+        Response r;
+        std::string rest = req.path.substr(22);
+        if (rest.find('/') != std::string::npos) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        char* e = nullptr;
+        unsigned long long v = std::strtoull(rest.c_str(), &e, 10);
+        if (*e != '\0' || v == 0) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        uint64_t uid = static_cast<uint64_t>(v);
+        if (!s.access_users().find(uid)) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        containercp::access::AccessUser au; au.id = uid;
+        auto pr = s.access_provider().remove_user(au);
+        if (!pr.success) { r.status_code = 500; r.body = "{\"success\":false,\"error\":\"sftp_backend_failure\",\"details\":\"" + JsonFormatter::escape(pr.message) + "\"}"; return r; }
+        s.access_users().remove(uid);
+        r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(uid) + "}}";
+        return r;
+    });
+
+    // POST /api/access/sftp/users/<id>/retry
+    router_.add_prefix("POST", "/api/access/sftp/users/", [&s, &sfp](const Request& req) {
+        Response r;
+        std::string rest = req.path.substr(22);
+        if (rest.size() < 7 || rest.substr(rest.size() - 6) != "/retry") { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        char* e = nullptr;
+        unsigned long long v = std::strtoull(rest.substr(0, rest.size() - 6).c_str(), &e, 10);
+        if (*e != '\0' || v == 0) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        if (!s.access_users().find(static_cast<uint64_t>(v))) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        auto res = sfp.retry_reconciliation();
+        if (!res.success) { r.status_code = 500; r.body = "{\"success\":false,\"error\":\"sftp_backend_failure\"}"; return r; }
+        r.body = "{\"success\":true}";
+        return r;
+    });
+
+    // ── Key endpoints ──
+
+    // POST /api/access/sftp/users/<uid>/keys[/<key_id>][/rebuild]
+    router_.add_prefix("POST", "/api/access/sftp/users/", [&s, &ebool, &sfp](const Request& req) {
+        Response r;
+        auto kp = req.path.find("/keys");
+        if (kp == std::string::npos) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        std::string before = req.path.substr(0, kp);
+        std::string after = req.path.substr(kp + 5);
+        if (before.size() <= 22) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        char* e = nullptr;
+        unsigned long long v = std::strtoull(before.substr(22).c_str(), &e, 10);
+        if (*e != '\0' || v == 0) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        uint64_t uid = static_cast<uint64_t>(v);
+        if (!s.access_users().find(uid)) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+
+        if (after == "/rebuild") {
+            auto mappings = s.storage().sqlite().load_system_accounts();
+            for (const auto& m : mappings) {
+                if (m.entity_type == "access_user" && m.entity_id == uid) {
+                    auto kw = sfp.write_authorized_keys(uid);
+                    if (!kw.success) { r.status_code = 500; r.body = "{\"success\":false,\"error\":\"sftp_backend_failure\",\"details\":\"" + JsonFormatter::escape(kw.message) + "\"}"; return r; }
+                    r.body = "{\"success\":true,\"data\":{\"message\":\"authorized_keys rebuilt\"}}"; return r;
+                }
+            }
+            r.status_code = 422; r.body = "{\"success\":false,\"error\":\"sftp_backend_failure\",\"details\":\"user not provisioned\"}"; return r;
+        }
+
+        std::string pk = json_extract(req.body, "publicKey");
+        if (pk.empty()) { r.status_code = 422; r.body = "{\"success\":false,\"error\":\"sftp_key_invalid\",\"details\":\"publicKey required\"}"; return r; }
+        auto val = containercp::access::SshKeyValidator::validate(pk);
+        if (!val.valid) { r.status_code = 422; r.body = "{\"success\":false,\"error\":\"sftp_key_invalid\",\"details\":\"" + JsonFormatter::escape(val.error) + "\"}"; return r; }
+        for (const auto& k : s.access_keys().list()) {
+            if (k.access_user_id == uid && k.fingerprint == val.fingerprint) { r.status_code = 409; r.body = "{\"success\":false,\"error\":\"sftp_key_duplicate\"}"; return r; }
+        }
+        containercp::access::AccessKey ak;
+        ak.access_user_id = uid; ak.key_type = val.key_type; ak.key_data = val.key_data;
+        ak.key_comment = json_extract(req.body, "comment"); if (ak.key_comment.empty()) ak.key_comment = val.key_comment;
+        ak.fingerprint = val.fingerprint; ak.enabled = true;
+        if (json_has_key(req.body, "enabled")) ak.enabled = ebool(req.body, "enabled");
+        uint64_t kid = s.access_keys().create(ak);
+        if (kid == 0) { r.status_code = 500; r.body = "{\"success\":false,\"error\":\"sftp_backend_failure\"}"; return r; }
+        s.storage().save_access_keys(s.access_keys().list());
+        for (const auto& m : s.storage().sqlite().load_system_accounts()) {
+            if (m.entity_type == "access_user" && m.entity_id == uid) { (void)sfp.write_authorized_keys(uid); break; }
+        }
+        r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(kid) + ",\"keyType\":\"" + JsonFormatter::escape(ak.key_type) + "\",\"fingerprint\":\"" + JsonFormatter::escape(ak.fingerprint) + "\",\"comment\":\"" + JsonFormatter::escape(ak.key_comment) + "\",\"enabled\":" + (ak.enabled ? "true" : "false") + "}}";
+        return r;
+    });
+
+    // GET /api/access/sftp/users/<uid>/keys
+    router_.add_prefix("GET", "/api/access/sftp/users/", [&s](const Request& req) {
+        Response r;
+        auto kp = req.path.find("/keys");
+        if (kp == std::string::npos) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        std::string before = req.path.substr(0, kp); std::string after = req.path.substr(kp + 5);
+        if (before.size() <= 22) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        char* e = nullptr; unsigned long long v = std::strtoull(before.substr(22).c_str(), &e, 10);
+        if (*e != '\0' || v == 0) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        uint64_t uid = static_cast<uint64_t>(v);
+        if (!s.access_users().find(uid)) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        if (!after.empty() && after.size() > 1) {
+            char* e2 = nullptr; unsigned long long v2 = std::strtoull(after.substr(1).c_str(), &e2, 10);
+            if (*e2 == '\0' && v2 > 0) {
+                auto* k = s.access_keys().find(static_cast<uint64_t>(v2));
+                if (!k || k->access_user_id != uid) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_key_not_found\"}"; return r; }
+                r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(k->id) + ",\"keyType\":\"" + JsonFormatter::escape(k->key_type) + "\",\"fingerprint\":\"" + JsonFormatter::escape(k->fingerprint) + "\",\"comment\":\"" + JsonFormatter::escape(k->key_comment) + "\",\"enabled\":" + (k->enabled ? "true" : "false") + "}}"; return r;
+            }
+            r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r;
+        }
+        std::string arr = "["; bool f = true;
+        for (const auto& k : s.access_keys().list()) {
+            if (k.access_user_id != uid) continue;
+            if (!f) arr += ","; f = false;
+            arr += "{\"id\":" + std::to_string(k.id) + ",\"keyType\":\"" + JsonFormatter::escape(k.key_type) + "\",\"fingerprint\":\"" + JsonFormatter::escape(k.fingerprint) + "\",\"comment\":\"" + JsonFormatter::escape(k.key_comment) + "\",\"enabled\":" + (k.enabled ? "true" : "false") + "}";
+        }
+        arr += "]"; r.body = "{\"success\":true,\"data\":" + arr + "}";
+        return r;
+    });
+
+    // PATCH /api/access/sftp/users/<uid>/keys/<key_id>
+    router_.add_prefix("PATCH", "/api/access/sftp/users/", [&s, &ebool](const Request& req) {
+        Response r;
+        auto kp = req.path.find("/keys/"); if (kp == std::string::npos) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        std::string before = req.path.substr(0, kp); std::string after = req.path.substr(kp + 6);
+        if (before.size() <= 22) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        char* e = nullptr; unsigned long long v = std::strtoull(before.substr(22).c_str(), &e, 10);
+        if (*e != '\0' || v == 0) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        uint64_t uid = static_cast<uint64_t>(v);
+        e = nullptr; v = std::strtoull(after.c_str(), &e, 10);
+        if (*e != '\0' || v == 0) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        uint64_t kid = static_cast<uint64_t>(v);
+        auto* k = s.access_keys().find(kid);
+        if (!k || k->access_user_id != uid) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_key_not_found\"}"; return r; }
+        if (json_has_key(req.body, "enabled")) s.access_keys().set_enabled(kid, ebool(req.body, "enabled"));
+        r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(kid) + ",\"enabled\":" + (s.access_keys().find(kid) && s.access_keys().find(kid)->enabled ? "true" : "false") + "}}";
+        return r;
+    });
+
+    // DELETE /api/access/sftp/users/<uid>/keys/<key_id>
+    router_.add_prefix("DELETE", "/api/access/sftp/users/", [&s, &sfp](const Request& req) {
+        Response r;
+        auto kp = req.path.find("/keys/"); if (kp == std::string::npos) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        std::string before = req.path.substr(0, kp); std::string after = req.path.substr(kp + 6);
+        if (before.size() <= 22) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        char* e = nullptr; unsigned long long v = std::strtoull(before.substr(22).c_str(), &e, 10);
+        if (*e != '\0' || v == 0) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        uint64_t uid = static_cast<uint64_t>(v);
+        e = nullptr; v = std::strtoull(after.c_str(), &e, 10);
+        if (*e != '\0' || v == 0) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        uint64_t kid = static_cast<uint64_t>(v);
+        if (!s.access_keys().find(kid) || s.access_keys().find(kid)->access_user_id != uid) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_key_not_found\"}"; return r; }
+        s.access_keys().remove(kid);
+        s.storage().save_access_keys(s.access_keys().list());
+        for (const auto& m : s.storage().sqlite().load_system_accounts()) { if (m.entity_type == "access_user" && m.entity_id == uid) { (void)sfp.write_authorized_keys(uid); break; } }
+        r.body = "{\"success\":true,\"data\":{\"id\":" + std::to_string(kid) + "}}";
+        return r;
+    });
+
+    // ── Grant endpoints ──
+
+    // GET /api/access/sftp/users/<uid>/grants
+    router_.add_prefix("GET", "/api/access/sftp/users/", [&s, &find_grant, &pstr](const Request& req) {
+        Response r;
+        auto gp = req.path.find("/grants"); if (gp == std::string::npos) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        std::string before = req.path.substr(0, gp); std::string after = req.path.substr(gp + 7);
+        if (before.size() <= 22) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        char* e = nullptr; unsigned long long v = std::strtoull(before.substr(22).c_str(), &e, 10);
+        if (*e != '\0' || v == 0) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        uint64_t uid = static_cast<uint64_t>(v);
+        if (!s.access_users().find(uid)) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        if (!after.empty() && after.size() > 1) {
+            char* e2 = nullptr; unsigned long long v2 = std::strtoull(after.substr(1).c_str(), &e2, 10);
+            if (*e2 == '\0' && v2 > 0) {
+                auto* g = find_grant(uid, static_cast<uint64_t>(v2));
+                if (!g) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_grant_not_found\"}"; return r; }
+                auto* site = s.sites().find_by_id(g->site_id);
+                r.body = "{\"success\":true,\"data\":{\"userId\":" + std::to_string(uid) + ",\"siteId\":" + std::to_string(g->site_id) + ",\"domain\":\"" + (site ? JsonFormatter::escape(site->domain) : "") + "\",\"permission\":\"" + JsonFormatter::escape(pstr(g->permission)) + "\"}}"; return r;
+            }
+            r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r;
+        }
+        auto gs = s.access_grants().find_by_user(uid);
+        std::string arr = "["; bool f = true;
+        for (const auto* g : gs) {
+            if (!f) arr += ","; f = false;
+            auto* site = s.sites().find_by_id(g->site_id);
+            arr += "{\"userId\":" + std::to_string(g->access_user_id) + ",\"siteId\":" + std::to_string(g->site_id) + ",\"domain\":\"" + (site ? JsonFormatter::escape(site->domain) : "") + "\",\"permission\":\"" + JsonFormatter::escape(pstr(g->permission)) + "\"}";
+        }
+        arr += "]"; r.body = "{\"success\":true,\"data\":" + arr + "}";
+        return r;
+    });
+
+    // POST /api/access/sftp/users/<uid>/grants
+    router_.add_prefix("POST", "/api/access/sftp/users/", [&s, &sfp, &find_grant, &pstr](const Request& req) {
+        Response r;
+        auto gp = req.path.find("/grants"); if (gp == std::string::npos) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        std::string before = req.path.substr(0, gp); std::string after = req.path.substr(gp + 7);
+        if (before.size() <= 22) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        char* e = nullptr; unsigned long long v = std::strtoull(before.substr(22).c_str(), &e, 10);
+        if (*e != '\0' || v == 0) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        uint64_t uid = static_cast<uint64_t>(v);
+        if (!s.access_users().find(uid)) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+
+        if (!after.empty()) {
+            std::string a = after.substr(1);
+            if (a.size() > 6 && a.substr(a.size() - 6) == "/retry") {
+                char* e2 = nullptr; unsigned long long v2 = std::strtoull(a.substr(0, a.size() - 6).c_str(), &e2, 10);
+                if (*e2 == '\0' && v2 > 0) {
+                    auto* g = find_grant(uid, static_cast<uint64_t>(v2));
+                    if (!g) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_grant_not_found\"}"; return r; }
+                    auto res2 = sfp.apply_grant(uid, g->site_id, pstr(g->permission));
+                    if (!res2.success) { r.status_code = 500; r.body = "{\"success\":false,\"error\":\"sftp_backend_failure\",\"details\":\"" + JsonFormatter::escape(res2.message) + "\"}"; return r; }
+                    r.body = "{\"success\":true}"; return r;
+                }
+            }
+            r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r;
+        }
+
+        std::string perm_str = json_extract(req.body, "permission");
+        if (perm_str == "ro") perm_str = "read_only";
+        else if (perm_str == "rw") perm_str = "read_write";
+        if (perm_str != "read_only" && perm_str != "read_write" && perm_str != "deploy") { r.status_code = 422; r.body = "{\"success\":false,\"error\":\"sftp_grant_invalid\",\"details\":\"permission must be ro or rw\"}"; return r; }
+        int sid_body = 0;
+        { std::string s2 = "\"siteId\":"; auto p = req.body.find(s2); if (p != std::string::npos) { p += s2.size(); char* e2 = nullptr; long val = std::strtol(req.body.c_str() + p, &e2, 10); if (e2 != req.body.c_str() + p && val > 0) sid_body = static_cast<int>(val); } }
+        if (sid_body <= 0) { r.status_code = 422; r.body = "{\"success\":false,\"error\":\"sftp_grant_invalid\",\"details\":\"siteId required\"}"; return r; }
+        uint64_t sid = static_cast<uint64_t>(sid_body);
+        if (!s.sites().find_by_id(sid)) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_site_not_found\"}"; return r; }
+        if (find_grant(uid, sid)) { r.status_code = 409; r.body = "{\"success\":false,\"error\":\"sftp_grant_conflict\"}"; return r; }
+        auto perm = containercp::access::permission_from_string(perm_str);
+        uint64_t gid = s.access_grants().create(uid, sid, perm);
+        if (gid == 0) { r.status_code = 500; r.body = "{\"success\":false,\"error\":\"sftp_backend_failure\"}"; return r; }
+        auto res = sfp.apply_grant(uid, sid, perm_str);
+        if (!res.success) { r.status_code = 500; r.body = "{\"success\":false,\"error\":\"sftp_backend_failure\",\"details\":\"" + JsonFormatter::escape(res.message) + "\"}"; return r; }
+        r.body = "{\"success\":true,\"data\":{\"userId\":" + std::to_string(uid) + ",\"siteId\":" + std::to_string(sid) + ",\"permission\":\"" + JsonFormatter::escape(perm_str) + "\"}}";
+        return r;
+    });
+
+    // PATCH /api/access/sftp/users/<uid>/grants/<site_id>
+    router_.add_prefix("PATCH", "/api/access/sftp/users/", [&s, &sfp, &find_grant, &pstr](const Request& req) {
+        Response r;
+        auto gp = req.path.find("/grants/"); if (gp == std::string::npos) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        std::string before = req.path.substr(0, gp); std::string after = req.path.substr(gp + 8);
+        if (before.size() <= 22) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        char* e = nullptr; unsigned long long v = std::strtoull(before.substr(22).c_str(), &e, 10);
+        if (*e != '\0' || v == 0) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        uint64_t uid = static_cast<uint64_t>(v);
+        e = nullptr; v = std::strtoull(after.c_str(), &e, 10);
+        if (*e != '\0' || v == 0) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        uint64_t sid = static_cast<uint64_t>(v);
+        auto* g = find_grant(uid, sid);
+        if (!g) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_grant_not_found\"}"; return r; }
+        std::string perm_str = json_extract(req.body, "permission");
+        if (perm_str == "ro") perm_str = "read_only"; else if (perm_str == "rw") perm_str = "read_write";
+        if (perm_str.empty() || (perm_str != "read_only" && perm_str != "read_write" && perm_str != "deploy")) { r.status_code = 422; r.body = "{\"success\":false,\"error\":\"sftp_grant_invalid\",\"details\":\"permission must be ro or rw\"}"; return r; }
+        (void)sfp.revoke_grant(uid, sid, pstr(g->permission));
+        s.access_grants().remove(g->id);
+        s.access_grants().create(uid, sid, containercp::access::permission_from_string(perm_str));
+        auto res = sfp.apply_grant(uid, sid, perm_str);
+        if (!res.success) { r.status_code = 500; r.body = "{\"success\":false,\"error\":\"sftp_backend_failure\",\"details\":\"" + JsonFormatter::escape(res.message) + "\"}"; return r; }
+        r.body = "{\"success\":true,\"data\":{\"userId\":" + std::to_string(uid) + ",\"siteId\":" + std::to_string(sid) + ",\"permission\":\"" + JsonFormatter::escape(perm_str) + "\"}}";
+        return r;
+    });
+
+    // DELETE /api/access/sftp/users/<uid>/grants/<site_id>
+    router_.add_prefix("DELETE", "/api/access/sftp/users/", [&s, &sfp, &find_grant, &pstr](const Request& req) {
+        Response r;
+        auto gp = req.path.find("/grants/"); if (gp == std::string::npos) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        std::string before = req.path.substr(0, gp); std::string after = req.path.substr(gp + 8);
+        if (before.size() <= 22) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        char* e = nullptr; unsigned long long v = std::strtoull(before.substr(22).c_str(), &e, 10);
+        if (*e != '\0' || v == 0) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_user_not_found\"}"; return r; }
+        uint64_t uid = static_cast<uint64_t>(v);
+        e = nullptr; v = std::strtoull(after.c_str(), &e, 10);
+        if (*e != '\0' || v == 0) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"not_found\"}"; return r; }
+        uint64_t sid = static_cast<uint64_t>(v);
+        auto* g = find_grant(uid, sid);
+        if (!g) { r.status_code = 404; r.body = "{\"success\":false,\"error\":\"sftp_grant_not_found\"}"; return r; }
+        auto res = sfp.revoke_grant(uid, sid, pstr(g->permission));
+        if (!res.success) { r.status_code = 500; r.body = "{\"success\":false,\"error\":\"sftp_backend_failure\",\"details\":\"" + JsonFormatter::escape(res.message) + "\"}"; return r; }
+        s.access_grants().remove(g->id);
+        r.body = "{\"success\":true,\"data\":{\"userId\":" + std::to_string(uid) + ",\"siteId\":" + std::to_string(sid) + "}}";
+        return r;
+    });
+
+    // ── Status and Reconciliation ──
+
+    router_.add("GET", "/api/access/sftp/status", [&s, &sfp](const Request&) {
+        Response r;
+        auto st = sfp.runtime_state_label();
+        auto last = sfp.last_reconciliation_result();
+        std::string j = "{\"runtimeState\":\"" + JsonFormatter::escape(st) + "\",\"enabled\":" + (sfp.runtime_state() != containercp::access::SftpRuntimeState::Disabled ? "true" : "false") + ",\"recordsInspected\":" + std::to_string(last.records_inspected) + ",\"recordsFixed\":" + std::to_string(last.records_fixed) + ",\"recordsFailed\":" + std::to_string(last.records_failed) + ",\"unsafeForeignStateDetected\":" + (last.unsafe_foreign_state_detected ? "true" : "false");
+        if (!last.errors.empty()) {
+            j += ",\"errors\":[";
+            for (size_t i = 0; i < last.errors.size(); ++i) { if (i > 0) j += ","; j += "\"" + JsonFormatter::escape(last.errors[i]) + "\""; }
+            j += "]";
+        }
+        j += "}";
+        r.body = "{\"success\":true,\"data\":" + j + "}";
+        return r;
+    });
+
+    router_.add("POST", "/api/access/sftp/reconcile", [&s, &sfp](const Request&) {
+        Response r;
+        auto res = sfp.retry_reconciliation();
+        if (!res.success && !res.errors.empty() && res.errors[0].find("concurrent") != std::string::npos) {
+            r.status_code = 409; r.body = "{\"success\":false,\"error\":\"sftp_reconciliation_busy\"}"; return r;
+        }
+        r.body = "{\"success\":true,\"data\":{\"message\":\"reconciliation complete\"}}";
         return r;
     });
 
