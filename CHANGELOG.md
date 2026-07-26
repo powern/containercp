@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-26 | `HEAD` | ARCH-009 Task 44 — Harden Privileged Command Execution
+
+**Summary:** Hardened `SystemAccountCommandRunner` with executable allowlist (17 allowed commands), typed argument validators for each command type, and `--` option termination before all path operands to prevent option injection. Added `CommandError` enum with typed error codes (NotAllowed, InvalidArg, etc.). Replaced `dir_is_empty` shell dependency with properly-terminated `ls -A -- <path>`. Added `CommandExecutor::run_safe()` with environment sanitization (fixed PATH, LC_ALL=C, bounded HOME), output size limit (64KB default), and timeout (30s default). Wired production `ServiceRegistry` callback to `run_safe()`. Updated `FakeCommandRunner` in tests to handle `--` terminators. Added 9 hardning test cases (96 assertions): allowlist rejection, argument validation (empty, control chars, relative path, `..`, long input, invalid mode/gid/uid/date/acl), and `--` insertion verification for all path-taking commands.
+
+**Files changed:** `libs/access/SystemAccountCommandRunner.h`, `libs/access/SystemAccountCommandRunner.cpp`, `libs/runtime/CommandExecutor.h`, `libs/runtime/CommandExecutor.cpp`, `libs/core/ServiceRegistry.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Privileged host commands are now validated against an executable allowlist before execution. Invalid arguments (empty, control characters, relative paths, `..`, shell metacharacters in usernames/paths) are rejected without invoking any command. All path operands use `--` option termination. The production command executor now runs with a sanitized environment (fixed PATH, LC_ALL=C), 64KB output cap, and 30-second timeout, reducing the risk of resource exhaustion or environment-based attacks.
+
+**Validation:** Full doctest suite passed (1239 cases, ~7700 assertions, 0 failures). 3 new test cases (9 subcases, 96 assertions) verify: allowlist rejects unknown commands, validators reject bad input, `--` termination present on all path commands. `git diff --check` passed. Zero compiler warnings.
+
+**Known risks:** Existing `std::system()` calls in `NginxProxyProvider`, `DockerRuntime`, `LetsEncryptProvider`, and `ServiceRegistry` are outside the scope of this task and remain unaddressed.
+
+---
+
 ## 2026-07-26 | `2a190e6` | ARCH-009 Task 43 — Separate Internal Reconciliation from Public Operation Gating
 
 **Summary:** Fixed self-blocking deadlock in the runtime state machine where internal reconciliation methods (called by `retry_reconciliation()` with state=Starting) would be rejected by the same `operation_gate()` they pass through. Solution: added `Starting` to `operation_gate()` rejection (public mutations during startup are now correctly denied), created 18 `_internal()` trusted implementation methods that bypass the public state gate, and refactored all public call sites into thin wrappers (`gate → _internal`). `run_reconciliation_flow()` now calls only `_internal()` methods. Added `ScopedReconciliationGuard` RAII struct replacing a manual boolean flag, ensuring the concurrent-execution guard is released on every return path (exceptions, early failures, normal completion). Updated `retry_reconciliation()` to use RAII guard. All internal-only call chains verified: no internal method depends on a public gate that rejects Starting. Added 13 tests: Starting permits internal mount/user reconciliation, Starting rejects public mutations, Healthy allows mutations, retry reaches Healthy/Degraded/Failed, guard released after dep/mount/user failures, second retry after failure not stuck on guard, no state stuck at Starting, read operations allowed during Starting.

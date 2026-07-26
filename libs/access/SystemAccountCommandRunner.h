@@ -9,9 +9,17 @@
 
 namespace containercp::access {
 
-// Builds and runs safe, structured privileged host commands.
-// No shell, no string interpolation, no std::system().
-// Accepts a runnable callback for testability.
+enum class CommandError {
+    None,
+    NotAllowed,
+    InvalidArg,
+    ExecutionFailed,
+    TimedOut,
+    NonZeroExit,
+    Signaled,
+    OutputTruncated
+};
+
 class SystemAccountCommandRunner {
 public:
     struct Command {
@@ -53,6 +61,20 @@ public:
     core::OperationResult dir_is_empty(const std::string& path);
 
 private:
+    static std::string sanitize_for_log(const std::string& arg);
+    static bool contains_control_chars(const std::string& s);
+    static bool is_valid_username(const std::string& s);
+    static bool is_valid_groupname(const std::string& s);
+    static bool is_valid_path(const std::string& s);
+    static bool is_valid_mode(const std::string& s);
+    static bool is_valid_acl_spec(const std::string& s);
+    static bool is_valid_shell(const std::string& s);
+    static bool is_valid_date(const std::string& s);
+    static bool is_allowed_executable(const std::string& exe);
+
+    core::OperationResult reject(CommandError err, const std::string& msg) const;
+    core::OperationResult validate_allowed(const std::string& exe) const;
+
     RunFn run_;
 };
 

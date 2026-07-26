@@ -17,6 +17,12 @@ public:
     CommandResult run(const std::vector<std::string>& args,
                       const std::string& workdir = "") const;
 
+    // Run with environment sanitization (fixed PATH, LC_ALL=C, bounded output)
+    CommandResult run_safe(const std::vector<std::string>& args,
+                           const std::string& workdir = "",
+                           int timeout_seconds = 30,
+                           size_t max_output_bytes = 65536) const;
+
     // Run command, write stdout directly to file (no RAM accumulation)
     CommandResult run_stdout_to_file(const std::vector<std::string>& args,
                                      const std::string& output_path,

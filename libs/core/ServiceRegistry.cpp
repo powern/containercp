@@ -670,7 +670,7 @@ void ServiceRegistry::start() {
     access_provider_.set_command_runner(
         std::make_unique<access::SystemAccountCommandRunner>(
             [this](const access::SystemAccountCommandRunner::Command& cmd) -> core::OperationResult {
-                auto result = credential_command_executor_.run(cmd.args);
+                auto result = credential_command_executor_.run_safe(cmd.args);
                 return {result.exit_code == 0, result.err, result.out};
             }));
 

@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/poll.h>
+#include <signal.h>
 #include <fcntl.h>
 #include <algorithm>
 #include <cstring>
@@ -17,6 +18,16 @@ void close_if_open(int fd) {
         close(fd);
     }
 }
+
+static const char* kSafeEnvironment[] = {
+    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "LC_ALL=C",
+    "HOME=/root",
+    "USER=root",
+    "LOGNAME=root",
+    "SHELL=/bin/sh",
+    nullptr
+};
 
 CommandResult run_capture(const std::vector<std::string>& args,
                           const std::string& workdir,
@@ -199,6 +210,147 @@ CommandResult CommandExecutor::run_with_stdin_file(
     const std::string& input_path,
     const std::string& workdir) const {
     return run_capture(args, workdir, &input_path);
+}
+
+namespace {
+
+CommandResult run_safe_capture(const std::vector<std::string>& args,
+                                const std::string& workdir,
+                                int timeout_seconds,
+                                size_t max_output_bytes) {
+    CommandResult result;
+
+    if (args.empty()) {
+        result.err = "no arguments";
+        return result;
+    }
+
+    int stdout_pipe[2] = {-1, -1};
+    int stderr_pipe[2] = {-1, -1};
+
+    if (pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0) {
+        result.err = "pipe() failed";
+        close_if_open(stdout_pipe[0]);
+        close_if_open(stdout_pipe[1]);
+        close_if_open(stderr_pipe[0]);
+        close_if_open(stderr_pipe[1]);
+        return result;
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        result.err = "fork() failed";
+        close(stdout_pipe[0]); close(stdout_pipe[1]);
+        close(stderr_pipe[0]); close(stderr_pipe[1]);
+        return result;
+    }
+
+    if (pid == 0) {
+        close(stdout_pipe[0]);
+        close(stderr_pipe[0]);
+        dup2(stdout_pipe[1], STDOUT_FILENO);
+        dup2(stderr_pipe[1], STDERR_FILENO);
+        close(stdout_pipe[1]);
+        close(stderr_pipe[1]);
+        if (!workdir.empty()) chdir(workdir.c_str());
+        std::vector<char*> argv;
+        for (const auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
+        argv.push_back(nullptr);
+        execve(argv[0], argv.data(), const_cast<char**>(kSafeEnvironment));
+        _exit(127);
+    }
+
+    close(stdout_pipe[1]);
+    close(stderr_pipe[1]);
+
+    int timeout_ms = timeout_seconds > 0 ? timeout_seconds * 1000 : -1;
+    char buf[4096];
+    bool out_done = false, err_done = false;
+    bool timed_out = false;
+
+    while (!out_done || !err_done) {
+        struct pollfd fds[2];
+        int nfds = 0;
+        int out_idx = -1, err_idx = -1;
+
+        if (!out_done) {
+            out_idx = nfds;
+            fds[nfds].fd = stdout_pipe[0];
+            fds[nfds].events = POLLIN;
+            fds[nfds].revents = 0;
+            ++nfds;
+        }
+        if (!err_done) {
+            err_idx = nfds;
+            fds[nfds].fd = stderr_pipe[0];
+            fds[nfds].events = POLLIN;
+            fds[nfds].revents = 0;
+            ++nfds;
+        }
+
+        int ret = poll(fds, nfds, timeout_ms);
+        if (ret == 0) {
+            timed_out = true;
+            break;
+        }
+        if (ret < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+
+        if (out_idx >= 0 && (fds[out_idx].revents & (POLLIN | POLLHUP | POLLERR))) {
+            ssize_t n = read(stdout_pipe[0], buf, sizeof(buf) - 1);
+            if (n > 0) {
+                size_t space = max_output_bytes - result.out.size();
+                if (space > 0) {
+                    result.out.append(buf, static_cast<std::size_t>(n > static_cast<ssize_t>(space) ? static_cast<ssize_t>(space) : n));
+                }
+            } else {
+                out_done = true;
+            }
+        }
+        if (err_idx >= 0 && (fds[err_idx].revents & (POLLIN | POLLHUP | POLLERR))) {
+            ssize_t n = read(stderr_pipe[0], buf, sizeof(buf) - 1);
+            if (n > 0) {
+                size_t space = max_output_bytes - result.err.size();
+                if (space > 0) {
+                    result.err.append(buf, static_cast<std::size_t>(n > static_cast<ssize_t>(space) ? static_cast<ssize_t>(space) : n));
+                }
+            } else {
+                err_done = true;
+            }
+        }
+    }
+
+    close(stdout_pipe[0]);
+    close(stderr_pipe[0]);
+
+    if (timed_out) {
+        kill(pid, SIGTERM);
+        usleep(500000);
+        kill(pid, SIGKILL);
+        result.err = "command timed out";
+        result.exit_code = -1;
+    } else {
+        int status;
+        waitpid(pid, &status, 0);
+        if (WIFEXITED(status)) {
+            result.exit_code = WEXITSTATUS(status);
+        } else if (WIFSIGNALED(status)) {
+            result.exit_code = -WTERMSIG(status);
+        }
+    }
+
+    return result;
+}
+
+} // namespace
+
+CommandResult CommandExecutor::run_safe(const std::vector<std::string>& args,
+                                         const std::string& workdir,
+                                         int timeout_seconds,
+                                         size_t max_output_bytes) const {
+    return run_safe_capture(args, workdir, timeout_seconds, max_output_bytes);
 }
 
 } // namespace containercp::runtime
