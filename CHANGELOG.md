@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-26 | `HEAD` | ARCH-009 Task 45 — Tighten Privileged Argument and Executable Validation
+## 2026-07-26 | `a5be008` | ARCH-009 Task 45 — Tighten Privileged Argument and Executable Validation
 
 **Summary:** Replaced short-name executable allowlist with canonical absolute-path identity map (17 commands mapped to `/usr/bin/` or `/usr/sbin/`). Added `ManagedPathValidator` shared library (`access/ManagedPathValidator.{h,cpp}`) reusing the component-based managed-path validation logic. Replaced generic `is_valid_path` with `validate_path_managed` using the shared validator when a managed root is configured. Replaced permissive `is_valid_mode` with strict `is_valid_octal_mode` (3-4 octal digits only, no symbolic modes). Replaced `is_valid_acl_spec` (accepted any string with a colon) with strict ACL grammar accepting only `g:group:perms`, `d:g:group:perms`, `g:group`, `d:g:group` forms with validated group names and permission characters (`r`/`w`/`x`/`-` only). Added UID/GID range enforcement (`validate_uid`/`validate_gid`) using configured managed ranges from `SystemAccountAllocator`. Wired managed root and ranges through `ServiceRegistry` into the production command runner. Added 7 new test cases (146 assertions): canonical executable mapping for all 17 commands, argv[0] verification, strict octal mode rejection of symbolic modes, strict ACL grammar (13 subcases), UID/GID boundary enforcement (9 subcases), managed path validation (7 subcases), and unknown-canonical-path rejection.
 
