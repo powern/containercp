@@ -667,12 +667,15 @@ void ServiceRegistry::start() {
             access::SystemAccountAllocator::Range{20000, 29999}));
 
     // Configure command runner for mount and account operations
-    access_provider_.set_command_runner(
-        std::make_unique<access::SystemAccountCommandRunner>(
-            [this](const access::SystemAccountCommandRunner::Command& cmd) -> core::OperationResult {
-                auto result = credential_command_executor_.run_safe(cmd.args);
-                return {result.exit_code == 0, result.err, result.out};
-            }));
+    auto runner = std::make_unique<access::SystemAccountCommandRunner>(
+        [this](const access::SystemAccountCommandRunner::Command& cmd) -> core::OperationResult {
+            auto result = credential_command_executor_.run_safe(cmd.args);
+            return {result.exit_code == 0, result.err, result.out};
+        });
+    runner->set_managed_root("/srv/containercp/users");
+    runner->set_uid_range(access::SystemAccountCommandRunner::Range{10000, 19999});
+    runner->set_gid_range(access::SystemAccountCommandRunner::Range{20000, 29999});
+    access_provider_.set_command_runner(std::move(runner));
 
     // Mapping persistence — load/save/delete SystemAccountMapping via SQLite
     access_provider_.set_mapping_persistence(

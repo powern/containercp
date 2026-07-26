@@ -17,6 +17,7 @@ set(CONTAINERCP_SOURCES
     libs/access/SshKeyValidator.cpp
     libs/access/SystemAccountAllocator.cpp
     libs/access/SystemAccountCommandRunner.cpp
+    libs/access/ManagedPathValidator.cpp
     libs/access/SystemIdentityInspector.cpp
     libs/access/UsernameMapper.cpp
     libs/access/AccessUser.cpp

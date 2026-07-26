@@ -1,19 +1,46 @@
+#include "access/ManagedPathValidator.h"
 #include "access/SystemAccountCommandRunner.h"
 
 #include <algorithm>
 #include <cctype>
-#include <unordered_set>
+#include <map>
 
 namespace containercp::access {
 namespace {
 
-const std::unordered_set<std::string>& allowed_executables() {
-    static const std::unordered_set<std::string> kAllowed = {
-        "groupadd", "useradd", "usermod", "passwd", "userdel", "groupdel",
-        "gpasswd", "chgrp", "chmod", "setfacl", "mkdir", "mount", "umount",
-        "mountpoint", "rmdir", "chown", "ls"
+const std::map<std::string, std::string>& canonical_paths() {
+    static const std::map<std::string, std::string> kPaths = {
+        {"groupadd", "/usr/sbin/groupadd"},
+        {"useradd", "/usr/sbin/useradd"},
+        {"usermod", "/usr/sbin/usermod"},
+        {"userdel", "/usr/sbin/userdel"},
+        {"groupdel", "/usr/sbin/groupdel"},
+        {"passwd", "/usr/bin/passwd"},
+        {"gpasswd", "/usr/bin/gpasswd"},
+        {"chgrp", "/usr/bin/chgrp"},
+        {"chmod", "/usr/bin/chmod"},
+        {"setfacl", "/usr/bin/setfacl"},
+        {"mkdir", "/usr/bin/mkdir"},
+        {"mount", "/usr/bin/mount"},
+        {"umount", "/usr/bin/umount"},
+        {"mountpoint", "/usr/bin/mountpoint"},
+        {"rmdir", "/usr/bin/rmdir"},
+        {"chown", "/usr/bin/chown"},
+        {"ls", "/usr/bin/ls"},
     };
-    return kAllowed;
+    return kPaths;
+}
+
+bool has_any_dotdot_component(const std::string& s) {
+    std::string::size_type pos = 0;
+    while (pos < s.size()) {
+        auto slash = s.find('/', pos);
+        std::string comp = (slash == std::string::npos) ? s.substr(pos) : s.substr(pos, slash - pos);
+        if (comp == "..") return true;
+        if (slash == std::string::npos) break;
+        pos = slash + 1;
+    }
+    return false;
 }
 
 } // namespace
@@ -52,37 +79,62 @@ bool SystemAccountCommandRunner::is_valid_groupname(const std::string& s) {
     return is_valid_username(s);
 }
 
-bool SystemAccountCommandRunner::is_valid_path(const std::string& s) {
-    if (s.empty()) return false;
-    if (s[0] != '/') return false;
+bool SystemAccountCommandRunner::is_valid_octal_mode(const std::string& s) {
+    if (s.empty() || s.size() < 3 || s.size() > 4) return false;
     if (contains_control_chars(s)) return false;
-    if (s.find("..") != std::string::npos) return false;
+    for (char c : s) {
+        if (c < '0' || c > '7') return false;
+    }
     return true;
 }
 
-bool SystemAccountCommandRunner::is_valid_mode(const std::string& s) {
-    if (s.empty() || contains_control_chars(s)) return false;
-    if (s.size() >= 3 && s.size() <= 4) {
-        bool all_octal = true;
-        for (char c : s) {
-            if (c < '0' || c > '7') { all_octal = false; break; }
-        }
-        if (all_octal) return true;
-    }
+bool SystemAccountCommandRunner::is_valid_perm_chars(const std::string& s) {
+    if (s.empty() || s.size() > 3) return false;
     for (char c : s) {
-        if (c == '+' || c == '-' || c == '=') return true;
+        if (c != 'r' && c != 'w' && c != 'x' && c != '-') return false;
     }
-    return false;
+    return true;
 }
 
 bool SystemAccountCommandRunner::is_valid_acl_spec(const std::string& s) {
     if (s.empty() || contains_control_chars(s)) return false;
-    return s.find(':') != std::string::npos;
+    if (s.size() > 256) return false;
+
+    // Access group entry: g:{group}:{perms}
+    if (s.rfind("g:", 0) == 0) {
+        auto rest = s.substr(2);
+        auto colon = rest.find(':');
+        if (colon == std::string::npos) {
+            // g:{group} — removal form
+            return is_valid_groupname(rest);
+        }
+        std::string group = rest.substr(0, colon);
+        std::string perms = rest.substr(colon + 1);
+        return is_valid_groupname(group) && is_valid_perm_chars(perms);
+    }
+
+    // Default group entry: d:g:{group}:{perms}
+    if (s.rfind("d:g:", 0) == 0) {
+        auto rest = s.substr(4);
+        auto colon = rest.find(':');
+        if (colon == std::string::npos) {
+            // d:g:{group} — removal form
+            return is_valid_groupname(rest);
+        }
+        std::string group = rest.substr(0, colon);
+        std::string perms = rest.substr(colon + 1);
+        return is_valid_groupname(group) && is_valid_perm_chars(perms);
+    }
+
+    return false;
 }
 
 bool SystemAccountCommandRunner::is_valid_shell(const std::string& s) {
     if (s.empty() || contains_control_chars(s)) return false;
-    return s[0] == '/';
+    if (s[0] != '/') return false;
+    if (s.find("..") != std::string::npos) return false;
+    if (s.size() > 256) return false;
+    return true;
 }
 
 bool SystemAccountCommandRunner::is_valid_date(const std::string& s) {
@@ -99,18 +151,39 @@ bool SystemAccountCommandRunner::is_valid_date(const std::string& s) {
     return true;
 }
 
-bool SystemAccountCommandRunner::is_allowed_executable(const std::string& exe) {
-    return allowed_executables().count(exe) > 0;
+std::string SystemAccountCommandRunner::canonical_path(const std::string& command_type) {
+    auto it = canonical_paths().find(command_type);
+    if (it == canonical_paths().end()) return {};
+    return it->second;
 }
 
 core::OperationResult SystemAccountCommandRunner::reject(CommandError, const std::string& msg) const {
     return {false, msg, ""};
 }
 
-core::OperationResult SystemAccountCommandRunner::validate_allowed(const std::string& exe) const {
-    if (!is_allowed_executable(exe)) {
-        return reject(CommandError::NotAllowed, "not_allowed:" + sanitize_for_log(exe));
+core::OperationResult SystemAccountCommandRunner::validate_path_managed(const std::string& path) const {
+    if (path.empty()) return reject(CommandError::InvalidArg, "empty_path");
+    if (path[0] != '/') return reject(CommandError::InvalidArg, "relative_path");
+    if (contains_control_chars(path)) return reject(CommandError::InvalidArg, "control_chars");
+    if (has_any_dotdot_component(path)) return reject(CommandError::InvalidArg, "dotdot_component");
+    if (!managed_root_.empty()) {
+        auto pv = validate_managed_path(path, managed_root_);
+        if (!pv.ok) return reject(CommandError::InvalidArg, "managed_path:" + pv.error);
     }
+    return {true, "", ""};
+}
+
+core::OperationResult SystemAccountCommandRunner::validate_uid(int uid) const {
+    if (uid <= 0) return reject(CommandError::InvalidArg, "invalid_uid");
+    if (uid_range_.min > 0 && uid < uid_range_.min) return reject(CommandError::InvalidArg, "uid_below_range");
+    if (uid_range_.max > 0 && uid > uid_range_.max) return reject(CommandError::InvalidArg, "uid_above_range");
+    return {true, "", ""};
+}
+
+core::OperationResult SystemAccountCommandRunner::validate_gid(int gid) const {
+    if (gid <= 0) return reject(CommandError::InvalidArg, "invalid_gid");
+    if (gid_range_.min > 0 && gid < gid_range_.min) return reject(CommandError::InvalidArg, "gid_below_range");
+    if (gid_range_.max > 0 && gid > gid_range_.max) return reject(CommandError::InvalidArg, "gid_above_range");
     return {true, "", ""};
 }
 
@@ -118,11 +191,14 @@ core::OperationResult SystemAccountCommandRunner::validate_allowed(const std::st
 
 core::OperationResult SystemAccountCommandRunner::groupadd(const std::string& groupname, int gid) {
     if (!is_valid_groupname(groupname)) return reject(CommandError::InvalidArg, "invalid_groupname");
-    if (gid != -1 && gid <= 0) return reject(CommandError::InvalidArg, "invalid_gid");
-    auto vr = validate_allowed("groupadd"); if (!vr.success) return vr;
+    if (gid != -1) {
+        auto vr = validate_gid(gid); if (!vr.success) return vr;
+    }
+    std::string exe = canonical_path("groupadd");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "groupadd");
 
-    if (gid > 0) return run_({{"groupadd", "-g", std::to_string(gid), groupname}});
-    return run_({{"groupadd", groupname}});
+    if (gid > 0) return run_({{exe, "-g", std::to_string(gid), groupname}});
+    return run_({{exe, groupname}});
 }
 
 core::OperationResult SystemAccountCommandRunner::useradd(const std::string& username,
@@ -131,13 +207,14 @@ core::OperationResult SystemAccountCommandRunner::useradd(const std::string& use
                                                            const std::string& shell,
                                                            const std::string&) {
     if (!is_valid_username(username)) return reject(CommandError::InvalidArg, "invalid_username");
-    if (uid <= 0) return reject(CommandError::InvalidArg, "invalid_uid");
-    if (gid <= 0) return reject(CommandError::InvalidArg, "invalid_gid");
-    if (!is_valid_path(home)) return reject(CommandError::InvalidArg, "invalid_home");
+    { auto vr = validate_uid(uid); if (!vr.success) return vr; }
+    { auto vr = validate_gid(gid); if (!vr.success) return vr; }
+    { auto vr = validate_path_managed(home); if (!vr.success) return vr; }
     if (!is_valid_shell(shell)) return reject(CommandError::InvalidArg, "invalid_shell");
-    auto vr = validate_allowed("useradd"); if (!vr.success) return vr;
+    std::string exe = canonical_path("useradd");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "useradd");
 
-    return run_({{"useradd",
+    return run_({{exe,
                   "-u", std::to_string(uid),
                   "-g", std::to_string(gid),
                   "-d", home,
@@ -150,150 +227,169 @@ core::OperationResult SystemAccountCommandRunner::usermod_add_group(const std::s
                                                                      const std::string& groupname) {
     if (!is_valid_username(username)) return reject(CommandError::InvalidArg, "invalid_username");
     if (!is_valid_groupname(groupname)) return reject(CommandError::InvalidArg, "invalid_groupname");
-    auto vr = validate_allowed("usermod"); if (!vr.success) return vr;
+    std::string exe = canonical_path("usermod");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "usermod");
 
-    return run_({{"usermod", "-a", "-G", groupname, username}});
+    return run_({{exe, "-a", "-G", groupname, username}});
 }
 
 core::OperationResult SystemAccountCommandRunner::usermod_remove_group(const std::string& username,
                                                                         const std::string& groupname) {
     if (!is_valid_username(username)) return reject(CommandError::InvalidArg, "invalid_username");
     if (!is_valid_groupname(groupname)) return reject(CommandError::InvalidArg, "invalid_groupname");
-    auto vr = validate_allowed("gpasswd"); if (!vr.success) return vr;
+    std::string exe = canonical_path("gpasswd");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "gpasswd");
 
-    return run_({{"gpasswd", "-d", username, groupname}});
+    return run_({{exe, "-d", username, groupname}});
 }
 
 core::OperationResult SystemAccountCommandRunner::passwd_lock(const std::string& username) {
     if (!is_valid_username(username)) return reject(CommandError::InvalidArg, "invalid_username");
-    auto vr = validate_allowed("passwd"); if (!vr.success) return vr;
+    std::string exe = canonical_path("passwd");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "passwd");
 
-    return run_({{"passwd", "-l", username}});
+    return run_({{exe, "-l", username}});
 }
 
 core::OperationResult SystemAccountCommandRunner::passwd_unlock(const std::string& username) {
     if (!is_valid_username(username)) return reject(CommandError::InvalidArg, "invalid_username");
-    auto vr = validate_allowed("passwd"); if (!vr.success) return vr;
+    std::string exe = canonical_path("passwd");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "passwd");
 
-    return run_({{"passwd", "-u", username}});
+    return run_({{exe, "-u", username}});
 }
 
 core::OperationResult SystemAccountCommandRunner::userdel(const std::string& username) {
     if (!is_valid_username(username)) return reject(CommandError::InvalidArg, "invalid_username");
-    auto vr = validate_allowed("userdel"); if (!vr.success) return vr;
+    std::string exe = canonical_path("userdel");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "userdel");
 
-    return run_({{"userdel", username}});
+    return run_({{exe, username}});
 }
 
 core::OperationResult SystemAccountCommandRunner::groupdel(const std::string& groupname) {
     if (!is_valid_groupname(groupname)) return reject(CommandError::InvalidArg, "invalid_groupname");
-    auto vr = validate_allowed("groupdel"); if (!vr.success) return vr;
+    std::string exe = canonical_path("groupdel");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "groupdel");
 
-    return run_({{"groupdel", groupname}});
+    return run_({{exe, groupname}});
 }
 
 core::OperationResult SystemAccountCommandRunner::usermod_expiredate(const std::string& username,
                                                                       const std::string& date) {
     if (!is_valid_username(username)) return reject(CommandError::InvalidArg, "invalid_username");
     if (!is_valid_date(date)) return reject(CommandError::InvalidArg, "invalid_date");
-    auto vr = validate_allowed("usermod"); if (!vr.success) return vr;
+    std::string exe = canonical_path("usermod");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "usermod");
 
-    return run_({{"usermod", "--expiredate", date, username}});
+    return run_({{exe, "--expiredate", date, username}});
 }
 
 core::OperationResult SystemAccountCommandRunner::usermod_shell(const std::string& username,
                                                                  const std::string& shell) {
     if (!is_valid_username(username)) return reject(CommandError::InvalidArg, "invalid_username");
     if (!is_valid_shell(shell)) return reject(CommandError::InvalidArg, "invalid_shell");
-    auto vr = validate_allowed("usermod"); if (!vr.success) return vr;
+    std::string exe = canonical_path("usermod");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "usermod");
 
-    return run_({{"usermod", "-s", shell, username}});
+    return run_({{exe, "-s", shell, username}});
 }
 
 // --- filesystem permissions ---
 
 core::OperationResult SystemAccountCommandRunner::chgrp(const std::string& group, const std::string& path) {
     if (!is_valid_groupname(group)) return reject(CommandError::InvalidArg, "invalid_group");
-    if (!is_valid_path(path)) return reject(CommandError::InvalidArg, "invalid_path");
-    auto vr = validate_allowed("chgrp"); if (!vr.success) return vr;
+    { auto vr = validate_path_managed(path); if (!vr.success) return vr; }
+    std::string exe = canonical_path("chgrp");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "chgrp");
 
-    return run_({{"chgrp", group, "--", path}});
+    return run_({{exe, group, "--", path}});
 }
 
 core::OperationResult SystemAccountCommandRunner::chmod(const std::string& mode, const std::string& path) {
-    if (!is_valid_mode(mode)) return reject(CommandError::InvalidArg, "invalid_mode");
-    if (!is_valid_path(path)) return reject(CommandError::InvalidArg, "invalid_path");
-    auto vr = validate_allowed("chmod"); if (!vr.success) return vr;
+    if (!is_valid_octal_mode(mode)) return reject(CommandError::InvalidArg, "invalid_mode");
+    { auto vr = validate_path_managed(path); if (!vr.success) return vr; }
+    std::string exe = canonical_path("chmod");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "chmod");
 
-    return run_({{"chmod", mode, "--", path}});
+    return run_({{exe, mode, "--", path}});
 }
 
 core::OperationResult SystemAccountCommandRunner::setfacl_modify(const std::string& acl_spec, const std::string& path) {
     if (!is_valid_acl_spec(acl_spec)) return reject(CommandError::InvalidArg, "invalid_acl_spec");
-    if (!is_valid_path(path)) return reject(CommandError::InvalidArg, "invalid_path");
-    auto vr = validate_allowed("setfacl"); if (!vr.success) return vr;
+    { auto vr = validate_path_managed(path); if (!vr.success) return vr; }
+    std::string exe = canonical_path("setfacl");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "setfacl");
 
-    return run_({{"setfacl", "-m", acl_spec, "--", path}});
+    return run_({{exe, "-m", acl_spec, "--", path}});
 }
 
 core::OperationResult SystemAccountCommandRunner::setfacl_remove(const std::string& acl_spec, const std::string& path) {
     if (!is_valid_acl_spec(acl_spec)) return reject(CommandError::InvalidArg, "invalid_acl_spec");
-    if (!is_valid_path(path)) return reject(CommandError::InvalidArg, "invalid_path");
-    auto vr = validate_allowed("setfacl"); if (!vr.success) return vr;
+    { auto vr = validate_path_managed(path); if (!vr.success) return vr; }
+    std::string exe = canonical_path("setfacl");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "setfacl");
 
-    return run_({{"setfacl", "-x", acl_spec, "--", path}});
+    return run_({{exe, "-x", acl_spec, "--", path}});
 }
 
 // --- mount commands ---
 
 core::OperationResult SystemAccountCommandRunner::mkdir_p(const std::string& path) {
-    if (!is_valid_path(path)) return reject(CommandError::InvalidArg, "invalid_path");
-    auto vr = validate_allowed("mkdir"); if (!vr.success) return vr;
+    { auto vr = validate_path_managed(path); if (!vr.success) return vr; }
+    std::string exe = canonical_path("mkdir");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "mkdir");
 
-    return run_({{"mkdir", "-p", "--", path}});
+    return run_({{exe, "-p", "--", path}});
 }
 
 core::OperationResult SystemAccountCommandRunner::mount_bind(const std::string& source, const std::string& target) {
-    if (!is_valid_path(source)) return reject(CommandError::InvalidArg, "invalid_source");
-    if (!is_valid_path(target)) return reject(CommandError::InvalidArg, "invalid_target");
-    auto vr = validate_allowed("mount"); if (!vr.success) return vr;
+    { auto vr = validate_path_managed(source); if (!vr.success) return vr; }
+    { auto vr = validate_path_managed(target); if (!vr.success) return vr; }
+    std::string exe = canonical_path("mount");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "mount");
 
-    return run_({{"mount", "--bind", "--", source, target}});
+    return run_({{exe, "--bind", "--", source, target}});
 }
 
 core::OperationResult SystemAccountCommandRunner::umount(const std::string& target) {
-    if (!is_valid_path(target)) return reject(CommandError::InvalidArg, "invalid_target");
-    auto vr = validate_allowed("umount"); if (!vr.success) return vr;
+    { auto vr = validate_path_managed(target); if (!vr.success) return vr; }
+    std::string exe = canonical_path("umount");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "umount");
 
-    return run_({{"umount", "--", target}});
+    return run_({{exe, "--", target}});
 }
 
 core::OperationResult SystemAccountCommandRunner::mountpoint_check(const std::string& path) {
-    if (!is_valid_path(path)) return reject(CommandError::InvalidArg, "invalid_path");
-    auto vr = validate_allowed("mountpoint"); if (!vr.success) return vr;
+    { auto vr = validate_path_managed(path); if (!vr.success) return vr; }
+    std::string exe = canonical_path("mountpoint");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "mountpoint");
 
-    return run_({{"mountpoint", "-q", "--", path}});
+    return run_({{exe, "-q", "--", path}});
 }
 
 core::OperationResult SystemAccountCommandRunner::rmdir(const std::string& path) {
-    if (!is_valid_path(path)) return reject(CommandError::InvalidArg, "invalid_path");
-    auto vr = validate_allowed("rmdir"); if (!vr.success) return vr;
+    { auto vr = validate_path_managed(path); if (!vr.success) return vr; }
+    std::string exe = canonical_path("rmdir");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "rmdir");
 
-    return run_({{"rmdir", "--", path}});
+    return run_({{exe, "--", path}});
 }
 
 core::OperationResult SystemAccountCommandRunner::chown_root(const std::string& path) {
-    if (!is_valid_path(path)) return reject(CommandError::InvalidArg, "invalid_path");
-    auto vr = validate_allowed("chown"); if (!vr.success) return vr;
+    { auto vr = validate_path_managed(path); if (!vr.success) return vr; }
+    std::string exe = canonical_path("chown");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "chown");
 
-    return run_({{"chown", "root:root", "--", path}});
+    return run_({{exe, "root:root", "--", path}});
 }
 
 core::OperationResult SystemAccountCommandRunner::dir_is_empty(const std::string& path) {
-    if (!is_valid_path(path)) return reject(CommandError::InvalidArg, "invalid_path");
-    auto vr = validate_allowed("ls"); if (!vr.success) return vr;
+    { auto vr = validate_path_managed(path); if (!vr.success) return vr; }
+    std::string exe = canonical_path("ls");
+    if (exe.empty()) return reject(CommandError::NotAllowed, "ls");
 
-    auto result = run_({{"ls", "-A", "--", path}});
+    auto result = run_({{exe, "-A", "--", path}});
     result.success = result.output.empty();
     if (!result.success) result.message = "directory not empty";
     return result;

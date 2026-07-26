@@ -22,6 +22,8 @@ enum class CommandError {
 
 class SystemAccountCommandRunner {
 public:
+    struct Range { int min = 0; int max = 0; };
+
     struct Command {
         std::vector<std::string> args;
     };
@@ -29,6 +31,10 @@ public:
     using RunFn = std::function<core::OperationResult(const Command& cmd)>;
 
     explicit SystemAccountCommandRunner(RunFn run) : run_(std::move(run)) {}
+
+    void set_managed_root(const std::string& root) { managed_root_ = root; }
+    void set_uid_range(Range r) { uid_range_ = r; }
+    void set_gid_range(Range r) { gid_range_ = r; }
 
     core::OperationResult groupadd(const std::string& groupname, int gid);
     core::OperationResult useradd(const std::string& username, int uid, int gid,
@@ -45,13 +51,11 @@ public:
     core::OperationResult usermod_expiredate(const std::string& username, const std::string& date);
     core::OperationResult usermod_shell(const std::string& username, const std::string& shell);
 
-    // --- Phase 3b: Filesystem permission commands ---
     core::OperationResult chgrp(const std::string& group, const std::string& path);
     core::OperationResult chmod(const std::string& mode, const std::string& path);
     core::OperationResult setfacl_modify(const std::string& acl_spec, const std::string& path);
     core::OperationResult setfacl_remove(const std::string& acl_spec, const std::string& path);
 
-    // --- Phase 3c: Filesystem mount commands ---
     core::OperationResult mkdir_p(const std::string& path);
     core::OperationResult mount_bind(const std::string& source, const std::string& target);
     core::OperationResult umount(const std::string& target);
@@ -60,21 +64,28 @@ public:
     core::OperationResult chown_root(const std::string& path);
     core::OperationResult dir_is_empty(const std::string& path);
 
+    // Resolve canonical absolute path for a command type
+    static std::string canonical_path(const std::string& command_type);
+
 private:
     static std::string sanitize_for_log(const std::string& arg);
     static bool contains_control_chars(const std::string& s);
     static bool is_valid_username(const std::string& s);
     static bool is_valid_groupname(const std::string& s);
-    static bool is_valid_path(const std::string& s);
-    static bool is_valid_mode(const std::string& s);
+    static bool is_valid_octal_mode(const std::string& s);
     static bool is_valid_acl_spec(const std::string& s);
     static bool is_valid_shell(const std::string& s);
     static bool is_valid_date(const std::string& s);
-    static bool is_allowed_executable(const std::string& exe);
+    static bool is_valid_perm_chars(const std::string& s);
 
     core::OperationResult reject(CommandError err, const std::string& msg) const;
-    core::OperationResult validate_allowed(const std::string& exe) const;
+    core::OperationResult validate_path_managed(const std::string& path) const;
+    core::OperationResult validate_uid(int uid) const;
+    core::OperationResult validate_gid(int gid) const;
 
+    std::string managed_root_;
+    Range uid_range_{0, 0};
+    Range gid_range_{0, 0};
     RunFn run_;
 };
 

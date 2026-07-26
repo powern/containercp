@@ -95,6 +95,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/access/SshKeyValidator.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/SystemAccountAllocator.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/SystemAccountCommandRunner.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/ManagedPathValidator.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/SystemIdentityInspector.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/UsernameMapper.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/FilesystemPermissionInspector.cpp

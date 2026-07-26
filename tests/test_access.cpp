@@ -477,8 +477,12 @@ class FakeCommandRunner {
     containercp::core::OperationResult run(const containercp::access::SystemAccountCommandRunner::Command& cmd) {
         cmds_.push_back(cmd);
         if (fail_next_) { fail_next_ = false; return {false, "injected failure", ""}; }
-        // Handle ls -A for dir_is_empty check
-        if (cmd.args.size() >= 4 && cmd.args[0] == "ls" && cmd.args[1] == "-A" && cmd.args[2] == "--") {
+        // Handle ls -A for dir_is_empty check (argv[0] may be /usr/bin/ls)
+        if (cmd.args.size() >= 4 && cmd.args[1] == "-A" && cmd.args[2] == "--") {
+            std::string prog_ls = cmd.args[0];
+            auto s = prog_ls.rfind('/');
+            std::string b = (s != std::string::npos) ? prog_ls.substr(s + 1) : prog_ls;
+            if (b != "ls") { apply_to_inspector(cmd); return {true, "ok", ""}; }
             const auto& path = cmd.args[3];
             if (non_empty_dirs_.count(path)) {
                 return {false, "directory not empty", "file1\nfile2\n"};
@@ -499,7 +503,10 @@ private:
         auto cmd = raw_cmd;
         cmd.args.erase(std::remove(cmd.args.begin(), cmd.args.end(), "--"), cmd.args.end());
         if (cmd.args.empty()) return;
-        const auto& prog = cmd.args[0];
+        // Extract base name from canonical absolute path (e.g. /usr/bin/chgrp -> chgrp)
+        const std::string& prog_full = cmd.args[0];
+        auto slash = prog_full.rfind('/');
+        std::string prog = (slash != std::string::npos) ? prog_full.substr(slash + 1) : prog_full;
 
         if (prog == "useradd" && cmd.args.size() >= 2) {
             const auto& name = cmd.args.back();
@@ -2878,7 +2885,7 @@ TEST_CASE("Phase3c apply_grant rollback on bind mount failure") {
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
             // Fail on mount --bind (5th command after groupadd and mkdir)
-            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) return containercp::core::OperationResult{false, "mount failed"};
             return fake_commands.run(cmd);
         }));
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -2945,7 +2952,7 @@ TEST_CASE("Phase3c cleanup_all_mounts fails on partial failure") {
     provider.set_mount_inspector(std::make_shared<FakeLiveMountInspector>(inspector->mount_state_));
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "umount") return containercp::core::OperationResult{false, "busy"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("umount")) return containercp::core::OperationResult{false, "busy"};
             return fake_commands.run(cmd);
         }));
     provider.set_enabled(true);
@@ -2994,7 +3001,7 @@ TEST_CASE("Phase3d grant rolls back newly created site group") {
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
             // Fail at Step 2 (add_user_to_site_group) — the group was just created at Step 1
-            if (cmd.args[0] == "usermod") return containercp::core::OperationResult{false, "fail"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("usermod")) return containercp::core::OperationResult{false, "fail"};
             return fake_commands.run(cmd);
         }));
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -3042,9 +3049,9 @@ TEST_CASE("Phase3d grant_rollback_incomplete collects multiple errors") {
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
             // Step 5: mount fails → enters compound rollback
-            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, ""};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) return containercp::core::OperationResult{false, ""};
             // During rollback: gpasswd (membership removal) also fails
-            if (cmd.args[0] == "gpasswd") return containercp::core::OperationResult{false, ""};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("gpasswd")) return containercp::core::OperationResult{false, ""};
             return fake_commands.run(cmd);
         }));
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -3108,7 +3115,7 @@ TEST_CASE("ARCH-009 directory permission rollback restores mode 0755") {
     provider.set_mount_inspector(mount_inspector);
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) return containercp::core::OperationResult{false, "mount failed"};
             return fake_commands.run(cmd);
         }));
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -3131,14 +3138,14 @@ TEST_CASE("ARCH-009 directory permission rollback restores mode 0755") {
     // Verify chgrp was called to restore original GID (group name "20001")
     bool chgrp_found = false;
     for (const auto& c : fake_commands.cmds_) {
-        if (c.args.size() >= 2 && c.args[0] == "chgrp" && c.args[1] == "20001") chgrp_found = true;
+        if (c.args.size() >= 2 && c.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("chgrp") && c.args[1] == "20001") chgrp_found = true;
     }
     CHECK(chgrp_found);
 
     // Verify chmod was called with octal "755"
     bool chmod_found = false;
     for (const auto& c : fake_commands.cmds_) {
-        if (c.args.size() >= 2 && c.args[0] == "chmod" && c.args[1] == "755") chmod_found = true;
+        if (c.args.size() >= 2 && c.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("chmod") && c.args[1] == "755") chmod_found = true;
     }
     CHECK(chmod_found);
 }
@@ -3181,7 +3188,7 @@ TEST_CASE("ARCH-009 directory permission rollback restores mode 0770") {
     provider.set_mount_inspector(mount_inspector);
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) return containercp::core::OperationResult{false, "mount failed"};
             return fake_commands.run(cmd);
         }));
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -3203,7 +3210,7 @@ TEST_CASE("ARCH-009 directory permission rollback restores mode 0770") {
 
     bool chmod_found = false;
     for (const auto& c : fake_commands.cmds_) {
-        if (c.args.size() >= 2 && c.args[0] == "chmod" && c.args[1] == "770") chmod_found = true;
+        if (c.args.size() >= 2 && c.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("chmod") && c.args[1] == "770") chmod_found = true;
     }
     CHECK(chmod_found);
 }
@@ -3247,7 +3254,7 @@ TEST_CASE("ARCH-009 directory permission rollback restores mode 0700") {
     provider.set_mount_inspector(mount_inspector);
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) return containercp::core::OperationResult{false, "mount failed"};
             return fake_commands.run(cmd);
         }));
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -3270,7 +3277,7 @@ TEST_CASE("ARCH-009 directory permission rollback restores mode 0700") {
     // Verify octal conversion: 0700 → "700"
     bool chmod_found = false;
     for (const auto& c : fake_commands.cmds_) {
-        if (c.args.size() >= 2 && c.args[0] == "chmod" && c.args[1] == "700") chmod_found = true;
+        if (c.args.size() >= 2 && c.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("chmod") && c.args[1] == "700") chmod_found = true;
     }
     CHECK(chmod_found);
 }
@@ -3313,9 +3320,9 @@ TEST_CASE("ARCH-009 directory permission rollback chmod command failure") {
     provider.set_mount_inspector(mount_inspector);
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands, &fail_count](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) return containercp::core::OperationResult{false, "mount failed"};
             // Fail on chmod during rollback
-            if (cmd.args[0] == "chmod" && fail_count++ > 0) return containercp::core::OperationResult{false, "chmod failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("chmod") && fail_count++ > 0) return containercp::core::OperationResult{false, "chmod failed"};
             return fake_commands.run(cmd);
         }));
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -3375,9 +3382,9 @@ TEST_CASE("ARCH-009 directory permission rollback GID command failure") {
     provider.set_mount_inspector(mount_inspector);
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) return containercp::core::OperationResult{false, "mount failed"};
             // Fail on chgrp during rollback (first chgrp after perms_changed)
-            if (cmd.args[0] == "chgrp" && cmd.args[1] == "20001") return containercp::core::OperationResult{false, "chgrp failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("chgrp") && cmd.args[1] == "20001") return containercp::core::OperationResult{false, "chgrp failed"};
             return fake_commands.run(cmd);
         }));
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -3442,11 +3449,11 @@ TEST_CASE("ARCH-009 directory permission rollback postcondition mismatch") {
     provider.set_mount_inspector(mount_inspector);
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) return containercp::core::OperationResult{false, "mount failed"};
             // Rollback chgrp: return success but skip state update to trigger postcondition mismatch
-            if (cmd.args[0] == "chgrp" && cmd.args[1] == "20001") return containercp::core::OperationResult{true, "ok"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("chgrp") && cmd.args[1] == "20001") return containercp::core::OperationResult{true, "ok"};
             // Rollback chmod: same treatment
-            if (cmd.args[0] == "chmod" && cmd.args[1] == "755") return containercp::core::OperationResult{true, "ok"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("chmod") && cmd.args[1] == "755") return containercp::core::OperationResult{true, "ok"};
             return fake_commands.run(cmd);
         }));
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -3518,7 +3525,7 @@ TEST_CASE("ARCH-009 ACL rollback initially absent access/default ACL") {
     provider.set_mount_inspector(mount_inspector);
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) return containercp::core::OperationResult{false, "mount failed"};
             return fake_commands.run(cmd);
         }));
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -3591,7 +3598,7 @@ TEST_CASE("ARCH-009 ACL rollback restores existing access ACL") {
     provider.set_mount_inspector(mount_inspector);
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) return containercp::core::OperationResult{false, "mount failed"};
             return fake_commands.run(cmd);
         }));
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -3668,7 +3675,7 @@ TEST_CASE("ARCH-009 ACL rollback restores existing default ACL") {
     provider.set_mount_inspector(mount_inspector);
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) return containercp::core::OperationResult{false, "mount failed"};
             return fake_commands.run(cmd);
         }));
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -3749,7 +3756,7 @@ TEST_CASE("ARCH-009 ACL rollback restores different masks") {
     provider.set_mount_inspector(mount_inspector);
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) return containercp::core::OperationResult{false, "mount failed"};
             return fake_commands.run(cmd);
         }));
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -3817,11 +3824,11 @@ TEST_CASE("ARCH-009 ACL rollback command failure") {
     provider.set_mount_inspector(mount_inspector);
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) return containercp::core::OperationResult{false, "mount failed"};
             // Only fail setfacl -x (remove) — these are used during rollback restore
             // when the original ACL was absent. The -m (modify) commands during apply
             // phase must succeed.
-            if (cmd.args[0] == "setfacl" && cmd.args[1] == "-x") return containercp::core::OperationResult{false, "setfacl -x failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("setfacl") && cmd.args[1] == "-x") return containercp::core::OperationResult{false, "setfacl -x failed"};
             return fake_commands.run(cmd);
         }));
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -3899,7 +3906,7 @@ TEST_CASE("ARCH-009 ACL rollback inspection failure") {
     provider.set_mount_inspector(mount_inspector);
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) return containercp::core::OperationResult{false, "mount failed"};
             return fake_commands.run(cmd);
         }));
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -3964,10 +3971,10 @@ TEST_CASE("ARCH-009 ACL rollback full-state mismatch") {
     provider.set_mount_inspector(mount_inspector);
     provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&fake_commands](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") return containercp::core::OperationResult{false, "mount failed"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) return containercp::core::OperationResult{false, "mount failed"};
             // Intercept rollback setfacl -x: return success but skip state update,
             // so the postcondition check sees stale data (ACL still present)
-            if (cmd.args[0] == "setfacl" && cmd.args[1] == "-x") return containercp::core::OperationResult{true, "ok"};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("setfacl") && cmd.args[1] == "-x") return containercp::core::OperationResult{true, "ok"};
             return fake_commands.run(cmd);
         }));
     provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
@@ -4183,7 +4190,7 @@ TEST_CASE("ARCH-009 bind mount verification failure clean rollback") {
     auto wrapper = std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
             auto result = ctx.fake_commands.run(cmd);
-            if (cmd.args[0] == "mount" && result.success) {
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount") && result.success) {
                 std::string target = cmd.args.back();
                 ctx.inspector->mount_state_->mounted_paths_.erase(target);
                 ctx.inspector->mount_state_->bind_sources_.erase(target);
@@ -4209,7 +4216,7 @@ TEST_CASE("ARCH-009 bind mount rollback umount failure") {
     bool umount_called = false;
     auto wrapper = std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx, &umount_called](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount" && !umount_called) {
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount") && !umount_called) {
                 auto result = ctx.fake_commands.run(cmd);
                 // Erase mount from state so verification fails
                 if (result.success) {
@@ -4219,7 +4226,7 @@ TEST_CASE("ARCH-009 bind mount rollback umount failure") {
                 }
                 return result;
             }
-            if (cmd.args[0] == "umount") {
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("umount")) {
                 umount_called = true;
                 return containercp::core::OperationResult{false, "umount failed"};
             }
@@ -4240,7 +4247,7 @@ TEST_CASE("ARCH-009 bind mount rollback still mounted") {
     bool in_umount = false;
     auto wrapper = std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx, &in_umount](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") {
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) {
                 auto result = ctx.fake_commands.run(cmd);
                 if (result.success) {
                     std::string target = cmd.args.back();
@@ -4248,7 +4255,7 @@ TEST_CASE("ARCH-009 bind mount rollback still mounted") {
                 }
                 return result;
             }
-            if (cmd.args[0] == "umount") {
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("umount")) {
                 in_umount = true;
                 auto result = ctx.fake_commands.run(cmd);
                 // After umount removes the mount, re-add it so re-inspect sees "still mounted"
@@ -4275,7 +4282,7 @@ TEST_CASE("ARCH-009 bind mount rollback rmdir failure") {
     int call_count = 0;
     auto wrapper = std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx, &call_count](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") {
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) {
                 auto result = ctx.fake_commands.run(cmd);
                 if (result.success) {
                     std::string target = cmd.args.back();
@@ -4284,7 +4291,7 @@ TEST_CASE("ARCH-009 bind mount rollback rmdir failure") {
                 }
                 return result;
             }
-            if (cmd.args[0] == "rmdir") {
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("rmdir")) {
                 ++call_count;
                 if (call_count == 1) {
                     // First rmdir attempt (the one in rollback) — fail it
@@ -4305,7 +4312,7 @@ TEST_CASE("ARCH-009 bind mount rollback target still present") {
 
     auto wrapper = std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") {
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) {
                 auto result = ctx.fake_commands.run(cmd);
                 if (result.success) {
                     std::string target = cmd.args.back();
@@ -4314,7 +4321,7 @@ TEST_CASE("ARCH-009 bind mount rollback target still present") {
                 }
                 return result;
             }
-            if (cmd.args[0] == "rmdir") {
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("rmdir")) {
                 auto result = ctx.fake_commands.run(cmd);
                 // rmdir succeeds (removes from fs_state_) but re-add so fs_inspect sees it
                 if (result.success) {
@@ -4346,7 +4353,7 @@ TEST_CASE("ARCH-009 bind mount rollback with pre-existing directory") {
 
     auto wrapper = std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "mount") {
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount")) {
                 auto result = ctx.fake_commands.run(cmd);
                 if (result.success) {
                     std::string target = cmd.args.back();
@@ -4794,7 +4801,7 @@ struct UnmountTestContext {
 
     bool has_mutation_commands() const {
         for (const auto& c : fake_commands.cmds_) {
-            if (c.args[0] == "umount" || c.args[0] == "rmdir") return true;
+            if (c.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("umount") || c.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("rmdir")) return true;
         }
         return false;
     }
@@ -5197,12 +5204,12 @@ TEST_CASE("ARCH-009 safe rmdir command failure") {
     int call_count = 0;
     ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx, &call_count](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "ls" && cmd.args[1] == "-A" && cmd.args.size() >= 4 && cmd.args[2] == "--") {
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("ls") && cmd.args.size() >= 4 && cmd.args[1] == "-A" && cmd.args[2] == "--") {
                 auto result = ctx.fake_commands.run(cmd);
                 return result;
             }
             call_count++;
-            if (call_count == 1 && cmd.args[0] == "rmdir") {
+            if (call_count == 1 && cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("rmdir")) {
                 return containercp::core::OperationResult{false, "rmdir failed", ""};
             }
             return ctx.fake_commands.run(cmd);
@@ -5221,7 +5228,7 @@ TEST_CASE("ARCH-009 safe rmdir target still present after rmdir") {
         [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
             auto result = ctx.fake_commands.run(cmd);
             // After rmdir removes from fs_state_, re-add so postcondition check sees it
-            if (cmd.args[0] == "rmdir" && result.success) {
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("rmdir") && result.success) {
                 containercp::access::FsPermissionState s;
                 s.exists = true; s.is_symlink = false; s.mode = S_IFDIR | 0755; s.group_gid = 0;
                 ctx.inspector->fs_state_->state_[cmd.args.back()] = s;
@@ -6541,7 +6548,7 @@ TEST_CASE("ARCH-009 revoke active grant unmount failure") {
     // Intercept umount to fail
     ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "umount") return containercp::core::OperationResult{false, "busy", ""};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("umount")) return containercp::core::OperationResult{false, "busy", ""};
             return ctx.fake_commands.run(cmd);
         }));
     auto r = ctx.provider.revoke_grant(1, 1, "read_write");
@@ -6692,7 +6699,7 @@ TEST_CASE("ARCH-009 revoke group deletion command failure") {
     ctx.provider.set_grants_lookup([](uint64_t, const std::string&) { return size_t{0}; });
     ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "groupdel") return containercp::core::OperationResult{false, "groupdel failed", ""};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("groupdel")) return containercp::core::OperationResult{false, "groupdel failed", ""};
             return ctx.fake_commands.run(cmd);
         }));
     auto r = ctx.provider.revoke_grant(1, 1, "read_write");
@@ -6722,7 +6729,7 @@ TEST_CASE("ARCH-009 revoke ACL removal command failure") {
     ctx.add_mount();
     ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "setfacl") return containercp::core::OperationResult{false, "setfacl failed", ""};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("setfacl")) return containercp::core::OperationResult{false, "setfacl failed", ""};
             return ctx.fake_commands.run(cmd);
         }));
     auto r = ctx.provider.revoke_grant(1, 1, "read_only");
@@ -7070,7 +7077,7 @@ TEST_CASE("ARCH-009 revoke all first failure continues") {
     bool first_umount = true;
     ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx, &first_umount](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "umount" && first_umount) {
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("umount") && first_umount) {
                 first_umount = false;
                 return containercp::core::OperationResult{false, "busy", ""};
             }
@@ -7158,7 +7165,7 @@ TEST_CASE("ARCH-009 revoke all one failed remains") {
     // Intercept umount to fail
     ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "umount") return containercp::core::OperationResult{false, "busy", ""};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("umount")) return containercp::core::OperationResult{false, "busy", ""};
             return ctx.fake_commands.run(cmd);
         }));
     auto r = ctx.provider.revoke_all_grants(1);
@@ -7272,7 +7279,7 @@ TEST_CASE("create_user useradd failure") {
     // Intercept useradd to fail
     ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "useradd") return containercp::core::OperationResult{false, "useradd failed", ""};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("useradd")) return containercp::core::OperationResult{false, "useradd failed", ""};
             return ctx.fake_commands.run(cmd);
         }));
     auto r = ctx.provider.create_user(ctx.make_user());
@@ -7288,8 +7295,8 @@ TEST_CASE("create_user group membership failure") {
     bool after_useradd = false;
     ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx, &after_useradd](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "useradd") { after_useradd = true; }
-            if (cmd.args[0] == "usermod" && after_useradd) {
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("useradd")) { after_useradd = true; }
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("usermod") && after_useradd) {
                 return containercp::core::OperationResult{false, "membership failed", ""};
             }
             return ctx.fake_commands.run(cmd);
@@ -7303,7 +7310,7 @@ TEST_CASE("create_user passwd lock failure") {
     // Intercept passwd to fail
     ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "passwd") return containercp::core::OperationResult{false, "passwd lock failed", ""};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("passwd")) return containercp::core::OperationResult{false, "passwd lock failed", ""};
             return ctx.fake_commands.run(cmd);
         }));
     auto r = ctx.provider.create_user(ctx.make_user());
@@ -7473,7 +7480,7 @@ TEST_CASE("remove_user revoke failure blocks userdel") {
     // Intercept umount to fail
     ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "umount") return containercp::core::OperationResult{false, "busy", ""};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("umount")) return containercp::core::OperationResult{false, "busy", ""};
             return ctx.fake_commands.run(cmd);
         }));
     auto r = ctx.provider.remove_user(ctx.make_user());
@@ -7486,7 +7493,7 @@ TEST_CASE("remove_user userdel failure") {
     RemoveUserContext ctx;
     ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "userdel") return containercp::core::OperationResult{false, "userdel failed", ""};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("userdel")) return containercp::core::OperationResult{false, "userdel failed", ""};
             return ctx.fake_commands.run(cmd);
         }));
     auto r = ctx.provider.remove_user(ctx.make_user());
@@ -7733,7 +7740,7 @@ TEST_CASE("reconcile_user_lifecycle removing_userdel_fails") {
     // Intercept userdel to fail
     ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
         [&ctx](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
-            if (cmd.args[0] == "userdel") return containercp::core::OperationResult{false, "userdel failed", ""};
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("userdel")) return containercp::core::OperationResult{false, "userdel failed", ""};
             return ctx.fake_commands.run(cmd);
         }));
     auto r = ctx.provider.reconcile_user_lifecycle();
@@ -8663,7 +8670,7 @@ TEST_CASE("ARCH-009 SystemAccountCommandRunner inserts -- before path operands")
         CHECK(r.success);
         REQUIRE(recorded.size() == 1);
         REQUIRE(recorded[0].args.size() >= 3);
-        CHECK(recorded[0].args[0] == "chmod");
+        CHECK(recorded[0].args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("chmod"));
         CHECK(recorded[0].args[2] == "--");
     }
 
@@ -8673,7 +8680,7 @@ TEST_CASE("ARCH-009 SystemAccountCommandRunner inserts -- before path operands")
         CHECK(r.success);
         REQUIRE(recorded.size() == 1);
         REQUIRE(recorded[0].args.size() >= 2);
-        CHECK(recorded[0].args[0] == "rmdir");
+        CHECK(recorded[0].args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("rmdir"));
         CHECK(recorded[0].args[1] == "--");
     }
 
@@ -8683,7 +8690,7 @@ TEST_CASE("ARCH-009 SystemAccountCommandRunner inserts -- before path operands")
         CHECK(r.success);
         REQUIRE(recorded.size() == 1);
         REQUIRE(recorded[0].args.size() >= 3);
-        CHECK(recorded[0].args[0] == "mkdir");
+        CHECK(recorded[0].args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mkdir"));
         CHECK(recorded[0].args[2] == "--");
     }
 
@@ -8693,7 +8700,7 @@ TEST_CASE("ARCH-009 SystemAccountCommandRunner inserts -- before path operands")
         CHECK(r.success);
         REQUIRE(recorded.size() == 1);
         REQUIRE(recorded[0].args.size() >= 3);
-        CHECK(recorded[0].args[0] == "chgrp");
+        CHECK(recorded[0].args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("chgrp"));
         CHECK(recorded[0].args[2] == "--");
     }
 
@@ -8703,7 +8710,7 @@ TEST_CASE("ARCH-009 SystemAccountCommandRunner inserts -- before path operands")
         CHECK(r.success);
         REQUIRE(recorded.size() == 1);
         REQUIRE(recorded[0].args.size() >= 4);
-        CHECK(recorded[0].args[0] == "setfacl");
+        CHECK(recorded[0].args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("setfacl"));
         CHECK(recorded[0].args[3] == "--");
     }
 
@@ -8713,7 +8720,7 @@ TEST_CASE("ARCH-009 SystemAccountCommandRunner inserts -- before path operands")
         CHECK(r.success);
         REQUIRE(recorded.size() == 1);
         REQUIRE(recorded[0].args.size() >= 3);
-        CHECK(recorded[0].args[0] == "mountpoint");
+        CHECK(recorded[0].args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mountpoint"));
         CHECK(recorded[0].args[2] == "--");
     }
 
@@ -8723,7 +8730,7 @@ TEST_CASE("ARCH-009 SystemAccountCommandRunner inserts -- before path operands")
         CHECK(r.success);
         REQUIRE(recorded.size() == 1);
         REQUIRE(recorded[0].args.size() >= 2);
-        CHECK(recorded[0].args[0] == "umount");
+        CHECK(recorded[0].args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("umount"));
         CHECK(recorded[0].args[1] == "--");
     }
 
@@ -8733,7 +8740,7 @@ TEST_CASE("ARCH-009 SystemAccountCommandRunner inserts -- before path operands")
         CHECK(r.success);
         REQUIRE(recorded.size() == 1);
         REQUIRE(recorded[0].args.size() >= 3);
-        CHECK(recorded[0].args[0] == "chown");
+        CHECK(recorded[0].args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("chown"));
         CHECK(recorded[0].args[2] == "--");
     }
 
@@ -8743,7 +8750,7 @@ TEST_CASE("ARCH-009 SystemAccountCommandRunner inserts -- before path operands")
         CHECK(r.success);
         REQUIRE(recorded.size() == 1);
         REQUIRE(recorded[0].args.size() >= 4);
-        CHECK(recorded[0].args[0] == "mount");
+        CHECK(recorded[0].args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("mount"));
         CHECK(recorded[0].args[2] == "--");
     }
 
@@ -8753,7 +8760,404 @@ TEST_CASE("ARCH-009 SystemAccountCommandRunner inserts -- before path operands")
         CHECK(r.success);
         REQUIRE(recorded.size() == 1);
         REQUIRE(recorded[0].args.size() >= 4);
-        CHECK(recorded[0].args[0] == "ls");
+        CHECK(recorded[0].args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("ls"));
         CHECK(recorded[0].args[2] == "--");
+    }
+}
+
+// ─── Task 45: Tighten Privileged Argument and Executable Validation ──
+
+TEST_CASE("ARCH-009 Task45 canonical executable mapping") {
+    using containercp::access::SystemAccountCommandRunner;
+    using containercp::core::OperationResult;
+
+    struct Entry { std::string type; std::string expected; };
+    Entry entries[] = {
+        {"groupadd", "/usr/sbin/groupadd"},
+        {"useradd", "/usr/sbin/useradd"},
+        {"usermod", "/usr/sbin/usermod"},
+        {"userdel", "/usr/sbin/userdel"},
+        {"groupdel", "/usr/sbin/groupdel"},
+        {"passwd", "/usr/bin/passwd"},
+        {"gpasswd", "/usr/bin/gpasswd"},
+        {"chgrp", "/usr/bin/chgrp"},
+        {"chmod", "/usr/bin/chmod"},
+        {"setfacl", "/usr/bin/setfacl"},
+        {"mkdir", "/usr/bin/mkdir"},
+        {"mount", "/usr/bin/mount"},
+        {"umount", "/usr/bin/umount"},
+        {"mountpoint", "/usr/bin/mountpoint"},
+        {"rmdir", "/usr/bin/rmdir"},
+        {"chown", "/usr/bin/chown"},
+        {"ls", "/usr/bin/ls"},
+    };
+    for (const auto& e : entries) {
+        INFO("Checking: ", e.type);
+        CHECK(SystemAccountCommandRunner::canonical_path(e.type) == e.expected);
+    }
+}
+
+TEST_CASE("ARCH-009 Task45 canonical path rejects unknown commands") {
+    using containercp::access::SystemAccountCommandRunner;
+    CHECK(SystemAccountCommandRunner::canonical_path("rm").empty());
+    CHECK(SystemAccountCommandRunner::canonical_path("sudo").empty());
+    CHECK(SystemAccountCommandRunner::canonical_path("").empty());
+    CHECK(SystemAccountCommandRunner::canonical_path("MY_COMMAND").empty());
+}
+
+TEST_CASE("ARCH-009 Task45 argv[0] is always canonical path") {
+    using containercp::access::SystemAccountCommandRunner;
+    using containercp::core::OperationResult;
+
+    struct TestCase { std::string name; std::string type; };
+    TestCase cases[] = {
+        {"groupadd", "groupadd"},
+        {"useradd", "useradd"},
+        {"usermod_add_group", "usermod"},
+        {"usermod_remove_group", "gpasswd"},
+        {"passwd_lock", "passwd"},
+        {"userdel", "userdel"},
+        {"groupdel", "groupdel"},
+        {"chgrp", "chgrp"},
+        {"chmod", "chmod"},
+        {"setfacl_modify", "setfacl"},
+        {"mkdir_p", "mkdir"},
+        {"mount_bind", "mount"},
+        {"umount", "umount"},
+        {"mountpoint_check", "mountpoint"},
+        {"rmdir", "rmdir"},
+        {"chown_root", "chown"},
+        {"dir_is_empty", "ls"},
+    };
+
+    int tested = 0;
+    for (const auto& tc : cases) {
+        std::vector<SystemAccountCommandRunner::Command> recorded;
+        SystemAccountCommandRunner runner(
+            [&](const SystemAccountCommandRunner::Command& cmd) -> OperationResult {
+                recorded.push_back(cmd);
+                return {true, "", ""};
+            });
+        std::string expected = SystemAccountCommandRunner::canonical_path(tc.type);
+
+        if (tc.name == "groupadd") {
+            runner.groupadd("testgroup", 10001);
+        } else if (tc.name == "useradd") {
+            runner.useradd("testuser", 10001, 20001, "/home/test", "/bin/bash", "testgroup");
+        } else if (tc.name == "usermod_add_group") {
+            runner.usermod_add_group("testuser", "testgroup");
+        } else if (tc.name == "usermod_remove_group") {
+            runner.usermod_remove_group("testuser", "testgroup");
+        } else if (tc.name == "passwd_lock") {
+            runner.passwd_lock("testuser");
+        } else if (tc.name == "userdel") {
+            runner.userdel("testuser");
+        } else if (tc.name == "groupdel") {
+            runner.groupdel("testgroup");
+        } else if (tc.name == "chgrp") {
+            runner.chgrp("testgroup", "/srv/test");
+        } else if (tc.name == "chmod") {
+            runner.chmod("755", "/srv/test");
+        } else if (tc.name == "setfacl_modify") {
+            runner.setfacl_modify("g:testgroup:rw", "/srv/test");
+        } else if (tc.name == "mkdir_p") {
+            runner.mkdir_p("/srv/test");
+        } else if (tc.name == "mount_bind") {
+            runner.mount_bind("/src", "/dst");
+        } else if (tc.name == "umount") {
+            runner.umount("/srv/test");
+        } else if (tc.name == "mountpoint_check") {
+            runner.mountpoint_check("/srv/test");
+        } else if (tc.name == "rmdir") {
+            runner.rmdir("/srv/test");
+        } else if (tc.name == "chown_root") {
+            runner.chown_root("/srv/test");
+        } else if (tc.name == "dir_is_empty") {
+            runner.dir_is_empty("/srv/test");
+        }
+
+        REQUIRE_FALSE(recorded.empty());
+        CHECK(recorded[0].args[0] == expected);
+        ++tested;
+    }
+    CHECK(tested == 17);
+}
+
+TEST_CASE("ARCH-009 Task45 strict octal mode rejects symbolic and mixed modes") {
+    using containercp::access::SystemAccountCommandRunner;
+    using containercp::core::OperationResult;
+
+    std::vector<SystemAccountCommandRunner::Command> recorded;
+    auto runner = SystemAccountCommandRunner(
+        [&](const SystemAccountCommandRunner::Command& cmd) -> OperationResult {
+            recorded.push_back(cmd);
+            return {true, "", ""};
+        });
+
+    SUBCASE("accepts 3-digit octal") {
+        recorded.clear();
+        auto r = runner.chmod("755", "/srv/test");
+        CHECK(r.success);
+    }
+
+    SUBCASE("accepts 4-digit octal") {
+        recorded.clear();
+        auto r = runner.chmod("0755", "/srv/test");
+        CHECK(r.success);
+    }
+
+    SUBCASE("rejects symbolic mode u+x") {
+        recorded.clear();
+        auto r = runner.chmod("u+x", "/srv/test");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects mixed mode 755r") {
+        recorded.clear();
+        auto r = runner.chmod("755r", "/srv/test");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects empty mode") {
+        recorded.clear();
+        auto r = runner.chmod("", "/srv/test");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects non-octal chars") {
+        recorded.clear();
+        auto r = runner.chmod("79a", "/srv/test");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects single digit") {
+        recorded.clear();
+        auto r = runner.chmod("7", "/srv/test");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects 2-digit") {
+        recorded.clear();
+        auto r = runner.chmod("77", "/srv/test");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects 5-digit") {
+        recorded.clear();
+        auto r = runner.chmod("00755", "/srv/test");
+        CHECK_FALSE(r.success);
+    }
+}
+
+TEST_CASE("ARCH-009 Task45 strict ACL grammar") {
+    using containercp::access::SystemAccountCommandRunner;
+    using containercp::core::OperationResult;
+
+    std::vector<SystemAccountCommandRunner::Command> recorded;
+    auto runner = SystemAccountCommandRunner(
+        [&](const SystemAccountCommandRunner::Command& cmd) -> OperationResult {
+            recorded.push_back(cmd);
+            return {true, "", ""};
+        });
+
+    SUBCASE("accepts access group entry g:group:rwx") {
+        recorded.clear();
+        auto r = runner.setfacl_modify("g:testgroup:rwx", "/srv/test");
+        CHECK(r.success);
+    }
+
+    SUBCASE("accepts access group entry g:group:r-x") {
+        recorded.clear();
+        auto r = runner.setfacl_modify("g:testgroup:r-x", "/srv/test");
+        CHECK(r.success);
+    }
+
+    SUBCASE("accepts default group entry d:g:group:rwx") {
+        recorded.clear();
+        auto r = runner.setfacl_modify("d:g:testgroup:rwx", "/srv/test");
+        CHECK(r.success);
+    }
+
+    SUBCASE("accepts access removal g:group") {
+        recorded.clear();
+        auto r = runner.setfacl_remove("g:testgroup", "/srv/test");
+        CHECK(r.success);
+    }
+
+    SUBCASE("accepts default removal d:g:group") {
+        recorded.clear();
+        auto r = runner.setfacl_remove("d:g:testgroup", "/srv/test");
+        CHECK(r.success);
+    }
+
+    SUBCASE("rejects user entry u:user:rwx") {
+        recorded.clear();
+        auto r = runner.setfacl_modify("u:auser:rwx", "/srv/test");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects mask entry m:rwx") {
+        recorded.clear();
+        auto r = runner.setfacl_modify("m:rwx", "/srv/test");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects no-colon string") {
+        recorded.clear();
+        auto r = runner.setfacl_modify("invalid", "/srv/test");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects empty group") {
+        recorded.clear();
+        auto r = runner.setfacl_modify("g::rwx", "/srv/test");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects control chars in spec") {
+        recorded.clear();
+        auto r = runner.setfacl_modify("g:\ntest:rw", "/srv/test");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects multiple entries with comma") {
+        recorded.clear();
+        auto r = runner.setfacl_modify("g:group1:rw,g:group2:rx", "/srv/test");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects invalid permission chars") {
+        recorded.clear();
+        auto r = runner.setfacl_modify("g:testgroup:abc", "/srv/test");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects overlong spec") {
+        recorded.clear();
+        auto r = runner.setfacl_modify("g:" + std::string(300, 'a') + ":rwx", "/srv/test");
+        CHECK_FALSE(r.success);
+    }
+}
+
+TEST_CASE("ARCH-009 Task45 UID/GID range enforcement") {
+    using containercp::access::SystemAccountCommandRunner;
+    using containercp::core::OperationResult;
+
+    std::vector<SystemAccountCommandRunner::Command> recorded;
+    auto runner = SystemAccountCommandRunner(
+        [&](const SystemAccountCommandRunner::Command& cmd) -> OperationResult {
+            recorded.push_back(cmd);
+            return {true, "", ""};
+        });
+    runner.set_uid_range({10000, 19999});
+    runner.set_gid_range({20000, 29999});
+
+    SUBCASE("accepts UID inside range") {
+        recorded.clear();
+        auto r = runner.useradd("valid", 15000, 25000, "/home/valid", "/bin/bash", "grp");
+        CHECK(r.success);
+    }
+
+    SUBCASE("rejects UID below range") {
+        recorded.clear();
+        auto r = runner.useradd("lowuid", 9999, 25000, "/home/lowuid", "/bin/bash", "grp");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects UID above range") {
+        recorded.clear();
+        auto r = runner.useradd("highuid", 20000, 25000, "/home/highuid", "/bin/bash", "grp");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects zero UID") {
+        recorded.clear();
+        auto r = runner.useradd("zerouid", 0, 25000, "/home/zero", "/bin/bash", "grp");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects negative UID") {
+        recorded.clear();
+        auto r = runner.useradd("neguid", -1, 25000, "/home/neg", "/bin/bash", "grp");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects GID below range") {
+        recorded.clear();
+        auto r = runner.useradd("lowgid", 15000, 19999, "/home/lowgid", "/bin/bash", "grp");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects GID above range") {
+        recorded.clear();
+        auto r = runner.useradd("highgid", 15000, 30000, "/home/highgid", "/bin/bash", "grp");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("groupadd rejects GID below range") {
+        recorded.clear();
+        auto r = runner.groupadd("lowgidgrp", 19999);
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("groupadd rejects GID above range") {
+        recorded.clear();
+        auto r = runner.groupadd("highgidgrp", 30000);
+        CHECK_FALSE(r.success);
+    }
+}
+
+TEST_CASE("ARCH-009 Task45 managed path validation with root") {
+    using containercp::access::SystemAccountCommandRunner;
+    using containercp::core::OperationResult;
+
+    std::vector<SystemAccountCommandRunner::Command> recorded;
+    auto runner = SystemAccountCommandRunner(
+        [&](const SystemAccountCommandRunner::Command& cmd) -> OperationResult {
+            recorded.push_back(cmd);
+            return {true, "", ""};
+        });
+    runner.set_managed_root("/srv/containercp/users");
+
+    SUBCASE("accepts path inside managed root") {
+        recorded.clear();
+        auto r = runner.rmdir("/srv/containercp/users/au-dev/sites/test");
+        CHECK(r.success);
+    }
+
+    SUBCASE("rejects path outside managed root") {
+        recorded.clear();
+        auto r = runner.rmdir("/tmp/evil");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects sibling prefix path") {
+        recorded.clear();
+        auto r = runner.rmdir("/srv/containercp/users-evil");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects path with .. component") {
+        recorded.clear();
+        auto r = runner.rmdir("/srv/containercp/users/au-dev/../../etc/passwd");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects relative path") {
+        recorded.clear();
+        auto r = runner.rmdir("relative/path");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("rejects path with control chars") {
+        recorded.clear();
+        auto r = runner.rmdir("/srv/containercp/users/\npath");
+        CHECK_FALSE(r.success);
+    }
+
+    SUBCASE("cross-user path accepted by path validator (provider-level check)") {
+        recorded.clear();
+        auto r = runner.rmdir("/srv/containercp/users/other-user/sites/test");
+        CHECK(r.success); // cross-user is a semantic check done at provider level
     }
 }
