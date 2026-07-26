@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-26 | `pending` | ARCH-009 Task 50 — Implement OpenSSH Discovery and Compatibility Verification
+
+**Summary:** Implemented `SshdDiscovery` component for Phase 4 OpenSSH integration. `SshdVersion` struct with strict parser for `ssh -V` output covering 8.x, 9.x, 10.x with patch support. `SshdDiscoveryResult` typed struct with all required fields: success, version, service info, config info, directive support, internal-sftp availability, syntax/effective config validation. `SshdDiscovery` class uses `CommandExecutor::run_safe()` for all external commands, no shell invocation. Executable identity verified from approved candidate list (`/usr/sbin/sshd`, `/usr/local/sbin/sshd`) with lstat checks: present, regular, executable, root-owned, not symlink, not group/world writable, rejects ambiguous multiple candidates. Config discovery reads main sshd_config for include directive, checks include directory existence, validates with `sshd -t` and `sshd -T`. Directive compatibility proven via temporary isolated configs that each contain a single Match-block directive — passes `sshd -t -f <temp>` only if the directive is supported. `internal-sftp` verified through config acceptance test. Service discovery via `systemctl is-active` and `systemctl show` for `ssh` and `sshd` unit candidates. RAII `TempSshdConfig` for secure temp file creation with atomic write, restrictive permissions, and destructor cleanup. Static helper methods enable privileged test usage without constructing a full discovery instance. Extended `arch009_linux_integration` with discovery-only checks: sshd executable identity, version parsing, config discovery (include, directory, sshd -t/ -T), internal-sftp support, directive support matrix, service unit detection. Added 25 unit tests covering: all version formats (10.x, 9.x, 8.x, malformed, empty), executable identity (missing, symlink, world-writable, non-executable, non-root, ambiguous), temp file safety (creation, move, destruction, atomic write), service discovery, result formatting.
+
+**Files changed:** `libs/access/SshdDiscovery.h` (new), `libs/access/SshdDiscovery.cpp` (new), `CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/test_sshd_discovery.cpp` (new), `tests/arch009_linux_integration.cpp`, `planning/ARCH-009-PHASE4-DESIGN.md`, `planning/ARCH-009-IMPLEMENTATION-PLAN.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No user-visible changes. Phase 4 discovery layer is implemented but not wired into the provider runtime yet. The privileged integration binary now reports sshd discovery details when run.
+
+**Validation:** 25/25 SshdDiscovery unit tests passed. Full unit suite passed. Full CTest passed with privileged integration PASS (not skipped). `git diff --check` passed.
+
+**Known risks:** Discovery does not write config or reload sshd. All detection is read-only. Temp files are under `/tmp/containercp-sshd-test/`. Service detection may skip in containers without systemd (graceful SKIP with typed reason).
+
+---
+
 ## 2026-07-26 | `pending` | ARCH-009 Task 49 — Phase 4 OpenSSH Integration Design and Safety Contract
 
 **Summary:** Began ARCH-009 Phase 4 with design-only task. Produced `planning/ARCH-009-PHASE4-DESIGN.md` covering: sshd integration model (dedicated include file `90-containercp-sftp.conf` via `Match Group containercp-sftp`), chroot contract (Phase 3 layout confirmed consistent with OpenSSH ChrootDirectory requirements), authorized_keys model (outside chroot via `AuthorizedKeysFile`, `restrict` prefix, root-owned 0600, atomic), config transaction (render → sshd -T → atomic replace → reload → health check → rollback), sshd discovery (binary path, service name, include support, internal-sftp availability), fail-closed policy, migration plan, and comprehensive test plan. Updated implementation plan Phase 4 steps from high-level to detailed file/class assignments. Updated project status to Phase 4 design phase. Updated Phase 3 acceptance report status.

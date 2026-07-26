@@ -23,6 +23,7 @@ set(CONTAINERCP_SOURCES
     libs/access/AccessUser.cpp
     libs/access/AccessUserManager.cpp
     libs/access/LocalSftpProvider.cpp
+    libs/access/SshdDiscovery.cpp
     libs/api/ApiServer.cpp
     libs/api/AuthMiddleware.cpp
     libs/api/WebServer.cpp

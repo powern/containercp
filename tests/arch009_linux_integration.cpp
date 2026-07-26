@@ -2,6 +2,7 @@
 #include "access/FilesystemPermissionInspector.h"
 #include "access/LocalSftpProvider.h"
 #include "access/MountInspector.h"
+#include "access/SshdDiscovery.h"
 #include "access/SystemAccountAllocator.h"
 #include "access/SystemAccountCommandRunner.h"
 #include "access/SystemAccountMapping.h"
@@ -244,6 +245,85 @@ int main() {
     std::filesystem::remove_all(kCleanupRoot, ec);
     if (ec || std::filesystem::exists(kCleanupRoot)) {
         return fail("managed test root cleanup failed");
+    }
+
+    // ── Phase 4: SSHD Discovery checks ──
+    {
+        containercp::access::SshdDiscovery::Config sscfg;
+        sscfg.approved_paths = {"/usr/sbin/sshd"};
+        containercp::access::SshdDiscovery sd(executor, sscfg);
+
+        // Validate executable identity
+        std::string sshd_path;
+        auto exec_check = sd.verify_sshd_executable(sshd_path);
+        if (!exec_check.success) {
+            std::cout << "SKIP sshd executable identity: " << exec_check.message << "\n";
+        } else {
+            std::cout << "PASS sshd executable identity: " << sshd_path << "\n";
+        }
+
+        // Version parsing
+        auto raw_ver = sd.detect_sshd_version_string();
+        auto ver = sd.parse_version(raw_ver);
+        if (ver.valid) {
+            std::cout << "PASS sshd version: " << ver.major << "." << ver.minor
+                      << "p" << ver.patch << "\n";
+        } else {
+            std::cout << "SKIP sshd version parsing: " << ver.error << "\n";
+        }
+
+        // Config discovery
+        auto config_info = containercp::access::SshdDiscovery::discover_config_for(executor, sscfg);
+        std::cout << "Config path: " << config_info.main_config_path << "\n";
+        std::cout << "Include directive present: " << (config_info.include_directive_present ? "yes" : "no") << "\n";
+        std::cout << "Include directory exists: " << (config_info.include_dir_exists ? "yes" : "no") << "\n";
+        std::cout << "Current config valid (sshd -t): " << (config_info.current_config_valid ? "yes" : "no");
+        if (!config_info.current_config_valid) std::cout << " (" << config_info.current_config_error << ")";
+        std::cout << "\n";
+
+        // Syntax validation
+        bool syntax_ok = containercp::access::SshdDiscovery::test_syntax_validation_for(executor, sscfg);
+        std::cout << "sshd -t available: " << (syntax_ok ? "yes" : "no") << "\n";
+
+        // Effective config
+        bool effective_ok = containercp::access::SshdDiscovery::test_effective_config_for(executor, sscfg);
+        std::cout << "sshd -T available: " << (effective_ok ? "yes" : "no") << "\n";
+
+        // Match group request
+        bool match_ok = containercp::access::SshdDiscovery::test_match_group_request_for(executor, sscfg);
+        std::cout << "Match Group -T request: " << (match_ok ? "yes" : "no") << "\n";
+
+        // internal-sftp
+        bool sftp_ok = containercp::access::SshdDiscovery::test_internal_sftp_for(executor, sscfg);
+        std::cout << "internal-sftp config accepted: " << (sftp_ok ? "yes" : "no") << "\n";
+
+        // Directive support
+        auto directives = containercp::access::SshdDiscovery::discover_directives_for(executor, sscfg);
+        std::cout << "Directives supported: "
+                  << (directives.match_group ? "MatchGroup " : "")
+                  << (directives.chroot_directory ? "ChrootDirectory " : "")
+                  << (directives.force_command_internal_sftp ? "ForceCommand " : "")
+                  << (directives.password_authentication ? "PasswordAuth " : "")
+                  << (directives.pubkey_authentication ? "PubkeyAuth " : "")
+                  << (directives.authorized_keys_file ? "AuthorizedKeysFile " : "")
+                  << (directives.permit_tty ? "PermitTTY " : "")
+                  << (directives.allow_tcp_forwarding ? "AllowTcpFwd " : "")
+                  << (directives.allow_agent_forwarding ? "AllowAgentFwd " : "")
+                  << (directives.x11_forwarding ? "X11Fwd " : "")
+                  << (directives.permit_tunnel ? "PermitTunnel " : "")
+                  << (directives.gateway_ports ? "GatewayPorts " : "")
+                  << (directives.restrict_option ? "restrict" : "")
+                  << "\n";
+
+        // Service discovery
+        auto svc = containercp::access::detect_systemd_service(executor);
+        if (svc.manager == containercp::access::ServiceManagerType::Systemd) {
+            std::cout << "PASS service unit: " << svc.unit_name
+                      << " reload=" << svc.reload_command
+                      << " health=" << svc.health_command << "\n";
+        } else {
+            std::cout << "SKIP service discovery: systemd not detected (container?)\n";
+        }
     }
 
     std::cout << "PASS: ARCH-009 privileged Linux integration exercised LocalSftpProvider -> "

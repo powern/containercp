@@ -63,7 +63,7 @@
 
 | Step | Action | File |
 |------|--------|------|
-| 4.1 | Add `SshdDiscovery` struct + detection runtime | `libs/access/SshdDiscovery.{h,cpp}` |
+| 4.1 | Add `SshdDiscovery` — version parsing, executable identity, config discovery, service discovery, directive support, RAII temp files | `libs/access/SshdDiscovery.{h,cpp}` (Task 50) |
 | 4.2 | Add `SshdConfigWriter` (atomic temp-file write, `sshd -t`, reload, rollback) | `libs/access/SshdConfigWriter.{h,cpp}` |
 | 4.3 | Add `SshdAuthorizedKeysWriter` (per-user key file outside chroot, atomic, `restrict` prefix) | `libs/access/SshdAuthorizedKeysWriter.{h,cpp}` |
 | 4.4 | Wire `LocalSftpProvider`: key add/remove → authorized_keys rebuild; user create/remove → sshd config ensure | `LocalSftpProvider.{h,cpp}` |

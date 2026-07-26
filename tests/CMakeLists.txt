@@ -36,6 +36,7 @@ add_executable(containercp_tests
     test_sql_console_session.cpp
     test_migrate_sqlite.cpp
     test_version.cpp
+    test_sshd_discovery.cpp
     test_wordpress_config_detector.cpp
     test_wordpress_config_service.cpp
     test_wordpress_config_types.cpp
@@ -101,6 +102,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/access/FilesystemPermissionInspector.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/MountInspector.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/LocalSftpProvider.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/SshdDiscovery.cpp
     ${CMAKE_SOURCE_DIR}/libs/proxy/ProxyConfigBuilder.cpp
     ${CMAKE_SOURCE_DIR}/libs/proxy/ReverseProxy.cpp
     ${CMAKE_SOURCE_DIR}/libs/proxy/ReverseProxyManager.cpp
@@ -222,6 +224,7 @@ add_executable(arch009_linux_integration
     ${CMAKE_SOURCE_DIR}/libs/access/UsernameMapper.cpp
     ${CMAKE_SOURCE_DIR}/libs/logger/Logger.cpp
     ${CMAKE_SOURCE_DIR}/libs/runtime/CommandExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/SshdDiscovery.cpp
 )
 
 target_include_directories(arch009_linux_integration PRIVATE

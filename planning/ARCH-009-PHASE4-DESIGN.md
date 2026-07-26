@@ -1,10 +1,16 @@
 # ARCH-009 Phase 4 — OpenSSH Integration Design and Safety Contract
 
-**Status:** DESIGN — Task 49 baseline
+**Status:** DESIGN — Task 50 SshdDiscovery implemented
 
-**Revision:** 1
+**Revision:** 2
 
 **Base:** `a5a61315f8484076541de8de91a8a6bbcedc0ece`
+**SshdDiscovery SHA:** `170ff4a9be5ca08e3fdc3d62fc9c4229c9e4be7d` + Task 50 commit
+
+**New files since Revision 1:**
+- `libs/access/SshdDiscovery.h` — discovery result structs, version parser, RAII temp file, discovery class
+- `libs/access/SshdDiscovery.cpp` — implementation: executable identity, version parsing, config/service/directive discovery, static helpers
+- `tests/test_sshd_discovery.cpp` — 25 unit tests covering version parsing, executable validation, temp file safety, service discovery, result formatting
 
 **Schema version:** 7
 
