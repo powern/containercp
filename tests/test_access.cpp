@@ -7,6 +7,7 @@
 #include "access/SystemAccountMapping.h"
 #include "access/SystemIdentityInspector.h"
 #include "access/LocalSftpProvider.h"
+#include "access/ManagedPathValidator.h"
 #include "access/MountInspector.h"
 #include "access/UsernameMapper.h"
 #include "core/OperationResult.h"
@@ -15,8 +16,10 @@
 #include "storage/ManagedMountState.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <set>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -9160,4 +9163,70 @@ TEST_CASE("ARCH-009 Task45 managed path validation with root") {
         auto r = runner.rmdir("/srv/containercp/users/other-user/sites/test");
         CHECK(r.success); // cross-user is a semantic check done at provider level
     }
+}
+
+TEST_CASE("ARCH-009 Task46 managed path validator exact dot component rules") {
+    namespace fs = std::filesystem;
+    auto root = fs::temp_directory_path() / ("ccp-managed-path-" + std::to_string(::getpid()));
+    auto cleanup = [&]() { std::error_code ec; fs::remove_all(root, ec); };
+    cleanup();
+    fs::create_directories(root / "au-dev" / "sites" / "...");
+
+    SUBCASE("accepts literal ... component") {
+        auto r = containercp::access::validate_managed_path((root / "au-dev" / "sites" / "...").string(), root.string());
+        CHECK(r.ok);
+    }
+
+    SUBCASE("rejects exact .. component") {
+        auto r = containercp::access::validate_managed_path((root / "au-dev" / ".." / "escape").string(), root.string());
+        CHECK_FALSE(r.ok);
+        CHECK(r.error == "path contains ..");
+    }
+
+    SUBCASE("rejects exact . component") {
+        auto r = containercp::access::validate_managed_path((root / "au-dev" / "." / "sites").string(), root.string());
+        CHECK_FALSE(r.ok);
+        CHECK(r.error == "path contains .");
+    }
+
+    SUBCASE("rejects repeated separator") {
+        auto r = containercp::access::validate_managed_path(root.string() + "//au-dev/sites", root.string());
+        CHECK_FALSE(r.ok);
+        CHECK(r.error == "repeated separator");
+    }
+
+    SUBCASE("rejects sibling-prefix escape") {
+        auto sibling = root.string() + "-evil/au-dev";
+        auto r = containercp::access::validate_managed_path(sibling, root.string());
+        CHECK_FALSE(r.ok);
+        CHECK(r.error == "outside managed root");
+    }
+
+    SUBCASE("rejects intermediate symlink") {
+        fs::create_directories(root / "safe");
+        std::error_code ec;
+        fs::create_directory_symlink("/tmp", root / "safe" / "link", ec);
+        if (ec) {
+            MESSAGE("symlink creation unavailable: " << ec.message());
+        } else {
+            auto r = containercp::access::validate_managed_path((root / "safe" / "link" / "target").string(), root.string());
+            CHECK_FALSE(r.ok);
+            CHECK(r.error == "parent component is symlink");
+        }
+    }
+
+    SUBCASE("rejects final symlink") {
+        fs::create_directories(root / "safe");
+        std::error_code ec;
+        fs::create_directory_symlink("/tmp", root / "safe" / "final-link", ec);
+        if (ec) {
+            MESSAGE("symlink creation unavailable: " << ec.message());
+        } else {
+            auto r = containercp::access::validate_managed_path((root / "safe" / "final-link").string(), root.string());
+            CHECK_FALSE(r.ok);
+            CHECK(r.error == "final path is symlink");
+        }
+    }
+
+    cleanup();
 }

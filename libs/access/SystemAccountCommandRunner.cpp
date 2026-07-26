@@ -4,6 +4,9 @@
 #include <algorithm>
 #include <cctype>
 #include <map>
+#include <sstream>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace containercp::access {
 namespace {
@@ -155,6 +158,43 @@ std::string SystemAccountCommandRunner::canonical_path(const std::string& comman
     auto it = canonical_paths().find(command_type);
     if (it == canonical_paths().end()) return {};
     return it->second;
+}
+
+core::OperationResult SystemAccountCommandRunner::validate_canonical_executable_identities() {
+    std::ostringstream errors;
+    bool ok = true;
+    for (const auto& [type, path] : canonical_paths()) {
+        struct stat st{};
+        if (::lstat(path.c_str(), &st) != 0) {
+            ok = false;
+            errors << type << ":missing:" << path << ";";
+            continue;
+        }
+        if (S_ISLNK(st.st_mode)) {
+            ok = false;
+            errors << type << ":symlink:" << path << ";";
+            continue;
+        }
+        if (!S_ISREG(st.st_mode)) {
+            ok = false;
+            errors << type << ":not_regular:" << path << ";";
+            continue;
+        }
+        if (st.st_uid != 0) {
+            ok = false;
+            errors << type << ":not_root_owned:" << path << ";";
+        }
+        if ((st.st_mode & S_IXUSR) == 0) {
+            ok = false;
+            errors << type << ":not_executable:" << path << ";";
+        }
+        if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+            ok = false;
+            errors << type << ":writable_by_group_or_world:" << path << ";";
+        }
+    }
+    if (!ok) return {false, errors.str(), ""};
+    return {true, "canonical executable identities verified", ""};
 }
 
 core::OperationResult SystemAccountCommandRunner::reject(CommandError, const std::string& msg) const {

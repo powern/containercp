@@ -2784,11 +2784,6 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
         out.success = false; out.message = "failed to persist system account mapping"; return out;
     }
 
-    // Track whether OS-level steps have started for rollback decisions
-    bool os_created = false;
-    bool group_created = false;
-    bool user_created = false;
-
     // 7. Create private group (OS account)
     {
         auto existing_gr = inspector_->lookup_group(mapped.canonical);
@@ -2808,8 +2803,6 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
                 out.success = false; out.message = "groupadd failed: " + mapped.canonical; return out;
             }
         }
-        group_created = true;
-        os_created = true;
     }
 
     // 8. Create OS user account
@@ -2820,8 +2813,6 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
         if (delete_mapping_) delete_mapping_("access_user", user.id);
         out.success = false; out.message = "useradd failed: " + mapped.canonical; return out;
     }
-    user_created = true;
-
     // 9. Add to global SFTP group
     auto add_gr = runner_->usermod_add_group(mapped.canonical, global_sftp_group_);
     if (!add_gr.success) {
@@ -2839,7 +2830,7 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
     // 11. Create home directory
     {
         std::error_code ec;
-        bool home_ok = std::filesystem::create_directories(home, ec);
+        (void)std::filesystem::create_directories(home, ec);
         if (ec) {
             rollback_create(mapped.canonical, mapped.canonical, user.id);
             out.success = false; out.message = "home directory creation failed"; return out;
@@ -3126,8 +3117,6 @@ core::OperationResult LocalSftpProvider::show_user(const AccessUser& user) {
 ReconciliationResult
 LocalSftpProvider::run_reconciliation_flow() {
     ReconciliationResult combined;
-    size_t mount_records = 0;
-    size_t user_records = 0;
 
     // Step 1: Mount reconciliation (uses internal to bypass state gate)
     {

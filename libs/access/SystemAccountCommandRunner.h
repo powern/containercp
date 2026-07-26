@@ -67,6 +67,9 @@ public:
     // Resolve canonical absolute path for a command type
     static std::string canonical_path(const std::string& command_type);
 
+    // Verify every approved executable identity before privileged use.
+    static core::OperationResult validate_canonical_executable_identities();
+
 private:
     static std::string sanitize_for_log(const std::string& arg);
     static bool contains_control_chars(const std::string& s);

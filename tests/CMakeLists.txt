@@ -209,3 +209,33 @@ if(ARGON2_INCLUDE_DIR AND ARGON2_LIBRARY)
 endif()
 
 add_test(NAME containercp_tests COMMAND containercp_tests)
+
+add_executable(arch009_linux_integration
+    arch009_linux_integration.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/FilesystemPermissionInspector.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/LocalSftpProvider.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/ManagedPathValidator.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/MountInspector.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/SystemAccountAllocator.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/SystemAccountCommandRunner.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/SystemIdentityInspector.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/UsernameMapper.cpp
+    ${CMAKE_SOURCE_DIR}/libs/logger/Logger.cpp
+    ${CMAKE_SOURCE_DIR}/libs/runtime/CommandExecutor.cpp
+)
+
+target_include_directories(arch009_linux_integration PRIVATE
+    ${CMAKE_SOURCE_DIR}/libs
+)
+
+target_compile_options(arch009_linux_integration PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+)
+
+add_test(NAME arch009_linux_integration COMMAND arch009_linux_integration)
+set_tests_properties(arch009_linux_integration PROPERTIES
+    LABELS arch009_linux_integration
+    SKIP_RETURN_CODE 77
+)

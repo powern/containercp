@@ -144,8 +144,6 @@ MountState parse_mountinfo_line(const std::string& line, const std::string& targ
     // Bind mount determination: root != "/" OR source is not a block device path
     // Real bind mounts have a non-"root" root AND source is a real filesystem path (not a device like /dev/sda1)
     bool root_is_subdir = (s.bind_root != "/");
-    bool source_is_path = (s.source.find('/') == 0);
-    bool source_is_device = (!source_is_path && s.source.find('/') == std::string::npos && !s.source.empty());
     s.is_bind = root_is_subdir;
 
     s.status = MountStatus::Ok;

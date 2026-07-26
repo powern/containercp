@@ -672,7 +672,6 @@ void ServiceRegistry::start() {
             auto result = credential_command_executor_.run_safe(cmd.args);
             return {result.exit_code == 0, result.err, result.out};
         });
-    runner->set_managed_root("/srv/containercp/users");
     runner->set_uid_range(access::SystemAccountCommandRunner::Range{10000, 19999});
     runner->set_gid_range(access::SystemAccountCommandRunner::Range{20000, 29999});
     access_provider_.set_command_runner(std::move(runner));
