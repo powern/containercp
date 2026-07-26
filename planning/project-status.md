@@ -466,7 +466,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | Docker/Runtime | Stable | |
 | Reverse Proxy | Active | |
 | SSL/Certs | Implemented | ACME HTTP-01, auto-renewal, full GUI |
-| Access/SFTP | Phase 3 accepted with residual risks | Real local provider core implemented through account lifecycle, grant lifecycle, mount lifecycle, startup reconciliation, runtime safety, and privileged command hardening. Privileged validation currently covers account lifecycle only; real ACL/bind/unmount/grant lifecycle integration is deferred before exposing SFTP login. See `docs/ARCH-009-PHASE3-ACCEPTANCE.md`. |
+| Access/SFTP | Phase 3 accepted with residual risks; Phase 4 MVP complete; ARCH-010 MVP closed | End-to-end backend: account/grant/mount lifecycle, OpenSSH config, authorized_keys, privileged command hardening. REST API: all user/key/grant/status endpoints under `/api/access/sftp/`. GUI: SFTP Access page with runtime status, user management, SSH keys, Site grants, runtime reconciliation. Deferred: real ACL/bind/mount privileged coverage, visual browser validation, RBAC beyond AllowAllAuth, full JSON parser. See `docs/ARCH-009-PHASE3-ACCEPTANCE.md` and `docs/api/sftp-administration-api.md`. |
 | Backup | Active | |
 | Profiles | Stable | |
 | Templates | Stable | |
@@ -486,7 +486,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | RC1 pass | 128/137 (9 stability deferred) |
 | RC2 validation | All items verified on real Debian 13 |
 | Bugs discovered during RC1 | 13 (all fixed) |
-| Current Epic | ARCH-010 SFTP Admin GUI MVP (Task 5) — SFTP Access page with runtime status, users table, detail panel, keys and grants tabs, navigation. |
+| Current Epic | ARCH-010 closed as MVP. Returned to main ContainerCP roadmap. |
 
 ---
 

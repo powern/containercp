@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-26 | `pending` | ARCH-010 Task 7 — Close SFTP Administration MVP with Honest Acceptance Status
+
+**Summary:** Formally closed ARCH-010 as MVP. Updated project status to reflect: backend lifecycle complete, OpenSSH integration MVP complete, REST API complete, GUI source implementation complete, runtime/API validation complete. Real visual browser validation: partial/deferred (no browser available in validation environment). RBAC beyond AllowAllAuth: deferred. Full JSON parser: deferred. Access/SFTP subsystem now spans Phases 1–4 of ARCH-009 and all of ARCH-010. Deferred items moved to backlog: browser screenshots, accessibility pass, configurable RBAC, standards-compliant JSON parser, multi-distro OpenSSH support, advanced drift recovery. Returned to main ContainerCP roadmap.
+
+**Files changed:** `planning/project-status.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No changes. Formal status update only.
+
+**Validation:** Documentation consistency checks passed. Full CTest passed. `git diff --check` passed.
+
+**Known risks:** None.
+
+---
+
 ## 2026-07-26 | `pending` | ARCH-010 Task 1 — Implement Minimal SFTP Administration API
 
 **Summary:** Added the full SFTP administration REST API under `/api/access/sftp/`. 18 endpoints covering user lifecycle (list, get, create, update, delete, retry reconciliation), SSH key management (list, get, add, update, delete, rebuild authorized_keys), Site grant management (list, get, create, update, revoke, retry), and provider status (global status with reconciliation records, trigger reconciliation). All endpoints reuse existing managers: `AccessUserManager`, `AccessKeyManager`, `AccessGrantManager`, `LocalSftpProvider`, `SshKeyValidator`, and SQLite storage. API handlers call provider methods via `static_cast<LocalSftpProvider&>` for Phase 3/4 methods not exposed on the `AccessProvider` interface. Key validation uses the existing `SshKeyValidator` pipeline; duplicate fingerprints are rejected per user. Grant operations go through the full lifecycle (`apply_grant`/`revoke_grant`). Added comprehensive API documentation at `docs/api/sftp-administration-api.md` with endpoint list, request/response examples, error code catalog, and lifecycle state documentation.
