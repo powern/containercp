@@ -1,6 +1,7 @@
 #include "ApiServer.h"
 #include "access/AccessGrant.h"
 #include "access/LocalSftpProvider.h"
+#include "access/SftpApiRequestParser.h"
 #include "access/SshKeyValidator.h"
 #include "api/JsonFormatter.h"
 #include "api/SitesViewService.h"

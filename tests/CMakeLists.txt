@@ -105,6 +105,7 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/access/MountInspector.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/LocalSftpProvider.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/SshdDiscovery.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/SftpApiRequestParser.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/SshdConfigWriter.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/SshdAuthorizedKeysWriter.cpp
     ${CMAKE_SOURCE_DIR}/libs/proxy/ProxyConfigBuilder.cpp
@@ -229,6 +230,7 @@ add_executable(arch009_linux_integration
     ${CMAKE_SOURCE_DIR}/libs/logger/Logger.cpp
     ${CMAKE_SOURCE_DIR}/libs/runtime/CommandExecutor.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/SshdDiscovery.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/SftpApiRequestParser.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/SshdConfigWriter.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/SshdAuthorizedKeysWriter.cpp
 )
