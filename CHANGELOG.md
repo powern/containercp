@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-26 | `this commit` | ARCH-009 Task 43 — Separate Internal Reconciliation from Public Operation Gating
+## 2026-07-26 | `2a190e6` | ARCH-009 Task 43 — Separate Internal Reconciliation from Public Operation Gating
 
 **Summary:** Fixed self-blocking deadlock in the runtime state machine where internal reconciliation methods (called by `retry_reconciliation()` with state=Starting) would be rejected by the same `operation_gate()` they pass through. Solution: added `Starting` to `operation_gate()` rejection (public mutations during startup are now correctly denied), created 18 `_internal()` trusted implementation methods that bypass the public state gate, and refactored all public call sites into thin wrappers (`gate → _internal`). `run_reconciliation_flow()` now calls only `_internal()` methods. Added `ScopedReconciliationGuard` RAII struct replacing a manual boolean flag, ensuring the concurrent-execution guard is released on every return path (exceptions, early failures, normal completion). Updated `retry_reconciliation()` to use RAII guard. All internal-only call chains verified: no internal method depends on a public gate that rejects Starting. Added 13 tests: Starting permits internal mount/user reconciliation, Starting rejects public mutations, Healthy allows mutations, retry reaches Healthy/Degraded/Failed, guard released after dep/mount/user failures, second retry after failure not stuck on guard, no state stuck at Starting, read operations allowed during Starting.
 
