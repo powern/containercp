@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-26 | `HEAD` | ARCH-009 Task 44 — Harden Privileged Command Execution
+## 2026-07-26 | `7d894fb` | ARCH-009 Task 44 — Harden Privileged Command Execution
 
 **Summary:** Hardened `SystemAccountCommandRunner` with executable allowlist (17 allowed commands), typed argument validators for each command type, and `--` option termination before all path operands to prevent option injection. Added `CommandError` enum with typed error codes (NotAllowed, InvalidArg, etc.). Replaced `dir_is_empty` shell dependency with properly-terminated `ls -A -- <path>`. Added `CommandExecutor::run_safe()` with environment sanitization (fixed PATH, LC_ALL=C, bounded HOME), output size limit (64KB default), and timeout (30s default). Wired production `ServiceRegistry` callback to `run_safe()`. Updated `FakeCommandRunner` in tests to handle `--` terminators. Added 9 hardning test cases (96 assertions): allowlist rejection, argument validation (empty, control chars, relative path, `..`, long input, invalid mode/gid/uid/date/acl), and `--` insertion verification for all path-taking commands.
 
