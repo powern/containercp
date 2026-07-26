@@ -1,4 +1,5 @@
 #include "access/LocalSftpProvider.h"
+#include "access/AccessKey.h"
 #include "access/ManagedPathValidator.h"
 #include "access/UsernameMapper.h"
 #include "storage/GrantLifecycleState.h"
@@ -96,6 +97,51 @@ void LocalSftpProvider::set_site_resolver(SiteInfoFn fn) {
 
 void LocalSftpProvider::set_grants_lookup(GrantsForSiteFn fn) {
     grants_lookup_ = std::move(fn);
+}
+
+// ── Phase 4: SSH config setters ──
+
+void LocalSftpProvider::set_sshd_config_ensurer(EnsureSshdConfigFn fn) {
+    sshd_config_ensurer_ = std::move(fn);
+}
+void LocalSftpProvider::set_key_writer(KeyWriterFn fn) {
+    key_writer_ = std::move(fn);
+}
+void LocalSftpProvider::set_key_remover(KeyRemoverFn fn) {
+    key_remover_ = std::move(fn);
+}
+void LocalSftpProvider::set_key_loader(KeyLoaderFn fn) {
+    key_loader_ = std::move(fn);
+}
+
+core::OperationResult LocalSftpProvider::ensure_sshd_config() {
+    if (sshd_config_ensurer_) {
+        auto r = sshd_config_ensurer_();
+        if (r.success) sshd_config_ensured_ = true;
+        return r;
+    }
+    return {false, "sshd config ensurer not configured", ""};
+}
+
+core::OperationResult LocalSftpProvider::write_authorized_keys(uint64_t access_user_id) {
+    std::string username;
+    if (key_loader_) {
+        auto keys = key_loader_(access_user_id);
+        if (keys.empty()) return {true, "no keys to write", ""};
+        // Find the linux username from mapping
+        if (load_mappings_) {
+            auto mappings = load_mappings_();
+            for (const auto& m : mappings) {
+                if (m.entity_type == "access_user" && m.entity_id == access_user_id) {
+                    username = m.username;
+                    break;
+                }
+            }
+        }
+    }
+    if (username.empty()) return {false, "user not provisioned", ""};
+    if (key_writer_) return key_writer_(access_user_id, username);
+    return {false, "key writer not configured", ""};
 }
 
 void LocalSftpProvider::set_managed_mount_storage(LoadAllManagedMountsFn load_all,
@@ -2878,10 +2924,20 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
         return out;
     }
 
+    // 15. Phase 4: ensure sshd config and write authorized_keys (best-effort, non-fatal)
+    if (enabled_ && sshd_config_ensurer_ && !sshd_config_ensured_) {
+        auto sc = sshd_config_ensurer_();
+        if (sc.success) sshd_config_ensured_ = true;
+        // Non-fatal: user exists without sshd config
+    }
+    if (enabled_ && key_writer_ && key_loader_) {
+        (void)key_writer_(user.id, mapped.canonical);
+    }
+
     out.success = true;
     out.message = "SFTP user created: " + mapped.canonical;
 
-    // 15. Apply pending grants
+    // 16. Apply pending grants
     if (enabled_) {
         auto grants = apply_pending_grants(user.id);
         if (!grants.success) {
@@ -2986,7 +3042,12 @@ core::OperationResult LocalSftpProvider::remove_user(const AccessUser& user) {
     // 8. Remove user from global SFTP group (best-effort)
     (void)runner_->usermod_remove_group(mapping->username, global_sftp_group_);
 
-    // 9. Delete the OS account
+    // 9. Remove authorized_keys file
+    if (key_remover_) {
+        (void)key_remover_(mapping->username);
+    }
+
+    // 10. Delete the OS account
     auto ur = runner_->userdel(mapping->username);
     if (!ur.success) {
         mapping->state = "error";

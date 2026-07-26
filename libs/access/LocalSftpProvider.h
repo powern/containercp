@@ -4,6 +4,7 @@
 #include "access/AccessProvider.h"
 #include "access/FilesystemPermissionInspector.h"
 #include "access/MountInspector.h"
+#include "access/AccessKey.h"
 #include "access/SftpRuntimeState.h"
 #include "access/SystemAccountAllocator.h"
 #include "access/SystemAccountCommandRunner.h"
@@ -44,6 +45,22 @@ public:
     // Used to determine if a group can be safely deleted.
     using GrantsForSiteFn = std::function<size_t(uint64_t site_id, const std::string& permission)>;
     void set_grants_lookup(GrantsForSiteFn fn);
+
+    // ── Phase 4: SSH config and authorized_keys ──
+
+    using EnsureSshdConfigFn = std::function<core::OperationResult()>;
+    using KeyWriterFn = std::function<core::OperationResult(uint64_t access_user_id, const std::string& linux_username)>;
+    using KeyRemoverFn = std::function<core::OperationResult(const std::string& linux_username)>;
+    using KeyLoaderFn = std::function<std::vector<AccessKey>(uint64_t access_user_id)>;
+
+    void set_sshd_config_ensurer(EnsureSshdConfigFn fn);
+    void set_key_writer(KeyWriterFn fn);
+    void set_key_remover(KeyRemoverFn fn);
+    void set_key_loader(KeyLoaderFn fn);
+
+    // Public Phase 4 methods: called by external key management (CLI/API)
+    core::OperationResult ensure_sshd_config();
+    core::OperationResult write_authorized_keys(uint64_t access_user_id);
 
     // --- Phase 3a: Site Grant Groups ---
 
@@ -345,6 +362,13 @@ private:
     std::string managed_home_root_ = "/srv/containercp/users";
     std::string managed_shell_ = "/usr/sbin/nologin";
     std::string global_sftp_group_ = "containercp-sftp";
+
+    // ── Phase 4 members ──
+    EnsureSshdConfigFn sshd_config_ensurer_;
+    KeyWriterFn key_writer_;
+    KeyRemoverFn key_remover_;
+    KeyLoaderFn key_loader_;
+    bool sshd_config_ensured_ = false;
 
     // ── Runtime health state ──
     SftpRuntimeState runtime_state_ = SftpRuntimeState::Disabled;

@@ -24,6 +24,8 @@ set(CONTAINERCP_SOURCES
     libs/access/AccessUserManager.cpp
     libs/access/LocalSftpProvider.cpp
     libs/access/SshdDiscovery.cpp
+    libs/access/SshdConfigWriter.cpp
+    libs/access/SshdAuthorizedKeysWriter.cpp
     libs/api/ApiServer.cpp
     libs/api/AuthMiddleware.cpp
     libs/api/WebServer.cpp

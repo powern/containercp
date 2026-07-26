@@ -486,7 +486,7 @@ scoring, and security recommendations. Does NOT manage DNS zones.
 | RC1 pass | 128/137 (9 stability deferred) |
 | RC2 validation | All items verified on real Debian 13 |
 | Bugs discovered during RC1 | 13 (all fixed) |
-| Current Epic | ARCH-009 Phase 4 design (Task 49) — OpenSSH integration, see `planning/ARCH-009-PHASE4-DESIGN.md` |
+| Current Epic | ARCH-009 Phase 4 MVP complete (Task 51) — sshd config writer, authorized_keys writer, provider wiring, privileged end-to-end SFTP test. Deferred: multi-distro support, advanced recovery. Next: return to main ContainerCP roadmap. |
 
 ---
 

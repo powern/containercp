@@ -64,14 +64,13 @@
 | Step | Action | File |
 |------|--------|------|
 | 4.1 | Add `SshdDiscovery` — version parsing, executable identity, config discovery, service discovery, directive support, RAII temp files | `libs/access/SshdDiscovery.{h,cpp}` (Task 50) |
-| 4.2 | Add `SshdConfigWriter` (atomic temp-file write, `sshd -t`, reload, rollback) | `libs/access/SshdConfigWriter.{h,cpp}` |
-| 4.3 | Add `SshdAuthorizedKeysWriter` (per-user key file outside chroot, atomic, `restrict` prefix) | `libs/access/SshdAuthorizedKeysWriter.{h,cpp}` |
-| 4.4 | Wire `LocalSftpProvider`: key add/remove → authorized_keys rebuild; user create/remove → sshd config ensure | `LocalSftpProvider.{h,cpp}` |
-| 4.5 | Wire `ServiceRegistry`: inject Phase 4 discovery + writers | `ServiceRegistry.cpp` |
-| 4.6 | Tests: fake-state unit for config writer, key writer, discovery | `tests/test_sshd_config_writer.cpp`, `tests/test_sshd_authorized_keys.cpp`, `tests/test_sshd_discovery.cpp` |
-| 4.7 | Privileged integration: add privileged sshd validation scenarios to `arch009_linux_integration` | `tests/arch009_linux_integration.cpp` |
+| 4.2 | Add `SshdConfigWriter` — render Match block, validate with `sshd -t`, atomic write, reload, rollback | `libs/access/SshdConfigWriter.{h,cpp}` (Task 51) |
+| 4.3 | Add `SshdAuthorizedKeysWriter` — per-user key file outside chroot, atomic, `restrict` prefix, sort, dedup, root-owned 0600 | `libs/access/SshdAuthorizedKeysWriter.{h,cpp}` (Task 51) |
+| 4.4 | Wire `LocalSftpProvider`: key add/remove → authorized_keys rebuild; user create/remove → sshd config ensure | `LocalSftpProvider.{h,cpp}` (Task 51) |
+| 4.5 | Wire `ServiceRegistry`: inject Phase 4 writers | `ServiceRegistry.cpp` (Task 51) |
+| 4.6 | Tests: fake-state unit for config writer, key writer; privileged end-to-end | `tests/test_sshd_writers.cpp`, `tests/arch009_linux_integration.cpp` (Task 51) |
 
-**Acceptance:** sshd config generated atomically. `sshd -t` validation before reload. authorized_keys outside chroot with correct permissions and content. `restrict` prefix on every key. Config rollback on reload failure. Key revocation prevents auth. Provider enters Degraded when Phase 4 deps missing.
+**Acceptance:** sshd config generated atomically. `sshd -t` validation before reload. Key rollback on reload failure. authorized_keys outside chroot with `restrict` prefix, root-owned 0600. Key revocation prevents auth. Privileged end-to-end SFTP login tested on disposable Debian. **Phase 4 MVP complete** (Task 51). Advanced compatibility and multi-distro support deferred.
 
 ## Phase 5 — Reconciliation
 

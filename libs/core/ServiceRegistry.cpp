@@ -1,4 +1,6 @@
 #include "ServiceRegistry.h"
+#include "access/SshdConfigWriter.h"
+#include "access/SshdAuthorizedKeysWriter.h"
 #include "storage/ManagedMountState.h"
 #include "auth/AuthService.h"
 #include "template/web_templates.h"
@@ -733,6 +735,47 @@ void ServiceRegistry::start() {
             return grants;
         }
     );
+
+    // ── Phase 4: SSH config and authorized_keys wiring ──
+    {
+        auto sshd_cfg_writer = std::make_shared<access::SshdConfigWriter>(
+            credential_command_executor_);
+        // Key loader: load keys for an access user from persisted storage
+        access_provider_.set_key_loader(
+            [this](uint64_t access_user_id) -> std::vector<access::AccessKey> {
+                std::vector<access::AccessKey> result;
+                auto all = access_keys_.list();
+                for (const auto& k : all) {
+                    if (k.access_user_id == access_user_id) result.push_back(k);
+                }
+                return result;
+            });
+        // Key writer: rebuild authorized_keys for a user
+        auto key_writer = std::make_shared<access::SshdAuthorizedKeysWriter>();
+        access_provider_.set_key_writer(
+            [this, key_writer](uint64_t access_user_id,
+                                const std::string& linux_username) -> core::OperationResult {
+                return key_writer->write(access_user_id, linux_username,
+                    [this](uint64_t uid) -> std::vector<access::AccessKey> {
+                        std::vector<access::AccessKey> result;
+                        auto all = access_keys_.list();
+                        for (const auto& k : all) {
+                            if (k.access_user_id == uid) result.push_back(k);
+                        }
+                        return result;
+                    });
+            });
+        // Key remover: delete authorized_keys file
+        access_provider_.set_key_remover(
+            [key_writer](const std::string& linux_username) -> core::OperationResult {
+                return key_writer->remove(linux_username);
+            });
+        // SSH config ensurer
+        access_provider_.set_sshd_config_ensurer(
+            [sshd_cfg_writer]() -> core::OperationResult {
+                return sshd_cfg_writer->ensure_config();
+            });
+    }
 
     // Grant lookup — count active lifecycle records for site+permission retention
     access_provider_.set_grants_lookup(
