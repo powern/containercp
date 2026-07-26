@@ -125,21 +125,37 @@ core::OperationResult LocalSftpProvider::ensure_sshd_config() {
 
 core::OperationResult LocalSftpProvider::write_authorized_keys(uint64_t access_user_id) {
     std::string username;
-    if (key_loader_) {
+    if (key_loader_ && load_mappings_) {
         auto keys = key_loader_(access_user_id);
-        if (keys.empty()) return {true, "no keys to write", ""};
-        // Find the linux username from mapping
-        if (load_mappings_) {
-            auto mappings = load_mappings_();
-            for (const auto& m : mappings) {
-                if (m.entity_type == "access_user" && m.entity_id == access_user_id) {
-                    username = m.username;
-                    break;
+        auto mappings = load_mappings_();
+        for (const auto& m : mappings) {
+            if (m.entity_type == "access_user" && m.entity_id == access_user_id) {
+                username = m.username;
+                break;
+            }
+        }
+        if (username.empty()) return {false, "user not provisioned", ""};
+        if (keys.empty() || std::none_of(keys.begin(), keys.end(),
+                [](const AccessKey& k) { return k.enabled; })) {
+            // No enabled keys — remove any existing key file
+            if (key_remover_) return key_remover_(username);
+            return {true, "no keys — nothing to remove and no remover configured", ""};
+        }
+    } else {
+        if (!username.empty() || !load_mappings_) {
+            // Can't load keys — try to use loader to find username
+            if (load_mappings_) {
+                auto mappings = load_mappings_();
+                for (const auto& m : mappings) {
+                    if (m.entity_type == "access_user" && m.entity_id == access_user_id) {
+                        username = m.username; break;
+                    }
                 }
             }
         }
+        if (username.empty()) return {false, "user not found and key loader not configured", ""};
+        if (!key_writer_) return {false, "key writer not configured", ""};
     }
-    if (username.empty()) return {false, "user not provisioned", ""};
     if (key_writer_) return key_writer_(access_user_id, username);
     return {false, "key writer not configured", ""};
 }
@@ -2924,14 +2940,30 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
         return out;
     }
 
-    // 15. Phase 4: ensure sshd config and write authorized_keys (best-effort, non-fatal)
+    // 15. Phase 4: ensure sshd config is installed and valid
     if (enabled_ && sshd_config_ensurer_ && !sshd_config_ensured_) {
         auto sc = sshd_config_ensurer_();
-        if (sc.success) sshd_config_ensured_ = true;
-        // Non-fatal: user exists without sshd config
+        if (sc.success) {
+            sshd_config_ensured_ = true;
+        } else {
+            mapping.state = "provisioning";
+            if (save_mapping_) save_mapping_(mapping);
+            out.success = false;
+            out.message = "sshd config failed: " + sc.message;
+            return out;
+        }
     }
+
+    // 16. Write authorized_keys from persisted keys
     if (enabled_ && key_writer_ && key_loader_) {
-        (void)key_writer_(user.id, mapped.canonical);
+        auto kw = key_writer_(user.id, mapped.canonical);
+        if (!kw.success) {
+            mapping.state = "provisioning";
+            if (save_mapping_) save_mapping_(mapping);
+            out.success = false;
+            out.message = "authorized_keys write failed: " + kw.message;
+            return out;
+        }
     }
 
     out.success = true;
@@ -3042,9 +3074,15 @@ core::OperationResult LocalSftpProvider::remove_user(const AccessUser& user) {
     // 8. Remove user from global SFTP group (best-effort)
     (void)runner_->usermod_remove_group(mapping->username, global_sftp_group_);
 
-    // 9. Remove authorized_keys file
+    // 9. Remove authorized_keys file. Must succeed before OS account deletion.
     if (key_remover_) {
-        (void)key_remover_(mapping->username);
+        auto kr = key_remover_(mapping->username);
+        if (!kr.success) {
+            mapping->state = "error";
+            if (save_mapping_) save_mapping_(*mapping);
+            out.success = false; out.message = "authorized_keys removal failed: " + kr.message;
+            return out;
+        }
     }
 
     // 10. Delete the OS account

@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-26 | `pending` | ARCH-009 Task 52 — Remove Phase 4 Best-Effort Success Paths and Close MVP
+
+**Summary:** Final corrective task for ARCH-009 Phase 4 MVP. Fixed `create_user()` to fail when sshd config ensure or authorized_keys write fails — no longer silently returns success with Phase 4 errors. On failure, state is persisted as "provisioning" for retry. Fixed `remove_user()` to check authorized_keys removal result and fail closed with "error" state when removal fails. Fixed `write_authorized_keys()` to call key remover and return correct result when the enabled key set is empty (previously returned early success). All Phase 4 operations now check results with no ignored `(void)` or best-effort paths: config writer failures, key writer failures, and key remover failures all propagate bounded errors with preserved retryable state. Cleaned up residual temp paths from privileged integration test.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `tests/arch009_linux_integration.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** create_user now fails closed when sshd config or authorized_keys cannot be written. remove_user now fails closed when authorized_keys cannot be removed. Empty key sets properly remove stale key files.
+
+**Validation:** Full CTest passed with privileged integration PASS. Cleanup verification: all test identities absent, no test paths, no marker, no sshd config file, no authorized_keys files. `git diff --check` passed.
+
+**Known risks:** None new. ARCH-009 MVP is now complete.
+
+---
+
 ## 2026-07-26 | `pending` | ARCH-009 Task 51 — Implement Minimal Production OpenSSH Integration
 
 **Summary:** Completed ARCH-009 Phase 4 MVP with focused Debian-only implementation. `SshdConfigWriter` renders the managed Match block for `containercp-sftp` group at `/etc/ssh/sshd_config.d/90-containercp-sftp.conf`. Transactional install: render → `sshd -t` → atomic replace → effective `sshd -t` → `systemctl reload ssh` → health check → rollback on failure. `SshdAuthorizedKeysWriter` manages per-user files at `/srv/containercp/ssh/authorized_keys/<username>` with `restrict` prefix, sorted, deduplicated, atomic replace, root-owned mode 0600, no symlink. File deleted when final key is removed. Wired into `LocalSftpProvider`: user creation ensures sshd config is installed; key add/remove/update rebuilds authorized_keys; user removal cleans up authorized_keys. Wired into `ServiceRegistry` with production callbacks for key loader (from `AccessKeyManager`), key writer, key remover, and config ensurer. Added 11 focused unit tests for config rendering (all directives verified), key deduplication, restrict prefix, deterministic sorting, disabled key filtering, symlink rejection, mode validation. Extended privileged integration test with end-to-end SFTP login scenario: SSH key generation, user/group creation, authorized_keys write, sshd config install with validation, SFTP connection, shell/port-forwarding denial verification, key revocation rejection, full cleanup. All phased work for ARCH-009 Phase 4 is now complete.

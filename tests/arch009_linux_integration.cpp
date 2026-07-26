@@ -438,6 +438,9 @@ int main() {
             // don't fail the whole integration test
             std::cout << "SKIP: end-to-end SFTP login not fully verified on this host\n";
         }
+        // Final cleanup: remove any leftover paths from e2e
+        std::error_code ec2;
+        std::filesystem::remove_all(kCleanupRoot, ec2);
     }
 
     // ── Phase 4: SSHD Discovery checks ──
