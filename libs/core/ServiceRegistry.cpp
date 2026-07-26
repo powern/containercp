@@ -649,14 +649,24 @@ void ServiceRegistry::start() {
         info.valid = true; info.domain = site->domain; info.root = config_.data_root() + "/sites/" + site->domain; return info;
     });
 
-    // ARCH-009 Task 29/30: managed mount storage callbacks + command runner
+    // ARCH-009 Task 29/30: managed mount storage callbacks
     access_provider_.set_managed_mount_storage(
         [this]() -> std::vector<storage::ManagedMountState> { return storage_.sqlite().list_all_managed_mounts(); },
         [this](const storage::ManagedMountState& m) -> bool { return storage_.sqlite().save_managed_mount(m); },
         [this](uint64_t uid, uint64_t sid) -> bool { return storage_.sqlite().delete_managed_mount(uid, sid); }
     );
 
-    // Configure command runner for mount operations
+    // ARCH-009 Phase 3d: identity inspector for OS account verification
+    access_provider_.set_identity_inspector(
+        std::make_shared<access::RealSystemIdentityInspector>());
+
+    // ARCH-009 Task 38/39: allocator for managed UID/GID ranges
+    access_provider_.set_allocator(
+        std::make_unique<access::SystemAccountAllocator>(
+            access::SystemAccountAllocator::Range{10000, 19999},
+            access::SystemAccountAllocator::Range{20000, 29999}));
+
+    // Configure command runner for mount and account operations
     access_provider_.set_command_runner(
         std::make_unique<access::SystemAccountCommandRunner>(
             [this](const access::SystemAccountCommandRunner::Command& cmd) -> core::OperationResult {
@@ -664,7 +674,7 @@ void ServiceRegistry::start() {
                 return {result.exit_code == 0, result.err, result.out};
             }));
 
-    // ARCH-009 Task 38/39: mapping persistence for user lifecycle
+    // Mapping persistence — load/save/delete SystemAccountMapping via SQLite
     access_provider_.set_mapping_persistence(
         [this]() -> std::vector<access::SystemAccountMapping> {
             return storage_.sqlite().load_system_accounts();
@@ -690,7 +700,7 @@ void ServiceRegistry::start() {
         }
     );
 
-    // Grant lifecycle storage for apply/revoke persistence
+    // Grant lifecycle storage — persist apply/revoke state machine records
     access_provider_.set_grant_lifecycle_storage(
         [this]() -> std::vector<storage::GrantLifecycleState> {
             return storage_.sqlite().list_all_grant_lifecycle();
@@ -703,11 +713,10 @@ void ServiceRegistry::start() {
         }
     );
 
-    // Grant loader for mount/apply operations
+    // Grant loader — resolve grants for a given user from lifecycle records
     access_provider_.set_grants_loader(
         [this](uint64_t access_user_id) -> std::vector<containercp::access::LocalSftpProvider::GrantInfo> {
             std::vector<containercp::access::LocalSftpProvider::GrantInfo> grants;
-            // Load from grant_lifecycle table for this user
             auto all = storage_.sqlite().list_all_grant_lifecycle();
             for (const auto& l : all) {
                 if (l.access_user_id == access_user_id) {
@@ -723,22 +732,53 @@ void ServiceRegistry::start() {
         }
     );
 
-    // ARCH-009 Task 30: reconcile persisted managed mounts at startup
-    auto mount_reconcile = access_provider_.reconcile_startup_mounts();
-    if (!mount_reconcile.success) {
-        logger_.warning("SFTP", "Startup mount reconciliation: " + mount_reconcile.message);
-    } else if (mount_reconcile.message.find("0 fixed") == std::string::npos) {
-        logger_.info("SFTP", "Startup mount reconciliation: " + mount_reconcile.message);
+    // Grant lookup — count active lifecycle records for site+permission retention
+    access_provider_.set_grants_lookup(
+        [this](uint64_t site_id, const std::string& permission) -> size_t {
+            size_t count = 0;
+            auto all = storage_.sqlite().list_all_grant_lifecycle();
+            for (const auto& l : all) {
+                if (l.site_id == site_id && l.permission == permission
+                    && l.state != "error" && l.state != "pending") {
+                    count++;
+                }
+            }
+            return count;
+        }
+    );
+
+    // ── Enable provider only after ALL dependencies verified ──
+    {
+        auto dep_check = access_provider_.verify_dependencies();
+        if (!dep_check.success) {
+            logger_.error("SFTP", dep_check.message);
+            logger_.warning("SFTP", "SFTP provider NOT enabled — continuing without Phase 3 functionality");
+        } else {
+            access_provider_.set_enabled(true);
+            logger_.info("SFTP", "SFTP provider enabled with all dependencies");
+        }
     }
 
-    // ARCH-009 Task 40: reconcile user lifecycle states at startup
-    // Must run after all provider dependencies, grant lifecycle storage,
-    // and managed mount storage are configured.
-    auto user_reconcile = access_provider_.reconcile_user_lifecycle();
-    if (!user_reconcile.success) {
-        logger_.warning("SFTP", "Startup user lifecycle reconciliation: " + user_reconcile.message);
-    } else if (user_reconcile.message.find("0 fixed") == std::string::npos) {
-        logger_.info("SFTP", "Startup user lifecycle reconciliation: " + user_reconcile.message);
+    // ── Phase 3c/d reconciliation (only if provider enabled) ──
+
+    // Mount lifecycle reconciliation at startup
+    {
+        auto mount_reconcile = access_provider_.reconcile_startup_mounts();
+        if (!mount_reconcile.success) {
+            logger_.warning("SFTP", "Startup mount reconciliation: " + mount_reconcile.message);
+        } else if (mount_reconcile.message.find("0 fixed") == std::string::npos) {
+            logger_.info("SFTP", "Startup mount reconciliation: " + mount_reconcile.message);
+        }
+    }
+
+    // User lifecycle reconciliation at startup
+    {
+        auto user_reconcile = access_provider_.reconcile_user_lifecycle();
+        if (!user_reconcile.success) {
+            logger_.warning("SFTP", "Startup user lifecycle reconciliation: " + user_reconcile.message);
+        } else if (user_reconcile.message.find("0 fixed") == std::string::npos) {
+            logger_.info("SFTP", "Startup user lifecycle reconciliation: " + user_reconcile.message);
+        }
     }
 }
 

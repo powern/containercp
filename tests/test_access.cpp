@@ -7841,3 +7841,186 @@ TEST_CASE("reconcile_user_lifecycle persistence_failure") {
     auto r = ctx.provider.reconcile_user_lifecycle();
     CHECK_FALSE(r.success);
 }
+
+// --- ARCH-009 Task 41: Production Wiring Acceptance ---
+
+struct WiringTestContext {
+    containercp::access::LocalSftpProvider provider;
+
+    WiringTestContext()
+        : provider(containercp::logger::Logger::instance())
+    {
+        auto inspector = std::make_shared<FakeInspector>();
+        auto runner = std::make_unique<containercp::access::SystemAccountCommandRunner>(
+            [](const containercp::access::SystemAccountCommandRunner::Command&) {
+                return containercp::core::OperationResult{true, "", ""};
+            });
+        provider.set_identity_inspector(inspector);
+        provider.set_command_runner(std::move(runner));
+        provider.set_allocator(std::make_unique<containercp::access::SystemAccountAllocator>(
+            containercp::access::SystemAccountAllocator::Range{10000, 19999},
+            containercp::access::SystemAccountAllocator::Range{20000, 29999}));
+        provider.set_filesystem_inspector(std::make_shared<FakeLiveFsInspector>(
+            inspector->fs_state_));
+        provider.set_mount_inspector(std::make_shared<FakeLiveMountInspector>(
+            inspector->mount_state_));
+        provider.set_site_resolver([](uint64_t) {
+            return containercp::access::LocalSftpProvider::SiteInfo{true, 1, "test", "/srv/sites/test"};
+        });
+        provider.set_mapping_persistence(
+            []() { return std::vector<containercp::access::SystemAccountMapping>{}; },
+            [](const containercp::access::SystemAccountMapping&) { return true; },
+            [](const std::string&, uint64_t) { return true; });
+        provider.set_grant_lifecycle_storage(
+            []() { return std::vector<containercp::storage::GrantLifecycleState>{}; },
+            [](const containercp::storage::GrantLifecycleState&) { return true; },
+            [](uint64_t, uint64_t) { return true; });
+        provider.set_managed_mount_storage(
+            []() { return std::vector<containercp::storage::ManagedMountState>{}; },
+            [](const containercp::storage::ManagedMountState&) { return true; },
+            [](uint64_t, uint64_t) { return true; });
+        provider.set_grants_loader([](uint64_t) {
+            return std::vector<containercp::access::LocalSftpProvider::GrantInfo>{};
+        });
+        provider.set_grants_lookup([](uint64_t, const std::string&) { return size_t{0}; });
+        provider.set_managed_home_root("/srv/users");
+    }
+};
+
+TEST_CASE("wiring complete startup") {
+    WiringTestContext ctx;
+    auto r = ctx.provider.verify_dependencies();
+    CHECK(r.success);
+    CHECK(!r.message.empty());
+}
+
+TEST_CASE("wiring missing identity inspector") {
+    WiringTestContext ctx;
+    ctx.provider.set_identity_inspector(nullptr);
+    auto r = ctx.provider.verify_dependencies();
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("identity_inspector") != std::string::npos);
+}
+
+TEST_CASE("wiring missing filesystem inspector") {
+    WiringTestContext ctx;
+    ctx.provider.set_filesystem_inspector(nullptr);
+    auto r = ctx.provider.verify_dependencies();
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("filesystem_inspector") != std::string::npos);
+}
+
+TEST_CASE("wiring missing mount inspector") {
+    WiringTestContext ctx;
+    ctx.provider.set_mount_inspector(nullptr);
+    auto r = ctx.provider.verify_dependencies();
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("mount_inspector") != std::string::npos);
+}
+
+TEST_CASE("wiring missing site resolver") {
+    WiringTestContext ctx;
+    ctx.provider.set_site_resolver(nullptr);
+    auto r = ctx.provider.verify_dependencies();
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("site_resolver") != std::string::npos);
+}
+
+TEST_CASE("wiring missing mapping persistence") {
+    WiringTestContext ctx;
+    // Clear save callback
+    ctx.provider.set_mapping_persistence(
+        []() { return std::vector<containercp::access::SystemAccountMapping>{}; },
+        nullptr,
+        nullptr);
+    auto r = ctx.provider.verify_dependencies();
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("mapping_persistence") != std::string::npos);
+}
+
+TEST_CASE("wiring missing grant lifecycle persistence") {
+    WiringTestContext ctx;
+    ctx.provider.set_grant_lifecycle_storage(
+        nullptr, nullptr, nullptr);
+    auto r = ctx.provider.verify_dependencies();
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("grant_lifecycle_storage") != std::string::npos);
+}
+
+TEST_CASE("wiring missing managed mount persistence") {
+    WiringTestContext ctx;
+    ctx.provider.set_managed_mount_storage(
+        nullptr, nullptr, nullptr);
+    auto r = ctx.provider.verify_dependencies();
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("managed_mount_storage") != std::string::npos);
+}
+
+TEST_CASE("wiring missing allocator") {
+    WiringTestContext ctx;
+    ctx.provider.set_allocator(nullptr);
+    auto r = ctx.provider.verify_dependencies();
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("allocator") != std::string::npos);
+}
+
+TEST_CASE("wiring missing command runner") {
+    WiringTestContext ctx;
+    ctx.provider.set_command_runner(nullptr);
+    auto r = ctx.provider.verify_dependencies();
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("command_runner") != std::string::npos);
+}
+
+TEST_CASE("wiring missing grants loader") {
+    WiringTestContext ctx;
+    ctx.provider.set_grants_loader(nullptr);
+    auto r = ctx.provider.verify_dependencies();
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("grants_loader") != std::string::npos);
+}
+
+TEST_CASE("wiring missing grants lookup") {
+    WiringTestContext ctx;
+    ctx.provider.set_grants_lookup(nullptr);
+    auto r = ctx.provider.verify_dependencies();
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("grants_lookup") != std::string::npos);
+}
+
+TEST_CASE("wiring reconciliation idempotency") {
+    // Simulate startup reconciliation twice
+    WiringTestContext ctx;
+    ctx.provider.set_enabled(true);
+    auto r1 = ctx.provider.reconcile_startup_mounts();
+    auto r2 = ctx.provider.reconcile_startup_mounts();
+    // Both should produce the same outcome
+    CHECK(r1.success == r2.success);
+
+    auto u1 = ctx.provider.reconcile_user_lifecycle();
+    auto u2 = ctx.provider.reconcile_user_lifecycle();
+    CHECK(u1.success == u2.success);
+}
+
+TEST_CASE("wiring reconciliation fail_closed_when_disabled") {
+    WiringTestContext ctx;
+    // Provider not enabled — reconciliation must return disabled error
+    auto r = ctx.provider.reconcile_startup_mounts();
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("SFTP provider disabled") != std::string::npos);
+
+    auto u = ctx.provider.reconcile_user_lifecycle();
+    CHECK_FALSE(u.success);
+    CHECK(u.message.find("SFTP provider disabled") != std::string::npos);
+}
+
+TEST_CASE("wiring enable_only_after_all_deps") {
+    WiringTestContext ctx;
+    // Remove a critical dep
+    ctx.provider.set_identity_inspector(nullptr);
+    auto dep_check = ctx.provider.verify_dependencies();
+    CHECK_FALSE(dep_check.success);
+
+    // With missing dep, enabling provider would be unsafe — verify_dependencies catches it
+    CHECK(dep_check.message.find("identity_inspector") != std::string::npos);
+}

@@ -122,6 +122,40 @@ bool LocalSftpProvider::disabled_result(core::OperationResult& out, const char* 
     return false;
 }
 
+core::OperationResult LocalSftpProvider::verify_dependencies() const {
+    core::OperationResult out;
+    std::string missing;
+
+    auto note = [&](const std::string& name) {
+        if (!missing.empty()) missing += ", ";
+        missing += name;
+    };
+
+    if (!inspector_) note("identity_inspector");
+    if (!runner_)    note("command_runner");
+    if (!allocator_) note("allocator");
+    if (!load_mappings_ || !save_mapping_ || !delete_mapping_)
+        note("mapping_persistence");
+    if (!site_resolver_) note("site_resolver");
+    if (!fs_inspector_)  note("filesystem_inspector");
+    if (!mount_inspector_) note("mount_inspector");
+    if (!load_all_managed_mounts_ || !save_managed_mount_ || !delete_managed_mount_)
+        note("managed_mount_storage");
+    if (!load_all_grant_lifecycle_ || !save_grant_lifecycle_ || !delete_grant_lifecycle_)
+        note("grant_lifecycle_storage");
+    if (!grants_loader_) note("grants_loader");
+    if (!grants_lookup_) note("grants_lookup");
+
+    if (!missing.empty()) {
+        out.success = false;
+        out.message = "SFTP provider missing dependencies: " + missing;
+    } else {
+        out.success = true;
+        out.message = "all dependencies present";
+    }
+    return out;
+}
+
 std::optional<SystemAccountMapping>
 LocalSftpProvider::find_mapping(const std::string& entity_type, uint64_t entity_id) const {
     if (!load_mappings_) return std::nullopt;

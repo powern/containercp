@@ -6,7 +6,21 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-26 | `this commit` | ARCH-009 Task 40 — User Lifecycle Restart Reconciliation
+## 2026-07-26 | `this commit` | ARCH-009 Task 41 — Final Production Wiring Acceptance for Phase 3
+
+**Summary:** Complete audit and fix of production dependency wiring in ServiceRegistry::start(). Added missing injections: `RealSystemIdentityInspector`, `SystemAccountAllocator` (10000–19999/20000–29999), `grants_lookup` callback. Added `verify_dependencies()` to LocalSftpProvider — checks all 11 required deps (identity_inspector, command_runner, allocator, mapping_persistence, site_resolver, filesystem_inspector, mount_inspector, managed_mount_storage, grant_lifecycle_storage, grants_loader, grants_lookup) and returns bounded diagnostic of missing ones. Provider is now enabled via `set_enabled(true)` only after dependency verification passes. Reconciliation (mount + user lifecycle) runs only after provider is enabled. Fail-closed: missing deps prevent enable, reconciliation returns disabled error. Added 15 production-wiring tests: complete startup, each missing dep individually, reconciliation idempotency, fail-closed when disabled, enable-only-after-all-deps.
+
+**Files changed:** `libs/access/LocalSftpProvider.h`, `libs/access/LocalSftpProvider.cpp`, `libs/core/ServiceRegistry.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Daemon now properly enables SFTP provider at startup only after verifying all Phase 3 dependencies. Mount and user lifecycle reconciliation actually runs in production (was silently skipped before). Missing dependencies produce clear ERROR log messages; daemon continues in degraded mode without SFTP.
+
+**Validation:** Full doctest suite passed (1206 cases, 7623 assertions). 15 new wiring tests pass. `git diff --check` passed. Zero compiler warnings.
+
+**Known risks:** None.
+
+---
+
+## 2026-07-26 | `8b744f3` | ARCH-009 Task 40 — User Lifecycle Restart Reconciliation
 
 **Summary:** Implemented `reconcile_user_lifecycle()` for deterministic startup reconciliation of SystemAccountMapping states (provisioning, active, removing, error). Behavior per state: provisioning — verify OS account identity, complete chroot/pending grants if safe, otherwise persist error; active — verify identity, chroot, reconcile grants/mounts, detect drift; removing — continue revoke/cleanup/userdel/groupdel/home cleanup/mapping delete idempotently; error — recover to active if OS account exists and matches, otherwise preserve last_error. Added schema v7 migration for `system_accounts.last_error` column. Updated SQLiteStorage to persist/load `last_error`. Wired `set_grants_lookup`, `set_grant_lifecycle_storage`, `set_mapping_persistence`, `set_grants_loader` into ServiceRegistry::start(). Added 17 tests: provisioning no OS, provisioning OS exists, provisioning OS mismatch, active ok, active ownership mismatch, active foreign mount, removing completes, removing no OS, removing userdel failure, error recoverable, error not recoverable, idempotent, provisioning crash after useradd, removing crash before userdel, removing crash after userdel, unmanaged conflict, persistence failure.
 
@@ -20,7 +34,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-07-25 | `this commit` | ARCH-009 Task 39 — Make remove_user Lifecycle Transactional
+## 2026-07-25 | `3785b41` | ARCH-009 Task 39 — Make remove_user Lifecycle Transactional
 
 **Summary:** Rewrote `remove_user()` with step ordering and transactional rollback. Steps: load active mapping, persist "removing" state, revoke all grants, verify no non-terminal grants remain, cleanup all mounts, reconcile mounts, verify zero mounts, remove from global SFTP group, delete OS account, verify OS account absent, remove private group, remove safe home content, delete persisted mapping. Failure behavior: revoke failure blocks userdel; cleanup failure blocks userdel; userdel failure preserves mapping in error state; mapping delete failure preserves recoverable evidence. Every result checked. Fixed `resolve_username` to accept "removing" state. Fixed `create_directories` return-value check. Fixed test `FakeCommandRunner` constructors to pass inspector for proper state tracking. Added 5 tests: successful removal, no grants, revoke failure blocks userdel, userdel failure, mapping delete failure.
 

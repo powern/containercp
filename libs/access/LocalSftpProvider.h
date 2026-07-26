@@ -164,8 +164,14 @@ public:
     // Checks: inside managed chroot, exact domain dir, is dir, not symlink,
     // not a mountpoint, empty, managed by ContainerCP, created by us or persisted.
     core::OperationResult safe_rmdir(const std::string& target, bool created_by_us,
-                                      const std::string& username,
-                                      const std::string& domain);
+                                       const std::string& username,
+                                       const std::string& domain);
+
+    // Verify all required dependencies are present. Returns success only when
+    // every dependency required for Phase 3 operations is configured.
+    // The message lists all missing dependencies (bounded diagnostic).
+    // Does NOT check enabled_ — callers use this to gate set_enabled(true).
+    core::OperationResult verify_dependencies() const;
 
 private:
     bool disabled_result(core::OperationResult& out, const char* op) const;
