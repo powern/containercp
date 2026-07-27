@@ -15,12 +15,15 @@ StandardOutput=journal
 StandardError=journal
 LimitNOFILE=65536
 
-# Security hardening — system account databases must be writable for SFTP provisioning
+# Security hardening
+# ProtectSystem=yes would make /etc read-only, which prevents groupadd/useradd
+# from writing to /etc/passwd, /etc/group, /etc/shadow, /etc/gshadow.
+# The daemon is a system administration tool and must write these files
+# for SFTP user provisioning. NoNewPrivileges and PrivateTmp remain active.
 NoNewPrivileges=yes
 PrivateTmp=yes
-ProtectSystem=full
 ProtectHome=no
-ReadWritePaths=/etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/ssh/sshd_config.d /srv/containercp /etc/passwd- /etc/group- /etc/shadow- /etc/gshadow-
+ReadWritePaths=/etc/ssh/sshd_config.d /srv/containercp
 
 [Install]
 WantedBy=multi-user.target
