@@ -4903,6 +4903,8 @@ bool ApiServer::start() {
             au.id = id; au.username = un; au.enabled = true;
             auto pr = lsp->create_user(au);
             if (!pr.success) {
+                // Clean up any OS state the provider may have created
+                (void)lsp->remove_user(au);
                 s.access_users().remove(id);
                 r.status_code = 500;
                 r.body = api_error("sftp_user_provision_failed", pr.message);
@@ -4950,7 +4952,10 @@ bool ApiServer::start() {
             containercp::access::AccessUser au;
             au.id = uid; au.username = u->username; au.enabled = true;
             auto pr = lsp->create_user(au);
-            if (!pr.success) { r.status_code = 500; r.body = api_error("sftp_user_provision_failed", pr.message); return r; }
+            if (!pr.success) {
+                (void)lsp->remove_user(au);
+                r.status_code = 500; r.body = api_error("sftp_user_provision_failed", pr.message); return r;
+            }
             u->enabled = true;
         } else {
             // Disable: call provider, check result, then persist

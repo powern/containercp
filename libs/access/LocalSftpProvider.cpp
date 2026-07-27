@@ -2794,11 +2794,30 @@ core::OperationResult LocalSftpProvider::create_user(const AccessUser& user) {
     }
 
     // 2. Check existing mapping — allow idempotent retry (no deps needed)
+    // If the mapping is active but the username doesn't match the requested
+    // username, it is a stale mapping from a previous deleted user with the
+    // same entity_id. Clean it up and start fresh.
     auto existing = find_mapping("access_user", user.id);
     if (existing.has_value()) {
-        if (existing->state == "active") {
+        if (existing->state == "active" && existing->username == mapped.canonical) {
             out.success = true; out.message = "SFTP user already provisioned: " + existing->username;
             return out;
+        }
+        if (existing->state == "active" && existing->username != mapped.canonical) {
+            // Stale mapping — clean up OS account, remove mapping, reprovision
+            if (inspector_ && inspector_->user_exists(existing->username)) {
+                (void)runner_->userdel(existing->username);
+            }
+            if (inspector_ && inspector_->group_exists(existing->groupname)) {
+                (void)runner_->groupdel(existing->groupname);
+            }
+            std::string stale_home = managed_home_root_ + "/" + existing->username;
+            if (managed_path_safe(stale_home, managed_home_root_)) {
+                std::error_code ec;
+                std::filesystem::remove_all(stale_home, ec);
+            }
+            if (delete_mapping_) delete_mapping_("access_user", user.id);
+            existing.reset();
         }
     }
 
