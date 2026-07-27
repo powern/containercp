@@ -137,7 +137,16 @@ function renderDetail() {
     + '<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:12px;">Advanced</summary><div style="font-size:12px;color:var(--text3);margin-top:4px;">'
     + '<div><strong>Home:</strong> ' + esc(u.home || '-') + '</div>'
     + '</div></details>'
-    + '</div><div style="margin-top:12px;">' + actionsHtml + '</div></div></div>';
+    + '</div><div style="margin-top:12px;">' + actionsHtml + '</div>'
+    // Quick start checklist
+    + '<div style="margin-top:12px;padding:12px;background:var(--bg2);border-radius:8px;font-size:12px;">'
+    + '<div style="font-weight:600;margin-bottom:6px;">Setup checklist</div>'
+    + '<div>' + (u.lifecycleState === 'active' ? '✓' : '○') + ' User provisioned</div>'
+    + '<div>' + ((u.keyCount || 0) > 0 ? '✓' : '○') + ' <button class="btn-link" onclick="showAddSftpKey()" style="padding:0;font-size:12px;">Add SSH key</button></div>'
+    + '<div>' + ((u.grantCount || 0) > 0 ? '✓' : '○') + ' <button class="btn-link" onclick="showAddSftpGrant()" style="padding:0;font-size:12px;">Grant site access</button></div>'
+    + '<div>' + (u.linuxUsername ? '✓' : '○') + ' Test SFTP login: <code style="font-size:11px;">sftp ' + esc(u.linuxUsername || 'user') + '@host</code></div>'
+    + '</div>'
+    + '</div></div>';
   renderKeys();
   renderGrants();
 }
@@ -285,14 +294,59 @@ async function retryUser(id) {
 /* ===== ADD KEY ===== */
 function showAddKey() {
   showModal('Add SSH Key',
-    '<form id="add-key-form" onsubmit="event.preventDefault();doAddSftpKey()">'
-    + '<div style="margin-bottom:12px;"><label for="ak-key" style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Public Key</label><textarea id="ak-key" rows="4" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:12px;font-family:monospace;"></textarea></div>'
-    + '<div style="margin-bottom:12px;"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Comment</label><input id="ak-comment" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;"></div>'
-    + '<div style="margin-bottom:12px;"><label style="display:flex;align-items:center;gap:8px;font-size:13px;"><input id="ak-enabled" type="checkbox" checked> Enabled</label></div>'
+    '<div style="margin-bottom:12px;"><label style="font-weight:600;font-size:13px;">Option A: Generate new key pair</label></div>'
+    + '<form id="add-key-form-gen" onsubmit="event.preventDefault();doGenerateSftpKey()">'
+    + '<div style="margin-bottom:8px;"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Key type</label><select id="ak-type" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;">'
+    + '<option value="ed25519">ED25519 (recommended)</option><option value="rsa">RSA 4096</option></select></div>'
+    + '<div style="margin-bottom:8px;"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Comment</label><input id="ak-comment-gen" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;" placeholder="user@hostname"></div>'
+    + '<div style="margin-bottom:8px;"><label style="display:flex;align-items:center;gap:8px;font-size:13px;"><input id="ak-enabled-gen" type="checkbox" checked> Enabled</label></div>'
+    + '<button class="btn btn-primary" type="submit">Generate and Add</button>'
+    + '</form>'
+    + '<hr style="margin:16px 0;border:none;border-top:1px solid var(--border);">'
+    + '<div style="margin-bottom:12px;"><label style="font-weight:600;font-size:13px;">Option B: Import existing public key</label></div>'
+    + '<form id="add-key-form" onsubmit="event.preventDefault();doAddSftpKey()">'
+    + '<div style="margin-bottom:8px;"><label for="ak-key" style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Public Key</label><textarea id="ak-key" rows="3" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:12px;font-family:monospace;" placeholder="ssh-ed25519 AAAA..."></textarea></div>'
+    + '<div style="margin-bottom:8px;"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px;">Comment</label><input id="ak-comment" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:13px;" placeholder="my-laptop"></div>'
+    + '<div style="margin-bottom:8px;"><label style="display:flex;align-items:center;gap:8px;font-size:13px;"><input id="ak-enabled" type="checkbox" checked> Enabled</label></div>'
     + '<div id="ak-error" style="color:var(--red);font-size:12px;display:none;"></div>'
     + '<button class="btn btn-primary" type="submit" id="ak-submit">Add Key</button>'
     + '<button class="btn" type="button" style="margin-left:8px;" onclick="hideModal()">Cancel</button>'
     + '</form>');
+}
+
+async function doGenerateKey() {
+  if (!state.selected) return;
+  const keyType = $('ak-type').value;
+  const comment = $('ak-comment-gen').value.trim();
+  try {
+    // Generate key via SSH backend
+    const genRes = await apiPost('/api/access/sftp/users/' + state.selected + '/keys/gen', { type: keyType, comment: comment, enabled: $('ak-enabled-gen').checked });
+    hideModal();
+    if (genRes.data && genRes.data.privateKey) {
+      const fp = genRes.data.fingerprint || '';
+      showModal('SSH Key Generated',
+        '<div style="margin-bottom:12px;"><strong>Public Key Fingerprint:</strong> <code>' + esc(fp) + '</code></div>'
+        + '<div style="margin-bottom:12px;"><label style="font-size:12px;">Public Key</label><textarea readonly rows="3" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:11px;font-family:monospace;">' + esc(genRes.data.publicKey) + '</textarea></div>'
+        + '<button class="btn btn-sm" onclick="copyText(\'' + esc(genRes.data.publicKey) + '\')">Copy Public Key</button>'
+        + '<div style="margin-top:12px;margin-bottom:8px;"><label style="font-size:12px;"><strong>Private Key</strong> (shown only once)</label><textarea readonly rows="6" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:11px;font-family:monospace;">' + esc(genRes.data.privateKey) + '</textarea></div>'
+        + '<div style="background:var(--bg2);padding:8px 12px;border-radius:6px;font-size:12px;color:var(--red);margin-bottom:8px;">⚠ The private key is shown only once. Save it now.</div>'
+        + '<button class="btn btn-sm" onclick="downloadSftpKey(\'' + esc(genRes.data.filename || 'id_' + keyType) + '\',\'' + esc(genRes.data.privateKey) + '\')">Download Private Key</button>'
+        + '<button class="btn btn-sm" style="margin-left:8px;" onclick="hideModal()">Done</button>');
+    }
+    renderKeys();
+    renderDetail();
+  } catch(e) {
+    toast('Key generation failed: ' + (e.api_message || e.message), 'error');
+  }
+}
+
+function downloadKey(filename, content) {
+  const blob = new Blob([content], { type: 'application/octet-stream' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 async function doAddKey() {
@@ -463,6 +517,7 @@ Object.assign(window, {
   selectSftpUser: selectUser, toggleSftpUser: toggleUser, deleteSftpUser: confirmDeleteUser, doDeleteSftpUser: doDeleteUser, retrySftpUser: retryUser,
   reconcileSftp: reconcile,
   showAddSftpKey: showAddKey, doAddSftpKey: doAddKey,
+  doGenerateSftpKey: doGenerateKey, downloadSftpKey: downloadKey,
   toggleSftpKey: toggleKey, deleteSftpKey: deleteKey, rebuildSftpKeys: rebuildKeys,
   showAddSftpGrant: showAddGrant, doAddSftpGrant: doAddGrant,
   showChangeSftpGrantPermission: showChangeGrantPermission, doChangeSftpGrantPermission: doChangeGrantPermission,
