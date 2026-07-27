@@ -20,6 +20,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-07-27 | `11859f4` | bugfix: systemd sandbox blocks SFTP provisioning
+
+**Summary:** `ProtectSystem=full` in the packaged systemd service made `/etc/passwd`, `/etc/group`, `/etc/shadow`, and `/etc/gshadow` read-only, causing `groupadd`/`useradd`/`usermod`/`groupdel` to fail when provisioning SFTP users. Added `ReadWritePaths=/etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/ssh/sshd_config.d /srv/containercp` to the service unit. Updated `install.sh` to create the managed SSH authorized_keys directory and `sshd_config.d` directory, and to verify ReadWritePaths are active after installation. Updated `update.sh` to replace the systemd service file on upgrade, perform `daemon-reload`, and verify ReadWritePaths in the active service. Without this fix, the first SFTP user creation fails with `sftp_user_provision_failed: global_sftp_group creation failed`.
+
+**Files changed:** `packaging/containercp.service`, `scripts/install.sh`, `scripts/update.sh`, `CHANGELOG.md`
+
+**User-visible behavior:** SFTP user provisioning now works on systems with `ProtectSystem=full` (Debian 13 default). Administrators with existing installations must run `update.sh` to apply the fixed service file, or manually: `cp packaging/containercp.service /etc/systemd/system/containercp.service && systemctl daemon-reload && systemctl restart containercpd`.
+
+**Validation:** Service file updated with minimal `ReadWritePaths`. `install.sh` creates required directories. `update.sh` migrates existing installations. Verification step checks `systemctl show containercpd -p ReadWritePaths` for `/etc/passwd`.
+
+**Known risks:** None. The change only adds write access to paths required for system account lifecycle management — no sandbox relaxation beyond necessity.
+
+---
+
 ## 2026-07-26 | `pending` | ARCH-010 Task 1 — Implement Minimal SFTP Administration API
 
 **Summary:** Added the full SFTP administration REST API under `/api/access/sftp/`. 18 endpoints covering user lifecycle (list, get, create, update, delete, retry reconciliation), SSH key management (list, get, add, update, delete, rebuild authorized_keys), Site grant management (list, get, create, update, revoke, retry), and provider status (global status with reconciliation records, trigger reconciliation). All endpoints reuse existing managers: `AccessUserManager`, `AccessKeyManager`, `AccessGrantManager`, `LocalSftpProvider`, `SshKeyValidator`, and SQLite storage. API handlers call provider methods via `static_cast<LocalSftpProvider&>` for Phase 3/4 methods not exposed on the `AccessProvider` interface. Key validation uses the existing `SshKeyValidator` pipeline; duplicate fingerprints are rejected per user. Grant operations go through the full lifecycle (`apply_grant`/`revoke_grant`). Added comprehensive API documentation at `docs/api/sftp-administration-api.md` with endpoint list, request/response examples, error code catalog, and lifecycle state documentation.
