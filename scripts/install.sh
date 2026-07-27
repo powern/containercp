@@ -73,8 +73,11 @@ mkdir -p "$DATA_DIR/sites"
 mkdir -p "$DATA_DIR/proxy/sites"
 mkdir -p "$DATA_DIR/backups"
 mkdir -p "$DATA_DIR/users"
+mkdir -p "$DATA_DIR/ssh/authorized_keys"
 mkdir -p "$CONFIG_DIR/templates/web"
 mkdir -p "$LOG_DIR"
+# sshd managed include directory (created by OS package, safe to ensure)
+mkdir -p /etc/ssh/sshd_config.d
 
 # --- 7. Build ---
 echo "[SYSTEM] Building ContainerCP (Release)..."
@@ -101,6 +104,14 @@ systemctl restart containercpd
 sleep 2
 if systemctl is-active --quiet containercpd; then
     echo "[SYSTEM] containercpd is running"
+    # Verify ReadWritePaths are applied
+    if systemctl show containercpd -p ReadWritePaths 2>/dev/null | grep -q '/etc/passwd'; then
+        echo "[SYSTEM] systemd sandbox allows SFTP provisioning (ReadWritePaths OK)"
+    else
+        echo "[WARN] Expected ReadWritePaths not found in active service."
+        echo "       SFTP user provisioning may fail."
+        echo "       Check: systemctl show containercpd -p ReadWritePaths"
+    fi
 else
     echo "[WARN] containercpd may not have started. Check: systemctl status containercpd"
 fi

@@ -77,9 +77,13 @@ cp "$INSTALL_DIR/build-release/containercpd" "$BIN_DIR/containercpd"
 cp "$INSTALL_DIR/build-release/containercp" "$BIN_DIR/containercp"
 chmod 755 "$BIN_DIR/containercpd" "$BIN_DIR/containercp"
 
-# --- 8. Start service ---
-echo "[SYSTEM] Starting containercpd..."
+# --- 8. Update systemd service file ---
+echo "[SYSTEM] Updating systemd service file..."
+cp "$INSTALL_DIR/packaging/containercp.service" "/etc/systemd/system/containercp.service"
 systemctl daemon-reload
+
+# --- 9. Start service ---
+echo "[SYSTEM] Starting containercpd..."
 systemctl start "$SERVICE"
 
 # --- 9. Wait for daemon and verify health ---
@@ -99,6 +103,14 @@ done
 # --- 10. Show status ---
 if systemctl is-active --quiet "$SERVICE"; then
     echo "[SYSTEM] Update complete. containercpd is running."
+    # Verify ReadWritePaths are applied (critical for SFTP provisioning)
+    if systemctl show "$SERVICE" -p ReadWritePaths 2>/dev/null | grep -q '/etc/passwd'; then
+        echo "[SYSTEM] systemd sandbox allows SFTP provisioning (ReadWritePaths OK)"
+    else
+        echo "[WARN] Expected ReadWritePaths not found. SFTP user provisioning may fail."
+        echo "       Check: systemctl show $SERVICE -p ReadWritePaths"
+        echo "       Manual fix: systemctl daemon-reload && systemctl restart $SERVICE"
+    fi
     systemctl status "$SERVICE" --no-pager 2>&1 | head -20
 else
     echo "[WARN] containercpd may not have started. Check: journalctl -u containercpd -f"

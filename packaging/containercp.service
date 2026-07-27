@@ -15,11 +15,12 @@ StandardOutput=journal
 StandardError=journal
 LimitNOFILE=65536
 
-# Security hardening
+# Security hardening — system account databases must be writable for SFTP provisioning
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full
 ProtectHome=no
+ReadWritePaths=/etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/ssh/sshd_config.d /srv/containercp
 
 [Install]
 WantedBy=multi-user.target
