@@ -20,7 +20,7 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full
 ProtectHome=no
-ReadWritePaths=/etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/ssh/sshd_config.d /srv/containercp
+ReadWritePaths=/etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/ssh/sshd_config.d /srv/containercp /etc/passwd- /etc/group- /etc/shadow- /etc/gshadow-
 
 [Install]
 WantedBy=multi-user.target
