@@ -175,17 +175,35 @@ core::OperationResult SshdConfigWriter::remove_config() {
 }
 
 core::OperationResult SshdConfigWriter::reload_and_verify() {
-    // Reload ssh.service
-    auto rl = run_cmd(exec_, {"systemctl", "reload", "ssh.service"}, 30, 4096);
-    if (!rl.success) {
-        return {false, "systemctl reload ssh.service failed: " + rl.message, ""};
+    // Validate config before reload
+    auto vt = run_cmd(exec_, {sshd_bin_, "-t"}, 15, 4096);
+    if (!vt.success) {
+        return {false, "sshd -t rejected config: " + vt.message, ""};
     }
-    // Verify health
-    auto hl = run_cmd(exec_, {"systemctl", "is-active", "--quiet", "ssh.service"}, 10, 1024);
+    // Send SIGHUP to sshd via PID file (avoids systemctl D-Bus dependency)
+    std::string pid_path = "/run/sshd.pid";
+    std::error_code ec;
+    auto pid_content = read_file(pid_path);
+    auto nl = pid_content.find('\n');
+    if (nl != std::string::npos) pid_content = pid_content.substr(0, nl);
+    if (pid_content.empty()) {
+        return {false, "cannot read sshd PID from " + pid_path, ""};
+    }
+    char* end = nullptr;
+    long pid = std::strtol(pid_content.c_str(), &end, 10);
+    if (*end != '\0' || pid <= 0) {
+        return {false, "invalid sshd PID: " + pid_content, ""};
+    }
+    auto hl = run_cmd(exec_, {"/bin/kill", "-HUP", std::to_string(pid)}, 10, 1024);
     if (!hl.success) {
-        return {false, "ssh.service not active after reload", ""};
+        return {false, "kill -HUP sshd (" + std::to_string(pid) + ") failed: " + hl.message, ""};
     }
-    return {true, "ssh.service reloaded and active", ""};
+    // Verify sshd is still alive
+    auto check = run_cmd(exec_, {"/bin/kill", "-0", std::to_string(pid)}, 5, 1024);
+    if (!check.success) {
+        return {false, "sshd process " + std::to_string(pid) + " not responding after HUP", ""};
+    }
+    return {true, "sshd reloaded via HUP", ""};
 }
 
 core::OperationResult SshdConfigWriter::rollback(const std::string& previous_content) {
