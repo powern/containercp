@@ -79,7 +79,7 @@ chmod 755 "$BIN_DIR/containercpd" "$BIN_DIR/containercp"
 
 # --- 8. Update systemd service file ---
 echo "[SYSTEM] Updating systemd service file..."
-cp "$INSTALL_DIR/packaging/containercp.service" "/etc/systemd/system/containercp.service"
+cp "$INSTALL_DIR/packaging/containercpd.service" "/etc/systemd/system/containercpd.service"
 systemctl daemon-reload
 
 # --- 9. Start service ---

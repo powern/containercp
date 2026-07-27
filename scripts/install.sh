@@ -15,7 +15,7 @@ BIN_DIR="/usr/local/bin"
 DATA_DIR="/srv/containercp"
 CONFIG_DIR="/etc/containercp"
 LOG_DIR="/var/log/containercp"
-SERVICE_FILE="/etc/systemd/system/containercp.service"
+SERVICE_FILE="/etc/systemd/system/containercpd.service"
 
 echo "[SYSTEM] ContainerCP Installer — Debian 13"
 echo "[SYSTEM] ========================================"
@@ -92,7 +92,7 @@ chmod 755 "$BIN_DIR/containercpd" "$BIN_DIR/containercp"
 
 # --- 9. Install systemd service ---
 echo "[SYSTEM] Installing systemd service..."
-cp "$INSTALL_DIR/packaging/containercp.service" "$SERVICE_FILE"
+cp "$INSTALL_DIR/packaging/containercpd.service" "$SERVICE_FILE"
 systemctl daemon-reload
 
 # --- 10. Enable and start service ---
