@@ -14,7 +14,7 @@ Format: date | commit | summary
 
 **User-visible behavior:** Granting a site to an SFTP user with Read only permission can proceed past ACL pre-inspection and apply the protected ACL transactionally. Successfully applied grants are persisted immediately.
 
-**Validation:** Canonical `getfacl` parser regression test added. Full validation pending.
+**Validation:** Canonical `getfacl` parser regression passed. Focused Phase 3b/ARCH-009 tests passed: 224 cases, 779 assertions. Full CTest passed; `arch009_linux_integration` was skipped because privileged prerequisites are unavailable locally. Commits `f664bbb` and `9e9e3b6` were deployed to web2; daemon health check passed.
 
 **Known risks:** The target site must still have a valid filesystem path and ACL-capable filesystem; the provider continues to fail closed when those preconditions are not met.
 
