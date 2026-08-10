@@ -38,8 +38,10 @@ public:
     using LoadMappingsFn = std::function<std::vector<SystemAccountMapping>()>;
     using SaveMappingFn = std::function<bool(const SystemAccountMapping&)>;
     using DeleteMappingFn = std::function<bool(const std::string& entity_type, uint64_t entity_id)>;
+    using AccessUserExistsFn = std::function<bool(uint64_t access_user_id)>;
     void set_mapping_persistence(LoadMappingsFn load, SaveMappingFn save,
                                  DeleteMappingFn remove);
+    void set_access_user_exists(AccessUserExistsFn fn);
 
     // Returns how many grants reference a given site group.
     // Used to determine if a group can be safely deleted.
@@ -170,6 +172,8 @@ public:
 
     // Resolve username from access_user_id via system_accounts mapping.
     std::string resolve_username(uint64_t access_user_id);
+    // Return the persisted managed identity, if one exists for the user.
+    std::optional<SystemAccountMapping> mapping_for_user(uint64_t access_user_id) const;
 
     core::OperationResult create_user(const AccessUser& user) override;
     core::OperationResult remove_user(const AccessUser& user) override;
@@ -296,6 +300,7 @@ private:
     core::OperationResult reconcile_mounts_internal(uint64_t access_user_id);
     core::OperationResult reconcile_startup_mounts_internal();
     core::OperationResult reconcile_user_lifecycle_internal();
+    core::OperationResult remove_user_internal(const AccessUser& user);
     core::OperationResult apply_grant_internal(uint64_t access_user_id, uint64_t site_id,
                                                 const std::string& permission);
     core::OperationResult revoke_grant_internal(uint64_t access_user_id, uint64_t site_id,
@@ -316,8 +321,7 @@ private:
     bool verify_ownership(const SystemAccountMapping& mapping,
                           const ObservedUser& observed) const;
     bool ensure_global_sftp_group();
-    void rollback_create(const std::string& username, const std::string& groupname,
-                         uint64_t access_user_id);
+    core::OperationResult rollback_create(const SystemAccountMapping& mapping);
     void restore_acl(const FsPermissionState& prev, const std::string& path,
                      const std::string& groupname, core::OperationResult& out);
     void rollback_chroot_rmdir(const std::string& path, bool created_by_us,
@@ -341,6 +345,7 @@ private:
     LoadMappingsFn load_mappings_;
     SaveMappingFn save_mapping_;
     DeleteMappingFn delete_mapping_;
+    AccessUserExistsFn access_user_exists_;
 
     GrantsForSiteFn grants_lookup_;
 

@@ -363,6 +363,13 @@ CREATE TABLE system_accounts (
 - For an `access_user` mapping in `provisioning`, the persisted matching GID
   proves ownership of a private group left by a partial create; reconciliation
   may remove that group before deleting the stale mapping.
+- For an `access_user` Linux account, ownership requires the persisted mapping
+  plus matching UID, primary GID, managed home, managed shell, and configured
+  UID/GID ranges. The `au-` name by itself is never an ownership marker.
+- If rollback cannot prove that `userdel`, private-group cleanup, and managed
+  home cleanup completed, the mapping remains in `error` with `last_error` so
+  reconciliation can retry safely. The API retains the AccessUser disabled
+  instead of discarding the ownership proof.
 
 ### Rollback via State
 
@@ -399,6 +406,8 @@ No new columns needed. The grant row is the SSOT for which user has which permis
 | `umount sites/X/` | EBUSY (open files) | Error, preserve state | Mount still exists | Reconciler retries |
 | `umount sites/X/` | Not mounted | N/A (check first) | Already unmounted | No-op |
 | `groupdel site-X-rw` | Group not empty | Error, preserve mapping | Group still exists | Check membership |
+| `userdel au-user` | Cleanup command fails or account remains | Preserve mapping in `error` | Managed account remains recoverable | Retry reconciliation; foreign identity is never adopted |
+| Provider failure after `useradd` | Rollback cannot prove cleanup | Preserve mapping and disabled AccessUser | Recoverable partial provisioning | Retry reconciliation from persisted UID/GID/home proof |
 
 ---
 

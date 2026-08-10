@@ -230,6 +230,8 @@ hidden by the mail-only health report.
 | `sftp_grant_not_found` | Grant does not exist |
 | `sftp_grant_conflict` | Grant already exists for this user and site |
 | `sftp_site_not_found` | Requested Site does not exist |
+| `sftp_user_provision_failed` | Provisioning failed; `details` identifies whether the state is recoverable |
+| `unmanaged_account_conflict` | Linux username exists without a persisted ContainerCP ownership proof; no adoption or deletion is attempted |
 | `sftp_runtime_degraded` | Provider is in Degraded state |
 | `sftp_reconciliation_busy` | Reconciliation already in progress |
 | `sftp_backend_failure` | Internal lifecycle operation failed |
@@ -252,4 +254,18 @@ hidden by the mail-only health report.
 - `provisioning` — Linux account creation in progress or incomplete
 - `active` — Linux account provisioned and ready
 - `removing` — Account removal in progress
-- `error` — Non-recoverable lifecycle failure, requires operator intervention
+- `error` — Lifecycle failure; the `lastError` and reconciliation detail identify whether retry is safe
+
+## Safe Provisioning Recovery
+
+ContainerCP persists the `system_accounts` mapping before creating the Linux
+identity. If a later provisioning step fails, the AccessUser is retained as
+disabled and the mapping remains in `provisioning` or `error` state. Startup or
+explicit reconciliation may complete the transaction only when the observed
+UID, primary GID, managed home, shell, and configured managed ranges match the
+persisted mapping.
+
+An existing Linux account with the derived `au-` name is never adopted based on
+its name alone. When no mapping proves ownership, the API returns
+`unmanaged_account_conflict` with the observed identity and a suggested
+read-only inspection path. Foreign accounts are never overwritten or deleted.

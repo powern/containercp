@@ -47,6 +47,7 @@ struct ReconciliationResult {
         std::string phase;             // "mount" or "user"
         std::string item;              // inspected reconciliation unit
         std::string state;             // "healthy", "fixed", or "failed"
+        std::string detail;            // phase-level bounded diagnostic
         std::string error;
         std::string recovery_action;
     };

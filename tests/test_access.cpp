@@ -7157,7 +7157,7 @@ TEST_CASE("ARCH-009 revoke all error state cleanup") {
     auto r = ctx.provider.revoke_all_grants(1);
     CHECK(r.success);
     // Error state should be cleaned up successfully
-    (void)r;
+    CHECK(ctx.glc_.empty());
 }
 
 TEST_CASE("ARCH-009 revoke all persistence failure") {
@@ -7315,6 +7315,85 @@ TEST_CASE("create_user useradd failure") {
     auto r = ctx.provider.create_user(ctx.make_user());
     CHECK_FALSE(r.success);
     CHECK(r.message.find("useradd") != std::string::npos);
+}
+
+TEST_CASE("create_user foreign same-name account is not modified") {
+    CreateUserFailureContext ctx;
+    ctx.inspector->users_["au-testuser"] = {
+        true, "au-testuser", 1500, 1500, "/home/au-testuser", "/bin/bash", false
+    };
+    const auto before_commands = ctx.fake_commands.cmds_.size();
+
+    auto r = ctx.provider.create_user(ctx.make_user());
+    CHECK_FALSE(r.success);
+    CHECK(r.message.find("unmanaged_account_conflict") != std::string::npos);
+    CHECK(ctx.inspector->users_["au-testuser"].uid == 1500);
+    CHECK(ctx.inspector->users_["au-testuser"].home == "/home/au-testuser");
+    CHECK(ctx.fake_commands.cmds_.size() == before_commands);
+    CHECK(ctx.stored_.empty());
+}
+
+TEST_CASE("create_user rollback preserves proof when userdel fails") {
+    CreateUserFailureContext ctx;
+    bool useradd_seen = false;
+    bool userdel_called = false;
+    ctx.provider.set_command_runner(std::make_unique<containercp::access::SystemAccountCommandRunner>(
+        [&ctx, &useradd_seen, &userdel_called](const containercp::access::SystemAccountCommandRunner::Command& cmd) {
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("useradd")) {
+                useradd_seen = true;
+            }
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("usermod") && useradd_seen) {
+                return containercp::core::OperationResult{false, "membership failed", ""};
+            }
+            if (cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("userdel")) {
+                userdel_called = true;
+                return containercp::core::OperationResult{false, "userdel blocked", ""};
+            }
+            return ctx.fake_commands.run(cmd);
+        }));
+
+    auto r = ctx.provider.create_user(ctx.make_user());
+    CHECK_FALSE(r.success);
+    CHECK(useradd_seen);
+    CHECK(userdel_called);
+    CHECK_MESSAGE(r.message.find("rollback:userdel_failed") != std::string::npos, r.message);
+    REQUIRE(ctx.stored_.size() == 1);
+    CHECK(ctx.stored_[0].state == "error");
+    CHECK(ctx.stored_[0].last_error.find("rollback:userdel_failed") != std::string::npos);
+    CHECK(ctx.inspector->user_exists("au-testuser"));
+}
+
+TEST_CASE("create_user retries an owned partial provisioning") {
+    CreateUserFailureContext ctx;
+    containercp::access::SystemAccountMapping mapping;
+    mapping.entity_type = "access_user";
+    mapping.entity_id = 1;
+    mapping.uid = 10000;
+    mapping.gid = 20000;
+    mapping.username = "au-testuser";
+    mapping.groupname = "au-testuser";
+    mapping.state = "provisioning";
+    mapping.home = "/srv/containercp/users/au-testuser";
+    ctx.stored_.push_back(mapping);
+    ctx.inspector->users_["au-testuser"] = {
+        true, "au-testuser", 10000, 20000, mapping.home, "/usr/sbin/nologin", true
+    };
+    ctx.inspector->groups_["au-testuser"] = {true, "au-testuser", 20000};
+    ctx.inspector->fs_state_->state_[mapping.home + "/sites/"] = {
+        true, false, S_IFDIR | 0755, 0, 0
+    };
+
+    auto r = ctx.provider.create_user(ctx.make_user());
+    CHECK(r.success);
+    REQUIRE(ctx.stored_.size() == 1);
+    CHECK(ctx.stored_[0].state == "active");
+    bool attempted_useradd = false;
+    for (const auto& cmd : ctx.fake_commands.cmds_) {
+        if (!cmd.args.empty() && cmd.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("useradd")) {
+            attempted_useradd = true;
+        }
+    }
+    CHECK_FALSE(attempted_useradd);
 }
 
 TEST_CASE("create_user group membership failure") {
@@ -7747,6 +7826,27 @@ TEST_CASE("reconcile_user_lifecycle active_ok") {
     CHECK(r.success);
     REQUIRE(ctx.stored_.size() == 1);
     CHECK(ctx.stored_[0].state == "active");
+}
+
+TEST_CASE("reconcile_user_lifecycle cleans active orphan without AccessUser") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "active");
+    ctx.add_os_user(1);
+    ctx.ensure_chroot_dir(1);
+    containercp::storage::GrantLifecycleState stale_grant;
+    stale_grant.access_user_id = 1;
+    stale_grant.site_id = 1;
+    stale_grant.permission = "read_only";
+    stale_grant.state = "error";
+    ctx.glc_.push_back(stale_grant);
+    ctx.provider.set_access_user_exists([](uint64_t) { return false; });
+
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK(r.success);
+    CHECK(ctx.stored_.empty());
+    CHECK(ctx.glc_.empty());
+    CHECK(ctx.inspector->users_.find("au1") == ctx.inspector->users_.end());
+    CHECK(r.message.find("orphan:cleaned") != std::string::npos);
 }
 
 TEST_CASE("reconcile_user_lifecycle active_ownership_mismatch") {

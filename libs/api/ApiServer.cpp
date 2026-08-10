@@ -4903,9 +4903,18 @@ bool ApiServer::start() {
             au.id = id; au.username = un; au.enabled = true;
             auto pr = lsp->create_user(au);
             if (!pr.success) {
-                // Clean up any OS state the provider may have created
-                (void)lsp->remove_user(au);
-                s.access_users().remove(id);
+                // The provider owns rollback. If it retained a managed
+                // mapping, keep the AccessUser disabled so reconciliation can
+                // prove ownership and complete the interrupted transaction.
+                // Only discard the resource when no managed mapping remains.
+                auto mapping = lsp->mapping_for_user(id);
+                if (mapping.has_value()) {
+                    u->enabled = false;
+                    s.save();
+                } else {
+                    s.access_users().remove(id);
+                    s.save();
+                }
                 r.status_code = 500;
                 r.body = api_error("sftp_user_provision_failed", pr.message);
                 return r;
@@ -4918,11 +4927,13 @@ bool ApiServer::start() {
             if (has_user_keys) {
                 auto kw = lsp->write_authorized_keys(id);
                 if (!kw.success) {
+                    s.save();
                     r.status_code = 500; r.body = api_error("sftp_key_sync_failed", kw.message); return r;
                 }
             }
         }
 
+        s.save();
         r.body = api_success("{\"id\":" + std::to_string(id) + ",\"username\":\"" + JsonFormatter::escape(un) + "\",\"enabled\":" + (enabled ? "true" : "false") + "}");
         return r;
     });
@@ -4953,7 +4964,8 @@ bool ApiServer::start() {
             au.id = uid; au.username = u->username; au.enabled = true;
             auto pr = lsp->create_user(au);
             if (!pr.success) {
-                (void)lsp->remove_user(au);
+                u->enabled = false;
+                s.save();
                 r.status_code = 500; r.body = api_error("sftp_user_provision_failed", pr.message); return r;
             }
             u->enabled = true;
@@ -4966,6 +4978,7 @@ bool ApiServer::start() {
             u->enabled = false;
         }
 
+        s.save();
         r.body = api_success("{\"id\":" + std::to_string(uid) + ",\"enabled\":" + (u->enabled ? "true" : "false") + "}");
         return r;
     });
@@ -5301,6 +5314,7 @@ bool ApiServer::start() {
              j += "{\"phase\":\"" + JsonFormatter::escape(record.phase)
                  + "\",\"item\":\"" + JsonFormatter::escape(record.item)
                  + "\",\"state\":\"" + JsonFormatter::escape(record.state)
+                 + "\",\"detail\":\"" + JsonFormatter::escape(record.detail)
                  + "\",\"error\":\"" + JsonFormatter::escape(record.error)
                  + "\",\"recoveryAction\":\"" + JsonFormatter::escape(record.recovery_action)
                  + "\"}";

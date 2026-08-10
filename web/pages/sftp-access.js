@@ -33,6 +33,7 @@ async function renderStatus() {
         + state.status.reconciliation.map(rec => '<div style="margin-bottom:8px;"><strong>' + esc(rec.item || rec.phase || 'reconciliation') + '</strong>: '
           + '<span class="badge ' + (rec.state === 'failed' ? 'badge-err' : rec.state === 'fixed' ? 'badge-warn' : 'badge-ok') + '">' + esc(rec.state || 'unknown') + '</span>'
           + (rec.error ? '<div>Failed item/error: ' + esc(rec.error) + '</div>' : '')
+          + (rec.detail ? '<div>Detail: ' + esc(rec.detail) + '</div>' : '')
           + (rec.recoveryAction ? '<div>Recovery action: ' + esc(rec.recoveryAction) + '</div>' : '')
           + '</div>').join('') + '</div></details>';
     }

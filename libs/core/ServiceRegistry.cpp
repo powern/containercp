@@ -235,6 +235,7 @@ ServiceRegistry::ServiceRegistry()
             records += "{\"phase\":\"" + json_escape(record.phase)
                 + "\",\"item\":\"" + json_escape(record.item)
                 + "\",\"state\":\"" + json_escape(record.state)
+                + "\",\"detail\":\"" + json_escape(record.detail)
                 + "\",\"error\":\"" + json_escape(record.error)
                 + "\",\"recovery_action\":\"" + json_escape(record.recovery_action)
                 + "\"}";
@@ -742,6 +743,14 @@ void ServiceRegistry::start() {
     runner->set_uid_range(access::SystemAccountCommandRunner::Range{10000, 19999});
     runner->set_gid_range(access::SystemAccountCommandRunner::Range{20000, 29999});
     access_provider_.set_command_runner(std::move(runner));
+
+    // AccessUserManager is the authoritative owner registry for
+    // access_user system mappings. Reconciliation uses it to detect orphaned
+    // Linux accounts that would otherwise be invisible in the GUI.
+    access_provider_.set_access_user_exists(
+        [this](uint64_t access_user_id) {
+            return access_users_.find(access_user_id) != nullptr;
+        });
 
     // Mapping persistence — load/save/delete SystemAccountMapping via SQLite
     access_provider_.set_mapping_persistence(

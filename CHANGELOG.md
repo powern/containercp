@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-10 | `pending` | bugfix: preserve SFTP ownership proof across failed provisioning
+
+**Summary:** Fixed SFTP create rollback losing the persisted `system_accounts` mapping when Linux account cleanup fails. Rollback now verifies each destructive postcondition and retains an `error` mapping with bounded diagnostics when cleanup is incomplete. Create retry and reconciliation recover only from matching persisted UID/GID/home/shell ownership evidence; deterministic `au-` names alone never adopt or delete accounts. The API now keeps a recoverable partial AccessUser disabled instead of deleting it blindly, persists successful and failed SFTP mutations, and reports actionable unmanaged-account conflict details. Orphan cleanup removes stale error grant records only after the managed account has been proven owned.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `libs/access/LocalSftpProvider.h`, `libs/core/ServiceRegistry.cpp`, `libs/api/ApiServer.cpp`, `tests/test_access.cpp`, `planning/ARCH-009-PHASE3-DESIGN.md`, `docs/api/sftp-administration-api.md`, `CHANGELOG.md`
+
+**User-visible behavior:** A failed SFTP create no longer leaves an account that cannot be retried because its ownership mapping was discarded. Managed partial state is visible as a disabled user with recovery details; foreign accounts with a matching derived name remain untouched and return `unmanaged_account_conflict` with UID/GID/home/shell inspection details.
+
+**Validation:** Focused create/reconciliation doctests passed: 32 test cases, 88 assertions. Full build of `containercp`, `containercpd`, and `containercp_tests` passed. Live web2 inspection was read-only; no account, mapping, database, or service state was modified.
+
+**Known risks:** The exact initiating operation for the existing web2 orphan cannot be recovered from current audit data; its ownership and orphan state are proven by the live UID/GID, home, group, and SQLite mapping. The existing disposable MariaDB DB-4 validation failure remains unrelated.
+
+---
+
 ## 2026-08-10 | `pending` | bugfix: recover stale SFTP provisioning groups and expose reconciliation failures
 
 **Summary:** Fixed startup reconciliation misclassifying a ContainerCP-owned private group left after a crash between `groupadd` and `useradd` as an unmanaged conflict. Reconciliation now verifies the persisted GID, removes only the proven managed group, checks cleanup postconditions, and removes the stale provisioning mapping. Added structured reconciliation records with failed item, error, and recovery action fields. SFTP is now included in `/api/health`; the GUI displays reconciliation details instead of only aggregate counters.
