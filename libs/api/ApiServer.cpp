@@ -4790,6 +4790,58 @@ bool ApiServer::start() {
         return true;
     };
 
+    auto patch_sftp_key = [&s, &api_success, &api_error, &check_provider, &lsp, &parse_uid](const Request& req) {
+        Response r;
+        if (!check_provider(r)) return r;
+        const auto key_path = req.path.find("/keys/");
+        if (key_path == std::string::npos) { r.status_code = 404; r.body = api_error("sftp_key_not_found", ""); return r; }
+        const std::string before = req.path.substr(0, key_path);
+        const std::string after = req.path.substr(key_path + 6);
+        if (before.size() <= 22) { r.status_code = 404; r.body = api_error("sftp_user_not_found", ""); return r; }
+        uint64_t uid = 0, kid = 0;
+        if (!parse_uid(before.substr(23), uid) || !parse_uid(after, kid)) { r.status_code = 404; r.body = api_error("sftp_key_not_found", ""); return r; }
+        auto* key = s.access_keys().find(kid);
+        if (!key || key->access_user_id != uid) { r.status_code = 404; r.body = api_error("sftp_key_not_found", ""); return r; }
+        const bool old_enabled = key->enabled;
+        const bool new_enabled = json_has_key(req.body, "enabled")
+            ? json_extract(req.body, "enabled") != "false" : old_enabled;
+        if (new_enabled != old_enabled) s.access_keys().set_enabled(kid, new_enabled);
+        s.storage().save_access_keys(s.access_keys().list());
+        auto kw = lsp->write_authorized_keys(uid);
+        if (!kw.success) {
+            if (new_enabled != old_enabled) s.access_keys().set_enabled(kid, old_enabled);
+            s.storage().save_access_keys(s.access_keys().list());
+            r.status_code = 500; r.body = api_error("sftp_key_sync_failed", kw.message); return r;
+        }
+        r.body = api_success("{\"id\":" + std::to_string(kid) + ",\"enabled\":" + (new_enabled ? "true" : "false") + "}");
+        return r;
+    };
+
+    auto delete_sftp_key = [&s, &api_success, &api_error, &check_provider, &lsp, &parse_uid](const Request& req) {
+        Response r;
+        if (!check_provider(r)) return r;
+        const auto key_path = req.path.find("/keys/");
+        if (key_path == std::string::npos) { r.status_code = 404; r.body = api_error("sftp_key_not_found", ""); return r; }
+        const std::string before = req.path.substr(0, key_path);
+        const std::string after = req.path.substr(key_path + 6);
+        if (before.size() <= 22) { r.status_code = 404; r.body = api_error("sftp_user_not_found", ""); return r; }
+        uint64_t uid = 0, kid = 0;
+        if (!parse_uid(before.substr(23), uid) || !parse_uid(after, kid)) { r.status_code = 404; r.body = api_error("sftp_key_not_found", ""); return r; }
+        auto* key = s.access_keys().find(kid);
+        if (!key || key->access_user_id != uid) { r.status_code = 404; r.body = api_error("sftp_key_not_found", ""); return r; }
+        const auto key_backup = *key;
+        s.access_keys().remove(kid);
+        s.storage().save_access_keys(s.access_keys().list());
+        auto kw = lsp->write_authorized_keys(uid);
+        if (!kw.success) {
+            s.access_keys().create(key_backup);
+            s.storage().save_access_keys(s.access_keys().list());
+            r.status_code = 500; r.body = api_error("sftp_key_sync_failed", kw.message); return r;
+        }
+        r.body = api_success("{\"id\":" + std::to_string(kid) + "}");
+        return r;
+    };
+
     // ── User endpoints ──
 
     router_.add("GET", "/api/access/sftp/users", [&s, &api_success](const Request&) {
@@ -4939,10 +4991,11 @@ bool ApiServer::start() {
     });
 
     // PATCH /api/access/sftp/users/<id> — enable/disable (provision/de-provision)
-    router_.add_prefix("PATCH", "/api/access/sftp/users/", [&s, &api_success, &api_error, &check_provider, &lsp, &parse_uid](const Request& req) {
+    router_.add_prefix("PATCH", "/api/access/sftp/users/", [&s, &api_success, &api_error, &check_provider, &lsp, &parse_uid, &patch_sftp_key](const Request& req) {
         Response r;
         if (!check_provider(r)) return r;
         std::string rest = req.path.substr(23);
+        if (rest.find("/keys/") != std::string::npos) return patch_sftp_key(req);
         if (rest.find('/') != std::string::npos) {
             r.status_code = 404; r.body = api_error("sftp_user_not_found", ""); return r;
         }
@@ -4984,10 +5037,11 @@ bool ApiServer::start() {
     });
 
     // DELETE /api/access/sftp/users/<id>
-    router_.add_prefix("DELETE", "/api/access/sftp/users/", [&s, &api_success, &api_error, &check_provider, &lsp, &parse_uid](const Request& req) {
+    router_.add_prefix("DELETE", "/api/access/sftp/users/", [&s, &api_success, &api_error, &check_provider, &lsp, &parse_uid, &delete_sftp_key](const Request& req) {
         Response r;
         if (!check_provider(r)) return r;
         std::string rest = req.path.substr(23);
+        if (rest.find("/keys/") != std::string::npos) return delete_sftp_key(req);
         if (rest.find('/') != std::string::npos) {
             r.status_code = 404; r.body = api_error("sftp_user_not_found", ""); return r;
         }

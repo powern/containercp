@@ -233,6 +233,15 @@ TEST_CASE("Vesta migration job includes automatic SSL issuance step") {
     CHECK(migration_block.find("SSL issuance failed") != std::string::npos);
 }
 
+TEST_CASE("SFTP key mutations are dispatched before user mutations") {
+    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/libs/api/ApiServer.cpp");
+    REQUIRE(in.is_open());
+    std::string source((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    CHECK(source.find("if (rest.find(\"/keys/\") != std::string::npos) return patch_sftp_key(req);") != std::string::npos);
+    CHECK(source.find("if (rest.find(\"/keys/\") != std::string::npos) return delete_sftp_key(req);") != std::string::npos);
+}
+
 TEST_CASE("API primitive JSON extractor accepts formatted string values") {
     std::ifstream in(std::string(TEST_SOURCE_DIR) + "/libs/api/ApiServer.cpp");
     REQUIRE(in.is_open());

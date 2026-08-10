@@ -8,7 +8,7 @@ Format: date | commit | summary
 
 ## 2026-08-10 | `pending` | bugfix: route SFTP key actions to key handlers
 
-**Summary:** Fixed `PATCH` and `DELETE` SFTP key actions being intercepted by the broader `/api/access/sftp/users/` prefix handler before reaching the specific `/keys/<key_id>` handlers. The router now prioritizes exact matches and the longest matching prefix. Key deletion rollback also keeps a safe copy of the key before removing it.
+**Summary:** Fixed `PATCH` and `DELETE` SFTP key actions being intercepted by the broader `/api/access/sftp/users/` prefix handler before reaching the specific `/keys/<key_id>` handlers. The shared user mutation dispatcher now delegates key paths explicitly; the router also prioritizes exact matches and the longest matching prefix. Key deletion rollback also keeps a safe copy of the key before removing it.
 
 **Files changed:** `libs/api/Router.cpp`, `tests/test_api.cpp`, `libs/api/ApiServer.cpp`, `CHANGELOG.md`
 
