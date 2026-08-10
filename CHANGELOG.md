@@ -8,9 +8,9 @@ Format: date | commit | summary
 
 ## 2026-08-10 | `pending` | bugfix: accept canonical getfacl default masks
 
-**Summary:** Fixed read-only SFTP grant application failing ACL pre-inspection on normal POSIX ACL output. The parser now correctly reads canonical `mask::r-x` and `default:mask::r-x` formats emitted by `getfacl`, and a previous pre-inspection error can be retried after the failed preflight condition is corrected.
+**Summary:** Fixed SFTP grant application failing ACL pre-inspection on normal POSIX ACL output and leaving the provider degraded after rollback. The parser now correctly reads canonical `mask::r-x` and `default:mask::r-x` formats emitted by `getfacl`, previous pre-inspection errors can be retried, and only active lifecycle records retain site groups during rollback.
 
-**Files changed:** `libs/access/FilesystemPermissionInspector.cpp`, `libs/access/LocalSftpProvider.cpp`, `libs/api/ApiServer.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+**Files changed:** `libs/access/FilesystemPermissionInspector.cpp`, `libs/access/LocalSftpProvider.cpp`, `libs/api/ApiServer.cpp`, `libs/core/ServiceRegistry.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
 
 **User-visible behavior:** Granting a site to an SFTP user with Read only permission can proceed past ACL pre-inspection and apply the protected ACL transactionally. Successfully applied grants are persisted immediately.
 

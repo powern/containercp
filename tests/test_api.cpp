@@ -242,6 +242,18 @@ TEST_CASE("SFTP key mutations are dispatched before user mutations") {
     CHECK(source.find("if (rest.find(\"/keys/\") != std::string::npos) return delete_sftp_key(req);") != std::string::npos);
 }
 
+TEST_CASE("SFTP group retention counts active grants only") {
+    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/libs/core/ServiceRegistry.cpp");
+    REQUIRE(in.is_open());
+    std::string source((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    const auto marker = source.find("Grant lookup — count active lifecycle records");
+    REQUIRE(marker != std::string::npos);
+    const auto block = source.substr(marker, 800);
+    CHECK(block.find("l.state == \"active\"") != std::string::npos);
+    CHECK(block.find("l.state != \"error\"") == std::string::npos);
+}
+
 TEST_CASE("API primitive JSON extractor accepts formatted string values") {
     std::ifstream in(std::string(TEST_SOURCE_DIR) + "/libs/api/ApiServer.cpp");
     REQUIRE(in.is_open());

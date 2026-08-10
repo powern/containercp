@@ -858,7 +858,7 @@ void ServiceRegistry::start() {
             auto all = storage_.sqlite().list_all_grant_lifecycle();
             for (const auto& l : all) {
                 if (l.site_id == site_id && l.permission == permission
-                    && l.state != "error" && l.state != "pending") {
+                    && l.state == "active") {
                     count++;
                 }
             }
