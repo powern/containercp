@@ -102,6 +102,29 @@ TEST_CASE("Router dispatch prefix over exact") {
     CHECK(resp.body == "prefix:catchall");
 }
 
+TEST_CASE("Router dispatch selects the most specific prefix") {
+    containercp::api::Router router;
+
+    router.add_prefix("PATCH", "/api/access/sftp/users/", [](const containercp::api::Request&) {
+        containercp::api::Response r;
+        r.body = "user";
+        return r;
+    });
+    router.add_prefix("PATCH", "/api/access/sftp/users/1/keys/", [](const containercp::api::Request&) {
+        containercp::api::Response r;
+        r.body = "key";
+        return r;
+    });
+
+    containercp::api::Request req;
+    req.method = "PATCH";
+    req.path = "/api/access/sftp/users/1/keys/2";
+    CHECK(router.dispatch(req).body == "key");
+
+    req.path = "/api/access/sftp/users/1";
+    CHECK(router.dispatch(req).body == "user");
+}
+
 // --- JsonFormatter ---
 
 TEST_CASE("JsonFormatter success wrapper") {

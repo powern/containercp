@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-10 | `pending` | bugfix: route SFTP key actions to key handlers
+
+**Summary:** Fixed `PATCH` and `DELETE` SFTP key actions being intercepted by the broader `/api/access/sftp/users/` prefix handler before reaching the specific `/keys/<key_id>` handlers. The router now prioritizes exact matches and the longest matching prefix. Key deletion rollback also keeps a safe copy of the key before removing it.
+
+**Files changed:** `libs/api/Router.cpp`, `tests/test_api.cpp`, `libs/api/ApiServer.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Disable/Enable and Delete buttons for individual SSH keys now reach the correct REST endpoints and update `authorized_keys` transactionally.
+
+**Validation:** Router regression tests passed: 6 cases, 9 assertions. SFTP API/parser tests passed: 40 cases, 100 assertions. Full build, frontend baseline check, and `git diff --check` passed.
+
+**Known risks:** Existing API routes with overlapping prefixes now use specificity instead of registration order, which is the intended deterministic routing behavior.
+
+---
+
 ## 2026-08-10 | `pending` | bugfix: make generated SFTP private-key download functional
 
 **Summary:** Fixed the generated SSH key modal interpolating the PEM private key into an inline `onclick` attribute. PEM newlines made the generated handler invalid, so `Download Private Key` and public-key copy appeared inert. The modal now binds both actions with event listeners, and downloads use a DOM-attached anchor with deferred object-URL cleanup.

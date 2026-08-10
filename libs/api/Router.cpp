@@ -11,18 +11,23 @@ void Router::add_prefix(const std::string& method, const std::string& prefix, Ro
 }
 
 Response Router::dispatch(const Request& req) const {
+    // Exact routes always win. This keeps a broad prefix route from
+    // swallowing a more specific endpoint registered later.
     for (const auto& route : routes_) {
         if (route.method != req.method) continue;
-        if (route.is_prefix) {
-            if (req.path.compare(0, route.path.size(), route.path) == 0) {
-                return route.handler(req);
-            }
-        } else {
-            if (route.path == req.path) {
-                return route.handler(req);
-            }
-        }
+        if (!route.is_prefix && route.path == req.path) return route.handler(req);
     }
+
+    // Prefix routes are selected by specificity rather than registration
+    // order. Nested resources such as /users/<id>/keys/<key_id> therefore
+    // cannot be intercepted by /users/<id> handlers.
+    const Route* best = nullptr;
+    for (const auto& route : routes_) {
+        if (route.method != req.method || !route.is_prefix) continue;
+        if (req.path.compare(0, route.path.size(), route.path) != 0) continue;
+        if (best == nullptr || route.path.size() > best->path.size()) best = &route;
+    }
+    if (best != nullptr) return best->handler(req);
 
     Response resp;
     resp.status_code = 404;

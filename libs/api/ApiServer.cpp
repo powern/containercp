@@ -5162,6 +5162,7 @@ bool ApiServer::start() {
         if (!parse_uid(before.substr(23), uid) || !parse_uid(after, kid)) { r.status_code = 404; r.body = api_error("sftp_key_not_found", ""); return r; }
         auto* k = s.access_keys().find(kid);
         if (!k || k->access_user_id != uid) { r.status_code = 404; r.body = api_error("sftp_key_not_found", ""); return r; }
+        const bool old_enabled = k->enabled;
         bool new_enabled = k->enabled;
         if (json_has_key(req.body, "enabled")) {
             new_enabled = json_extract(req.body, "enabled") != "false";
@@ -5172,9 +5173,7 @@ bool ApiServer::start() {
         s.storage().save_access_keys(s.access_keys().list());
         auto kw = lsp->write_authorized_keys(uid);
         if (!kw.success) {
-            if (new_enabled != k->enabled) {
-                s.access_keys().set_enabled(kid, k->enabled);
-            }
+            if (new_enabled != old_enabled) s.access_keys().set_enabled(kid, old_enabled);
             s.storage().save_access_keys(s.access_keys().list());
             r.status_code = 500; r.body = api_error("sftp_key_sync_failed", kw.message); return r;
         }
@@ -5193,13 +5192,13 @@ bool ApiServer::start() {
         if (!parse_uid(before.substr(23), uid) || !parse_uid(after, kid)) { r.status_code = 404; r.body = api_error("sftp_key_not_found", ""); return r; }
         auto* k = s.access_keys().find(kid);
         if (!k || k->access_user_id != uid) { r.status_code = 404; r.body = api_error("sftp_key_not_found", ""); return r; }
+        const containercp::access::AccessKey key_backup = *k;
         s.access_keys().remove(kid);
         s.storage().save_access_keys(s.access_keys().list());
         auto kw = lsp->write_authorized_keys(uid);
         if (!kw.success) {
             // Rollback: re-insert the key
-            containercp::access::AccessKey rk = *k;
-            s.access_keys().create(rk);
+            s.access_keys().create(key_backup);
             s.storage().save_access_keys(s.access_keys().list());
             r.status_code = 500; r.body = api_error("sftp_key_sync_failed", kw.message); return r;
         }
