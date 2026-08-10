@@ -5171,6 +5171,7 @@ bool ApiServer::start() {
             s.access_grants().remove(gid);
             r.status_code = 500; r.body = api_error("sftp_grant_apply_failed", res.message); return r;
         }
+        s.save();
         r.body = api_success("{\"userId\":" + std::to_string(uid) + ",\"siteId\":" + std::to_string(sid) + ",\"permission\":\"" + JsonFormatter::escape(perm_str) + "\"}");
         return r;
     });
