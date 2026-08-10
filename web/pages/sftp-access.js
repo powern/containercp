@@ -28,6 +28,14 @@ async function renderStatus() {
     if (state.status.errors && state.status.errors.length) {
       errorsHtml = '<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:12px;">Errors (' + state.status.errors.length + ')</summary><div style="font-size:11px;color:var(--text3);margin-top:4px;">' + state.status.errors.map(e => '<div>&bull; ' + esc(e) + '</div>').join('') + '</div></details>';
     }
+    if (state.status.reconciliation && state.status.reconciliation.length) {
+      errorsHtml += '<details open style="margin-top:8px;"><summary style="cursor:pointer;font-size:12px;">Reconciliation details</summary><div style="font-size:11px;color:var(--text3);margin-top:4px;">'
+        + state.status.reconciliation.map(rec => '<div style="margin-bottom:8px;"><strong>' + esc(rec.item || rec.phase || 'reconciliation') + '</strong>: '
+          + '<span class="badge ' + (rec.state === 'failed' ? 'badge-err' : rec.state === 'fixed' ? 'badge-warn' : 'badge-ok') + '">' + esc(rec.state || 'unknown') + '</span>'
+          + (rec.error ? '<div>Failed item/error: ' + esc(rec.error) + '</div>' : '')
+          + (rec.recoveryAction ? '<div>Recovery action: ' + esc(rec.recoveryAction) + '</div>' : '')
+          + '</div>').join('') + '</div></details>';
+    }
     p.innerHTML = '<div class="ui-summary-grid">'
       + '<div class="ui-summary-card ' + (healthy ? 'healthy' : st === 'degraded' ? 'warning' : 'critical') + '"><div class="ui-summary-label">Runtime</div><div class="ui-summary-value">' + esc(st) + '</div></div>'
       + '<div class="ui-summary-card neutral"><div class="ui-summary-label">Inspected</div><div class="ui-summary-value">' + (state.status.recordsInspected ?? 0) + '</div></div>'

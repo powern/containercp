@@ -717,6 +717,19 @@ See `docs/development/wordpress-credential-management.md` for supported config f
 | GET | `/api/access-users` | List SFTP access users | `AccessUserManager` |
 | POST | `/api/access-users/remove` | Remove an access user | `AccessUserManager` |
 
+The administration routes are under `/api/access/sftp/`. SSH key imports use
+`POST /api/access/sftp/users/<id>/keys` and require `publicKey`. Generated
+key pairs use the separate `POST /api/access/sftp/users/<id>/keys/gen` route
+with `{ "type": "ed25519", "comment": "...", "enabled": true }` and do
+not accept or require `publicKey`. Only the generated response contains the
+one-time `privateKey`; persistent access-key records contain public-key data
+only. Supported generation types are `ed25519` and `rsa`.
+
+`GET /api/access/sftp/status` returns runtime state, reconciliation summaries
+for managed mounts and system-account lifecycle, bounded errors, and recovery
+actions. `GET /api/health` includes the SFTP provider as the `sftp` module and
+reflects degraded/failed SFTP state in the aggregate status.
+
 ### 2.13 Profiles
 
 | Method | Path | Purpose | Owner |

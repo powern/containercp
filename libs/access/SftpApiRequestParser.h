@@ -25,6 +25,13 @@ struct SftpCreateKeyRequest {
     bool enabled_present = false;
 };
 
+struct SftpGenerateKeyRequest {
+    std::string type;
+    std::string comment;
+    bool enabled = true;
+    bool enabled_present = false;
+};
+
 struct SftpCreateGrantRequest {
     uint64_t site_id = 0;
     bool site_id_present = false;
@@ -39,6 +46,7 @@ struct SftpParsedResult {
     SftpCreateUserRequest create_user;
     SftpPatchUserRequest patch_user;
     SftpCreateKeyRequest create_key;
+    SftpGenerateKeyRequest generate_key;
     SftpCreateGrantRequest create_grant;
 };
 
@@ -52,6 +60,9 @@ SftpParsedResult parse_patch_user_body(const std::string& body, size_t max_size 
 
 // Parse a "create/update key" body.
 SftpParsedResult parse_create_key_body(const std::string& body, size_t max_size = 65536);
+
+// Parse a generated-key request.  Unlike import, publicKey is not accepted or required.
+SftpParsedResult parse_generate_key_body(const std::string& body, size_t max_size = 65536);
 
 // Parse a "create/update grant" body.
 SftpParsedResult parse_create_grant_body(const std::string& body, size_t max_size = 65536);

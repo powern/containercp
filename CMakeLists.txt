@@ -25,6 +25,8 @@ set(CONTAINERCP_SOURCES
     libs/access/LocalSftpProvider.cpp
     libs/access/SshdDiscovery.cpp
     libs/access/SftpApiRequestParser.cpp
+    libs/access/SshKeyGenerator.cpp
+    libs/access/SftpKeyService.cpp
     libs/access/SshdConfigWriter.cpp
     libs/access/SshdAuthorizedKeysWriter.cpp
     libs/api/ApiServer.cpp

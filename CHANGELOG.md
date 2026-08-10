@@ -6,6 +6,34 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-10 | `pending` | bugfix: recover stale SFTP provisioning groups and expose reconciliation failures
+
+**Summary:** Fixed startup reconciliation misclassifying a ContainerCP-owned private group left after a crash between `groupadd` and `useradd` as an unmanaged conflict. Reconciliation now verifies the persisted GID, removes only the proven managed group, checks cleanup postconditions, and removes the stale provisioning mapping. Added structured reconciliation records with failed item, error, and recovery action fields. SFTP is now included in `/api/health`; the GUI displays reconciliation details instead of only aggregate counters.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `libs/access/SftpRuntimeState.h`, `libs/core/ServiceRegistry.cpp`, `libs/api/ApiServer.cpp`, `web/pages/sftp-access.js`, `tests/test_access.cpp`, `planning/ARCH-009-PHASE3-DESIGN.md`, `docs/api/API_REFERENCE.md`, `docs/api/sftp-administration-api.md`, `CHANGELOG.md`
+
+**User-visible behavior:** After a recoverable partial SFTP provisioning failure, daemon restart/reconciliation can clean the stale managed group and return the provider to `healthy`. Unmanaged users/groups remain fail-closed. While degraded, mutations remain blocked. Status and health responses now identify the failed reconciliation unit and recovery action.
+
+**Validation:** Reconciliation-focused doctests passed: 16 test cases, 50 assertions. SFTP-focused doctests passed: 42 test cases, 109 assertions. `cmake --build build2 -j2`, `node --check web/pages/sftp-access.js`, and `git diff --check` passed. Full CTest reached 1332/1333 doctest cases; the pre-existing disposable MariaDB DB-4 import test failed because its runtime import did not complete, and `arch009_linux_integration` was skipped.
+
+**Known risks:** Real privileged SFTP login and production web2 deployment still require live validation after rebuild/restart. The unrelated disposable MariaDB DB-4 test environment needs separate cleanup/investigation.
+
+---
+
+## 2026-08-10 | `pending` | bugfix: separate generated SFTP SSH keys from public-key import
+
+**Summary:** Fixed `POST /api/access/sftp/users/{id}/keys/gen` being routed through the import flow and incorrectly requiring `publicKey`. Added a dedicated generate-key parser and access service. ED25519 and RSA pairs are generated with `ssh-keygen` in a private temporary directory, the public key is validated and persisted, `authorized_keys` is rebuilt transactionally, and the private key is returned only in the creation response.
+
+**Files changed:** `libs/access/SftpApiRequestParser.*`, `libs/access/SshKeyGenerator.*`, `libs/access/SftpKeyService.*`, `libs/api/ApiServer.cpp`, `libs/core/ServiceRegistry.*`, `docs/api/sftp-administration-api.md`, `tests/CMakeLists.txt`, `tests/test_sftp_api.cpp`, `CMakeLists.txt`, `CHANGELOG.md`
+
+**User-visible behavior:** Generate and Add now accepts `{ "type": "ed25519", "comment": "...", "enabled": true }` without `publicKey` and returns a one-time private key alongside the persisted public-key metadata. Import continues to require `publicKey`; duplicate keys return 409 and failed authorized_keys synchronization leaves no new key record.
+
+**Validation:** Focused SFTP doctest selection passed: 42 test cases, 109 assertions. `cmake --build build2 -j2` passed. `git diff --check` passed.
+
+**Known risks:** Key generation currently supports the system `ssh-keygen` binary and the existing supported OpenSSH key types only.
+
+---
+
 ## 2026-07-26 | `pending` | ARCH-010 Task 7 — Close SFTP Administration MVP with Honest Acceptance Status
 
 **Summary:** Formally closed ARCH-010 as MVP. Updated project status to reflect: backend lifecycle complete, OpenSSH integration MVP complete, REST API complete, GUI source implementation complete, runtime/API validation complete. Real visual browser validation: partial/deferred (no browser available in validation environment). RBAC beyond AllowAllAuth: deferred. Full JSON parser: deferred. Access/SFTP subsystem now spans Phases 1–4 of ARCH-009 and all of ARCH-010. Deferred items moved to backlog: browser screenshots, accessibility pass, configurable RBAC, standards-compliant JSON parser, multi-distro OpenSSH support, advanced drift recovery. Returned to main ContainerCP roadmap.

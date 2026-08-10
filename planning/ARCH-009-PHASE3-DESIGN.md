@@ -360,6 +360,9 @@ CREATE TABLE system_accounts (
 - A `site_group_*` entry in `system_accounts` proves ContainerCP created the OS group
 - Before `groupdel site-1-rw`: verify `system_accounts` has matching entry → safe
 - No entry → `unmanaged_group_conflict` → fail closed
+- For an `access_user` mapping in `provisioning`, the persisted matching GID
+  proves ownership of a private group left by a partial create; reconciliation
+  may remove that group before deleting the stale mapping.
 
 ### Rollback via State
 

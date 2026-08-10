@@ -86,6 +86,28 @@ Triggers full provider reconciliation for all users.
 
 Validates the key, checks for duplicates, persists, and rebuilds authorized_keys.
 
+### Generate key pair
+
+`POST /api/access/sftp/users/{id}/keys/gen`
+
+```json
+{
+  "type": "ed25519",
+  "comment": "operator@example.test",
+  "enabled": true
+}
+```
+
+The supported types are `ed25519` and `rsa`. `publicKey` is not required for
+this operation. ContainerCP generates the pair in a private temporary
+directory, validates the generated OpenSSH public key with the same validator
+used by imports, persists only the public key, and rebuilds `authorized_keys`.
+The private key is returned only in this response and is not stored or logged.
+
+The generated response includes `id`, `keyType`, `fingerprint`, `comment`,
+`enabled`, `publicKey`, and `privateKey`. A failed `authorized_keys` rebuild
+rolls back the new `access_keys` record.
+
 ### Update key
 
 `PATCH /api/access/sftp/users/{id}/keys/{key_id}`
@@ -160,11 +182,37 @@ Retries the grant application after a failure.
 
 Returns runtime state, reconciliation record counts, and bounded errors.
 
+The response also includes a `reconciliation` array with one record for each
+startup reconciliation unit:
+
+```json
+{
+  "runtimeState": "degraded",
+  "recordsInspected": 2,
+  "recordsFixed": 1,
+  "recordsFailed": 1,
+  "reconciliation": [
+    {
+      "phase": "user",
+      "item": "system account lifecycle reconciliation",
+      "state": "failed",
+      "error": "reconcile_users:1 failures ...",
+      "recoveryAction": "Inspect system_accounts mapping, Linux user/group/home state, then retry SFTP reconciliation"
+    }
+  ]
+}
+```
+
 ### Trigger reconciliation
 
 `POST /api/access/sftp/reconcile`
 
-Invokes provider retry_reconciliation(). Returns 409 if concurrently busy.
+Invokes provider retry_reconciliation(). Returns 409 if concurrently busy and
+returns the bounded reconciliation diagnostic when recovery still fails.
+
+`GET /api/health` now includes a `modules.sftp` report. A `degraded` or
+`failed` SFTP provider changes the aggregate health status instead of being
+hidden by the mail-only health report.
 
 ---
 

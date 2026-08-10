@@ -6,10 +6,16 @@
 #include "access/AccessKeyManager.h"
 #include "access/LocalSftpProvider.h"
 #include "access/AccessGrant.h"
+#include "access/SftpKeyService.h"
+#include "access/SshKeyGenerator.h"
+#include "access/SshKeyValidator.h"
 #include "logger/Logger.h"
+#include "storage/Storage.h"
 
+#include <filesystem>
 #include <string>
 #include <vector>
+#include <unistd.h>
 
 #include "doctest/doctest.h"
 
@@ -96,12 +102,108 @@ TEST_CASE("sftp parser patch user rejects wrong type") {
 TEST_CASE("sftp parser create key requires publicKey") {
     auto r = access::parse_create_key_body("{}");
     CHECK_FALSE(r.valid);
+    CHECK(r.error_code == access::kErrorKeyInvalid);
 }
 
 TEST_CASE("sftp parser create key accepts valid") {
     auto r = access::parse_create_key_body("{\"publicKey\":\"ssh-ed25519 AAA...\"}");
     CHECK(r.valid);
     CHECK(r.create_key.public_key == "ssh-ed25519 AAA...");
+}
+
+TEST_CASE("sftp parser generate key does not require publicKey") {
+    auto r = access::parse_generate_key_body(
+        "{\"type\":\"ed25519\",\"comment\":\"operator@example.test\",\"enabled\":true}");
+    REQUIRE(r.valid);
+    CHECK(r.generate_key.type == "ed25519");
+    CHECK(r.generate_key.comment == "operator@example.test");
+    CHECK(r.generate_key.enabled);
+}
+
+TEST_CASE("sftp parser generate key rejects unknown type") {
+    auto r = access::parse_generate_key_body("{\"type\":\"dsa\"}");
+    CHECK_FALSE(r.valid);
+    CHECK(r.error_code == access::kErrorKeyInvalid);
+    CHECK(r.error_details.find("unsupported") != std::string::npos);
+}
+
+TEST_CASE("sftp key generator creates a valid ed25519 OpenSSH pair") {
+    access::SshKeyGenerator generator;
+    auto generated = generator.generate("ed25519", "operator@example.test");
+    REQUIRE(generated.success);
+    CHECK(generated.private_key.find("-----BEGIN OPENSSH PRIVATE KEY-----") == 0);
+    auto validation = access::SshKeyValidator::validate(generated.public_key);
+    REQUIRE(validation.valid);
+    CHECK(validation.key_type == "ssh-ed25519");
+    CHECK(validation.key_comment == "operator@example.test");
+    CHECK(generated.private_key.find(generated.public_key) == std::string::npos);
+}
+
+TEST_CASE("sftp generated key is persisted and written to authorized_keys") {
+    const std::string root = "/tmp/containercp-sftp-api-" + std::to_string(::getpid());
+    std::filesystem::remove_all(root);
+    storage::Storage storage(root);
+    access::AccessKeyManager keys;
+    auto& log = logger::Logger::instance();
+    access::LocalSftpProvider provider(log);
+    access::SystemAccountMapping mapping;
+    mapping.entity_type = "access_user";
+    mapping.entity_id = 1;
+    mapping.username = "sftp-test";
+    provider.set_mapping_persistence(
+        [&]() { return std::vector<access::SystemAccountMapping>{mapping}; },
+        [](const access::SystemAccountMapping&) { return true; },
+        [](const std::string&, uint64_t) { return true; });
+    std::vector<access::AccessKey> written_keys;
+    provider.set_key_loader([&](uint64_t) { return keys.list(); });
+    provider.set_key_writer([&](uint64_t, const std::string&) {
+        written_keys = keys.list();
+        return core::OperationResult{true, "written", ""};
+    });
+
+    access::SshKeyGenerator generator;
+    access::SftpKeyService service(keys, storage, provider, generator);
+    auto generated = service.generate_key(1, "ed25519", "operator@example.test", true);
+    REQUIRE(generated.success);
+    CHECK(keys.list().size() == 1);
+    CHECK(written_keys.size() == 1);
+    auto authorized_key = access::SshKeyValidator::validate(
+        "ssh-ed25519 " + written_keys[0].key_data + " " + written_keys[0].key_comment);
+    CHECK(authorized_key.valid);
+    CHECK(written_keys[0].key_comment == "operator@example.test");
+    CHECK(generated.private_key.find("PRIVATE KEY") != std::string::npos);
+    CHECK(written_keys[0].key_data.find(generated.private_key) == std::string::npos);
+    CHECK(service.import_key(1, generated.public_key, "", true).error_code == access::kErrorKeyDuplicate);
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE("sftp key service rolls back when authorized_keys write fails") {
+    const std::string root = "/tmp/containercp-sftp-api-rollback-" + std::to_string(::getpid());
+    std::filesystem::remove_all(root);
+    storage::Storage storage(root);
+    access::AccessKeyManager keys;
+    auto& log = logger::Logger::instance();
+    access::LocalSftpProvider provider(log);
+    access::SystemAccountMapping mapping;
+    mapping.entity_type = "access_user";
+    mapping.entity_id = 1;
+    mapping.username = "sftp-test";
+    provider.set_mapping_persistence(
+        [&]() { return std::vector<access::SystemAccountMapping>{mapping}; },
+        [](const access::SystemAccountMapping&) { return true; },
+        [](const std::string&, uint64_t) { return true; });
+    provider.set_key_loader([&](uint64_t) { return keys.list(); });
+    provider.set_key_writer([](uint64_t, const std::string&) {
+        return core::OperationResult{false, "authorized_keys write failed", ""};
+    });
+
+    access::SshKeyGenerator generator;
+    access::SftpKeyService service(keys, storage, provider, generator);
+    auto result = service.generate_key(1, "ed25519", "rollback@example.test", true);
+    CHECK_FALSE(result.success);
+    CHECK(result.error_code == access::kErrorKeySyncFailed);
+    CHECK(keys.list().empty());
+    std::filesystem::remove_all(root);
 }
 
 TEST_CASE("sftp parser create grant requires permission and siteId") {

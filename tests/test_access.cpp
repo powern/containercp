@@ -354,6 +354,14 @@ TEST_CASE("UsernameMapper replaces dots") {
     CHECK(r.canonical == "au-john_doe");
 }
 
+TEST_CASE("UsernameMapper maps email usernames to a safe Linux identity") {
+    auto r = containercp::access::UsernameMapper::map("skr@softico.ua");
+    CHECK(r.valid);
+    CHECK(r.canonical == "au-skr_softico_ua");
+    CHECK(r.canonical.find('@') == std::string::npos);
+    CHECK(r.canonical.size() <= 32);
+}
+
 TEST_CASE("UsernameMapper collapses separators") {
     auto r = containercp::access::UsernameMapper::map("a___b");
     CHECK(r.valid);
@@ -7692,6 +7700,20 @@ TEST_CASE("reconcile_user_lifecycle provisioning_no_os_account") {
     CHECK(ctx.stored_.empty());
 }
 
+TEST_CASE("reconcile_user_lifecycle cleans stale managed private group") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "provisioning");
+    // A crash after private group creation but before useradd leaves this
+    // exact, ContainerCP-owned group behind.
+    ctx.inspector->groups_["au1"] = {true, "au1", 20001};
+
+    auto r = ctx.provider.reconcile_user_lifecycle();
+    CHECK(r.success);
+    CHECK(ctx.stored_.empty());
+    CHECK_FALSE(ctx.inspector->group_exists("au1"));
+    CHECK(r.message.find("managed_group_cleaned") != std::string::npos);
+}
+
 TEST_CASE("reconcile_user_lifecycle provisioning_os_exists_matches") {
     ReconcileUserContext ctx;
     ctx.add_user(1, "provisioning");
@@ -8256,6 +8278,49 @@ TEST_CASE("ARCH-009 retry reconciliation reports record counts") {
     // At minimum, mount step and user step were inspected
     CHECK(result.records_inspected >= 1);
     CHECK(result.records_fixed >= 0);
+}
+
+TEST_CASE("ARCH-009 failed reconciliation exposes item and recovery action") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "active");
+    // The persisted active mapping has no matching OS account.
+    auto result = ctx.provider.retry_reconciliation();
+    CHECK_FALSE(result.success);
+    CHECK(ctx.provider.runtime_state() == containercp::access::SftpRuntimeState::Degraded);
+    REQUIRE(result.records.size() == 2);
+    CHECK(result.records[0].item == "managed mount reconciliation");
+    CHECK(result.records[1].item == "system account lifecycle reconciliation");
+    CHECK(result.records[1].state == "failed");
+    CHECK(result.records[1].error.find("ownership") != std::string::npos);
+    CHECK_FALSE(result.records[1].recovery_action.empty());
+}
+
+TEST_CASE("ARCH-009 retry after reconciliation cause is removed reaches Healthy") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "active");
+    auto failed = ctx.provider.retry_reconciliation();
+    CHECK_FALSE(failed.success);
+    CHECK(ctx.provider.runtime_state() == containercp::access::SftpRuntimeState::Degraded);
+
+    // The operator removed the stale persisted mapping before retrying.
+    ctx.stored_.clear();
+    auto recovered = ctx.provider.retry_reconciliation();
+    CHECK(recovered.success);
+    CHECK(ctx.provider.runtime_state() == containercp::access::SftpRuntimeState::Healthy);
+}
+
+TEST_CASE("ARCH-009 mutation remains blocked while reconciliation is Degraded") {
+    ReconcileUserContext ctx;
+    ctx.add_user(1, "active");
+    auto failed = ctx.provider.retry_reconciliation();
+    REQUIRE_FALSE(failed.success);
+
+    containercp::access::AccessUser user;
+    user.id = 2;
+    user.username = "skr@softico.ua";
+    auto result = ctx.provider.create_user(user);
+    CHECK_FALSE(result.success);
+    CHECK(result.message.find("SFTP provider degraded: create_user") != std::string::npos);
 }
 
 TEST_CASE("ARCH-009 to_operation_result roundtrip") {

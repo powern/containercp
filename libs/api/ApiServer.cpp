@@ -5017,27 +5017,58 @@ bool ApiServer::start() {
                 if (!kw.success) { r.status_code = 500; r.body = api_error("sftp_key_sync_failed", kw.message); return r; }
                 r.body = api_success("{\"message\":\"authorized_keys rebuilt\"}"); return r;
             }
-            std::string pk = json_extract(req.body, "publicKey");
-            if (pk.empty()) { r.status_code = 422; r.body = api_error("sftp_key_invalid", "publicKey required"); return r; }
-            auto val = containercp::access::SshKeyValidator::validate(pk);
-            if (!val.valid) { r.status_code = 422; r.body = api_error("sftp_key_invalid", val.error); return r; }
-            for (const auto& k : s.access_keys().list()) {
-                if (k.access_user_id == uid && k.fingerprint == val.fingerprint) { r.status_code = 409; r.body = api_error("sftp_key_duplicate", ""); return r; }
+            if (after == "/gen") {
+                auto parsed = containercp::access::parse_generate_key_body(req.body);
+                if (!parsed.valid) {
+                    r.status_code = 422;
+                    r.body = api_error(parsed.error_code, parsed.error_details);
+                    return r;
+                }
+                auto generated = s.sftp_keys().generate_key(
+                    uid, parsed.generate_key.type, parsed.generate_key.comment,
+                    parsed.generate_key.enabled);
+                if (!generated.success) {
+                    r.status_code = generated.error_code == "sftp_key_duplicate" ? 409
+                                  : generated.error_code == "sftp_key_invalid" ? 422 : 500;
+                    r.body = api_error(generated.error_code, generated.error_details);
+                    return r;
+                }
+                r.body = api_success("{\"id\":" + std::to_string(generated.id)
+                    + ",\"keyType\":\"" + JsonFormatter::escape(generated.key_type)
+                    + "\",\"fingerprint\":\"" + JsonFormatter::escape(generated.fingerprint)
+                    + "\",\"comment\":\"" + JsonFormatter::escape(generated.comment)
+                    + "\",\"enabled\":" + (generated.enabled ? "true" : "false")
+                    + ",\"publicKey\":\"" + JsonFormatter::escape(generated.public_key)
+                    + "\",\"privateKey\":\"" + JsonFormatter::escape(generated.private_key) + "\"}");
+                return r;
             }
-            containercp::access::AccessKey ak;
-            ak.access_user_id = uid; ak.key_type = val.key_type; ak.key_data = val.key_data;
-            ak.key_comment = json_extract(req.body, "comment"); if (ak.key_comment.empty()) ak.key_comment = val.key_comment;
-            ak.fingerprint = val.fingerprint; ak.enabled = true;
-            if (json_has_key(req.body, "enabled")) { ak.enabled = json_extract(req.body, "enabled") != "false"; }
-            uint64_t kid = s.access_keys().create(ak);
-            if (kid == 0) { r.status_code = 500; r.body = api_error("sftp_backend_failure", "key create failed"); return r; }
-            s.storage().save_access_keys(s.access_keys().list());
-            auto kw = lsp->write_authorized_keys(uid);
-            if (!kw.success) {
-                s.access_keys().remove(kid); s.storage().save_access_keys(s.access_keys().list());
-                r.status_code = 500; r.body = api_error("sftp_key_sync_failed", kw.message); return r;
+            if (!after.empty()) {
+                r.status_code = 404;
+                r.body = api_error("sftp_key_not_found", "");
+                return r;
             }
-            r.body = api_success("{\"id\":" + std::to_string(kid) + ",\"keyType\":\"" + JsonFormatter::escape(ak.key_type) + "\",\"fingerprint\":\"" + JsonFormatter::escape(ak.fingerprint) + "\",\"comment\":\"" + JsonFormatter::escape(ak.key_comment) + "\",\"enabled\":" + (ak.enabled ? "true" : "false") + "}");
+
+            // POST /keys is import-existing-public-key. publicKey remains required.
+            auto parsed = containercp::access::parse_create_key_body(req.body);
+            if (!parsed.valid) {
+                r.status_code = 422;
+                r.body = api_error(parsed.error_code, parsed.error_details);
+                return r;
+            }
+            auto imported = s.sftp_keys().import_key(
+                uid, parsed.create_key.public_key, parsed.create_key.comment,
+                parsed.create_key.enabled);
+            if (!imported.success) {
+                r.status_code = imported.error_code == "sftp_key_duplicate" ? 409
+                              : imported.error_code == "sftp_key_invalid" ? 422 : 500;
+                r.body = api_error(imported.error_code, imported.error_details);
+                return r;
+            }
+            r.body = api_success("{\"id\":" + std::to_string(imported.id)
+                + ",\"keyType\":\"" + JsonFormatter::escape(imported.key_type)
+                + "\",\"fingerprint\":\"" + JsonFormatter::escape(imported.fingerprint)
+                + "\",\"comment\":\"" + JsonFormatter::escape(imported.comment)
+                + "\",\"enabled\":" + (imported.enabled ? "true" : "false") + "}");
             return r;
         }
 
@@ -5258,12 +5289,24 @@ bool ApiServer::start() {
         auto st = lsp->runtime_state_label();
         auto last = lsp->last_reconciliation_result();
         std::string j = "{\"runtimeState\":\"" + JsonFormatter::escape(st) + "\",\"enabled\":" + (lsp->runtime_state() != containercp::access::SftpRuntimeState::Disabled ? "true" : "false") + ",\"recordsInspected\":" + std::to_string(last.records_inspected) + ",\"recordsFixed\":" + std::to_string(last.records_fixed) + ",\"recordsFailed\":" + std::to_string(last.records_failed) + ",\"unsafeForeignStateDetected\":" + (last.unsafe_foreign_state_detected ? "true" : "false");
-        if (!last.errors.empty()) {
-            j += ",\"errors\":[";
-            for (size_t i = 0; i < last.errors.size(); ++i) { if (i > 0) j += ","; j += "\"" + JsonFormatter::escape(last.errors[i]) + "\""; }
-            j += "]";
-        }
-        j += "}";
+         if (!last.errors.empty()) {
+             j += ",\"errors\":[";
+             for (size_t i = 0; i < last.errors.size(); ++i) { if (i > 0) j += ","; j += "\"" + JsonFormatter::escape(last.errors[i]) + "\""; }
+             j += "]";
+         }
+         j += ",\"reconciliation\":[";
+         for (size_t i = 0; i < last.records.size(); ++i) {
+             if (i > 0) j += ",";
+             const auto& record = last.records[i];
+             j += "{\"phase\":\"" + JsonFormatter::escape(record.phase)
+                 + "\",\"item\":\"" + JsonFormatter::escape(record.item)
+                 + "\",\"state\":\"" + JsonFormatter::escape(record.state)
+                 + "\",\"error\":\"" + JsonFormatter::escape(record.error)
+                 + "\",\"recoveryAction\":\"" + JsonFormatter::escape(record.recovery_action)
+                 + "\"}";
+         }
+         j += "]";
+         j += "}";
         r.body = api_success(j);
         return r;
     });
@@ -5275,7 +5318,11 @@ bool ApiServer::start() {
         if (!res.success && !res.errors.empty() && res.errors[0].find("concurrent") != std::string::npos) {
             r.status_code = 409; r.body = api_error("sftp_reconciliation_busy", ""); return r;
         }
-        if (!res.success) { r.status_code = 500; r.body = api_error("sftp_backend_failure", "reconciliation failed"); return r; }
+        if (!res.success) {
+            r.status_code = 500;
+            r.body = api_error("sftp_backend_failure", res.to_operation_result().message);
+            return r;
+        }
         r.body = api_success("{\"message\":\"reconciliation complete\"}");
         return r;
     });

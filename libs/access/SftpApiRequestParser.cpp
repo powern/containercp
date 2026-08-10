@@ -173,6 +173,53 @@ SftpParsedResult parse_create_key_body(const std::string& body, size_t max_size)
     return r;
 }
 
+SftpParsedResult parse_generate_key_body(const std::string& body, size_t max_size) {
+    SftpParsedResult r;
+    if (body.size() > max_size) { r.error_code = kErrorJsonInvalid; r.error_details = "body too large"; return r; }
+    if (body.empty() || body[0] != '{') { r.error_code = kErrorJsonInvalid; r.error_details = "not valid JSON"; return r; }
+
+    FieldTracker ft;
+    r.generate_key.type = extract_string(body, "type");
+    if (r.generate_key.type.empty()) {
+        r.error_code = kErrorKeyInvalid; r.error_details = "type required"; return r;
+    }
+    if (!ft.add("type")) { r.error_code = kErrorJsonInvalid; r.error_details = "duplicate field: type"; return r; }
+    if (r.generate_key.type != "ed25519" && r.generate_key.type != "rsa") {
+        r.error_code = kErrorKeyInvalid;
+        r.error_details = "unsupported key type: " + r.generate_key.type;
+        return r;
+    }
+
+    r.generate_key.comment = extract_string(body, "comment");
+    if (!ft.add("comment")) { r.error_code = kErrorJsonInvalid; r.error_details = "duplicate field: comment"; return r; }
+    if (r.generate_key.comment.size() > 256) {
+        r.error_code = kErrorKeyInvalid; r.error_details = "key comment too long (max 256 chars)"; return r;
+    }
+    for (unsigned char c : r.generate_key.comment) {
+        if (std::iscntrl(c) != 0) {
+            r.error_code = kErrorKeyInvalid; r.error_details = "control characters in comment"; return r;
+        }
+    }
+
+    bool en_present = false;
+    if (!extract_bool(body, "enabled", r.generate_key.enabled, en_present)) {
+        r.error_code = kErrorJsonInvalid; r.error_details = "enabled must be boolean"; return r;
+    }
+    if (en_present && !ft.add("enabled")) {
+        r.error_code = kErrorJsonInvalid; r.error_details = "duplicate field: enabled"; return r;
+    }
+    r.generate_key.enabled_present = en_present;
+
+    // Keep generated and imported request schemas separate. In particular, a
+    // generated request must never accidentally be treated as an import.
+    if (body.find("\"publicKey\":") != std::string::npos ||
+        body.find("\"public_key\":") != std::string::npos) {
+        r.error_code = kErrorJsonInvalid; r.error_details = "unknown field: publicKey"; return r;
+    }
+    r.valid = true;
+    return r;
+}
+
 SftpParsedResult parse_create_grant_body(const std::string& body, size_t max_size) {
     SftpParsedResult r;
     if (body.size() > max_size) { r.error_code = kErrorJsonInvalid; r.error_details = "body too large"; return r; }

@@ -13,6 +13,29 @@
 
 namespace containercp::core {
 
+namespace {
+
+std::string json_escape(const std::string& value) {
+    std::string out;
+    out.reserve(value.size());
+    for (unsigned char c : value) {
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (c < 0x20) out += '?';
+                else out += static_cast<char>(c);
+                break;
+        }
+    }
+    return out;
+}
+
+} // namespace
+
 storage::StorageOptions ServiceRegistry::storage_backend_options(const config::Config& cfg) {
     storage::StorageOptions opts;
     std::string backend = cfg.storage_backend();
@@ -42,6 +65,7 @@ ServiceRegistry::ServiceRegistry()
     , pem_cert_provider_(std::make_shared<ssl::PemCertificateProvider>(logger_))
     , dkim_(logger_)
     , storage_(config_.database_dir(), storage_backend_options(config_))
+    , sftp_key_service_(access_keys_, storage_, access_provider_, ssh_key_generator_)
     , sql_console_runtime_runner_(credential_command_executor_)
     , mariadb_command_runner_(credential_command_executor_)
     , mariadb_credential_provider_(mariadb_command_runner_)
@@ -183,6 +207,47 @@ ServiceRegistry::ServiceRegistry()
             + ",\"mailbox_count\":" + std::to_string(mailbox_count)
             + ",\"alias_count\":" + std::to_string(alias_count)
             + ",\"certificate\":\"" + cert_status + "\"}";
+        return report;
+    });
+
+    // SFTP health is derived from the provider's runtime state and the last
+    // structured reconciliation result. It must not be hidden by mail health.
+    health_.register_check("sftp", [this]() -> runtime::HealthReport {
+        runtime::HealthReport report;
+        const auto state = access_provider_.runtime_state();
+        const auto& reconciliation = access_provider_.last_reconciliation_result();
+        const auto state_label = access_provider_.runtime_state_label();
+        const std::string health_status =
+            state == access::SftpRuntimeState::Healthy ? "ok" :
+            state == access::SftpRuntimeState::Failed ? "error" :
+            state == access::SftpRuntimeState::Disabled ? "unknown" : "degraded";
+        report.status = health_status;
+        std::string message = "runtime=" + state_label;
+        if (!reconciliation.errors.empty()) {
+            message += ": " + reconciliation.errors.front();
+        }
+        report.services.push_back({"provider", health_status, message});
+
+        std::string records = "[";
+        for (size_t i = 0; i < reconciliation.records.size(); ++i) {
+            if (i > 0) records += ",";
+            const auto& record = reconciliation.records[i];
+            records += "{\"phase\":\"" + json_escape(record.phase)
+                + "\",\"item\":\"" + json_escape(record.item)
+                + "\",\"state\":\"" + json_escape(record.state)
+                + "\",\"error\":\"" + json_escape(record.error)
+                + "\",\"recovery_action\":\"" + json_escape(record.recovery_action)
+                + "\"}";
+        }
+        records += "]";
+        report.details = "{\"runtime_state\":\"" + json_escape(state_label)
+            + "\",\"enabled\":" + (access_provider_.runtime_state() != access::SftpRuntimeState::Disabled ? "true" : "false")
+            + ",\"records_inspected\":" + std::to_string(reconciliation.records_inspected)
+            + ",\"records_fixed\":" + std::to_string(reconciliation.records_fixed)
+            + ",\"records_failed\":" + std::to_string(reconciliation.records_failed)
+            + ",\"recoverable\":" + (reconciliation.recoverable ? "true" : "false")
+            + ",\"unsafe_foreign_state_detected\":" + (reconciliation.unsafe_foreign_state_detected ? "true" : "false")
+            + ",\"records\":" + records + "}";
         return report;
     });
 
@@ -1170,6 +1235,10 @@ access::AccessGrantManager& ServiceRegistry::access_grants() {
 
 access::AccessKeyManager& ServiceRegistry::access_keys() {
     return access_keys_;
+}
+
+access::SftpKeyService& ServiceRegistry::sftp_keys() {
+    return sftp_key_service_;
 }
 
 access::AccessProvider& ServiceRegistry::access_provider() {

@@ -106,6 +106,8 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/access/LocalSftpProvider.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/SshdDiscovery.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/SftpApiRequestParser.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/SshKeyGenerator.cpp
+    ${CMAKE_SOURCE_DIR}/libs/access/SftpKeyService.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/SshdConfigWriter.cpp
     ${CMAKE_SOURCE_DIR}/libs/access/SshdAuthorizedKeysWriter.cpp
     ${CMAKE_SOURCE_DIR}/libs/proxy/ProxyConfigBuilder.cpp

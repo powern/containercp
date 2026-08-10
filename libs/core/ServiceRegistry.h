@@ -7,6 +7,7 @@
 #include "auth/AuthService.h"
 #include "auth/AuthUserManager.h"
 #include "access/LocalSftpProvider.h"
+#include "access/SftpKeyService.h"
 #include "backup/BackupManager.h"
 #include "backup/BackupJobService.h"
 #include "backup/BackupService.h"
@@ -111,6 +112,7 @@ public:
     access::AccessUserManager& access_users();
     access::AccessGrantManager& access_grants();
     access::AccessKeyManager& access_keys();
+    access::SftpKeyService& sftp_keys();
     access::AccessProvider& access_provider();
 
     // Typed accessor for LocalSftpProvider (Phase 3/4 methods).
@@ -185,6 +187,7 @@ private:
     access::AccessGrantManager access_grants_;
     access::AccessKeyManager access_keys_;
     access::LocalSftpProvider access_provider_;
+    access::SshKeyGenerator ssh_key_generator_;
     proxy::ReverseProxyManager reverse_proxies_;
     proxy::NginxProxyProvider proxy_provider_;
     ssl::SslCertificateManager ssl_;
@@ -203,6 +206,7 @@ private:
     mail::SiteMailCredentials mail_credentials_;
     storage::Storage storage_;
     runtime::CommandExecutor credential_command_executor_;
+    access::SftpKeyService sftp_key_service_;
     sqlconsole::CommandExecutorSqlConsoleRuntimeRunner sql_console_runtime_runner_;
     database::MariaDBCommandExecutorRunner mariadb_command_runner_;
     database::MariaDBCredentialProvider mariadb_credential_provider_;

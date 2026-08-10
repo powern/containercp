@@ -1619,9 +1619,9 @@ core::OperationResult LocalSftpProvider::reconcile_user_lifecycle_internal() {
                 }
             } else {
                 // OS account doesn't exist — check for unmanaged conflicts
-                if (inspector_->user_exists(mapping.username) ||
-                    inspector_->group_exists(mapping.groupname)) {
-                    // Unmanaged entity with this name exists
+                if (inspector_->user_exists(mapping.username)) {
+                    // An existing user with the mapped name cannot be proven
+                    // to be ours when the persisted provisioning never completed.
                     mapping.last_error = "provisioning:unmanaged_conflict";
                     if (!persist(mapping, "error", mapping.last_error)) {
                         note(ident + ":provisioning:conflict_persist_failed");
@@ -1633,12 +1633,34 @@ core::OperationResult LocalSftpProvider::reconcile_user_lifecycle_internal() {
                     continue;
                 }
 
-                // Clean up stale group if it exists but is managed
+                // A failed provisioning may have created the private group
+                // before useradd failed. It is safe to remove only the exact
+                // group whose GID was allocated and persisted by ContainerCP.
                 if (inspector_->group_exists(mapping.groupname)) {
                     auto grp = inspector_->lookup_group(mapping.groupname);
-                    if (grp.gid == mapping.gid) {
-                        (void)runner_->groupdel(mapping.groupname);
+                    if (!grp.exists || grp.gid != mapping.gid) {
+                        mapping.last_error = "provisioning:unmanaged_group_conflict";
+                        if (!persist(mapping, "error", mapping.last_error)) {
+                            note(ident + ":provisioning:conflict_persist_failed");
+                        } else {
+                            note(ident + ":provisioning:conflict_error");
+                        }
+                        failures++;
+                        continue;
                     }
+                    auto gd = runner_->groupdel(mapping.groupname);
+                    if (!gd.success || inspector_->group_exists(mapping.groupname)) {
+                        mapping.last_error = "provisioning:managed_group_cleanup_failed";
+                        if (!persist(mapping, "error", mapping.last_error)) {
+                            note(ident + ":provisioning:cleanup_persist_failed");
+                        } else {
+                            note(ident + ":provisioning:cleanup_failed");
+                        }
+                        failures++;
+                        continue;
+                    }
+                    note(ident + ":provisioning:managed_group_cleaned");
+                    reconciled++;
                 }
 
                 // Clean up provisioning record — it was never completed
@@ -1646,6 +1668,16 @@ core::OperationResult LocalSftpProvider::reconcile_user_lifecycle_internal() {
                 if (!mapping.home.empty() && managed_path_safe(mapping.home, managed_home_root_)) {
                     std::error_code ec;
                     std::filesystem::remove_all(mapping.home, ec);
+                    if (ec) {
+                        mapping.last_error = "provisioning:home_cleanup_failed";
+                        if (!persist(mapping, "error", mapping.last_error)) {
+                            note(ident + ":provisioning:cleanup_persist_failed");
+                        } else {
+                            note(ident + ":provisioning:cleanup_failed");
+                        }
+                        failures++;
+                        continue;
+                    }
                 }
 
                 if (!delete_mapping_ || !delete_mapping_("access_user", mapping.entity_id)) {
@@ -3251,6 +3283,31 @@ ReconciliationResult
 LocalSftpProvider::run_reconciliation_flow() {
     ReconciliationResult combined;
 
+    auto add_record = [&](const std::string& phase, const std::string& item,
+                          const core::OperationResult& result,
+                          const std::string& recovery_action) -> bool {
+        ReconciliationResult::Record record;
+        record.phase = phase;
+        record.item = item;
+        record.state = "healthy";
+        bool fixed = false;
+        if (!result.success) {
+            record.state = "failed";
+            record.error = result.message;
+            record.recovery_action = recovery_action;
+        } else if (result.message.find("0 fixed") == std::string::npos &&
+                   (result.message.find("fixed") != std::string::npos ||
+                    result.message.find("recovered") != std::string::npos ||
+                    result.message.find("cleaned") != std::string::npos ||
+                    result.message.find("applied") != std::string::npos ||
+                    result.message.find("recreated") != std::string::npos)) {
+            record.state = "fixed";
+            fixed = true;
+        }
+        combined.records.push_back(std::move(record));
+        return fixed;
+    };
+
     // Step 1: Mount reconciliation (uses internal to bypass state gate)
     {
         auto r = reconcile_startup_mounts_internal();
@@ -3258,13 +3315,15 @@ LocalSftpProvider::run_reconciliation_flow() {
         if (!r.message.empty()) {
             // Inspected ~ (failures + fixed) from message
         }
-        if (r.success) {
-            combined.records_fixed += 1; // one step completed
-        } else {
+        if (!r.success) {
             combined.records_failed += 1;
             combined.errors.push_back("mount:" + r.message);
         }
         combined.records_inspected += 1;
+        if (add_record("mount", "managed mount reconciliation", r,
+                       "Inspect managed mount source/target and permissions, then retry SFTP reconciliation")) {
+            combined.records_fixed += 1;
+        }
         if (r.message.find("foreign") != std::string::npos) {
             combined.unsafe_foreign_state_detected = true;
         }
@@ -3273,13 +3332,15 @@ LocalSftpProvider::run_reconciliation_flow() {
     // Step 2: User lifecycle reconciliation (uses internal to bypass state gate)
     {
         auto r = reconcile_user_lifecycle_internal();
-        if (r.success) {
-            combined.records_fixed += 1;
-        } else {
+        if (!r.success) {
             combined.records_failed += 1;
             combined.errors.push_back("user:" + r.message);
         }
         combined.records_inspected += 1;
+        if (add_record("user", "system account lifecycle reconciliation", r,
+                       "Inspect system_accounts mapping, Linux user/group/home state, then retry SFTP reconciliation")) {
+            combined.records_fixed += 1;
+        }
         if (r.message.find("foreign") != std::string::npos) {
             combined.unsafe_foreign_state_detected = true;
         }

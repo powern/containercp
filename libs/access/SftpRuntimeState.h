@@ -43,6 +43,15 @@ struct ReconciliationResult {
     std::vector<std::string> affected_identities; // user/site identifiers
     bool     unsafe_foreign_state_detected = false;
 
+    struct Record {
+        std::string phase;             // "mount" or "user"
+        std::string item;              // inspected reconciliation unit
+        std::string state;             // "healthy", "fixed", or "failed"
+        std::string error;
+        std::string recovery_action;
+    };
+    std::vector<Record> records;
+
     core::OperationResult to_operation_result() const {
         core::OperationResult out;
         out.success = success;
