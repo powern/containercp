@@ -2253,33 +2253,42 @@ core::OperationResult LocalSftpProvider::apply_grant_internal(uint64_t access_us
     } else if (ls.state == "revoking") {
         out.success = false; out.message = "grant_lifecycle:revoking_cannot_apply"; return out;
     } else if (ls.state == "error") {
-        // Only approved recovery: verify mount exists and is correct
-        bool recovered = false;
-        if (mount_inspector_) {
-            std::string target = managed_home_root_ + "/" + username + "/sites/"
-                + [&]() -> std::string {
-                    auto si = site_resolver_(site_id);
-                    if (!si.valid) return "";
-                    std::string d = si.root;
-                    while (!d.empty() && d.back() == '/') d.pop_back();
-                    auto p = d.rfind('/');
-                    return (p != std::string::npos) ? d.substr(p + 1) : d;
-                }();
-            if (!target.empty()) {
-                auto ms = mount_inspector_->inspect(target);
-                if (ms.status == MountStatus::Ok && ms.mounted && ms.is_bind) {
-                    recovered = true;
+        // A pre-inspection failure happens before ACL mutation. Retry it from
+        // the beginning after the failed preflight condition is corrected.
+        if (ls.last_error == "ACL pre-inspection failed") {
+            if (!persist("applying", "retrying after ACL pre-inspection failure")) {
+                out.success = false; out.message = "grant_lifecycle:retry_persist_failed"; return out;
+            }
+            continue_step = -1;
+        } else {
+            // Other errors only have the approved recovery: verify the mount.
+            bool recovered = false;
+            if (mount_inspector_) {
+                std::string target = managed_home_root_ + "/" + username + "/sites/"
+                    + [&]() -> std::string {
+                        auto si = site_resolver_(site_id);
+                        if (!si.valid) return "";
+                        std::string d = si.root;
+                        while (!d.empty() && d.back() == '/') d.pop_back();
+                        auto p = d.rfind('/');
+                        return (p != std::string::npos) ? d.substr(p + 1) : d;
+                    }();
+                if (!target.empty()) {
+                    auto ms = mount_inspector_->inspect(target);
+                    if (ms.status == MountStatus::Ok && ms.mounted && ms.is_bind) {
+                        recovered = true;
+                    }
                 }
             }
-        }
-        if (recovered) {
-            if (!persist("active", "")) {
-                out.success = false; out.message = "grant_lifecycle:error_recover_persist_failed"; return out;
+            if (recovered) {
+                if (!persist("active", "")) {
+                    out.success = false; out.message = "grant_lifecycle:error_recover_persist_failed"; return out;
+                }
+                out.success = true; out.message = "grant error recovered"; return out;
             }
-            out.success = true; out.message = "grant error recovered"; return out;
+            out.success = false; out.message = "grant_lifecycle:error_state:" + ls.last_error; return out;
         }
-        out.success = false; out.message = "grant_lifecycle:error_state:" + ls.last_error; return out;
-        }
+    }
     }
 
     // 3. Continue apply from observed state (for pending/applying)

@@ -2507,6 +2507,27 @@ TEST_CASE("Phase3b parse_getfacl correct parsing") {
     CHECK(s.access_mask == "rwx");
 }
 
+TEST_CASE("Phase3b parse_getfacl accepts canonical default mask output") {
+    using containercp::access::parse_getfacl;
+    containercp::access::AclState s;
+    containercp::access::InspectionStatus st;
+    std::string err;
+    const std::string output =
+        "user::rwx\n"
+        "group::r-x\n"
+        "mask::r-x\n"
+        "other::r-x\n"
+        "default:user::rwx\n"
+        "default:group::r-x\n"
+        "default:mask::r-x\n"
+        "default:other::r-x\n";
+
+    CHECK(parse_getfacl(output, "site-1-ro", s, st, err));
+    CHECK(st == containercp::access::InspectionStatus::Ok);
+    CHECK(s.access_mask == "r-x");
+    CHECK(s.default_mask == "r-x");
+}
+
 TEST_CASE("Phase3b FakeAclFs models real setfacl mutations") {
     FakeAclFs fs;
     fs.apply_modify("g:site-1-ro:r-x");

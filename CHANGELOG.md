@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-10 | `pending` | bugfix: accept canonical getfacl default masks
+
+**Summary:** Fixed read-only SFTP grant application failing ACL pre-inspection on normal POSIX ACL output. The parser now correctly reads canonical `mask::r-x` and `default:mask::r-x` formats emitted by `getfacl`, and a previous pre-inspection error can be retried after the failed preflight condition is corrected.
+
+**Files changed:** `libs/access/FilesystemPermissionInspector.cpp`, `libs/access/LocalSftpProvider.cpp`, `tests/test_access.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Granting a site to an SFTP user with Read only permission can proceed past ACL pre-inspection and apply the protected ACL transactionally.
+
+**Validation:** Canonical `getfacl` parser regression test added. Full validation pending.
+
+**Known risks:** The target site must still have a valid filesystem path and ACL-capable filesystem; the provider continues to fail closed when those preconditions are not met.
+
+---
+
 ## 2026-08-10 | `pending` | bugfix: route SFTP key actions to key handlers
 
 **Summary:** Fixed `PATCH` and `DELETE` SFTP key actions being intercepted by the broader `/api/access/sftp/users/` prefix handler before reaching the specific `/keys/<key_id>` handlers. The shared user mutation dispatcher now delegates key paths explicitly; the router also prioritizes exact matches and the longest matching prefix. Key deletion rollback also keeps a safe copy of the key before removing it.

@@ -92,14 +92,17 @@ bool parse_getfacl(const std::string& output, const std::string& target_group,
         } else if (line.rfind("mask:", 0) == 0 && line.rfind("default:mask:", 0) != 0) {
             if (am_seen) { status = InspectionStatus::MalformedAclOutput; error_detail = "dup mask " + std::to_string(ln); return false; }
             if (line.size() < 8) { status = InspectionStatus::MalformedAclOutput; error_detail = "bad mask " + std::to_string(ln); return false; }
-            std::string m = line.substr(5);
+            // Accept both the canonical getfacl "mask::r-x" form and the
+            // compact fixture form "mask:r-x".
+            std::string m = line.substr(line.size() > 5 && line[5] == ':' ? 6 : 5);
             if (!valid_acl_perms(m)) { status = InspectionStatus::MalformedAclOutput; error_detail = "bad mask p " + std::to_string(ln); return false; }
             am_seen = true; state.access_mask = m;
         // default mask
         } else if (line.rfind("default:mask:", 0) == 0) {
             if (dm_seen) { status = InspectionStatus::MalformedAclOutput; error_detail = "dup dmask " + std::to_string(ln); return false; }
             if (line.size() < 16) { status = InspectionStatus::MalformedAclOutput; error_detail = "bad dmask " + std::to_string(ln); return false; }
-            std::string m = line.substr(13);
+            // default:mask::r-x has two separators after "mask".
+            std::string m = line.substr(line.size() > 13 && line[13] == ':' ? 14 : 13);
             if (!valid_acl_perms(m)) { status = InspectionStatus::MalformedAclOutput; error_detail = "bad dmask p " + std::to_string(ln); return false; }
             dm_seen = true; state.default_mask = m;
         // user/other/default:user/default:other — allowed
