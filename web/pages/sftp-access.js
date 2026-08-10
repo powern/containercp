@@ -333,14 +333,21 @@ async function doGenerateKey() {
     hideModal();
     if (genRes.data && genRes.data.privateKey) {
       const fp = genRes.data.fingerprint || '';
+      const publicKey = genRes.data.publicKey || '';
+      const privateKey = genRes.data.privateKey;
+      const filename = genRes.data.filename || 'id_' + keyType;
       showModal('SSH Key Generated',
         '<div style="margin-bottom:12px;"><strong>Public Key Fingerprint:</strong> <code>' + esc(fp) + '</code></div>'
-        + '<div style="margin-bottom:12px;"><label style="font-size:12px;">Public Key</label><textarea readonly rows="3" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:11px;font-family:monospace;">' + esc(genRes.data.publicKey) + '</textarea></div>'
-        + '<button class="btn btn-sm" onclick="copyText(\'' + esc(genRes.data.publicKey) + '\')">Copy Public Key</button>'
-        + '<div style="margin-top:12px;margin-bottom:8px;"><label style="font-size:12px;"><strong>Private Key</strong> (shown only once)</label><textarea readonly rows="6" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:11px;font-family:monospace;">' + esc(genRes.data.privateKey) + '</textarea></div>'
+        + '<div style="margin-bottom:12px;"><label style="font-size:12px;">Public Key</label><textarea readonly rows="3" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:11px;font-family:monospace;">' + esc(publicKey) + '</textarea></div>'
+        + '<button class="btn btn-sm" id="copy-generated-public-key">Copy Public Key</button>'
+        + '<div style="margin-top:12px;margin-bottom:8px;"><label style="font-size:12px;"><strong>Private Key</strong> (shown only once)</label><textarea readonly rows="6" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);font-size:11px;font-family:monospace;">' + esc(privateKey) + '</textarea></div>'
         + '<div style="background:var(--bg2);padding:8px 12px;border-radius:6px;font-size:12px;color:var(--red);margin-bottom:8px;">⚠ The private key is shown only once. Save it now.</div>'
-        + '<button class="btn btn-sm" onclick="downloadSftpKey(\'' + esc(genRes.data.filename || 'id_' + keyType) + '\',\'' + esc(genRes.data.privateKey) + '\')">Download Private Key</button>'
+        + '<button class="btn btn-sm" id="download-generated-private-key">Download Private Key</button>'
         + '<button class="btn btn-sm" style="margin-left:8px;" onclick="hideModal()">Done</button>');
+      const copyButton = $('copy-generated-public-key');
+      if (copyButton) copyButton.addEventListener('click', () => copyText(publicKey));
+      const downloadButton = $('download-generated-private-key');
+      if (downloadButton) downloadButton.addEventListener('click', () => downloadKey(filename, privateKey));
     }
     renderKeys();
     renderDetail();
@@ -351,11 +358,17 @@ async function doGenerateKey() {
 
 function downloadKey(filename, content) {
   const blob = new Blob([content], { type: 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+  a.href = url;
   a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(a.href);
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    a.remove();
+  }, 0);
 }
 
 async function doAddKey() {

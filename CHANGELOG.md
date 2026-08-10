@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-10 | `pending` | bugfix: make generated SFTP private-key download functional
+
+**Summary:** Fixed the generated SSH key modal interpolating the PEM private key into an inline `onclick` attribute. PEM newlines made the generated handler invalid, so `Download Private Key` and public-key copy appeared inert. The modal now binds both actions with event listeners, and downloads use a DOM-attached anchor with deferred object-URL cleanup.
+
+**Files changed:** `web/pages/sftp-access.js`, `scripts/test-sftp-key-download.js`, `CHANGELOG.md`
+
+**User-visible behavior:** Clicking `Download Private Key` now downloads the one-time private key file. Copy Public Key remains functional for keys containing comments or other characters that must not be interpolated into JavaScript.
+
+**Validation:** `node --check web/pages/sftp-access.js`, SFTP key download regression script, frontend baseline check, and `git diff --check` passed. No live key or SFTP state was modified.
+
+**Known risks:** Browser download behavior still depends on the browser allowing downloads initiated by a user click, which is the standard supported path.
+
+---
+
 ## 2026-08-10 | `pending` | bugfix: preserve SFTP ownership proof across failed provisioning
 
 **Summary:** Fixed SFTP create rollback losing the persisted `system_accounts` mapping when Linux account cleanup fails. Rollback now verifies each destructive postcondition and retains an `error` mapping with bounded diagnostics when cleanup is incomplete. Create retry and reconciliation recover only from matching persisted UID/GID/home/shell ownership evidence; deterministic `au-` names alone never adopt or delete accounts. The API now keeps a recoverable partial AccessUser disabled instead of deleting it blindly, persists successful and failed SFTP mutations, and reports actionable unmanaged-account conflict details. Orphan cleanup removes stale error grant records only after the managed account has been proven owned.
