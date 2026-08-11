@@ -1051,15 +1051,16 @@ core::OperationResult LocalSftpProvider::bind_mount_site_internal(uint64_t acces
     // Mount
     auto r2 = runner_->mount_bind(source, target);
     if (!r2.success) {
+        const std::string mount_error = r2.message.empty() ? "command failed" : r2.message;
         if (dir_created) {
             auto rm_r = safe_rmdir(target, true, username, domain);
             out.success = false;
             if (!rm_r.success)
-                out.message = "mount failed: " + rm_r.message;
+                out.message = "mount failed: " + mount_error + "; cleanup: " + rm_r.message;
             else
-                out.message = "mount failed";
+                out.message = "mount failed: " + mount_error;
         } else {
-            out.success = false; out.message = "mount failed";
+            out.success = false; out.message = "mount failed: " + mount_error;
         }
         return out;
     }
@@ -2411,8 +2412,8 @@ core::OperationResult LocalSftpProvider::apply_grant_internal(uint64_t access_us
             }
 
             if (rollback_errors.empty()) {
-                persist("error", "grant apply failed, fully rolled back");
-                out.success = false; out.message = "grant apply failed, fully rolled back";
+                persist("error", r5.message);
+                out.success = false; out.message = r5.message;
             } else {
                 persist("error", "grant_rollback_incomplete: " + rollback_errors);
                 out.success = false;

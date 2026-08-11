@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-11 | `pending` | bugfix: expose SFTP grant mount failures
+
+**Summary:** Preserved the command diagnostic when a bind mount fails during SFTP grant application instead of returning only `grant apply failed, fully rolled back`.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** A failed grant now reports the actual mount command error and cleanup status, making host capability or path failures actionable while retaining transactional rollback.
+
+**Validation:** Bind-mount rollback regression passed. Full validation and web2 deployment pending.
+
+**Known risks:** This change improves diagnostics; it does not bypass mount safety or systemd capability restrictions.
+
+---
+
 ## 2026-08-10 | `pending` | bugfix: accept canonical getfacl default masks
 
 **Summary:** Fixed SFTP grant application failing ACL pre-inspection on normal POSIX ACL output and leaving the provider degraded after rollback. The parser now correctly reads canonical `mask::r-x` and `default:mask::r-x` formats emitted by `getfacl`, previous pre-inspection errors can be retried, and only active lifecycle records retain site groups during rollback.
