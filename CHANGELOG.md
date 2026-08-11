@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-11 | `pending` | bugfix: normalize SFTP bind-mount paths
+
+**Summary:** Fixed successful SFTP bind mounts being rejected by postcondition checks because Linux mountinfo omits the trailing slash from the source path while the provider expected one.
+
+**Files changed:** `libs/access/LocalSftpProvider.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Site grants can complete after the bind mount is created instead of being rolled back as `mount verification failed`.
+
+**Validation:** Focused Phase 3c/ARCH-009 mount tests passed: 86 cases, 233 assertions. Full validation and web2 deployment pending.
+
+**Known risks:** Mount source and target paths are still validated and compared fail-closed after slash normalization; foreign mounts are not accepted.
+
+---
+
 ## 2026-08-11 | `pending` | bugfix: expose SFTP grant mount failures
 
 **Summary:** Preserved the command diagnostic when a bind mount fails during SFTP grant application instead of returning only `grant apply failed, fully rolled back`.

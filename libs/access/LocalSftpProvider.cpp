@@ -15,6 +15,15 @@
 namespace containercp::access {
 namespace {
 
+bool mount_paths_equal(std::string lhs, std::string rhs) {
+    auto trim = [](std::string& path) {
+        while (path.size() > 1 && path.back() == '/') path.pop_back();
+    };
+    trim(lhs);
+    trim(rhs);
+    return lhs == rhs;
+}
+
 // Validate that `path` is safely deletable: under managed_root, not a symlink,
 // not the root itself, and component-based (not string prefix) to prevent
 // /srv/containercp/users-evil matching /srv/containercp/users.
@@ -997,7 +1006,7 @@ core::OperationResult LocalSftpProvider::bind_mount_site_internal(uint64_t acces
         if (existing.status != MountStatus::Ok) note("status");
         if (!existing.is_bind)                 note("no_bind");
         if (existing.target != target)         note("target");
-        if (existing.bind_root != source)      note("source");
+        if (!mount_paths_equal(existing.bind_root, source)) note("source");
         if (existing.fstype.empty())           note("fstype");
         if (existing.device.empty())           note("device");
         // Required mount options: must have rw, must not have ro
@@ -1072,7 +1081,7 @@ core::OperationResult LocalSftpProvider::bind_mount_site_internal(uint64_t acces
     if (!post.mounted)                                              post_ok = false;
     if (post.target != target)                                      post_ok = false;
     if (!post.is_bind)                                              post_ok = false;
-    if (post.bind_root != source)                                   post_ok = false;
+    if (!mount_paths_equal(post.bind_root, source))                  post_ok = false;
     if (post.fstype.empty())                                        post_ok = false;
     if (post.device.empty())                                        post_ok = false;
     {
@@ -1181,7 +1190,7 @@ core::OperationResult LocalSftpProvider::unmount_site_internal(uint64_t access_u
 
     if (!existing.is_bind)                 note("no_bind");
     if (existing.target != target)         note("target");
-    if (existing.bind_root != expected_source) note("source");
+    if (!mount_paths_equal(existing.bind_root, expected_source)) note("source");
     if (existing.fstype.empty())           note("fstype");
     if (existing.device.empty())           note("device");
     {
@@ -1219,7 +1228,7 @@ core::OperationResult LocalSftpProvider::unmount_site_internal(uint64_t access_u
                 out.success = false; out.message = "umount_verify:ambiguous"; return out;
             }
             // Mount still present — check if it's still our bind
-            if (post.is_bind && post.bind_root == expected_source && post.target == target && !post.fstype.empty() && !post.device.empty()) {
+            if (post.is_bind && mount_paths_equal(post.bind_root, expected_source) && post.target == target && !post.fstype.empty() && !post.device.empty()) {
                 out.success = false; out.message = "umount_verify:still_mounted"; return out;
             }
             out.success = false; out.message = "umount_verify:foreign_mount"; return out;
@@ -1339,7 +1348,7 @@ core::OperationResult LocalSftpProvider::reconcile_mounts_internal(uint64_t acce
             continue;
         }
         const auto& obs = *it->second;
-        bool ok = obs.mounted && obs.is_bind && obs.bind_root == exp.source
+        bool ok = obs.mounted && obs.is_bind && mount_paths_equal(obs.bind_root, exp.source)
                   && !obs.fstype.empty() && !obs.device.empty();
         {
             bool has_rw = false, has_ro = false;
@@ -1447,7 +1456,7 @@ core::OperationResult LocalSftpProvider::reconcile_startup_mounts_internal() {
             auto si = site_resolver_(mount.site_id);
             if (!si.valid) { note("active:skip:" + ident + ":site"); continue; }
             auto ms = mount_inspector_->inspect(mount.target_path);
-            if (ms.status == MountStatus::Ok && ms.mounted && ms.is_bind && ms.bind_root == mount.source_path) {
+            if (ms.status == MountStatus::Ok && ms.mounted && ms.is_bind && mount_paths_equal(ms.bind_root, mount.source_path)) {
                 continue; // Mount is correct
             }
             if (!ms.mounted || ms.status != MountStatus::Ok) {
@@ -1496,7 +1505,7 @@ core::OperationResult LocalSftpProvider::reconcile_startup_mounts_internal() {
             auto si = site_resolver_(mount.site_id);
             if (!si.valid) { note("applying:skip:" + ident + ":site"); continue; }
             auto ms = mount_inspector_->inspect(mount.target_path);
-            if (ms.status == MountStatus::Ok && ms.mounted && ms.is_bind && ms.bind_root == mount.source_path) {
+            if (ms.status == MountStatus::Ok && ms.mounted && ms.is_bind && mount_paths_equal(ms.bind_root, mount.source_path)) {
                 // Mount already exists correctly — complete
                 mount.state = "active";
                 mount.last_error = "";
@@ -1547,7 +1556,7 @@ core::OperationResult LocalSftpProvider::reconcile_startup_mounts_internal() {
             // If mount is actually active and correct, clear the error.
             if (mount_inspector_) {
                 auto ms = mount_inspector_->inspect(mount.target_path);
-                if (ms.status == MountStatus::Ok && ms.mounted && ms.is_bind && ms.bind_root == mount.source_path) {
+                if (ms.status == MountStatus::Ok && ms.mounted && ms.is_bind && mount_paths_equal(ms.bind_root, mount.source_path)) {
                     mount.state = "active";
                     mount.last_error = "";
                     if (!save_managed_mount_(mount)) { note("error:recover:persist:" + ident); failures++; }
@@ -2199,7 +2208,7 @@ core::OperationResult LocalSftpProvider::apply_grant_internal(uint64_t access_us
                     std::string target = managed_home_root_ + "/" + username + "/sites/" + domain;
                     auto ms = mount_inspector_->inspect(target);
                     if (ms.status == MountStatus::Ok && ms.mounted && ms.is_bind
-                        && ms.bind_root == si.root + "/public/") {
+                        && mount_paths_equal(ms.bind_root, si.root + "/public/")) {
                         return 5; // all complete
                     }
                     // Mount exists but is wrong — foreign or mismatched
