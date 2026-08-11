@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-08-11 | `pending` | ci: provision WP-CLI before GitHub tests
+## 2026-08-11 | `d0585c0` | ci: provision WP-CLI before GitHub tests
 
 **Summary:** Fixed the GitHub Actions Build and Test workflow to provision the
 reviewed WP-CLI artifact before artifact validation tests and to use the current
