@@ -77,33 +77,35 @@ async function renderUsers() {
   try {
     const res = await api('/api/access/sftp/users');
     state.users = res.data || [];
-    p.innerHTML = '';
-    const tbl = p;
     const rows = state.users;
     const lifecycleBadge = (u) => {
       const ls = (u.lifecycleState || 'none').toLowerCase();
       const cls = ls === 'active' ? 'badge-ok' : ls === 'error' ? 'badge-err' : ls === 'provisioning' ? 'badge-warn' : ls === 'removing' ? 'badge-warn' : 'badge-info';
       return '<span class="badge ' + cls + '">' + esc(ls) + '</span>';
     };
-    const renderActions = (u) => {
-      let acts = '<button class="btn btn-sm" onclick="selectSftpUser(' + u.id + ')" title="Manage user">Manage</button>';
-      if (u.lifecycleState === 'error') acts += '<button class="btn btn-sm" onclick="retrySftpUser(' + u.id + ')" style="margin-left:4px;">Retry</button>';
-      acts += '<button class="btn btn-sm" onclick="toggleSftpUser(' + u.id + ')" style="margin-left:4px;">' + (u.enabled ? 'Disable' : 'Enable') + '</button>';
-      acts += '<button class="btn btn-sm" style="margin-left:4px;color:var(--red);" onclick="deleteSftpUser(' + u.id + ')">Delete</button>';
-      return acts;
+    const actions = (u) => {
+      const id = Number(u.id) || 0;
+      let html = '<button class="btn btn-sm" onclick="selectSftpUser(' + id + ');event.stopPropagation();">Details</button>';
+      if (u.lifecycleState === 'error') html += '<button class="btn btn-sm" onclick="retrySftpUser(' + id + ');event.stopPropagation();" style="margin-left:4px;">Retry</button>';
+      html += '<button class="btn btn-sm" onclick="toggleSftpUser(' + id + ');event.stopPropagation();" style="margin-left:4px;">' + (u.enabled ? 'Disable' : 'Enable') + '</button>';
+      html += '<button class="btn btn-sm" style="margin-left:4px;color:var(--red);" onclick="deleteSftpUser(' + id + ');event.stopPropagation();">Delete</button>';
+      return html;
     };
-    const html = '<div class="table-toolbar"><div style="font-weight:600;font-size:14px;">SFTP Users</div><div><button class="btn btn-primary btn-sm" onclick="showCreateSftpUser()">+ Create User</button></div></div>'
-      + buildTable([
-        {label:'Username', html: r => esc(r.username)},
-        {label:'Linux User', html: r => esc(r.linuxUsername || '-')},
-        {label:'Status', html: r => lifecycleBadge(r)},
-        {label:'Enabled', html: r => r.enabled ? '<span class="badge badge-ok">Yes</span>' : '<span class="badge badge-info">No</span>'},
-        {label:'SSH Keys', html: r => String(r.keyCount ?? 0)},
-        {label:'Grants', html: r => String(r.grantCount ?? 0)},
-        {label:'Last Error', html: r => esc(r.lastError || '')},
-        {label:'Actions', html: r => renderActions(r)}
-      ], rows, 'No SFTP users. Create one to get started.');
-    tbl.innerHTML = html;
+    const table = rows.length ? '<div class="db-table-wrap"><table class="db-table sftp-table"><thead><tr><th>User</th><th>Lifecycle</th><th>Enabled</th><th>SSH Keys</th><th>Grants</th><th>Last Error</th><th>Actions</th></tr></thead><tbody>'
+      + rows.map(u => {
+        const id = Number(u.id) || 0;
+        return '<tr onclick="selectSftpUser(' + id + ')" tabindex="0" onkeydown="if(event.key===\'Enter\')selectSftpUser(' + id + ')">'
+          + '<td><strong>' + esc(u.username || 'Unknown user') + '</strong><div class="sftp-table-meta">' + esc(u.linuxUsername || 'Linux account unavailable') + '</div></td>'
+          + '<td>' + lifecycleBadge(u) + '</td>'
+          + '<td>' + (u.enabled ? '<span class="badge badge-ok">Enabled</span>' : '<span class="badge badge-info">Disabled</span>') + '</td>'
+          + '<td>' + String(u.keyCount ?? 0) + '</td><td>' + String(u.grantCount ?? 0) + '</td>'
+          + '<td><span class="sftp-error-cell">' + esc(u.lastError || '—') + '</span></td><td>' + actions(u) + '</td></tr>';
+      }).join('') + '</tbody></table></div>' : '<div class="empty-state">No SFTP users. Create one to get started.</div>';
+    const cards = rows.length ? '<div class="db-mobile-list">' + rows.map(u => {
+      const id = Number(u.id) || 0;
+      return '<button class="db-mobile-card sftp-mobile-card" onclick="selectSftpUser(' + id + ')"><div class="db-mobile-main"><div><strong>' + esc(u.username || 'Unknown user') + '</strong><div class="sftp-table-meta">' + esc(u.linuxUsername || 'Linux account unavailable') + '</div></div>' + lifecycleBadge(u) + '</div><div class="db-mobile-statuses">' + (u.enabled ? '<span class="badge badge-ok">Enabled</span>' : '<span class="badge badge-info">Disabled</span>') + '<span class="badge badge-info">' + String(u.keyCount ?? 0) + ' keys</span><span class="badge badge-info">' + String(u.grantCount ?? 0) + ' grants</span></div></button>';
+    }).join('') + '</div>' : '';
+    p.innerHTML = '<div class="db-inventory card"><div class="db-inventory-title"><strong>SFTP Users</strong><span>' + rows.length + ' user' + (rows.length === 1 ? '' : 's') + '</span></div>' + table + cards + '</div>';
   } catch(e) {
     p.innerHTML = '<div class="empty-state ui-state-error" role="alert">Failed to load users: ' + esc(e.message) + '</div>';
   }
@@ -112,52 +114,59 @@ async function renderUsers() {
 /* ===== SELECT USER ===== */
 async function selectUser(id) {
   state.selected = id;
+  showSftpDrawer('<div class="empty-state">Loading user detail...</div>');
   try {
     const res = await api('/api/access/sftp/users/' + id);
     state.selectedDetail = res.data;
   } catch(e) {
     state.selectedDetail = null;
     toast('Failed to load user details: ' + e.message, 'error');
+    showSftpDrawer('<div class="db-drawer-header"><div><h2>User detail unavailable</h2><p>' + esc(e.message || 'The selected user could not be loaded.') + '</p></div><button class="btn-icon" onclick="closeSftpDrawer()" aria-label="Close user detail">&times;</button></div><div class="empty-state">Try selecting the user again.</div>');
+    return;
   }
   renderDetail();
 }
 
 /* ===== DETAIL PANEL ===== */
 function renderDetail() {
-  const p = $('sftp-detail');
-  if (!p) return;
   const u = state.selectedDetail;
-  if (!u) {
-    p.innerHTML = '<div class="empty-state">Select a user to view details</div>';
-    return;
-  }
-  const actionsHtml = '<button class="btn btn-sm" onclick="toggleSftpUser(' + u.id + ')">' + (u.enabled ? 'Disable' : 'Enable') + '</button>'
-    + '<button class="btn btn-sm" onclick="retrySftpUser(' + u.id + ')" style="margin-left:4px;">Retry</button>'
-    + '<button class="btn btn-sm" style="margin-left:4px;color:var(--red);" onclick="deleteSftpUser(' + u.id + ')">Delete</button>';
-  p.innerHTML = '<div class="card" style="margin-bottom:12px;"><div style="padding:16px;">'
-    + '<div style="font-weight:600;font-size:14px;margin-bottom:8px;">' + esc(u.username) + '</div>'
-    + '<div style="display:grid;gap:6px;font-size:13px;">'
-    + '<div><strong>Linux user:</strong> ' + esc(u.linuxUsername || '-') + '</div>'
-    + '<div><strong>Lifecycle:</strong> ' + statusBadge(u.lifecycleState || 'none') + '</div>'
-    + '<div><strong>Enabled:</strong> ' + (u.enabled ? 'Yes' : 'No') + '</div>'
-    + '<div><strong>SSH Keys:</strong> ' + (u.keyCount ?? 0) + '</div>'
-    + '<div><strong>Grants:</strong> ' + (u.grantCount ?? 0) + '</div>'
-    + (u.lastError ? '<div><strong>Last error:</strong> ' + esc(u.lastError) + '</div>' : '')
-    + '<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:12px;">Advanced</summary><div style="font-size:12px;color:var(--text3);margin-top:4px;">'
-    + '<div><strong>Home:</strong> ' + esc(u.home || '-') + '</div>'
-    + '</div></details>'
-    + '</div><div style="margin-top:12px;">' + actionsHtml + '</div>'
-    // Quick start checklist
-    + '<div style="margin-top:12px;padding:12px;background:var(--bg2);border-radius:8px;font-size:12px;">'
-    + '<div style="font-weight:600;margin-bottom:6px;">Setup checklist</div>'
-    + '<div>' + (u.lifecycleState === 'active' ? '✓' : '○') + ' User provisioned</div>'
-    + '<div>' + ((u.keyCount || 0) > 0 ? '✓' : '○') + ' <button class="btn-link" onclick="showAddSftpKey()" style="padding:0;font-size:12px;">Add SSH key</button></div>'
-    + '<div>' + ((u.grantCount || 0) > 0 ? '✓' : '○') + ' <button class="btn-link" onclick="showAddSftpGrant()" style="padding:0;font-size:12px;">Grant site access</button></div>'
-    + '<div>' + (u.linuxUsername ? '✓' : '○') + ' Test SFTP login: <code style="font-size:11px;">sftp ' + esc(u.linuxUsername || 'user') + '@host</code></div>'
-    + '</div>'
-    + '</div></div>';
+  if (!u) return;
+  const actionsHtml = '<div class="sftp-drawer-actions"><button class="btn btn-sm" onclick="toggleSftpUser(' + u.id + ')">' + (u.enabled ? 'Disable' : 'Enable') + '</button><button class="btn btn-sm" onclick="retrySftpUser(' + u.id + ')">Retry</button><button class="btn btn-sm sftp-danger-action" onclick="deleteSftpUser(' + u.id + ')">Delete user</button></div>';
+  showSftpDrawer('<div class="db-drawer-header"><div class="sftp-drawer-identity"><div class="sftp-avatar">' + esc((u.username || 'U').slice(0, 1).toUpperCase()) + '</div><div><h2>' + esc(u.username || 'SFTP User') + '</h2><p>' + esc(u.linuxUsername || 'Linux account unavailable') + '</p><div class="sftp-drawer-badges">' + statusBadge(u.lifecycleState || 'none') + (u.enabled ? '<span class="badge badge-ok">Enabled</span>' : '<span class="badge badge-info">Disabled</span>') + '</div></div></div><button class="btn-icon" onclick="closeSftpDrawer()" aria-label="Close user detail">&times;</button></div>'
+    + '<div class="db-detail-content"><section class="db-detail-section"><h3>Overview</h3><div class="details-grid"><div class="details-field"><div class="details-label">SSH keys</div><div class="details-value">' + (u.keyCount ?? 0) + '</div></div><div class="details-field"><div class="details-label">Site grants</div><div class="details-value">' + (u.grantCount ?? 0) + '</div></div><div class="details-field"><div class="details-label">Home</div><div class="details-value"><code>' + esc(u.home || 'Unavailable') + '</code></div></div><div class="details-field"><div class="details-label">User ID</div><div class="details-value"><code>' + esc(u.id) + '</code></div></div></div>' + (u.lastError ? '<div class="sftp-last-error"><strong>Last error</strong><span>' + esc(u.lastError) + '</span></div>' : '') + actionsHtml + '</section>'
+    + '<section class="db-detail-section"><h3>SSH Keys</h3><div id="sftp-keys"></div></section><section class="db-detail-section"><h3>Site Grants</h3><div id="sftp-grants"></div></section>'
+    + '<section class="db-detail-section"><h3>Setup Checklist</h3><div class="sftp-checklist"><div>' + (u.lifecycleState === 'active' ? '✓' : '○') + ' User provisioned</div><div>' + ((u.keyCount || 0) > 0 ? '✓' : '○') + ' SSH key configured</div><div>' + ((u.grantCount || 0) > 0 ? '✓' : '○') + ' Site access granted</div><div>' + (u.linuxUsername ? '✓' : '○') + ' Linux account mapped</div></div></section></div>');
   renderKeys();
   renderGrants();
+}
+
+function showSftpDrawer(content) {
+  let backdrop = $('sftp-detail-backdrop');
+  if (!backdrop) {
+    backdrop = document.createElement('div');
+    backdrop.id = 'sftp-detail-backdrop';
+    backdrop.className = 'db-drawer-backdrop';
+    backdrop.addEventListener('click', e => { if (e.target === backdrop) closeSftpDrawer(); });
+    document.body.appendChild(backdrop);
+  }
+  backdrop.innerHTML = '<aside class="db-detail-drawer" role="dialog" aria-modal="true" aria-label="SFTP user detail" tabindex="-1">' + content + '</aside>';
+  backdrop.style.display = 'flex';
+  const later = activeLifecycle && activeLifecycle.setTimeout ? activeLifecycle.setTimeout.bind(activeLifecycle) : setTimeout;
+  later(() => { const drawer = backdrop.querySelector('.db-detail-drawer'); if (drawer) drawer.focus(); }, 0);
+}
+
+function closeSftpDrawer() {
+  const backdrop = $('sftp-detail-backdrop');
+  if (backdrop) backdrop.style.display = 'none';
+  state.selected = null;
+  state.selectedDetail = null;
+}
+
+function destroySftpDrawer() {
+  const backdrop = $('sftp-detail-backdrop');
+  if (backdrop) backdrop.remove();
+  state.selected = null;
+  state.selectedDetail = null;
 }
 
 /* ===== KEYS ===== */
@@ -279,7 +288,7 @@ async function doDeleteUser(id) {
     await apiPost('/api/access/sftp/users/' + id, {}, 'DELETE');
     hideModal();
     toast('User deleted', 'success');
-    if (state.selected === id) { state.selected = null; state.selectedDetail = null; renderDetail(); }
+    if (state.selected === id) closeSftpDrawer();
     renderUsers();
   } catch(e) {
     const errEl = $('du-error');
@@ -518,19 +527,18 @@ let lifecycle = null;
 function mount(p, params, lc) {
   lifecycle = lc;
   activeLifecycle = lc;
+  if (lc && lc.addEventListener) lc.addEventListener(document, 'keydown', e => {
+    if (e.key === 'Escape' && $('sftp-detail-backdrop') && $('sftp-detail-backdrop').style.display !== 'none') closeSftpDrawer();
+  });
+  if (lc && lc.onCleanup) lc.onCleanup(destroySftpDrawer);
   p.innerHTML = pageHeader('SFTP Access', 'Manage SFTP users, SSH keys, and Site grants.', '<button class="btn btn-primary btn-sm" onclick="showCreateSftpUser()">+ Create User</button>', 'Admin')
     + '<div id="sftp-status" style="margin-bottom:16px;">' + loadingState('Loading runtime status...') + '</div>'
-    + '<div style="display:grid;gap:16px;grid-template-columns:1fr 1fr;">'
-    + '<div><div id="sftp-users">' + loadingState('Loading users...') + '</div></div>'
-    + '<div><div id="sftp-detail"><div class="empty-state">Select a user to view details</div></div>'
-    + '<div style="margin-top:12px;"><div style="font-weight:600;font-size:13px;margin-bottom:8px;">SSH Keys</div><div id="sftp-keys"></div></div>'
-    + '<div style="margin-top:12px;"><div style="font-weight:600;font-size:13px;margin-bottom:8px;">Site Grants</div><div id="sftp-grants"></div></div>'
-    + '</div></div>';
+    + '<div id="sftp-users">' + loadingState('Loading users...') + '</div>';
   renderStatus();
   renderUsers();
 }
 
-function unmount() { activeLifecycle = null; lifecycle = null; state.selected = null; state.selectedDetail = null; }
+function unmount() { destroySftpDrawer(); activeLifecycle = null; lifecycle = null; }
 
 const sftpAccessPage = { mount, unmount };
 export { sftpAccessPage, mount as loadSftpAccess };
@@ -543,5 +551,6 @@ Object.assign(window, {
   toggleSftpKey: toggleKey, deleteSftpKey: deleteKey, rebuildSftpKeys: rebuildKeys,
   showAddSftpGrant: showAddGrant, doAddSftpGrant: doAddGrant,
   showChangeSftpGrantPermission: showChangeGrantPermission, doChangeSftpGrantPermission: doChangeGrantPermission,
-  revokeSftpGrant: revokeGrant, retrySftpGrant: retryGrant
+  revokeSftpGrant: revokeGrant, retrySftpGrant: retryGrant,
+  closeSftpDrawer
 });

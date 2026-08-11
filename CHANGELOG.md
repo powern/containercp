@@ -6,6 +6,20 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-11 | `pending` | ui: redesign SFTP user management around a detail drawer
+
+**Summary:** Reworked the SFTP Access page to use the Databases inventory and detail-drawer interaction pattern instead of rendering the selected user's full detail inline on the page.
+
+**Files changed:** `web/pages/sftp-access.js`, `web/styles/drawer.css`, `CHANGELOG.md`
+
+**User-visible behavior:** SFTP users now appear in a compact inventory table with responsive mobile cards. Selecting a user opens a modern right-side drawer containing overview, lifecycle actions, SSH keys, site grants, and setup checklist. The drawer supports backdrop click, Escape close, and full-screen mobile layout.
+
+**Validation:** `node --check web/pages/sftp-access.js`, frontend baseline check, and `git diff --check` passed.
+
+**Known risks:** The drawer reuses the existing Databases drawer tokens and classes; no SFTP API contracts or mutation behavior were changed.
+
+---
+
 ## 2026-08-11 | `pending` | bugfix: normalize SFTP bind-mount paths
 
 **Summary:** Fixed successful SFTP bind mounts being rejected by postcondition checks because Linux mountinfo omits the trailing slash from the source path while the provider expected one.

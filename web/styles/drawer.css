@@ -14,3 +14,14 @@
 .db-mobile-card { width:100%; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:var(--radius); padding:14px; text-align:left; margin-bottom:10px; cursor:pointer; }
 .db-mobile-main { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
 .db-mobile-statuses { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+.sftp-table-meta { color:var(--text3); font-size:var(--font-xs); margin-top:3px; }
+.sftp-error-cell { display:block; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text3); font-size:var(--font-xs); }
+.sftp-drawer-identity { display:flex; align-items:center; gap:12px; min-width:0; }
+.sftp-avatar { display:grid; place-items:center; width:42px; height:42px; flex:0 0 42px; border-radius:var(--radius-lg); background:linear-gradient(135deg,var(--primary),var(--purple)); color:#fff; font-size:18px; font-weight:700; box-shadow:var(--shadow); }
+.sftp-drawer-badges { display:flex; gap:6px; flex-wrap:wrap; margin-top:7px; }
+.sftp-drawer-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:16px; padding-top:14px; border-top:1px solid var(--border); }
+.sftp-danger-action { color:#fff; background:var(--red); border-color:var(--red); }
+.sftp-last-error { display:grid; gap:4px; margin-top:14px; padding:10px 12px; border:1px solid var(--red); border-radius:var(--radius-sm); background:var(--bg3); color:var(--text2); font-size:var(--font-sm); }
+.sftp-last-error strong { color:var(--red); font-size:var(--font-xs); text-transform:uppercase; letter-spacing:.4px; }
+.sftp-checklist { display:grid; gap:9px; color:var(--text2); font-size:var(--font-md); }
+.sftp-checklist div:first-letter { color:var(--green); }
