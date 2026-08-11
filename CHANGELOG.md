@@ -123,7 +123,7 @@ backed mutations, audit events, and arbitrary console remain unimplemented.
 
 ---
 
-## 2026-08-11 | `pending` | feat: add isolated read-only WP-CLI backend
+## 2026-08-11 | `9a965dc` | feat: add isolated read-only WP-CLI backend
 
 **Summary:** Added the typed `WordPressCliService` read-only backend for
 `core is-installed`, `core version`, `plugin list`, and `theme list`. The
@@ -157,7 +157,7 @@ wiring, and multi-PHP/Apache/Nginx lifecycle validation remain later phases.
 
 ---
 
-## 2026-08-11 | `pending` | feat: add canonical WordPress runtime context
+## 2026-08-11 | `4c145f5` | feat: add canonical WordPress runtime context
 
 **Summary:** Added the transient `WordPressRuntimeContext` resolver for
 managed WordPress sites. It reuses `WordPressConfigService` for canonical
@@ -188,7 +188,7 @@ proven context property; no mutation operation is implemented here.
 
 ---
 
-## 2026-08-11 | `pending` | fix: harden WordPress migration runtime resolution
+## 2026-08-11 | `b4d6003` | fix: harden WordPress migration runtime resolution
 
 **Summary:** Hardened `VestaSiteImporter` migration runtime resolution by
 requiring valid managed domains and regular non-symlink backup files, resolving
@@ -218,7 +218,7 @@ was introduced in this separate task.
 
 ---
 
-## 2026-08-11 | `pending` | docs: align WP-CLI approval references
+## 2026-08-11 | `2da2d29` | docs: align WP-CLI approval references
 
 **Summary:** Updated the WPCLI-001 modernization plan to reflect the approved
 ARCH-012 proposal status after the architecture review correction.
@@ -236,7 +236,7 @@ implementation phases remain outstanding.
 
 ---
 
-## 2026-08-11 | `pending` | docs: approve WP-CLI execution architecture
+## 2026-08-11 | `451da78` | docs: approve WP-CLI execution architecture
 
 **Summary:** Corrected the WP-CLI architecture proposal identity from ARCH-011
 to ARCH-012 and recorded the accepted architecture decisions in the approval
@@ -256,7 +256,7 @@ disposable integration validation remain outstanding.
 
 ---
 
-## 2026-08-11 | `pending` | docs: formalize WP-CLI execution architecture
+## 2026-08-11 | `4d399a9` | docs: formalize WP-CLI execution architecture
 
 **Summary:** Added the WPCLI-002 Architecture Proposal and corrected the
 WPCLI-001 modernization plan. The architecture now requires actual running
@@ -297,7 +297,7 @@ multi-PHP disposable integration remain implementation blockers.
 
 ---
 
-## 2026-08-11 | `pending` | docs: audit existing WP-CLI path and modernization plan
+## 2026-08-11 | `5d54fb8` | docs: audit existing WP-CLI path and modernization plan
 
 **Summary:** Documented the current ContainerCP WordPress execution paths and
 confirmed that WP-CLI is not yet implemented. Added an architecture-grounded,
