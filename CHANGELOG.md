@@ -6,6 +6,26 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-11 | `pending` | docs: approve WP-CLI execution architecture
+
+**Summary:** Corrected the WP-CLI architecture proposal identity from ARCH-011
+to ARCH-012 and recorded the accepted architecture decisions in the approval
+checklist. The proposal is now marked Approved for phased implementation.
+
+**Files changed:** `planning/proposals/ARCH-012-WordPressCliExecution.md`,
+`CHANGELOG.md`
+
+**User-visible behavior:** No runtime behavior changes. WP-CLI remains
+unimplemented until the subsequent implementation phases.
+
+**Validation:** Verified repository references, checked the complete
+documentation diff, and ran `git diff --check` before commit.
+
+**Known risks:** Runtime implementation, migration correctness fixes, and
+disposable integration validation remain outstanding.
+
+---
+
 ## 2026-08-11 | `pending` | docs: formalize WP-CLI execution architecture
 
 **Summary:** Added the WPCLI-002 Architecture Proposal and corrected the

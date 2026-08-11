@@ -1,6 +1,6 @@
-# ARCH-011: WordPress CLI Execution Architecture
+# ARCH-012: WordPress CLI Execution Architecture
 
-**Status:** Review
+**Status:** Approved
 
 **Proposal owner:** ContainerCP project
 
@@ -971,14 +971,15 @@ GUI. Production execution is not part of repository-level approval.
 
 ## Approval Checklist
 
-- [ ] All proposal sections reviewed.
-- [ ] Actual running PHP image discovery accepted.
-- [ ] Immutable image ID runner model accepted.
-- [ ] WP-CLI Phar version and integrity policy accepted.
-- [ ] PHP-FPM UID/GID derivation and fail-closed rule accepted.
-- [ ] Network and mount isolation accepted.
-- [ ] `run_safe()` absolute executable decision accepted.
-- [ ] Timeout and runner cleanup accepted.
-- [ ] Phase 2 disposable integration gate accepted.
-- [ ] Migration correctness work separated.
-- [ ] Proposal status changed from `Review` to `Approved` before Phase 1.
+- [x] All proposal sections reviewed.
+- [x] Actual running PHP image discovery accepted.
+- [x] Immutable image ID runner model accepted.
+- [x] WP-CLI Phar version and integrity policy accepted.
+- [x] PHP-FPM UID/GID derivation and fail-closed rule accepted.
+- [x] Network and mount isolation accepted.
+- [x] `run_safe()` absolute executable decision accepted.
+- [x] Timeout and runner cleanup accepted.
+- [x] Phase 2 disposable integration gate accepted.
+- [x] Migration correctness work separated.
+- [x] No arbitrary WP-CLI console accepted.
+- [x] Proposal status changed from `Review` to `Approved` before Phase 1.
