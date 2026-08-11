@@ -6,6 +6,30 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-11 | `pending` | fix: initialize canonical PHP site ownership
+
+**Summary:** Corrected new Docker Compose site provisioning to derive the live
+non-root PHP-FPM worker identity and initialize ownership for the newly created
+document root before deployment completes.
+
+**Files changed:** `libs/provider/DockerComposeProvider.h`,
+`libs/provider/DockerComposeProvider.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Newly created managed site files are owned by the
+actual PHP-FPM runtime identity selected from the running site container. The
+ownership operation is targeted to the new site’s document root and is not a
+WP-CLI execution or a repair of arbitrary existing production trees.
+
+**Validation:** Real `SiteCreateOperation` rollback integration passed with the
+ownership initialization path active and no leaked site resources. Full
+deterministic CTest is required before commit.
+
+**Known risks:** Existing sites retain their current ownership and are handled
+by the runtime capability audit, which fails mutation access closed when proof
+is unavailable.
+
+---
+
 ## 2026-08-11 | `pending` | fix: require positive WP-CLI cleanup verification
 
 **Summary:** Replaced boolean inspect-error handling with a positive exact-name

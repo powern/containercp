@@ -4,6 +4,11 @@
 #include "runtime/CommandExecutor.h"
 #include "template/TemplateEngine.h"
 
+#include <algorithm>
+#include <cctype>
+#include <set>
+#include <sstream>
+
 namespace containercp::provider {
 
 static profile::Profile* select_web_profile(profile::ProfileManager& profiles,
@@ -47,6 +52,62 @@ DockerComposeProvider::DockerComposeProvider(filesystem::Filesystem& fs, config:
     , rt_(rt)
     , prof_(prof)
 {
+}
+
+core::OperationResult DockerComposeProvider::ensure_php_runtime_ownership(
+    const std::string& compose_file,
+    const std::string& container_document_root,
+    uint64_t site_id) {
+    runtime::CommandExecutor executor;
+    const auto php_container = executor.run_safe({"/usr/bin/docker", "compose", "-f", compose_file,
+                                                  "ps", "-q", "php"}, "", 30, 4096);
+    if (php_container.exit_code != 0) {
+        return {false, "PHP runtime container could not be resolved for ownership initialization", ""};
+    }
+    std::string container = php_container.out;
+    while (!container.empty() && std::isspace(static_cast<unsigned char>(container.back())) != 0) container.pop_back();
+    if (container.empty()) {
+        return {false, "PHP runtime container identity is unavailable for ownership initialization", ""};
+    }
+
+    const auto processes = executor.run_safe({"/usr/bin/docker", "top", container,
+                                              "-eo", "pid,uid,gid,args"}, "", 30, 8192);
+    if (processes.exit_code != 0) {
+        return {false, "PHP-FPM worker identity could not be resolved for ownership initialization", ""};
+    }
+    std::set<std::pair<int64_t, int64_t>> identities;
+    std::istringstream lines(processes.out);
+    std::string line;
+    while (std::getline(lines, line)) {
+        if (line.find("php-fpm") == std::string::npos || line.find("pool") == std::string::npos) continue;
+        std::istringstream fields(line);
+        std::string pid_token;
+        std::string uid_token;
+        std::string gid_token;
+        if (!(fields >> pid_token >> uid_token >> gid_token)) continue;
+        if (uid_token.empty() || gid_token.empty() ||
+            !std::all_of(uid_token.begin(), uid_token.end(), [](unsigned char c) { return std::isdigit(c) != 0; }) ||
+            !std::all_of(gid_token.begin(), gid_token.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) continue;
+        try {
+            const auto uid = std::stoll(uid_token);
+            const auto gid = std::stoll(gid_token);
+            if (uid > 0 && gid > 0) identities.emplace(uid, gid);
+        } catch (...) {
+            continue;
+        }
+    }
+    if (identities.size() != 1) {
+        return {false, "Exactly one non-root PHP-FPM worker identity is required for ownership initialization", ""};
+    }
+    const auto [uid, gid] = *identities.begin();
+    const auto ownership = executor.run_safe({"/usr/bin/docker", "compose", "-f", compose_file,
+                                              "exec", "-T", "--user", "0:0", "php", "chown", "-R",
+                                              std::to_string(uid) + ":" + std::to_string(gid),
+                                              container_document_root}, "", 60, 8192);
+    if (ownership.exit_code != 0) {
+        return {false, "PHP runtime ownership initialization failed for site " + std::to_string(site_id), ""};
+    }
+    return {true, "PHP runtime ownership initialized", ""};
 }
 
 core::OperationResult DockerComposeProvider::create_site(site::Site& site, core::ProgressCallback progress) {
@@ -213,6 +274,9 @@ core::OperationResult DockerComposeProvider::create_site(site::Site& site, core:
     auto result = rt_.create_site_stack(site.domain);
 
     if (result.success) {
+        const auto ownership = ensure_php_runtime_ownership(site_dir + "docker-compose.yml",
+                                                            web_doc_root, site.id);
+        if (!ownership.success) return ownership;
         progress(100, "Deployment completed.");
     }
     return result;

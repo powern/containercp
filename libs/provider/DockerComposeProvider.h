@@ -26,6 +26,10 @@ public:
     core::OperationResult apply_web_template(site::Site& site, const std::string& template_path);
 
 private:
+    core::OperationResult ensure_php_runtime_ownership(const std::string& compose_file,
+                                                      const std::string& container_document_root,
+                                                      uint64_t site_id);
+
     filesystem::Filesystem& fs_;
     config::Config& cfg_;
     php::PhpVersionManager& php_;
