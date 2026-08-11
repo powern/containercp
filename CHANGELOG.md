@@ -6,6 +6,24 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-11 | `pending` | docs: align WP-CLI approval references
+
+**Summary:** Updated the WPCLI-001 modernization plan to reflect the approved
+ARCH-012 proposal status after the architecture review correction.
+
+**Files changed:** `planning/wp-cli-001-audit-and-modernization-plan.md`,
+`CHANGELOG.md`
+
+**User-visible behavior:** No runtime behavior changes.
+
+**Validation:** Repository-wide ARCH-011/ARCH-012 reference review and
+`git diff --check` passed.
+
+**Known risks:** The separate migration correctness task and all WP-CLI
+implementation phases remain outstanding.
+
+---
+
 ## 2026-08-11 | `pending` | docs: approve WP-CLI execution architecture
 
 **Summary:** Corrected the WP-CLI architecture proposal identity from ARCH-011

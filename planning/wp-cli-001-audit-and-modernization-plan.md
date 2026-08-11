@@ -547,8 +547,8 @@ details above where they conflict:
 
 `planning/proposals/ARCH-012-WordPressCliExecution.md`
 
-The proposal is currently `Review`. No implementation phase may start until it
-is explicitly moved to `Approved`.
+The proposal is `Approved`. Implementation proceeds phase by phase, with each
+phase remaining a separate reviewable commit and validation gate.
 
 ### Corrected execution model
 
