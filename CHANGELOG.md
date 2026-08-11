@@ -6,7 +6,29 @@ Format: date | commit | summary
 
 ---
 
-## 2026-08-11 | `pending` | fix: harden final WP-CLI cleanup and reaping paths
+## 2026-08-11 | `pending` | fix: reap all generic command children safely
+
+**Summary:** Closed the final source-review gap in the non-timeout executor
+paths by making blocking child waits EINTR-safe and explicitly handling an
+unrecoverable `ECHILD` result.
+
+**Files changed:** `libs/runtime/CommandExecutor.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Existing generic command execution paths no longer
+interpret an interrupted `waitpid()` as a completed child or inspect an
+uninitialized status value. Every normal fork path now waits through the same
+bounded-retry contract used by the WP-CLI timeout path.
+
+**Validation:** CommandExecutor tests, real WP-CLI lifecycle, real two-site
+matrix, full deterministic CTest, and frontend checks passed before this final
+source-review correction. The complete correction is revalidated before push.
+
+**Known risks:** None identified in the final source review beyond unrelated
+repository warning baseline entries.
+
+---
+
+## 2026-08-11 | `4ea661a` | fix: harden final WP-CLI cleanup and reaping paths
 
 **Summary:** Corrected stale-runner reconciliation to enumerate trusted names,
 handled runner-creation absence explicitly, and ensured child signal fallback

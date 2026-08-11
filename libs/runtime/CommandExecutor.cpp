@@ -20,6 +20,14 @@ void close_if_open(int fd) {
     }
 }
 
+bool wait_for_child(pid_t pid, int& status) {
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno == EINTR) continue;
+        return errno == ECHILD;
+    }
+    return true;
+}
+
 static const char* kSafeEnvironment[] = {
     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     "LC_ALL=C",
@@ -133,7 +141,10 @@ CommandResult run_capture(const std::vector<std::string>& args,
     close(stderr_pipe[0]);
 
     int status;
-    waitpid(pid, &status, 0);
+    if (!wait_for_child(pid, status)) {
+        result.err = "waitpid failed: " + std::string(strerror(errno));
+        return result;
+    }
     if (WIFEXITED(status)) {
         result.exit_code = WEXITSTATUS(status);
     }
@@ -201,7 +212,10 @@ CommandResult CommandExecutor::run_stdout_to_file(
     close(stderr_pipe[0]);
 
     int status;
-    waitpid(pid, &status, 0);
+    if (!wait_for_child(pid, status)) {
+        result.err = "waitpid failed: " + std::string(strerror(errno));
+        return result;
+    }
     if (WIFEXITED(status)) result.exit_code = WEXITSTATUS(status);
     return result;
 }
