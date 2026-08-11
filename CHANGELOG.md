@@ -6,6 +6,30 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-11 | `pending` | test: prove WP-CLI timeout cleanup
+
+**Summary:** Added a deterministic timeout seam and real disposable timeout
+coverage for the isolated WP-CLI runner.
+
+**Files changed:** `libs/wordpress/WordPressCliService.h`,
+`libs/wordpress/WordPressCliService.cpp`,
+`tests/test_wordpress_cli_service.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** A bounded Docker-client timeout now fails with the
+typed `wordpress_cli_timeout` code, performs forced runner cleanup, verifies
+runner absence, and never reports success when cleanup fails.
+
+**Validation:** The real disposable WordPress lifecycle passed 1/1 case and
+494/494 assertions, including the timeout stub, cleanup, failure path, and
+non-root mutation lifecycle. Full deterministic CTest passed 100%, with the
+privileged Linux test skipped by its existing contract. Final build produced no
+warnings.
+
+**Known risks:** The timeout seam is internal and does not change the approved
+runner architecture or public API.
+
+---
+
 ## 2026-08-11 | `0e0ede7` | fix: pin reviewed WP-CLI artifact version
 
 **Summary:** Closed the final artifact-integrity review gap by requiring the

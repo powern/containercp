@@ -70,7 +70,9 @@ public:
                         WordPressRuntimeContextResolver& resolver,
                         config::Config& config,
                         logger::Logger& logger,
-                        std::string docker_executable = "/usr/bin/docker");
+                        std::string docker_executable = "/usr/bin/docker",
+                        int runner_timeout_seconds = 60,
+                        int cleanup_timeout_seconds = 15);
 
     WordPressCliResult run(uint64_t site_id, WordPressCliOperation operation) const;
     WordPressCliResult run_mutation(uint64_t site_id,
@@ -104,6 +106,8 @@ private:
     config::Config& config_;
     logger::Logger& logger_;
     std::string docker_executable_;
+    int runner_timeout_seconds_;
+    int cleanup_timeout_seconds_;
 };
 
 } // namespace containercp::wordpress

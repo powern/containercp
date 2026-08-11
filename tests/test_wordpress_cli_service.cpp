@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <sys/stat.h>
 #include <thread>
+#include <unistd.h>
 
 namespace {
 
@@ -391,6 +392,25 @@ TEST_CASE("WordPressCliService real disposable WordPress lifecycle") {
     CAPTURE(language_update.diagnostic);
     CHECK(language_update.success);
     CHECK(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::CacheFlush).success);
+
+    const auto timeout_docker = std::filesystem::path("/tmp/containercp-wpcli-timeout-docker.sh");
+    struct TimeoutStubCleanup {
+        std::filesystem::path path;
+        ~TimeoutStubCleanup() { std::filesystem::remove(path); }
+    } timeout_stub_cleanup{timeout_docker};
+    std::ofstream(timeout_docker)
+        << "#!/bin/sh\n"
+        << "if [ \"$1\" = \"run\" ]; then sleep 3; exit 124; fi\n"
+        << "if [ \"$1\" = \"rm\" ]; then exit 0; fi\n"
+        << "if [ \"$1\" = \"inspect\" ]; then exit 1; fi\n"
+        << "exit 1\n";
+    REQUIRE(::chmod(timeout_docker.c_str(), 0555) == 0);
+    containercp::wordpress::WordPressCliService timeout_service(
+        executor, resolver, config, containercp::logger::Logger::instance(), timeout_docker.string(), 1, 5);
+    const auto timed_out = timeout_service.run(site_id, containercp::wordpress::WordPressCliOperation::CoreVersion);
+    CHECK_FALSE(timed_out.success);
+    CHECK(timed_out.failure_code == "wordpress_cli_timeout");
+    CHECK(timed_out.cleanup_succeeded);
 
     for (const auto& entry : std::filesystem::recursive_directory_iterator(public_dir / "wp-content")) {
         struct stat metadata{};

@@ -15,8 +15,6 @@
 namespace containercp::wordpress {
 namespace {
 
-constexpr int kRunnerTimeoutSeconds = 60;
-constexpr int kCleanupTimeoutSeconds = 15;
 constexpr std::size_t kMaxOutputBytes = 65536;
 constexpr const char* kExpectedWpCliVersion = "2.11.0";
 constexpr const char* kRunnerLabel = "containercp.wpcli.managed=true";
@@ -216,12 +214,16 @@ WordPressCliService::WordPressCliService(runtime::CommandExecutor& executor,
                                          WordPressRuntimeContextResolver& resolver,
                                          config::Config& config,
                                          logger::Logger& logger,
-                                         std::string docker_executable)
+                                         std::string docker_executable,
+                                         int runner_timeout_seconds,
+                                         int cleanup_timeout_seconds)
     : executor_(executor)
     , resolver_(resolver)
     , config_(config)
     , logger_(logger)
-    , docker_executable_(std::move(docker_executable)) {
+    , docker_executable_(std::move(docker_executable))
+    , runner_timeout_seconds_(runner_timeout_seconds)
+    , cleanup_timeout_seconds_(cleanup_timeout_seconds) {
 }
 
 WordPressCliResult WordPressCliService::failure(std::string code, std::string message) const {
@@ -360,13 +362,13 @@ runtime::CommandResult WordPressCliService::execute_docker(const std::vector<std
 
 bool WordPressCliService::verify_runner_absent(const std::string& identifier) const {
     const auto inspected = execute_docker({"inspect", identifier, "--format", "{{.Id}}"},
-                                          kCleanupTimeoutSeconds, 4096);
+                                           cleanup_timeout_seconds_, 4096);
     return inspected.exit_code != 0;
 }
 
 WordPressCliResult WordPressCliService::cleanup_runner(const std::string& runner) const {
     WordPressCliResult result;
-    const auto removed = execute_docker({"rm", "-f", runner}, kCleanupTimeoutSeconds, 4096);
+    const auto removed = execute_docker({"rm", "-f", runner}, cleanup_timeout_seconds_, 4096);
     if (!verify_runner_absent(runner)) {
         result.failure_code = "wordpress_cli_runner_cleanup_failed";
         result.message = "WP-CLI runner remained after cleanup";
@@ -441,7 +443,7 @@ WordPressCliResult WordPressCliService::run_command(uint64_t site_id,
     };
     command.insert(command.end(), arguments.begin(), arguments.end());
 
-    const auto execution = execute_docker(command, kRunnerTimeoutSeconds, kMaxOutputBytes);
+    const auto execution = execute_docker(command, runner_timeout_seconds_, kMaxOutputBytes);
     auto cleanup = cleanup_runner(name);
     WordPressCliResult result;
     result.output = execution.out;
@@ -467,7 +469,7 @@ WordPressCliResult WordPressCliService::run_command(uint64_t site_id,
 WordPressCliResult WordPressCliService::reconcile_runner(const std::string& identifier) const {
     const auto inspected = execute_docker({"inspect", identifier, "--format",
         "{{.Name}}|{{index .Config.Labels \"containercp.wpcli.managed\"}}"},
-        kCleanupTimeoutSeconds, 4096);
+        cleanup_timeout_seconds_, 4096);
     const auto fields = split_pipe(inspected.out);
     if (inspected.exit_code != 0 || fields.size() != 2 || fields[1] != "true" ||
         fields[0].find("/" + std::string(kRunnerPrefix)) != 0) {
@@ -483,7 +485,7 @@ WordPressCliResult WordPressCliService::reconcile_stale_runners() const {
         return failure("wordpress_cli_docker_executable_untrusted", "Trusted Docker executable is unavailable");
     }
     const auto listed = execute_docker({"ps", "-a", "--filter", "label=" + std::string(kRunnerLabel),
-                                        "--format", "{{.ID}}"}, kCleanupTimeoutSeconds, 16384);
+                                        "--format", "{{.ID}}"}, cleanup_timeout_seconds_, 16384);
     if (listed.exit_code != 0) {
         return failure("wordpress_cli_reconciliation_failed", "Managed WP-CLI runners could not be enumerated");
     }
