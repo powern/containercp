@@ -8,15 +8,15 @@ Format: date | commit | summary
 
 ## 2026-08-11 | `pending` | ui: redesign SFTP user management around a detail drawer
 
-**Summary:** Reworked the SFTP Access page to use the Databases inventory and detail-drawer interaction pattern instead of rendering the selected user's full detail inline on the page.
+**Summary:** Reworked the SFTP Access page to use the Databases inventory and detail-drawer interaction pattern instead of rendering the selected user's full detail inline on the page. Also fixed the users endpoint summary payload and preserved Apache traversal permissions when applying RW site access.
 
-**Files changed:** `libs/api/ApiServer.cpp`, `tests/test_api.cpp`, `web/pages/sftp-access.js`, `web/styles/drawer.css`, `CHANGELOG.md`
+**Files changed:** `libs/api/ApiServer.cpp`, `libs/access/LocalSftpProvider.cpp`, `tests/test_api.cpp`, `tests/test_access.cpp`, `web/pages/sftp-access.js`, `web/styles/drawer.css`, `CHANGELOG.md`
 
 **User-visible behavior:** SFTP users now appear in a compact inventory table with accurate Linux account, lifecycle, key, grant, and error summary fields, plus responsive mobile cards. Selecting a user opens a modern right-side drawer containing overview, lifecycle actions, SSH keys, site grants, and setup checklist. The drawer supports backdrop click, Escape close, and full-screen mobile layout without horizontal scrolling.
 
-**Validation:** `node --check web/pages/sftp-access.js`, frontend baseline check, and `git diff --check` passed.
+**Validation:** `node --check web/pages/sftp-access.js`, frontend baseline check, `git diff --check`, focused permission/API tests, and full CTest passed. Production `unity.softico.ua` was restored to HTTP `200` after applying the safe `775` public-directory mode; the previous Apache `.htaccess` 403 was resolved.
 
-**Known risks:** The drawer reuses the existing Databases drawer tokens and classes; no SFTP API contracts or mutation behavior were changed.
+**Known risks:** The drawer reuses the existing Databases drawer tokens and classes. RW site access now uses `775` on the site public directory so Apache containers with a different numeric UID retain read/execute access; SFTP group write access remains enforced by the group mode.
 
 ---
 

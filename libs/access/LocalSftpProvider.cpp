@@ -678,7 +678,9 @@ core::OperationResult LocalSftpProvider::apply_directory_permissions_internal(ui
         out.success = false; out.message = "chgrp postcondition failed"; return out;
     }
 
-    auto r2 = runner_->chmod("770", public_dir);
+    // Keep world read/execute so the Apache container can traverse the bind
+    // mounted site even when its numeric www-data UID differs from the host.
+    auto r2 = runner_->chmod("775", public_dir);
     if (!r2.success) {
         if (original.exists && original.group_gid > 0) {
             auto rb = runner_->chgrp(std::to_string(original.group_gid), public_dir);
@@ -687,7 +689,7 @@ core::OperationResult LocalSftpProvider::apply_directory_permissions_internal(ui
         out.success = false; out.message = "chmod failed"; return out;
     }
     auto post_mode = fs_inspector_->inspect(public_dir);
-    if (!post_mode.exists || post_mode.mode != 0770) {
+    if (!post_mode.exists || post_mode.mode != 0775) {
         out.success = false; out.message = "chmod postcondition failed"; return out;
     }
 

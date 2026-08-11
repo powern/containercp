@@ -1901,8 +1901,11 @@ TEST_CASE("Phase3b valid RW permission accepted") {
         }));
     provider.set_enabled(true);
     provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
-    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
-    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    auto fs = std::make_shared<FakeFsInspector>();
+    fs->state_["/srv/containercp/sites/test/public/"].exists = true;
+    fs->state_["/srv/containercp/sites/test/public/"].group_gid = 20001;
+    fs->state_["/srv/containercp/sites/test/public/"].mode = 0775;
+    provider.set_filesystem_inspector(fs);
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
@@ -1930,8 +1933,11 @@ TEST_CASE("Phase3b deploy permission maps to RW") {
         }));
     provider.set_enabled(true);
     provider.set_site_resolver([](uint64_t id) { containercp::access::LocalSftpProvider::SiteInfo info; info.valid = true; info.site_id = id; info.domain = "test"; info.root = "/srv/containercp/sites/test"; return info; });
-    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
-    provider.set_filesystem_inspector(std::make_shared<FakeFsInspector>());
+    auto fs = std::make_shared<FakeFsInspector>();
+    fs->state_["/srv/containercp/sites/test/public/"].exists = true;
+    fs->state_["/srv/containercp/sites/test/public/"].group_gid = 20001;
+    fs->state_["/srv/containercp/sites/test/public/"].mode = 0775;
+    provider.set_filesystem_inspector(fs);
     provider.set_mapping_persistence(
         [&stored]() { return stored; },
         [&stored](const containercp::access::SystemAccountMapping&) { return true; },
@@ -3073,6 +3079,9 @@ TEST_CASE("Phase3d grant_rollback_incomplete collects multiple errors") {
     inspector->users_["au-dev"] = {true, "au-dev", 10000, 20000, "/srv/containercp/users/au-dev", "/usr/sbin/nologin", true};
 
     auto fs = std::make_shared<FakeFsInspector>();
+    fs->state_["/srv/containercp/sites/test/public/"].exists = true;
+    fs->state_["/srv/containercp/sites/test/public/"].group_gid = 20001;
+    fs->state_["/srv/containercp/sites/test/public/"].mode = 0775;
 
     auto* log = &containercp::logger::Logger::instance();
     containercp::access::LocalSftpProvider provider(*log);
@@ -3182,7 +3191,7 @@ TEST_CASE("ARCH-009 directory permission rollback restores mode 0755") {
     CHECK(chmod_found);
 }
 
-TEST_CASE("ARCH-009 directory permission rollback restores mode 0770") {
+TEST_CASE("ARCH-009 directory permission rollback restores mode 0775") {
     auto inspector = std::make_shared<FakeInspector>();
     FakeCommandRunner fake_commands(inspector);
     auto mount_inspector = std::make_shared<FakeMountInspector>();
@@ -3242,7 +3251,7 @@ TEST_CASE("ARCH-009 directory permission rollback restores mode 0770") {
 
     bool chmod_found = false;
     for (const auto& c : fake_commands.cmds_) {
-        if (c.args.size() >= 2 && c.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("chmod") && c.args[1] == "770") chmod_found = true;
+        if (c.args.size() >= 2 && c.args[0] == containercp::access::SystemAccountCommandRunner::canonical_path("chmod") && c.args[1] == "775") chmod_found = true;
     }
     CHECK(chmod_found);
 }
