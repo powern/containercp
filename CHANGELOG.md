@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-08-11 | `pending` | test: prove WP-CLI timeout cleanup
+## 2026-08-11 | `548a97a` | test: prove WP-CLI timeout cleanup
 
 **Summary:** Added a deterministic timeout seam and real disposable timeout
 coverage for the isolated WP-CLI runner.
