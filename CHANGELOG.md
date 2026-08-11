@@ -6,7 +6,30 @@ Format: date | commit | summary
 
 ---
 
-## 2026-08-11 | `pending` | test: close WP-CLI production readiness gaps
+## 2026-08-11 | `pending` | fix: harden final WP-CLI cleanup and reaping paths
+
+**Summary:** Corrected stale-runner reconciliation to enumerate trusted names,
+handled runner-creation absence explicitly, and ensured child signal fallback
+still targets the child when process-group signalling reports `ESRCH`.
+
+**Files changed:** `libs/wordpress/WordPressCliService.cpp`,
+`libs/runtime/CommandExecutor.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Stale reconciliation no longer compares short Docker
+IDs with full names, runner creation failure distinguishes definite absence from
+unknown Docker state, and timeout termination cannot skip the child signal
+fallback. No cleanup or shell boundary was weakened.
+
+**Validation:** CommandExecutor tests passed 48/48 assertions, the real single
+site lifecycle passed 560/560 assertions, and the real two-site matrix passed
+993/993 assertions. Full deterministic CTest is required before commit.
+
+**Known risks:** None identified in the final source review beyond the existing
+repository warning baseline in unrelated aggregate initializers.
+
+---
+
+## 2026-08-11 | `9c9e13e` | test: close WP-CLI production readiness gaps
 
 **Summary:** Expanded the real disposable matrix across Nginx/PHP 8.4 and
 Apache/PHP 8.3 with the complete approved mutation lifecycle and real Docker

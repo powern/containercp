@@ -343,7 +343,7 @@ CommandResult run_safe_capture(const std::vector<std::string>& args,
     close(stderr_pipe[0]);
 
     auto signal_process_group = [pid](int signal) {
-        if (kill(-pid, signal) != 0 && errno != ESRCH) {
+        if (kill(-pid, signal) != 0) {
             (void)kill(pid, signal);
         }
     };

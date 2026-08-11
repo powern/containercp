@@ -399,6 +399,17 @@ WordPressCliResult WordPressCliService::cleanup_runner(const std::string& runner
     const auto inspected = execute_docker({"inspect", runner, "--format", kRunnerInspectFormat},
                                           cleanup_timeout_seconds_, 4096);
     const auto fields = split_pipe(inspected.out);
+    if (inspected.exit_code != 0) {
+        const auto presence = verify_runner_absent(runner);
+        if (presence.state == RunnerPresenceState::Absent) {
+            result.failure_code = "wordpress_cli_runner_not_created";
+            result.message = "WP-CLI runner was not created by this operation";
+        } else {
+            result.failure_code = "wordpress_cli_runner_state_unknown";
+            result.message = "WP-CLI runner state could not be proven before cleanup";
+        }
+        return result;
+    }
     const bool owned = inspected.exit_code == 0 && fields.size() == 6 &&
                        fields[0] == "/" + runner && fields[1] == "true" &&
                        fields[2] == std::to_string(site_id) && fields[3] == operation_name &&
@@ -546,7 +557,7 @@ WordPressCliResult WordPressCliService::reconcile_stale_runners() const {
         return failure("wordpress_cli_docker_executable_untrusted", "Trusted Docker executable is unavailable");
     }
     const auto listed = execute_docker({"ps", "-a", "--filter", "label=" + std::string(kRunnerLabel),
-                                        "--format", "{{.ID}}"}, cleanup_timeout_seconds_, 16384);
+                                        "--format", "{{.Names}}"}, cleanup_timeout_seconds_, 16384);
     if (listed.exit_code != 0) {
         return failure("wordpress_cli_reconciliation_failed", "Managed WP-CLI runners could not be enumerated");
     }
