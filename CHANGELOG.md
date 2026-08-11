@@ -6,6 +6,36 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-11 | `pending` | fix: harden WordPress migration runtime resolution
+
+**Summary:** Hardened `VestaSiteImporter` migration runtime resolution by
+requiring valid managed domains and regular non-symlink backup files, resolving
+containers from the selected site's compose services and labels, validating the
+managed site/document-root paths, and deriving the PHP config path from the
+actual PHP mount. Apache and Nginx now use separate runtime validation paths.
+
+**Files changed:** `libs/migration/VestaSiteImporter.cpp`,
+`libs/migration/VestaSiteImporter.h`, `tests/test_migration_api.cpp`,
+`CHANGELOG.md`
+
+**User-visible behavior:** Migration rejects traversal, unsafe backup paths,
+unmanaged/ambiguous runtime identities, cross-site container selection, and
+unsafe document-root mappings. Migration diagnostics no longer return raw
+WordPress errors, logs, HTTP bodies, database identifiers, or site-controlled
+runtime output.
+
+**Validation:** Focused migration tests passed 36/36. Fake Docker runtime tests
+covered managed Apache and Nginx container selection, legacy `site-N` rejection,
+and actual PHP mount-derived config paths. The complete deterministic CTest
+suite passed with the Linux integration test skipped when its environment is
+unavailable.
+
+**Known risks:** Live disposable migration validation against running Apache
+and Nginx stacks remains an operational validation activity; no WP-CLI runtime
+was introduced in this separate task.
+
+---
+
 ## 2026-08-11 | `pending` | docs: align WP-CLI approval references
 
 **Summary:** Updated the WPCLI-001 modernization plan to reflect the approved

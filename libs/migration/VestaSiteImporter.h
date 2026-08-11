@@ -116,6 +116,25 @@ public:
     UpgradeResult upgrade_site(const Options& opts);
 
 private:
+    struct ManagedRuntime {
+        uint64_t site_id = 0;
+        std::string site_dir;
+        std::string web_container;
+        std::string php_container;
+        std::string database_container;
+        std::string php_document_root;
+    };
+
+    std::string validate_options(const Options& opts) const;
+    bool resolve_service_container(const std::string& site_dir,
+                                   uint64_t site_id,
+                                   const std::string& service,
+                                   std::string& container,
+                                   std::string& error) const;
+    bool resolve_managed_runtime(const Options& opts,
+                                 uint64_t expected_site_id,
+                                 ManagedRuntime& runtime,
+                                 std::string& error) const;
     bool tar_safe_list(const std::string& archive,
                        std::vector<std::string>& entries,
                        std::string& error);
@@ -153,10 +172,12 @@ private:
                                const std::string& web_root_type,
                                const std::string& site_dir,
                                ImportFilesResult& result,
-                               const std::string& uid_str,
-                               const std::string& gid_str,
-                               uint64_t site_id,
-                               const std::string& domain = "");
+                                const std::string& uid_str,
+                                const std::string& gid_str,
+                                uint64_t site_id,
+                                const std::string& domain,
+                                const std::string& web_container,
+                                const std::string& php_container);
     std::string find_wp_config_file(const std::string& public_dir) const;
     bool update_wp_config_db_credentials(const std::string& config_path,
                                           const std::string& site_root,

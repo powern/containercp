@@ -5,6 +5,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <climits>
 #include <string>
@@ -134,4 +136,176 @@ TEST_CASE("VestaSiteImporter JSON response has no DB_PASSWORD") {
 
     CHECK(json_sample.find("db_password") == std::string::npos);
     CHECK(json_sample.find("DB_PASSWORD") == std::string::npos);
+}
+
+TEST_CASE("VestaSiteImporter rejects invalid migration domain before archive access") {
+    config::Config& cfg = config::Config::instance();
+    filesystem::Filesystem fs;
+    runtime::CommandExecutor exec;
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
+
+    migration::Options opts;
+    opts.backup_path = "/tmp/does-not-matter.tar";
+    opts.domain = "../../etc/passwd";
+    opts.owner = "admin";
+
+    const auto manifest = importer.inspect(opts);
+    REQUIRE_FALSE(manifest.errors.empty());
+    CHECK(manifest.errors.front() == "Invalid migration domain");
+}
+
+TEST_CASE("VestaSiteImporter rejects unsafe backup paths") {
+    config::Config& cfg = config::Config::instance();
+    filesystem::Filesystem fs;
+    runtime::CommandExecutor exec;
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance());
+
+    const std::string directory = "/tmp/containercp-migration-path-test";
+    std::filesystem::remove_all(directory);
+    std::filesystem::create_directories(directory);
+    const std::string target = directory + "/backup.tar";
+    const std::string link = directory + "/backup-link.tar";
+    { std::ofstream(target) << "not an archive"; }
+
+    migration::Options opts;
+    opts.backup_path = link;
+    opts.domain = "example.com";
+    opts.owner = "admin";
+    REQUIRE(::symlink(target.c_str(), link.c_str()) == 0);
+
+    const auto manifest = importer.inspect(opts);
+    REQUIRE_FALSE(manifest.errors.empty());
+    CHECK(manifest.errors.front() == "Backup path is not a regular file");
+
+    std::filesystem::remove_all(directory);
+}
+
+TEST_CASE("VestaSiteImporter upgrade rejects traversal and unmanaged sites") {
+    config::Config& cfg = config::Config::instance();
+    filesystem::Filesystem fs;
+    runtime::CommandExecutor exec;
+    site::SiteManager sites;
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance(), &sites, nullptr);
+
+    migration::Options traversal;
+    traversal.domain = "../outside.example";
+    auto traversal_result = importer.upgrade_site(traversal);
+    REQUIRE_FALSE(traversal_result.success);
+    CHECK(traversal_result.errors.front() == "Invalid migration domain");
+
+    migration::Options missing;
+    missing.domain = "managed.example";
+    auto missing_result = importer.upgrade_site(missing);
+    REQUIRE_FALSE(missing_result.success);
+    CHECK(missing_result.errors.front() == "Managed migration site was not found");
+}
+
+static std::string write_fake_docker(const std::string& directory,
+                                     uint64_t site_id,
+                                     const std::string& site_dir,
+                                     const std::string& mount_destination,
+                                     const std::string& log_path) {
+    const std::string script_path = directory + "/docker";
+    std::ofstream script(script_path);
+    script << "#!/bin/sh\n"
+           << "printf '%s\\n' \"$*\" >> '" << log_path << "'\n"
+           << "if [ \"$1\" = compose ] && [ \"$4\" = ps ]; then\n"
+           << "  if [ \"$8\" = web ]; then printf 'site-" << site_id << "-web\\n';\n"
+           << "  else printf 'site-" << site_id << "-php\\n'; fi\n"
+           << "  exit 0\n"
+           << "fi\n"
+           << "if [ \"$1\" = inspect ]; then\n"
+           << "  case \"$4\" in\n"
+           << "    '{{range .Mounts}}'*) printf '" << site_dir << "public|" << mount_destination << "\\n'; exit 0 ;;\n"
+           << "  esac\n"
+           << "  case \"$2\" in\n"
+           << "    site-" << site_id << "-web) printf '" << site_id << "|web|" << site_dir << "|running\\n' ;;\n"
+           << "    site-" << site_id << "-php) printf '" << site_id << "|php|" << site_dir << "|running\\n' ;;\n"
+           << "    *) exit 1 ;;\n"
+           << "  esac\n"
+           << "  exit 0\n"
+           << "fi\n"
+           << "exit 0\n";
+    script.close();
+    ::chmod(script_path.c_str(), 0755);
+    return script_path;
+}
+
+TEST_CASE("VestaSiteImporter resolves the managed Apache runtime and PHP mount") {
+    config::Config& cfg = config::Config::instance();
+    filesystem::Filesystem fs;
+    runtime::CommandExecutor exec;
+    site::SiteManager sites;
+    const std::string domain = "migration-runtime-apache.local";
+    const std::string site_dir = cfg.sites_dir() + domain + "/";
+    std::filesystem::remove_all(site_dir);
+    std::filesystem::create_directories(site_dir + "public");
+    std::filesystem::create_directories(site_dir + "config/apache");
+    std::ofstream(site_dir + "docker-compose.yml") << "services: {}\n";
+    std::ofstream(site_dir + "public/wp-config.php") << "<?php\n";
+
+    const uint64_t site_id = sites.create(domain, "admin", 1, "apache");
+    const std::string fake_dir = "/tmp/containercp-fake-docker-apache";
+    std::filesystem::remove_all(fake_dir);
+    std::filesystem::create_directories(fake_dir);
+    const std::string log_path = fake_dir + "/commands.log";
+    write_fake_docker(fake_dir, site_id, site_dir, "/usr/local/apache2/htdocs", log_path);
+
+    const char* old_path = std::getenv("PATH");
+    const std::string saved_path = old_path == nullptr ? std::string() : old_path;
+    setenv("PATH", (fake_dir + ":" + saved_path).c_str(), 1);
+
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance(), &sites, nullptr);
+    migration::Options opts;
+    opts.domain = domain;
+    const auto result = importer.upgrade_site(opts);
+
+    setenv("PATH", saved_path.c_str(), 1);
+    REQUIRE(result.success);
+    const std::string log = fs.read_file(log_path);
+    CHECK(log.find("site-" + std::to_string(site_id) + "-web") != std::string::npos);
+    CHECK(log.find("site-N-web") == std::string::npos);
+    CHECK(log.find("site-" + std::to_string(site_id) + "-php php -l /usr/local/apache2/htdocs/wp-config.php") != std::string::npos);
+
+    std::filesystem::remove_all(site_dir);
+    std::filesystem::remove_all(fake_dir);
+}
+
+TEST_CASE("VestaSiteImporter resolves the managed Nginx runtime and PHP mount") {
+    config::Config& cfg = config::Config::instance();
+    filesystem::Filesystem fs;
+    runtime::CommandExecutor exec;
+    site::SiteManager sites;
+    const std::string domain = "migration-runtime-nginx.local";
+    const std::string site_dir = cfg.sites_dir() + domain + "/";
+    std::filesystem::remove_all(site_dir);
+    std::filesystem::create_directories(site_dir + "public");
+    std::ofstream(site_dir + "docker-compose.yml") << "services: {}\n";
+    std::ofstream(site_dir + "public/wp-config.php") << "<?php\n";
+
+    const uint64_t site_id = sites.create(domain, "admin", 1, "nginx");
+    const std::string fake_dir = "/tmp/containercp-fake-docker-nginx";
+    std::filesystem::remove_all(fake_dir);
+    std::filesystem::create_directories(fake_dir);
+    const std::string log_path = fake_dir + "/commands.log";
+    write_fake_docker(fake_dir, site_id, site_dir, "/var/www/html", log_path);
+
+    const char* old_path = std::getenv("PATH");
+    const std::string saved_path = old_path == nullptr ? std::string() : old_path;
+    setenv("PATH", (fake_dir + ":" + saved_path).c_str(), 1);
+
+    migration::VestaSiteImporter importer(exec, fs, cfg, logger::Logger::instance(), &sites, nullptr);
+    migration::Options opts;
+    opts.domain = domain;
+    const auto result = importer.upgrade_site(opts);
+
+    setenv("PATH", saved_path.c_str(), 1);
+    REQUIRE(result.success);
+    const std::string log = fs.read_file(log_path);
+    CHECK(log.find("nginx -t") != std::string::npos);
+    CHECK(log.find("site-N-web") == std::string::npos);
+    CHECK(log.find("site-" + std::to_string(site_id) + "-php php -l /var/www/html/wp-config.php") != std::string::npos);
+
+    std::filesystem::remove_all(site_dir);
+    std::filesystem::remove_all(fake_dir);
 }

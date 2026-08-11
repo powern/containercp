@@ -2,6 +2,8 @@
 
 #include "wordpress/WordPressConfigDetector.h"
 #include "wordpress/WordPressConfigUpdater.h"
+#include "utils/PathUtils.h"
+#include "utils/Validator.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -14,6 +16,7 @@
 #include <sstream>
 #include <sys/stat.h>
 #include <thread>
+#include <utility>
 
 namespace containercp::migration {
 
@@ -32,10 +35,199 @@ VestaSiteImporter::VestaSiteImporter(runtime::CommandExecutor& executor,
 {
 }
 
+std::string VestaSiteImporter::validate_options(const Options& opts) const {
+    if (!utils::Validator::is_valid_hostname(opts.domain)) {
+        return "Invalid migration domain";
+    }
+    if (opts.backup_path.empty()) {
+        return "Backup path is required";
+    }
+    if (!std::filesystem::path(opts.backup_path).is_absolute() ||
+        opts.backup_path.find('\0') != std::string::npos) {
+        return "Invalid backup path";
+    }
+
+    struct stat st{};
+    if (::lstat(opts.backup_path.c_str(), &st) != 0) {
+        return "Backup file not found";
+    }
+    if (S_ISLNK(st.st_mode) || !S_ISREG(st.st_mode)) {
+        return "Backup path is not a regular file";
+    }
+    return {};
+}
+
+bool VestaSiteImporter::resolve_service_container(const std::string& site_dir,
+                                                   uint64_t site_id,
+                                                   const std::string& service,
+                                                   std::string& container,
+                                                   std::string& error) const {
+    const std::string compose_file = site_dir + "docker-compose.yml";
+    std::error_code ec;
+    const auto compose_status = std::filesystem::symlink_status(compose_file, ec);
+    if (ec || !std::filesystem::is_regular_file(compose_status)) {
+        error = "Managed site compose file is unavailable";
+        return false;
+    }
+
+    const auto listed = executor_.run({"docker", "compose", "-f", compose_file,
+                                       "ps", "--all", "--format", "{{.Name}}", service});
+    if (listed.exit_code != 0) {
+        error = "Managed site runtime service could not be enumerated";
+        return false;
+    }
+
+    std::vector<std::string> candidates;
+    std::istringstream lines(listed.out);
+    std::string line;
+    while (std::getline(lines, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' ')) {
+            line.pop_back();
+        }
+        if (!line.empty() && std::find(candidates.begin(), candidates.end(), line) == candidates.end()) {
+            candidates.push_back(line);
+        }
+    }
+    if (candidates.size() != 1) {
+        error = "Managed site runtime service identity is ambiguous or missing";
+        return false;
+    }
+
+    const std::string inspect_format =
+        "{{index .Config.Labels \"containercp.site.id\"}}|"
+        "{{index .Config.Labels \"com.docker.compose.service\"}}|"
+        "{{index .Config.Labels \"com.docker.compose.project.working_dir\"}}|"
+        "{{.State.Status}}";
+    const auto inspected = executor_.run({"docker", "inspect", candidates.front(),
+                                          "--format", inspect_format});
+    if (inspected.exit_code != 0) {
+        error = "Managed site runtime service could not be inspected";
+        return false;
+    }
+
+    std::vector<std::string> fields;
+    std::istringstream field_stream(inspected.out);
+    std::string field;
+    while (std::getline(field_stream, field, '|')) {
+        while (!field.empty() && (field.back() == '\r' || field.back() == '\n')) field.pop_back();
+        fields.push_back(field);
+    }
+    if (fields.size() != 4 || fields[0] != std::to_string(site_id) ||
+        fields[1] != service || fields[3] != "running") {
+        error = "Managed site runtime service identity could not be proven";
+        return false;
+    }
+
+    std::error_code path_ec;
+    const auto expected_dir = std::filesystem::weakly_canonical(site_dir, path_ec);
+    const auto reported_dir = std::filesystem::weakly_canonical(fields[2], path_ec);
+    if (path_ec || fields[2].empty() || expected_dir != reported_dir) {
+        error = "Managed site compose identity could not be proven";
+        return false;
+    }
+
+    container = candidates.front();
+    return true;
+}
+
+bool VestaSiteImporter::resolve_managed_runtime(const Options& opts,
+                                                uint64_t expected_site_id,
+                                                ManagedRuntime& runtime,
+                                                std::string& error) const {
+    if (sites_ == nullptr) {
+        error = "SiteManager is required for managed runtime resolution";
+        return false;
+    }
+
+    const auto* site = sites_->find(opts.domain);
+    if (site == nullptr || site->id == 0 || site->node_id == 0 || site->owner == "system") {
+        error = "Managed migration site was not found";
+        return false;
+    }
+    if (expected_site_id != 0 && site->id != expected_site_id) {
+        error = "Managed migration site identity mismatch";
+        return false;
+    }
+
+    std::error_code ec;
+    const auto sites_root = std::filesystem::weakly_canonical(cfg_.sites_dir(), ec);
+    if (ec) {
+        error = "Managed sites root could not be resolved";
+        return false;
+    }
+    const auto raw_site_root = sites_root / site->domain;
+    const auto raw_status = std::filesystem::symlink_status(raw_site_root, ec);
+    if (ec || std::filesystem::is_symlink(raw_status) || !std::filesystem::is_directory(raw_status)) {
+        error = "Managed site root is unsafe";
+        return false;
+    }
+    const auto site_root = std::filesystem::weakly_canonical(raw_site_root, ec);
+    if (ec || !utils::path_has_prefix(site_root, sites_root)) {
+        error = "Managed site root escapes the configured sites directory";
+        return false;
+    }
+
+    const auto public_root = site_root / "public";
+    const auto public_status = std::filesystem::symlink_status(public_root, ec);
+    if (ec || std::filesystem::is_symlink(public_status) || !std::filesystem::is_directory(public_status)) {
+        error = "Managed WordPress document root is unsafe";
+        return false;
+    }
+    const auto canonical_public_root = std::filesystem::weakly_canonical(public_root, ec);
+    if (ec || !utils::path_has_prefix(canonical_public_root, site_root)) {
+        error = "Managed WordPress document root escapes the site root";
+        return false;
+    }
+
+    runtime.site_id = site->id;
+    runtime.site_dir = site_root.string() + "/";
+    if (!resolve_service_container(runtime.site_dir, site->id, "web",
+                                   runtime.web_container, error) ||
+        !resolve_service_container(runtime.site_dir, site->id, "php",
+                                   runtime.php_container, error)) {
+        return false;
+    }
+
+    const auto mounts = executor_.run({"docker", "inspect", runtime.php_container,
+                                       "--format", "{{range .Mounts}}{{.Source}}|{{.Destination}}\n{{end}}"});
+    if (mounts.exit_code != 0) {
+        error = "Managed PHP document-root mount could not be inspected";
+        return false;
+    }
+
+    std::size_t matching_mounts = 0;
+    std::istringstream mount_stream(mounts.out);
+    std::string mount_line;
+    while (std::getline(mount_stream, mount_line)) {
+        const auto separator = mount_line.find('|');
+        if (separator == std::string::npos) continue;
+        const auto source = mount_line.substr(0, separator);
+        auto destination = mount_line.substr(separator + 1);
+        while (!destination.empty() && (destination.back() == '\r' || destination.back() == '\n')) {
+            destination.pop_back();
+        }
+        std::error_code source_ec;
+        const auto canonical_source = std::filesystem::weakly_canonical(source, source_ec);
+        if (!source_ec && canonical_source == canonical_public_root) {
+            if (destination.empty() || destination.front() != '/') {
+                error = "Managed PHP document-root mount has an unsafe destination";
+                return false;
+            }
+            runtime.php_document_root = destination;
+            ++matching_mounts;
+        }
+    }
+    if (matching_mounts != 1) {
+        error = "Managed PHP document-root mount is missing or ambiguous";
+        return false;
+    }
+    return true;
+}
+
 bool VestaSiteImporter::tar_safe_list(const std::string& archive,
                                        std::vector<std::string>& entries,
                                        std::string& error) {
-    logger_.info("MIGRATION", "tar_safe_list ENTER: " + archive);
+    logger_.info("MIGRATION", "tar_safe_list entered for migration backup");
     logger_.info("MIGRATION", "tar_safe_list: running tar -tf (may take time for large archives)");
     auto result = executor_.run({
         "tar", "-tf", archive
@@ -43,7 +235,7 @@ bool VestaSiteImporter::tar_safe_list(const std::string& archive,
     logger_.info("MIGRATION", "tar_safe_list: tar -tf completed, exit_code=" + std::to_string(result.exit_code)
                  + " stdout_size=" + std::to_string(result.out.size()));
     if (result.exit_code != 0) {
-        error = result.err.empty() ? "Failed to read archive" : result.err;
+        error = "Failed to read archive";
         return false;
     }
 
@@ -54,7 +246,7 @@ bool VestaSiteImporter::tar_safe_list(const std::string& archive,
 
         // Reject absolute paths
         if (line[0] == '/') {
-            error = "Archive contains absolute path: " + line;
+            error = "Archive contains an unsafe absolute path";
             return false;
         }
 
@@ -63,7 +255,7 @@ bool VestaSiteImporter::tar_safe_list(const std::string& archive,
         std::string component;
         while (std::getline(path_stream, component, '/')) {
             if (component == "..") {
-                error = "Archive contains parent directory reference: " + line;
+                error = "Archive contains an unsafe parent directory reference";
                 return false;
             }
         }
@@ -74,7 +266,7 @@ bool VestaSiteImporter::tar_safe_list(const std::string& archive,
         std::vector<std::string> parts;
         while (std::getline(norm_stream, component, '/')) {
             if (component == "..") { // already rejected, but keep as safety
-                error = "Archive contains parent directory reference: " + line;
+                error = "Archive contains an unsafe parent directory reference";
                 return false;
             }
             if (!component.empty() && component != ".") {
@@ -83,7 +275,7 @@ bool VestaSiteImporter::tar_safe_list(const std::string& archive,
         }
         // Rebuild and check for leading /
         if (!parts.empty() && parts[0][0] == '/') {
-            error = "Archive contains absolute path: " + line;
+            error = "Archive contains an unsafe absolute path";
             return false;
         }
 
@@ -530,13 +722,14 @@ Manifest VestaSiteImporter::inspect(const Options& opts) {
     m.domain = opts.domain;
     m.backup_path = opts.backup_path;
 
-    if (!fs_.exists(opts.backup_path)) {
-        m.errors.push_back("Backup file not found: " + opts.backup_path);
+    const std::string options_error = validate_options(opts);
+    if (!options_error.empty()) {
+        m.errors.push_back(options_error);
         return m;
     }
 
     struct stat st;
-    if (::stat(opts.backup_path.c_str(), &st) == 0) {
+    if (::lstat(opts.backup_path.c_str(), &st) == 0) {
         m.archive_size = st.st_size;
     }
 
@@ -1032,7 +1225,9 @@ bool VestaSiteImporter::copy_files_to_public(
     const std::string& site_dir,
     ImportFilesResult& result,
     const std::string& uid_str, const std::string& gid_str,
-    uint64_t site_id, const std::string& domain) {
+    uint64_t site_id, const std::string& domain,
+    const std::string& web_container,
+    const std::string& php_container) {
 
     std::string data_tarball = staging_dir + "/domain_data.tar.gz";
     std::string public_dir = site_dir + "public/";
@@ -1052,9 +1247,8 @@ bool VestaSiteImporter::copy_files_to_public(
     ::mkdir(safety_dir.c_str(), 0755);
     auto safety = executor_.run({"rsync", "-a", "--safe-links", public_dir, safety_dir + "/"});
     if (safety.exit_code != 0) {
-        std::string err = "rsync exit code " + std::to_string(safety.exit_code) + " stderr=" + safety.err;
-        logger_.error("MIGRATION", "Safety copy failed: " + err);
-        result.errors.push_back("Safety copy failed: " + err);
+        logger_.error("MIGRATION", "Safety copy failed with exit code " + std::to_string(safety.exit_code));
+        result.errors.push_back("Safety copy failed");
         return false;
     }
     logger_.info("MIGRATION", "Safety backup created");
@@ -1071,7 +1265,9 @@ bool VestaSiteImporter::copy_files_to_public(
             ok = false;
         }
         auto up = executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "up", "-d", "web", "php"});
-        if (up.exit_code != 0) logger_.error("MIGRATION", "Rollback docker compose up failed: " + up.err);
+        if (up.exit_code != 0) {
+            logger_.error("MIGRATION", "Rollback docker compose up failed with exit code " + std::to_string(up.exit_code));
+        }
         logger_.info("MIGRATION", "Rollback completed");
         return ok;
     };
@@ -1080,9 +1276,8 @@ bool VestaSiteImporter::copy_files_to_public(
     logger_.info("MIGRATION", "Stopping web+php containers");
     auto stop_res = executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "stop", "web", "php"});
     if (stop_res.exit_code != 0) {
-        std::string err = "exit=" + std::to_string(stop_res.exit_code) + " " + stop_res.err;
-        logger_.error("MIGRATION", "Failed to stop web/php: " + err);
-        result.errors.push_back("Failed to stop web/php: " + err);
+        logger_.error("MIGRATION", "Failed to stop web/php with exit code " + std::to_string(stop_res.exit_code));
+        result.errors.push_back("Failed to stop web/php");
         return false;
     }
     logger_.info("MIGRATION", "Web+php stopped");
@@ -1093,9 +1288,8 @@ bool VestaSiteImporter::copy_files_to_public(
     ::mkdir(extract_dir.c_str(), 0755);
     auto ext_res = executor_.run({"tar", "-xzf", data_tarball, "-C", extract_dir});
     if (ext_res.exit_code != 0) {
-        std::string err = "tar exit=" + std::to_string(ext_res.exit_code) + " " + ext_res.err;
-        logger_.error("MIGRATION", "Extraction failed: " + err);
-        result.errors.push_back("Extraction failed: " + err);
+        logger_.error("MIGRATION", "Extraction failed with exit code " + std::to_string(ext_res.exit_code));
+        result.errors.push_back("Extraction failed");
         rollback_stage2();
         return false;
     }
@@ -1147,9 +1341,8 @@ bool VestaSiteImporter::copy_files_to_public(
     logger_.info("MIGRATION", "Cleaning public directory: " + public_dir);
     auto clean_res = executor_.run({"find", public_dir, "-mindepth", "1", "-maxdepth", "1", "-exec", "rm", "-rf", "{}", "+"});
     if (clean_res.exit_code != 0) {
-        std::string err = "find/rm exit=" + std::to_string(clean_res.exit_code) + " " + clean_res.err;
-        logger_.error("MIGRATION", "Failed to clean public: " + err);
-        result.errors.push_back("Failed to clean public: " + err);
+        logger_.error("MIGRATION", "Failed to clean public with exit code " + std::to_string(clean_res.exit_code));
+        result.errors.push_back("Failed to clean public");
         rollback_stage2();
         return false;
     }
@@ -1161,9 +1354,8 @@ bool VestaSiteImporter::copy_files_to_public(
     logger_.info("MIGRATION", "  dest=" + public_dir);
     auto rsync_res = executor_.run({"rsync", "-a", "--safe-links", source_path + "/", public_dir});
     if (rsync_res.exit_code != 0) {
-        std::string err = "rsync exit=" + std::to_string(rsync_res.exit_code) + " " + rsync_res.err;
-        logger_.error("MIGRATION", "rsync failed: " + err);
-        result.errors.push_back("rsync failed: " + err);
+        logger_.error("MIGRATION", "rsync failed with exit code " + std::to_string(rsync_res.exit_code));
+        result.errors.push_back("rsync failed");
         rollback_stage2();
         return false;
     }
@@ -1174,9 +1366,8 @@ bool VestaSiteImporter::copy_files_to_public(
     auto chown_res = executor_.run({"docker", "run", "--rm", "-v", public_dir + ":/t:rw", "alpine",
                                      "chown", "-R", uid_str + ":" + gid_str, "/t"});
     if (chown_res.exit_code != 0) {
-        std::string err = "chown exit=" + std::to_string(chown_res.exit_code) + " " + chown_res.err;
-        logger_.error("MIGRATION", "Ownership fix failed: " + err);
-        result.errors.push_back("Ownership fix failed: " + err);
+        logger_.error("MIGRATION", "Ownership fix failed with exit code " + std::to_string(chown_res.exit_code));
+        result.errors.push_back("Ownership fix failed");
         rollback_stage2();
         return false;
     }
@@ -1184,15 +1375,11 @@ bool VestaSiteImporter::copy_files_to_public(
     // 11. Start web+php
     const int HEALTH_TIMEOUT_SECONDS = 120;
     const int HEALTH_CHECK_INTERVAL = 2;
-    std::string web_container = "site-" + std::to_string(site_id) + "-web";
-    std::string php_container = "site-" + std::to_string(site_id) + "-php";
-
     logger_.info("MIGRATION", "Starting web+php containers");
     auto up_res = executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "up", "-d", "web", "php"});
     if (up_res.exit_code != 0) {
-        std::string err = "docker compose exit=" + std::to_string(up_res.exit_code) + " " + up_res.err;
-        logger_.error("MIGRATION", "Failed to start web/php: " + err);
-        result.errors.push_back("Failed to start web/php: " + err);
+        logger_.error("MIGRATION", "Failed to start web/php with exit code " + std::to_string(up_res.exit_code));
+        result.errors.push_back("Failed to start web/php");
         rollback_stage2();
         return false;
     }
@@ -1245,10 +1432,10 @@ bool VestaSiteImporter::copy_files_to_public(
 
         // Immediate failure on exited/dead containers
         if (!web_running && web_hc.exit_code == 0) {
-            logger_.error("MIGRATION", "Web container not running: " + web_hc.out);
+            logger_.error("MIGRATION", "Web container is not running");
         }
         if (!php_running && php_hc.exit_code == 0) {
-            logger_.error("MIGRATION", "PHP container not running: " + php_hc.out);
+            logger_.error("MIGRATION", "PHP container is not running");
         }
 
         // Log progress every 20 seconds
@@ -1270,10 +1457,10 @@ bool VestaSiteImporter::copy_files_to_public(
         auto web_logs = executor_.run({"docker", "logs", "--tail", "20", web_container});
         auto php_logs = executor_.run({"docker", "logs", "--tail", "20", php_container});
 
-        logger_.error("MIGRATION", "Web inspect: " + web_inspect.out);
-        logger_.error("MIGRATION", "PHP inspect: " + php_inspect.out);
-        if (!web_logs.err.empty()) logger_.error("MIGRATION", "Web logs (err): " + web_logs.err);
-        if (!php_logs.err.empty()) logger_.error("MIGRATION", "PHP logs (err): " + php_logs.err);
+        logger_.error("MIGRATION", "Web diagnostic captured with exit code " + std::to_string(web_inspect.exit_code));
+        logger_.error("MIGRATION", "PHP diagnostic captured with exit code " + std::to_string(php_inspect.exit_code));
+        logger_.error("MIGRATION", "Web logs captured with exit code " + std::to_string(web_logs.exit_code));
+        logger_.error("MIGRATION", "PHP logs captured with exit code " + std::to_string(php_logs.exit_code));
 
         // If containers are running but still starting, don't rollback immediately — health often succeeds
         if (web_running && php_running) {
@@ -1406,8 +1593,7 @@ bool VestaSiteImporter::update_wp_config_db_credentials(
 VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Options& opts) {
     ImportFilesResult result;
 
-    logger_.info("MIGRATION", "Import files requested");
-    logger_.info("MIGRATION", "  domain=" + opts.domain + " owner=" + opts.owner + " backup=" + opts.backup_path);
+    logger_.info("MIGRATION", "Import files requested for managed migration site");
 
     Manifest m = inspect(opts);
     if (!m.errors.empty()) {
@@ -1427,6 +1613,14 @@ VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Optio
     }
     logger_.info("MIGRATION", "Marker OK — site_id=" + std::to_string(m.migration_site_id) + " stage=" + std::to_string(m.migration_stage));
     logger_.info("MIGRATION", "  files_status=" + m.files_status + " sql_status=" + m.sql_status);
+
+    ManagedRuntime runtime;
+    std::string runtime_error;
+    if (!resolve_managed_runtime(opts, m.migration_site_id, runtime, runtime_error)) {
+        logger_.error("MIGRATION", "Managed runtime resolution failed");
+        result.errors.push_back(runtime_error);
+        return result;
+    }
 
     // Determine UID/GID BEFORE stopping containers (while they're still running)
     logger_.info("MIGRATION", "Determining container UID/GID");
@@ -1472,14 +1666,16 @@ VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Optio
     logger_.info("MIGRATION", "Extracting web archive from backup");
     std::string data_tarball;
     if (!extract_web_archive(opts.backup_path, opts.domain, staging, data_tarball)) {
-        logger_.error("MIGRATION", "Failed to extract web archive from " + opts.backup_path);
+        logger_.error("MIGRATION", "Failed to extract web archive");
         result.errors.push_back("Failed to extract web archive");
         cleanup(); return result;
     }
     logger_.info("MIGRATION", "Extracted to staging: " + data_tarball);
 
     logger_.info("MIGRATION", "Calling copy_files_to_public (site_id=" + std::to_string(m.migration_site_id) + ")");
-    bool ok = copy_files_to_public(staging, m.web_root_type, site_dir, result, uid_str, gid_str, m.migration_site_id, opts.domain);
+    bool ok = copy_files_to_public(staging, m.web_root_type, site_dir, result,
+                                   uid_str, gid_str, m.migration_site_id, opts.domain,
+                                   runtime.web_container, runtime.php_container);
     cleanup();
     if (!ok) {
         logger_.error("MIGRATION", "copy_files_to_public failed");
@@ -1524,7 +1720,7 @@ VestaSiteImporter::ImportFilesResult VestaSiteImporter::import_files(const Optio
 VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& opts) {
     ImportSqlResult result;
 
-    logger_.info("MIGRATION", "Import SQL requested — domain=" + opts.domain + " backup=" + opts.backup_path);
+    logger_.info("MIGRATION", "Import SQL requested for managed migration site");
 
     Manifest m = inspect(opts);
     if (!m.errors.empty()) {
@@ -1545,9 +1741,19 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
     }
     logger_.info("MIGRATION", "Marker OK — stage=" + std::to_string(m.migration_stage) + " site_id=" + std::to_string(m.migration_site_id));
 
+    ManagedRuntime runtime;
+    std::string runtime_error;
+    if (!resolve_managed_runtime(opts, m.migration_site_id, runtime, runtime_error) ||
+        !resolve_service_container(runtime.site_dir, runtime.site_id, "mariadb",
+                                   runtime.database_container, runtime_error)) {
+        logger_.error("MIGRATION", "Managed runtime resolution failed");
+        result.errors.push_back(runtime_error);
+        return result;
+    }
+
     // Find DB dump in backup
     logger_.info("MIGRATION", "Finding SQL dump in backup");
-    logger_.info("MIGRATION", "tar_safe_list: opening " + opts.backup_path);
+    logger_.info("MIGRATION", "Opening migration backup archive");
     std::vector<std::string> entries;
     std::string error;
     if (!tar_safe_list(opts.backup_path, entries, error)) {
@@ -1563,14 +1769,13 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
     }
     // Use exact DB_NAME from wp-config.php as source (do NOT normalize before lookup)
     std::string source_db_name = m.wp_db_name;
-    logger_.info("MIGRATION", "Source DB_NAME from wp-config: '" + source_db_name
-                 + "' — searching exact match first, fallback variants if not found");
+    logger_.info("MIGRATION", "Source database identifier resolved; searching exact and safe fallback variants");
     std::string dump_path, dump_type;
     size_t dump_size = 0;
     bool size_known = false;
-    logger_.info("MIGRATION", "Entering find_db_in_archive for '" + source_db_name + "'");
+    logger_.info("MIGRATION", "Entering database dump lookup");
     if (!find_db_in_archive(entries, source_db_name, dump_path, dump_size, size_known, dump_type)) {
-        logger_.error("MIGRATION", "find_db_in_archive FAILED for '" + source_db_name + "'");
+        logger_.error("MIGRATION", "Database dump lookup failed");
         // Log all databases found in archive for debugging
         std::string dbs;
         for (const auto& e : entries) {
@@ -1613,8 +1818,8 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
     }
     result.db_name = db_name;
 
-    std::string db_container = "site-" + std::to_string(m.migration_site_id) + "-db";
-    logger_.info("MIGRATION", "Target DB: " + db_name + " user=" + db_user + " container=" + db_container);
+    const std::string& db_container = runtime.database_container;
+    logger_.info("MIGRATION", "Target database credentials resolved for managed site");
 
     std::string staging = make_staging_dir();
     if (staging.empty()) { result.errors.push_back("Cannot create staging"); return result; }
@@ -1650,14 +1855,14 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
     logger_.info("MIGRATION", "Copying SQL dump into container");
     auto cp_res = executor_.run({"docker", "cp", sql_file, db_container + ":/tmp/import.sql"});
     if (cp_res.exit_code != 0) {
-        logger_.error("MIGRATION", "docker cp failed: " + cp_res.err);
+        logger_.error("MIGRATION", "docker cp failed with exit code " + std::to_string(cp_res.exit_code));
         result.errors.push_back("Cannot copy SQL dump into database container");
         cleanup_stg(); return result;
     }
 
     // Preflight: verify PHP container has required MySQL extensions
-    std::string php_container_name = "site-" + std::to_string(m.migration_site_id) + "-php";
-    logger_.info("MIGRATION", "Preflight: checking PHP MySQL extensions in " + php_container_name);
+    const std::string& php_container_name = runtime.php_container;
+    logger_.info("MIGRATION", "Preflight: checking PHP MySQL extensions in managed runtime");
     bool has_mysqli = false, has_pdo_mysql = false;
     {
         auto m_check = executor_.run({"docker", "exec", php_container_name, "php", "-r",
@@ -1724,7 +1929,7 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
         }
         auto cp = executor_.run({"docker", "cp", safety_file, db_container + ":/tmp/safety_restore.sql"});
         if (cp.exit_code != 0) {
-            logger_.error("MIGRATION", "Rollback: docker cp failed: " + cp.err);
+            logger_.error("MIGRATION", "Rollback: docker cp failed with exit code " + std::to_string(cp.exit_code));
             return false;
         }
         logger_.info("MIGRATION", "Rollback step 2: clearing DB objects and restoring safety dump");
@@ -1754,7 +1959,7 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
             "-e", "SET FOREIGN_KEY_CHECKS=0; SOURCE /tmp/safety_restore.sql; SET FOREIGN_KEY_CHECKS=1;"
         });
         if (restore.exit_code != 0) {
-            logger_.error("MIGRATION", "Rollback: DB restore failed: exit=" + std::to_string(restore.exit_code) + " " + restore.err);
+            logger_.error("MIGRATION", "Rollback: DB restore failed with exit code " + std::to_string(restore.exit_code));
             return false;
         }
         logger_.info("MIGRATION", "Rollback step 3: verifying restored table count");
@@ -1784,13 +1989,10 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
     };
 
     // Drop existing tables with FOREIGN_KEY_CHECKS=0 (HARD FAILURE)
-    logger_.info("MIGRATION", "Dropping all database content from " + db_name);
-    logger_.info("MIGRATION", "Target database: " + db_name);
-    logger_.info("MIGRATION", "Target user: " + db_user);
-    logger_.info("MIGRATION", "DB container: " + db_container);
+    logger_.info("MIGRATION", "Dropping all database content from the managed database");
 
     // Step 1: list tables
-    logger_.info("MIGRATION", "mysql: SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='" + db_name + "'");
+    logger_.info("MIGRATION", "Listing managed database tables");
     auto table_list = executor_.run({
         "docker", "exec", db_container,
         "env", "MYSQL_PWD=" + db_password,
@@ -1803,8 +2005,7 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
 
     if (table_list.exit_code != 0) {
         logger_.error("MIGRATION", "Failed to list tables: exit=" + std::to_string(table_list.exit_code));
-        logger_.error("MIGRATION", "table_list stderr: " + table_list.err);
-        result.errors.push_back("Cannot list database tables: " + table_list.err);
+        result.errors.push_back("Cannot list database tables");
         cleanup_stg(); return result;
     }
 
@@ -1838,8 +2039,7 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
                      + " stderr=" + drop_res.err);
         if (drop_res.exit_code != 0) {
             logger_.error("MIGRATION", "Failed to drop tables: exit=" + std::to_string(drop_res.exit_code));
-            logger_.error("MIGRATION", "drop_tables stderr: " + drop_res.err);
-            result.errors.push_back("Cannot clean database: " + drop_res.err);
+            result.errors.push_back("Cannot clean database");
             cleanup_stg(); return result;
         }
     } else {
@@ -1855,7 +2055,7 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
         "mariadb", "-u" + db_user, db_name
     }, sql_file);
     if (import_res.exit_code != 0) {
-        logger_.error("MIGRATION", "SQL import failed: exit=" + std::to_string(import_res.exit_code) + " " + import_res.err);
+        logger_.error("MIGRATION", "SQL import failed with exit code " + std::to_string(import_res.exit_code));
         result.errors.push_back("SQL import failed");
         do_rollback();
         cleanup_stg(); return result;
@@ -1900,51 +2100,36 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
     // Docker compose MariaDB service name (used for wp-config and diagnostics)
     std::string db_host = "mariadb";
 
-    // Determine container wp-config path from docker inspect mount mapping
-    logger_.info("MIGRATION", "Determining container wp-config path from mount mapping");
-    std::string container_wp_config;
-    std::string php_cont = "site-" + std::to_string(m.migration_site_id) + "-php";
-    {
-        // Get all mounts from PHP container as JSON
-        auto inspect = executor_.run({"docker", "inspect", php_cont,
-            "--format", "{{range .Mounts}}{{.Source}}|{{.Destination}}\n{{end}}"});
-        logger_.info("MIGRATION", "Host public dir: " + cfg_.sites_dir() + opts.domain + "/public");
-        if (inspect.exit_code == 0) {
-            std::istringstream mount_stream(inspect.out);
-            std::string mount_line;
-            while (std::getline(mount_stream, mount_line)) {
-                if (mount_line.empty()) continue;
-                auto pipe = mount_line.find('|');
-                if (pipe == std::string::npos) continue;
-                std::string host_path = mount_line.substr(0, pipe);
-                std::string cont_path = mount_line.substr(pipe + 1);
-                // Canonical match: resolve host path
-                char host_real[PATH_MAX], pub_real[PATH_MAX];
-                if (::realpath(host_path.c_str(), host_real) &&
-                    ::realpath((cfg_.sites_dir() + opts.domain + "/public").c_str(), pub_real) &&
-                    std::string(host_real) == std::string(pub_real)) {
-                    container_wp_config = cont_path + "/wp-config.php";
-                    logger_.info("MIGRATION", "PHP public mount destination: " + cont_path);
-                    logger_.info("MIGRATION", "Container wp-config path: " + container_wp_config);
-                    break;
-                }
-            }
-        }
-    }
+    // The PHP mount destination is derived from the actual managed PHP
+    // container, not from the web server layout or a guessed container name.
+    logger_.info("MIGRATION", "Using verified PHP document-root mount");
+    const std::string php_cont = runtime.php_container;
+    std::string container_wp_config = runtime.php_document_root + "/wp-config.php";
 
     // Update wp-config.php with safety copy
     std::string public_dir = site_dir + "public/";
     std::string wp_config_path = find_wp_config_file(public_dir);
     wp_config_path_for_rollback = wp_config_path; // for rollback to restore
     if (!wp_config_path.empty()) {
+        std::error_code relative_ec;
+        const auto relative_config = std::filesystem::relative(
+            std::filesystem::weakly_canonical(wp_config_path, relative_ec),
+            std::filesystem::weakly_canonical(public_dir, relative_ec), relative_ec);
+        if (relative_ec || relative_config.empty() || relative_config.is_absolute() ||
+            relative_config.string().find("..") == 0) {
+            result.errors.push_back("WordPress config path is outside the managed document root");
+            do_rollback();
+            cleanup_stg();
+            return result;
+        }
+        container_wp_config = runtime.php_document_root + "/" + relative_config.string();
         logger_.info("MIGRATION", "Backing up wp-config.php before update");
         wp_config_bak = wp_config_path + ".containercp-before-sql";
         executor_.run({"cp", wp_config_path, wp_config_bak});
 
-        std::string php_check_path = container_wp_config.empty() ? "/var/www/html/wp-config.php" : container_wp_config;
         bool wp_updated = update_wp_config_db_credentials(wp_config_path, site_dir, m.wp_db_name, m.wp_db_user,
                                                            db_name, db_user, db_password, db_host,
-                                                           php_cont, php_check_path);
+                                                           php_cont, container_wp_config);
         if (!wp_updated) {
             logger_.error("MIGRATION", "wp-config.php update failed — rolling back DB");
             result.errors.push_back("wp-config.php update failed");
@@ -2001,9 +2186,9 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
     bool healthy = false;
     for (int i = 0; i < 30; ++i) {
         std::this_thread::sleep_for(std::chrono::seconds(2));
-        auto whc = executor_.run({"docker", "inspect", "site-" + std::to_string(m.migration_site_id) + "-web",
+        auto whc = executor_.run({"docker", "inspect", runtime.web_container,
                                   "--format", "{{.State.Status}}|{{.State.Health.Status}}"});
-        auto phc = executor_.run({"docker", "inspect", "site-" + std::to_string(m.migration_site_id) + "-php",
+        auto phc = executor_.run({"docker", "inspect", runtime.php_container,
                                   "--format", "{{.State.Status}}|{{.State.Health.Status}}"});
         if (whc.exit_code == 0 && phc.exit_code == 0 &&
             whc.out.find("running|healthy") != std::string::npos &&
@@ -2042,21 +2227,18 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
 
             // A. Run WordPress directly via PHP CLI to capture real error
             logger_.info("MIGRATION", "DIAG: Running WordPress via PHP CLI");
-            auto index_path = container_wp_config.empty()
-                ? "/usr/local/apache2/htdocs/index.php"
-                : container_wp_config.substr(0, container_wp_config.rfind('/') + 1) + "index.php";
+            const auto index_path = runtime.php_document_root + "/index.php";
             auto wp_cli = executor_.run({
-                "docker", "exec", "site-" + std::to_string(m.migration_site_id) + "-php",
+                "docker", "exec", runtime.php_container,
                 "php", "-d", "display_errors=1", index_path
             });
-            std::string wp_error = wp_cli.err.empty() ? wp_cli.out : wp_cli.err;
-            logger_.info("MIGRATION", "DIAG: WordPress CLI output=" + wp_error.substr(0, 1000));
+            logger_.info("MIGRATION", "DIAG: WordPress execution exit=" + std::to_string(wp_cli.exit_code));
 
-            // B. DB constants (without password)
-            logger_.info("MIGRATION", "DIAG: DB_NAME=" + db_name + " DB_USER=" + db_user + " DB_HOST=" + db_host);
+            // B. Do not expose database identifiers or site-controlled errors.
+            logger_.info("MIGRATION", "DIAG: database configuration was checked (values redacted)");
 
             // C. PHP modules check
-            auto php_m = executor_.run({"docker", "exec", "site-" + std::to_string(m.migration_site_id) + "-php",
+            auto php_m = executor_.run({"docker", "exec", runtime.php_container,
                                          "php", "-m"});
             bool has_mysqli = php_m.out.find("mysqli") != std::string::npos;
             bool has_pdo_mysql = php_m.out.find("pdo_mysql") != std::string::npos;
@@ -2064,31 +2246,30 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
                          + " pdo_mysql=" + std::string(has_pdo_mysql ? "yes" : "NO"));
 
             // D. DNS check from PHP container
-            auto dns = executor_.run({"docker", "exec", "site-" + std::to_string(m.migration_site_id) + "-php",
+            auto dns = executor_.run({"docker", "exec", runtime.php_container,
                                        "getent", "hosts", db_host});
-            logger_.info("MIGRATION", "DIAG: DNS " + db_host + " exit=" + std::to_string(dns.exit_code) + " " + dns.out);
+            logger_.info("MIGRATION", "DIAG: DNS check exit=" + std::to_string(dns.exit_code));
 
             // E. TCP connection
-            auto tcp = executor_.run({"docker", "exec", "site-" + std::to_string(m.migration_site_id) + "-php",
+            auto tcp = executor_.run({"docker", "exec", runtime.php_container,
                                       "timeout", "3", "nc", "-zv", db_host, "3306"});
-            std::string tcp_result = (tcp.exit_code == 0) ? "connected" : "failed exit=" + std::to_string(tcp.exit_code);
-            logger_.info("MIGRATION", "DIAG: TCP " + db_host + ":3306 " + tcp_result);
+            logger_.info("MIGRATION", "DIAG: TCP check exit=" + std::to_string(tcp.exit_code));
 
             // F. PHP error log
-            auto php_err = executor_.run({"docker", "logs", "--tail", "50", "site-" + std::to_string(m.migration_site_id) + "-php"});
-            logger_.info("MIGRATION", "DIAG: PHP logs tail=50 err=" + php_err.err);
+            auto php_err = executor_.run({"docker", "logs", "--tail", "50", runtime.php_container});
+            logger_.info("MIGRATION", "DIAG: PHP logs captured exit=" + std::to_string(php_err.exit_code));
 
             // G. Web error log
-            auto web_err = executor_.run({"docker", "logs", "--tail", "50", "site-" + std::to_string(m.migration_site_id) + "-web"});
-            logger_.info("MIGRATION", "DIAG: Web logs tail=50 err=" + web_err.err);
+            auto web_err = executor_.run({"docker", "logs", "--tail", "50", runtime.web_container});
+            logger_.info("MIGRATION", "DIAG: web logs captured exit=" + std::to_string(web_err.exit_code));
 
             // H. HTTP response body (first 4KB)
             auto http_body = executor_.run({"curl", "-s", "--max-time", "5", "--resolve", opts.domain + ":80:127.0.0.1",
                                             "http://" + opts.domain + "/"});
-            std::string body_preview = http_body.out.substr(0, 4096);
-            logger_.info("MIGRATION", "DIAG: HTTP body (4KB)=" + body_preview.substr(0, 200));
+            logger_.info("MIGRATION", "DIAG: HTTP body captured exit=" + std::to_string(http_body.exit_code)
+                         + " bytes=" + std::to_string(http_body.out.size()));
 
-            result.errors.push_back("HTTP 500: " + wp_error.substr(0, 500));
+            result.errors.push_back("HTTP 500 during WordPress health check; diagnostics redacted");
             do_rollback();
             if (result.wp_config_updated && !wp_config_bak.empty()) {
                 executor_.run({"cp", wp_config_bak, wp_config_path});
@@ -2132,51 +2313,70 @@ VestaSiteImporter::ImportSqlResult VestaSiteImporter::import_sql(const Options& 
 
 VestaSiteImporter::UpgradeResult VestaSiteImporter::upgrade_site(const Options& opts) {
     UpgradeResult result;
-    logger_.info("MIGRATION", "Upgrade site requested — domain=" + opts.domain);
-
-    std::string site_dir = cfg_.sites_dir() + opts.domain + "/";
-    if (!fs_.exists(site_dir + "docker-compose.yml")) {
-        result.errors.push_back("Site not found: " + opts.domain);
+    if (!utils::Validator::is_valid_hostname(opts.domain)) {
+        result.errors.push_back("Invalid migration domain");
         return result;
     }
 
-    // 1. Check Apache mod_rewrite
-    auto mod_check = executor_.run({"docker", "exec", "site-N-web", "httpd", "-M"});
-    // Use compose to get correct container name
-    auto container_list = executor_.run({
-        "docker", "compose", "-f", site_dir + "docker-compose.yml", "ps", "--format={{.Name}}", "web"
-    });
-    std::string web_container;
-    std::istringstream cl(container_list.out);
-    std::getline(cl, web_container);
-    while (!web_container.empty() && (web_container.back() == '\n' || web_container.back() == '\r')) web_container.pop_back();
+    ManagedRuntime runtime;
+    std::string runtime_error;
+    if (!resolve_managed_runtime(opts, 0, runtime, runtime_error)) {
+        result.errors.push_back(runtime_error);
+        return result;
+    }
 
-    if (!web_container.empty()) {
-        auto httpd_check = executor_.run({"docker", "exec", web_container, "httpd", "-M"});
+    const auto* site = sites_->find(opts.domain);
+    logger_.info("MIGRATION", "Upgrade site requested for managed runtime");
+
+    // Apache and Nginx have different web-server configuration contracts.
+    // Only Apache receives the mod_rewrite check; Nginx is validated in its
+    // own container instead of being probed through an Apache command.
+    const std::string web_server = site->web_server.empty() ? "apache" : site->web_server;
+    if (web_server == "apache") {
+        auto httpd_check = executor_.run({"docker", "exec", runtime.web_container, "httpd", "-M"});
         result.mod_rewrite_checked = true;
         if (httpd_check.exit_code == 0 && httpd_check.out.find("rewrite_module") != std::string::npos) {
-            logger_.info("MIGRATION", "mod_rewrite already enabled in " + web_container);
+            logger_.info("MIGRATION", "Apache mod_rewrite already enabled");
         } else {
-            logger_.info("MIGRATION", "mod_rewrite NOT found in " + web_container + " — adding");
+            logger_.info("MIGRATION", "Apache mod_rewrite not found — adding");
             // Add rewrite module to Apache config
-            std::string modules_file = site_dir + "config/apache/00-load-modules.conf";
+            std::string modules_file = runtime.site_dir + "config/apache/00-load-modules.conf";
             if (fs_.exists(modules_file)) {
                 std::string content = fs_.read_file(modules_file);
                 if (content.find("rewrite_module") == std::string::npos) {
                     std::string addition = "LoadModule rewrite_module modules/mod_rewrite.so\n";
                     content += addition;
-                    fs_.create_file(modules_file, content);
-                    executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "restart", "web"});
+                    if (!fs_.create_file(modules_file, content)) {
+                        result.errors.push_back("Apache module configuration could not be updated");
+                        return result;
+                    }
+                    executor_.run({"docker", "compose", "-f", runtime.site_dir + "docker-compose.yml", "restart", "web"});
                     logger_.info("MIGRATION", "mod_rewrite enabled for " + opts.domain);
                 }
             }
         }
+    } else if (web_server == "nginx") {
+        const auto nginx_check = executor_.run({"docker", "exec", runtime.web_container, "nginx", "-t"});
+        if (nginx_check.exit_code != 0) {
+            result.errors.push_back("Nginx configuration validation failed");
+            return result;
+        }
     }
 
     // 2. Check and add trusted proxy block to wp-config.php
-    std::string public_dir = site_dir + "public/";
+    std::string public_dir = runtime.site_dir + "public/";
     std::string wp_config = find_wp_config_file(public_dir);
     if (!wp_config.empty()) {
+        std::error_code relative_ec;
+        const auto relative_config = std::filesystem::relative(
+            std::filesystem::weakly_canonical(wp_config, relative_ec),
+            std::filesystem::weakly_canonical(public_dir, relative_ec), relative_ec);
+        if (relative_ec || relative_config.empty() || relative_config.is_absolute() ||
+            relative_config.string().find("..") == 0) {
+            result.errors.push_back("WordPress config path is outside the managed document root");
+            return result;
+        }
+        const std::string container_config_path = runtime.php_document_root + "/" + relative_config.string();
         std::string content = fs_.read_file(wp_config);
         if (content.find("BEGIN CONTAINERCP TRUSTED PROXY") == std::string::npos) {
             logger_.info("MIGRATION", "Adding trusted proxy block to wp-config.php");
@@ -2207,9 +2407,8 @@ VestaSiteImporter::UpgradeResult VestaSiteImporter::upgrade_site(const Options& 
             fs_.create_file(wp_config, content);
 
             // PHP syntax check
-            auto site_id_str = opts.domain;
-            auto php_check = executor_.run({"docker", "exec", web_container.empty() ? "php" : web_container.substr(0, web_container.find('-', 4)) + "-php",
-                                             "php", "-l", "/var/www/html/wp-config.php"});
+            auto php_check = executor_.run({"docker", "exec", runtime.php_container,
+                                             "php", "-l", container_config_path});
             if (php_check.exit_code != 0) {
                 logger_.error("MIGRATION", "php -l failed after upgrade — restoring backup");
                 executor_.run({"cp", wp_config + ".containercp-upgrade-bak", wp_config});
@@ -2230,7 +2429,11 @@ VestaSiteImporter::UpgradeResult VestaSiteImporter::upgrade_site(const Options& 
     }
 
     // 3. Restart PHP to pick up changes
-    executor_.run({"docker", "compose", "-f", site_dir + "docker-compose.yml", "restart", "php"});
+    const auto restart = executor_.run({"docker", "compose", "-f", runtime.site_dir + "docker-compose.yml", "restart", "php"});
+    if (restart.exit_code != 0) {
+        result.errors.push_back("PHP runtime restart failed");
+        return result;
+    }
 
     result.success = true;
     logger_.info("MIGRATION", "Upgrade completed for " + opts.domain);
