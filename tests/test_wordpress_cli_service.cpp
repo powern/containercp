@@ -416,6 +416,7 @@ TEST_CASE("WordPressCliService real disposable WordPress lifecycle") {
         << "fi\n"
         << "if [ \"$command\" = \"inspect\" ]; then [ -f \"$state\" ] && cat \"$state\" && exit 0; exit 1; fi\n"
         << "if [ \"$command\" = \"rm\" ]; then /bin/rm -f \"$state\"; exit 0; fi\n"
+        << "if [ \"$command\" = \"ps\" ]; then if [ -f \"$state\" ]; then cut -d'|' -f1 \"$state\" | cut -c2-; fi; exit 0; fi\n"
         << "exit 1\n";
     REQUIRE(::chmod(timeout_docker.c_str(), 0555) == 0);
     containercp::wordpress::WordPressCliService timeout_service(
@@ -428,7 +429,8 @@ TEST_CASE("WordPressCliService real disposable WordPress lifecycle") {
     const auto run_ownership_case = [&](const std::string& mode,
                                         const std::string& expected_code,
                                         bool expect_cleanup,
-                                        bool expect_success) {
+                                        bool expect_success,
+                                        bool expect_rm) {
         const auto stub = std::filesystem::path("/tmp/containercp-wpcli-ownership-" + mode + ".sh");
         const auto state = std::filesystem::path("/tmp/containercp-wpcli-ownership-" + mode + ".state");
         const auto marker = std::filesystem::path("/tmp/containercp-wpcli-ownership-" + mode + ".removed");
@@ -471,7 +473,7 @@ TEST_CASE("WordPressCliService real disposable WordPress lifecycle") {
             << "fi\n"
             << "if [ \"$command\" = \"inspect\" ]; then [ -f \"$state\" ] && cat \"$state\" && exit 0; exit 1; fi\n"
             << "if [ \"$command\" = \"rm\" ]; then touch \"$marker\"; /bin/rm -f \"$state\"; exit 0; fi\n"
-            << "if [ \"$command\" = \"ps\" ]; then printf 'containercp-wpcli-stale\\n'; exit 0; fi\n"
+            << "if [ \"$command\" = \"ps\" ]; then [ \"$mode\" = verification-error ] && exit 42; [ \"$mode\" = verification-timeout ] && sleep 10; if [ -f \"$state\" ]; then cut -d'|' -f1 \"$state\" | cut -c2-; fi; exit 0; fi\n"
             << "exit 1\n";
         REQUIRE(::chmod(stub.c_str(), 0555) == 0);
         if (mode == "reconcile-managed" || mode == "reconcile-unmanaged") {
@@ -491,19 +493,21 @@ TEST_CASE("WordPressCliService real disposable WordPress lifecycle") {
         CHECK(result.success == expect_success);
         CHECK(result.cleanup_succeeded == expect_cleanup);
         if (!expected_code.empty()) CHECK(result.failure_code == expected_code);
-        CHECK(std::filesystem::exists(marker) == expect_cleanup);
+        CHECK(std::filesystem::exists(marker) == expect_rm);
         if (mode == "collision") CHECK(std::filesystem::exists(state));
     };
 
-    run_ownership_case("normal", "", true, true);
-    run_ownership_case("wrong-execution", "wordpress_cli_runner_identity_mismatch", false, false);
-    run_ownership_case("wrong-site", "wordpress_cli_runner_identity_mismatch", false, false);
-    run_ownership_case("missing-label", "wordpress_cli_runner_identity_mismatch", false, false);
-    run_ownership_case("name-prefix-only", "wordpress_cli_runner_identity_mismatch", false, false);
-    run_ownership_case("forged-partial", "wordpress_cli_runner_identity_mismatch", false, false);
-    run_ownership_case("collision", "wordpress_cli_runner_identity_mismatch", false, false);
-    run_ownership_case("reconcile-managed", "", true, true);
-    run_ownership_case("reconcile-unmanaged", "wordpress_cli_reconciliation_rejected", false, false);
+    run_ownership_case("normal", "", true, true, true);
+    run_ownership_case("wrong-execution", "wordpress_cli_runner_identity_mismatch", false, false, false);
+    run_ownership_case("wrong-site", "wordpress_cli_runner_identity_mismatch", false, false, false);
+    run_ownership_case("missing-label", "wordpress_cli_runner_identity_mismatch", false, false, false);
+    run_ownership_case("name-prefix-only", "wordpress_cli_runner_identity_mismatch", false, false, false);
+    run_ownership_case("forged-partial", "wordpress_cli_runner_identity_mismatch", false, false, false);
+    run_ownership_case("collision", "wordpress_cli_runner_identity_mismatch", false, false, false);
+    run_ownership_case("verification-error", "wordpress_cli_runner_state_unknown", false, false, true);
+    run_ownership_case("verification-timeout", "wordpress_cli_runner_state_unknown", false, false, true);
+    run_ownership_case("reconcile-managed", "", true, true, true);
+    run_ownership_case("reconcile-unmanaged", "wordpress_cli_reconciliation_rejected", false, false, false);
 
     const auto collision_wrapper = std::filesystem::path("/tmp/containercp-wpcli-real-collision-docker.sh");
     const auto collision_name_file = std::filesystem::path("/tmp/containercp-wpcli-real-collision-name");

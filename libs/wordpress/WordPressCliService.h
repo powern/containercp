@@ -87,6 +87,17 @@ public:
                                                        const std::string& package_id);
 
 private:
+    enum class RunnerPresenceState {
+        Absent,
+        Present,
+        Unknown,
+    };
+
+    struct RunnerPresence {
+        RunnerPresenceState state = RunnerPresenceState::Unknown;
+        std::string message;
+    };
+
     WordPressCliResult failure(std::string code, std::string message) const;
     bool trusted_docker_executable() const;
     std::string runner_name(uint64_t site_id, const std::string& execution_id) const;
@@ -94,7 +105,7 @@ private:
                                      uint64_t site_id,
                                      const std::string& operation_name,
                                      const std::string& execution_id) const;
-    bool verify_runner_absent(const std::string& identifier) const;
+    RunnerPresence verify_runner_absent(const std::string& identifier) const;
     WordPressCliResult reconcile_runner(const std::string& identifier) const;
     WordPressCliResult run_command(uint64_t site_id,
                                    const std::string& operation_name,

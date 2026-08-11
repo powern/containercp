@@ -6,7 +6,33 @@ Format: date | commit | summary
 
 ---
 
-## 2026-08-11 | `pending` | fix: enforce absolute safe-command deadlines
+## 2026-08-11 | `pending` | fix: require positive WP-CLI cleanup verification
+
+**Summary:** Replaced boolean inspect-error handling with a positive exact-name
+Docker presence query and explicit cleanup state classification.
+
+**Files changed:** `libs/wordpress/WordPressCliService.h`,
+`libs/wordpress/WordPressCliService.cpp`,
+`tests/test_wordpress_cli_service.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Cleanup succeeds only when a bounded successful
+Docker query proves the exact runner name is absent. Existing runners are
+reported present, unexpected Docker output and daemon/permission/timeout errors
+are reported as `wordpress_cli_runner_state_unknown`, and cleanup never reports
+success for unknown state.
+
+**Validation:** The real disposable lifecycle passed 1/1 case and 555/555
+assertions, including successful absence, present/identity detection, daemon
+error simulation, Docker timeout simulation, collision protection, stale
+reconciliation, and cleanup fail-closed behavior. Full deterministic CTest is
+required before commit.
+
+**Known risks:** Job-level cleanup propagation reuses the existing result-to-job
+mapping and is covered by the next full job/API regression run.
+
+---
+
+## 2026-08-11 | `b7e0140` | fix: enforce absolute safe-command deadlines
 
 **Summary:** Corrected `CommandExecutor::run_safe()` to enforce one monotonic
 wall-clock deadline and reliably terminate/reap timed-out process groups.

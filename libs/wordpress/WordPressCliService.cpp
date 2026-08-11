@@ -366,10 +366,28 @@ runtime::CommandResult WordPressCliService::execute_docker(const std::vector<std
     return executor_.run_safe(command, {}, timeout_seconds, max_output_bytes);
 }
 
-bool WordPressCliService::verify_runner_absent(const std::string& identifier) const {
-    const auto inspected = execute_docker({"inspect", identifier, "--format", "{{.Id}}"},
-                                           cleanup_timeout_seconds_, 4096);
-    return inspected.exit_code != 0;
+WordPressCliService::RunnerPresence WordPressCliService::verify_runner_absent(
+    const std::string& identifier) const {
+    const auto listed = execute_docker({"ps", "-a", "--no-trunc",
+                                        "--filter", "name=^" + identifier + "$",
+                                        "--format", "{{.Names}}"},
+                                       cleanup_timeout_seconds_, 4096);
+    if (listed.exit_code != 0) {
+        return {RunnerPresenceState::Unknown, "Docker state could not prove runner absence"};
+    }
+    std::istringstream lines(listed.out);
+    std::string line;
+    bool exact_match = false;
+    while (std::getline(lines, line)) {
+        line = trim(line);
+        if (line.empty()) continue;
+        if (line != identifier) {
+            return {RunnerPresenceState::Unknown, "Docker returned an unexpected runner identity"};
+        }
+        exact_match = true;
+    }
+    if (exact_match) return {RunnerPresenceState::Present, "WP-CLI runner is still present"};
+    return {RunnerPresenceState::Absent, "WP-CLI runner is definitely absent"};
 }
 
 WordPressCliResult WordPressCliService::cleanup_runner(const std::string& runner,
@@ -390,16 +408,24 @@ WordPressCliResult WordPressCliService::cleanup_runner(const std::string& runner
         return result;
     }
     const auto removed = execute_docker({"rm", "-f", runner}, cleanup_timeout_seconds_, 4096);
-    if (!verify_runner_absent(runner)) {
+    if (removed.exit_code != 0) {
         result.failure_code = "wordpress_cli_runner_cleanup_failed";
-        result.message = "WP-CLI runner remained after cleanup";
+        result.message = "WP-CLI runner cleanup command failed";
+        return result;
+    }
+    const auto presence = verify_runner_absent(runner);
+    if (presence.state == RunnerPresenceState::Present) {
+        result.failure_code = "wordpress_cli_runner_cleanup_failed";
+        result.message = presence.message;
+        return result;
+    }
+    if (presence.state == RunnerPresenceState::Unknown) {
+        result.failure_code = "wordpress_cli_runner_state_unknown";
+        result.message = presence.message;
         return result;
     }
     result.success = true;
     result.cleanup_succeeded = true;
-    if (removed.exit_code != 0) {
-        logger_.warning("WORDPRESS", "Managed WP-CLI runner was already absent during cleanup");
-    }
     return result;
 }
 
