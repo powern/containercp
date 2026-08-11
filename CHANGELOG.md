@@ -176,7 +176,7 @@ is unavailable.
 
 ---
 
-## 2026-08-11 | `pending` | fix: require positive WP-CLI cleanup verification
+## 2026-08-11 | `601fa56` | fix: require positive WP-CLI cleanup verification
 
 **Summary:** Replaced boolean inspect-error handling with a positive exact-name
 Docker presence query and explicit cleanup state classification.
@@ -227,7 +227,7 @@ executor/test sources.
 
 ---
 
-## 2026-08-11 | `pending` | fix: prove WP-CLI runner ownership before cleanup
+## 2026-08-11 | `3f39949` | fix: prove WP-CLI runner ownership before cleanup
 
 **Summary:** Added execution-scoped WP-CLI runner identity labels and
 fail-closed ownership verification before destructive cleanup.
