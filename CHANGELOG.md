@@ -6,6 +6,40 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-11 | `pending` | feat: add isolated read-only WP-CLI backend
+
+**Summary:** Added the typed `WordPressCliService` read-only backend for
+`core is-installed`, `core version`, `plugin list`, and `theme list`. The
+service verifies a pinned WP-CLI Phar, runs only with the canonical managed
+runtime context, and launches an ephemeral isolated runner from the selected
+immutable PHP image.
+
+**Files changed:** `libs/wordpress/WordPressCliService.h`,
+`libs/wordpress/WordPressCliService.cpp`, `CMakeLists.txt`,
+`tests/CMakeLists.txt`, `tests/test_wordpress_cli_service.cpp`,
+`CHANGELOG.md`
+
+**User-visible behavior:** No REST API, GUI, mutation, raw command string, raw
+argv, shell, host WP-CLI, generic PHP fallback, or arbitrary WP-CLI console was
+added. The backend now enforces read-only document-root and Phar mounts,
+selected private network, non-root PHP-FPM UID/GID, read-only rootfs, dropped
+capabilities, no-new-privileges, no ports/socket/host mounts, bounded resources,
+bounded output, and deterministic cleanup after success/failure/timeout.
+
+**Validation:** WP-CLI 2.11.0 Phar SHA-256
+`a39021ac809530ea607580dbf93afbc46ba02f86b6cffd03de4b126ca53079f6` was
+verified. Typed unit tests passed 6/6 cases and 14/14 assertions. The real
+disposable WordPress lifecycle passed 1/1 case and 26/26 assertions across
+actual PHP 8.4-FPM, MariaDB, WordPress core, plugin/theme lists, broken-plugin
+isolation, non-root execution, image/network/mount identity, and failure
+cleanup. Full deterministic CTest passed 100%; the privileged Linux test used
+its existing skip contract.
+
+**Known risks:** REST API, GUI, job-backed mutations, startup reconciliation
+wiring, and multi-PHP/Apache/Nginx lifecycle validation remain later phases.
+
+---
+
 ## 2026-08-11 | `pending` | feat: add canonical WordPress runtime context
 
 **Summary:** Added the transient `WordPressRuntimeContext` resolver for
