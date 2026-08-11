@@ -181,6 +181,22 @@ TEST_CASE("WordPressCliService rejects a wrong Phar SHA-256") {
     CHECK(artifact.failure_code == "wordpress_cli_artifact_integrity_failed");
 }
 
+TEST_CASE("WordPressCliService rejects an unreviewed Phar version") {
+    ArtifactFixture fixture;
+    fixture.write("stable-phar-content", "2.12.0");
+    auto& config = containercp::config::Config::instance();
+    containercp::site::SiteManager sites;
+    containercp::wordpress::WordPressConfigService config_service(sites);
+    containercp::runtime::CommandExecutor executor;
+    containercp::wordpress::WordPressRuntimeContextResolver resolver(
+        executor, sites, config_service, config, containercp::logger::Logger::instance());
+    auto service = make_service(executor, resolver, config);
+
+    const auto artifact = service.validate_artifact();
+    CHECK_FALSE(artifact.ok);
+    CHECK(artifact.failure_code == "wordpress_cli_artifact_metadata_invalid");
+}
+
 TEST_CASE("WordPressCliService rejects a symlink Phar") {
     ArtifactFixture fixture;
     fixture.write("stable-phar-content");

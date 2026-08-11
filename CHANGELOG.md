@@ -6,7 +6,30 @@ Format: date | commit | summary
 
 ---
 
-## 2026-08-11 | `pending` | test: validate complete WP-CLI lifecycle
+## 2026-08-11 | `pending` | fix: pin reviewed WP-CLI artifact version
+
+**Summary:** Closed the final artifact-integrity review gap by requiring the
+managed Phar metadata to identify the reviewed WP-CLI version `2.11.0`, in
+addition to the existing root-owned/read-only and SHA-256 checks.
+
+**Files changed:** `libs/wordpress/WordPressCliService.cpp`,
+`tests/test_wordpress_cli_service.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** WP-CLI execution fails closed when the Phar version
+metadata names an unreviewed release, even if its SHA-256 manifest is
+syntactically valid.
+
+**Validation:** Unreviewed-version regression passed, the complete deterministic
+CTest passed 100% with the privileged Linux test skipped by its existing
+contract, the final build produced no warnings, and frontend checks passed.
+
+**Known risks:** The reviewed artifact remains externally installed at
+`/srv/containercp/wp-cli/wp-cli.phar`; installation/update policy is still an
+operator-managed deployment concern.
+
+---
+
+## 2026-08-11 | `a48e79c` | test: validate complete WP-CLI lifecycle
 
 **Summary:** Added the gated real disposable Phase 5 validation matrix for
 Apache and Nginx site layouts, two managed sites, separate private networks and

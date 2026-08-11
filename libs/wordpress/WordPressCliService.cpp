@@ -18,6 +18,7 @@ namespace {
 constexpr int kRunnerTimeoutSeconds = 60;
 constexpr int kCleanupTimeoutSeconds = 15;
 constexpr std::size_t kMaxOutputBytes = 65536;
+constexpr const char* kExpectedWpCliVersion = "2.11.0";
 constexpr const char* kRunnerLabel = "containercp.wpcli.managed=true";
 constexpr const char* kRunnerPrefix = "containercp-wpcli-";
 
@@ -310,9 +311,9 @@ WordPressCliArtifact WordPressCliService::validate_artifact() const {
     std::ostringstream sha_content;
     sha_content << sha_input.rdbuf();
     const std::string expected_sha = trim(sha_content.str());
-    if (artifact.version.empty() || !valid_sha256(expected_sha)) {
+    if (artifact.version != kExpectedWpCliVersion || !valid_sha256(expected_sha)) {
         artifact.failure_code = "wordpress_cli_artifact_metadata_invalid";
-        artifact.message = "Pinned WP-CLI version or SHA-256 metadata is invalid";
+        artifact.message = "Pinned WP-CLI version or SHA-256 metadata does not match the reviewed artifact";
         return artifact;
     }
 
