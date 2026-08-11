@@ -6,6 +6,37 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-11 | `pending` | feat: add canonical WordPress runtime context
+
+**Summary:** Added the transient `WordPressRuntimeContext` resolver for
+managed WordPress sites. It reuses `WordPressConfigService` for canonical
+paths and proves the running PHP service, compose/container identity, actual
+configured image, immutable image ID, selected private network, document-root
+mount, and non-root PHP-FPM worker UID/GID from live Docker metadata.
+
+**Files changed:** `libs/wordpress/WordPressRuntimeContext.h`,
+`libs/wordpress/WordPressRuntimeContext.cpp`, `CMakeLists.txt`,
+`tests/CMakeLists.txt`, `tests/test_wordpress_runtime_context.cpp`,
+`CHANGELOG.md`
+
+**User-visible behavior:** No REST API, GUI, WP-CLI command execution, or
+mutation behavior was added. Internal WordPress runtime operations now have a
+canonical transient context and fail closed for missing sites, system sites,
+path escapes, wrong or ambiguous PHP containers, image mismatch, public or
+unrelated networks, cross-site mounts, and unproven PHP-FPM identity.
+
+**Validation:** Context tests passed 6/6 test cases and 55/55 assertions,
+covering canonical resolution, site/path failures, PHP service/image failures,
+network/mount isolation, and root/SFTP/missing FPM identity. The new runtime
+and test sources produced no warnings; full deterministic CTest is required
+before commit.
+
+**Known risks:** Live disposable WordPress validation and the future WP-CLI
+runner still belong to later phases. Mutation capability is exposed only as a
+proven context property; no mutation operation is implemented here.
+
+---
+
 ## 2026-08-11 | `pending` | fix: harden WordPress migration runtime resolution
 
 **Summary:** Hardened `VestaSiteImporter` migration runtime resolution by
