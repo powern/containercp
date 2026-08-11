@@ -982,13 +982,7 @@ bool ApiServer::start() {
             return r;
         }
 
-        runtime::CommandExecutor executor;
-        wordpress::WordPressConfigService config_service(s.sites());
-        wordpress::WordPressRuntimeContextResolver resolver(
-            executor, s.sites(), config_service, s.config(), s.logger());
-        wordpress::WordPressCliService service(
-            executor, resolver, s.config(), s.logger());
-        const auto result = service.run(site_id, operation);
+        const auto result = s.wordpress_cli().run(site_id, operation);
         if (!result.success) {
             r.status_code = result.failure_code == "site_not_found" ? 404 : 503;
             r.body = json_error(result.failure_code.empty() ? "wordpress_cli_failed" : result.failure_code,
@@ -1003,6 +997,103 @@ bool ApiServer::start() {
              << ",\"output\":\"" << JsonFormatter::escape(result.output) << "\""
              << ",\"cleanup_succeeded\":" << (result.cleanup_succeeded ? "true" : "false")
              << "}}";
+        r.body = json.str();
+        return r;
+    });
+
+    // POST /api/wordpress/cli/<site_id>/mutation
+    // Mutations are typed, authenticated admin requests and always return a job.
+    router_.add_prefix("POST", "/api/wordpress/cli/", [&s, &json_error](const Request& req) {
+        Response r;
+        const auto* session = s.auth().validate_session(request_header(req, "X-Session-Token"));
+        if (session == nullptr) {
+            r.status_code = 401;
+            r.body = json_error("unauthorized", "An authenticated administrator session is required");
+            return r;
+        }
+        if (session->role != "admin") {
+            r.status_code = 403;
+            r.body = json_error("forbidden", "Administrator role is required");
+            return r;
+        }
+
+        const std::string prefix = "/api/wordpress/cli/";
+        const std::string remaining = req.path.substr(prefix.size());
+        const auto first_slash = remaining.find('/');
+        if (first_slash == std::string::npos || first_slash == 0 ||
+            remaining.substr(first_slash + 1) != "mutation") {
+            r.status_code = 400;
+            r.body = json_error("invalid_request", "Usage: POST /api/wordpress/cli/<site_id>/mutation");
+            return r;
+        }
+        const std::string id_text = remaining.substr(0, first_slash);
+        if (!std::all_of(id_text.begin(), id_text.end(), [](unsigned char c) {
+                return std::isdigit(c) != 0;
+            })) {
+            r.status_code = 400;
+            r.body = json_error("invalid_identifier", "Site id must be numeric");
+            return r;
+        }
+        uint64_t site_id = 0;
+        try {
+            site_id = std::stoull(id_text);
+        } catch (...) {
+            site_id = 0;
+        }
+        if (site_id == 0) {
+            r.status_code = 400;
+            r.body = json_error("invalid_identifier", "Site id must be a positive numeric identifier");
+            return r;
+        }
+        const auto* site = s.sites().find_by_id(site_id);
+        if (site == nullptr) {
+            r.status_code = 404;
+            r.body = json_error("site_not_found", "Managed site was not found");
+            return r;
+        }
+
+        static constexpr const char* forbidden_runtime_fields[] = {
+            "command", "argv", "container", "docker_executable", "image", "network",
+            "document_root", "config_path", "php_path", "uid", "gid", "phar_path", "runner"
+        };
+        for (const auto* field : forbidden_runtime_fields) {
+            if (json_has_key(req.body, field)) {
+                r.status_code = 400;
+                r.body = json_error("runtime_fields_forbidden", "Runtime identity and command fields are not accepted");
+                return r;
+            }
+        }
+
+        wordpress::WordPressCliMutation mutation;
+        const std::string operation_text = json_extract_string_value(req.body, "operation");
+        const std::string package_id = json_extract_string_value(req.body, "package");
+        if (!wordpress::parseWordPressCliMutation(operation_text, mutation)) {
+            r.status_code = 400;
+            r.body = json_error("invalid_operation", "Mutation is not in the approved WP-CLI allowlist");
+            return r;
+        }
+        const bool requires_package = wordpress::wordPressCliMutationRequiresPackage(mutation);
+        if ((requires_package && !wordpress::validWordPressCliPackageIdentifier(package_id)) ||
+            (!requires_package && !package_id.empty())) {
+            r.status_code = 400;
+            r.body = json_error("invalid_package", "The typed mutation package identifier is invalid");
+            return r;
+        }
+
+        const auto queued = s.wordpress_cli_jobs().enqueue(site_id, mutation, package_id,
+                                                            session->username, site->domain);
+        if (!queued.accepted) {
+            r.status_code = queued.code == "operation_already_running" ? 409 : 503;
+            r.body = json_error(queued.code, queued.message);
+            return r;
+        }
+        r.status_code = 202;
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":{\"job_id\":" << queued.job_id
+             << ",\"site_id\":" << site_id
+             << ",\"operation\":\"" << JsonFormatter::escape(queued.operation)
+             << "\",\"package\":\"" << JsonFormatter::escape(queued.package_id)
+             << "\"}}";
         r.body = json.str();
         return r;
     });
@@ -1876,10 +1967,12 @@ bool ApiServer::start() {
             json << "{\"success\":true,\"data\":{"
                  << "\"id\":" << job->id
                  << ",\"type\":\"" << JsonFormatter::escape(job->type)
-                 << "\",\"status\":\"" << JsonFormatter::escape(job->status)
-                 << "\",\"progress\":" << job->progress
-                 << ",\"current_step\":" << job->current_step
-                 << ",\"message\":\"" << JsonFormatter::escape(job->message)
+                  << "\",\"status\":\"" << JsonFormatter::escape(job->status)
+                  << "\",\"progress\":" << job->progress
+                  << ",\"current_step\":" << job->current_step
+                  << ",\"cleanup_status\":\"" << JsonFormatter::escape(job->cleanup_status)
+                  << "\",\"cleanup_message\":\"" << JsonFormatter::escape(job->cleanup_message)
+                  << "\",\"message\":\"" << JsonFormatter::escape(job->message)
                  << "\",\"created_at\":\"" << JsonFormatter::escape(job->created_at)
                  << "\",\"steps\":[";
             for (std::size_t i = 0; i < job->step_details.size(); ++i) {
@@ -1919,10 +2012,11 @@ bool ApiServer::start() {
             if (!first) json << ",";
             first = false;
             json << "{\"id\":" << j.id
-                 << ",\"type\":\"" << JsonFormatter::escape(j.type)
-                 << "\",\"status\":\"" << JsonFormatter::escape(j.status)
-                 << "\",\"progress\":" << j.progress
-                 << ",\"message\":\"" << JsonFormatter::escape(j.message)
+                  << ",\"type\":\"" << JsonFormatter::escape(j.type)
+                  << "\",\"status\":\"" << JsonFormatter::escape(j.status)
+                  << "\",\"progress\":" << j.progress
+                  << ",\"cleanup_status\":\"" << JsonFormatter::escape(j.cleanup_status)
+                  << "\",\"message\":\"" << JsonFormatter::escape(j.message)
                  << "\",\"created_at\":\"" << JsonFormatter::escape(j.created_at)
                  << "\"}";
         }

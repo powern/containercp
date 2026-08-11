@@ -20,9 +20,30 @@ enum class WordPressCliOperation {
     ThemeList
 };
 
+enum class WordPressCliMutation {
+    PluginInstall,
+    PluginActivate,
+    PluginDeactivate,
+    PluginUpdate,
+    PluginDelete,
+    ThemeInstall,
+    ThemeActivate,
+    ThemeUpdate,
+    ThemeDelete,
+    CoreUpdate,
+    LanguageInstall,
+    LanguageUpdate,
+    CacheFlush
+};
+
 std::string wordPressCliOperationName(WordPressCliOperation operation);
 bool parseWordPressCliOperation(const std::string& value,
                                 WordPressCliOperation& operation);
+std::string wordPressCliMutationName(WordPressCliMutation mutation);
+bool parseWordPressCliMutation(const std::string& value,
+                               WordPressCliMutation& mutation);
+bool wordPressCliMutationRequiresPackage(WordPressCliMutation mutation);
+bool validWordPressCliPackageIdentifier(const std::string& value);
 
 struct WordPressCliArtifact {
     bool ok = false;
@@ -52,11 +73,16 @@ public:
                         std::string docker_executable = "/usr/bin/docker");
 
     WordPressCliResult run(uint64_t site_id, WordPressCliOperation operation) const;
+    WordPressCliResult run_mutation(uint64_t site_id,
+                                    WordPressCliMutation mutation,
+                                    const std::string& package_id = {}) const;
     WordPressCliResult reconcile_stale_runners() const;
 
     WordPressCliArtifact validate_artifact() const;
 
     static std::vector<std::string> operation_arguments(WordPressCliOperation operation);
+    static std::vector<std::string> mutation_arguments(WordPressCliMutation mutation,
+                                                       const std::string& package_id);
 
 private:
     WordPressCliResult failure(std::string code, std::string message) const;
@@ -65,6 +91,10 @@ private:
     WordPressCliResult cleanup_runner(const std::string& runner) const;
     bool verify_runner_absent(const std::string& identifier) const;
     WordPressCliResult reconcile_runner(const std::string& identifier) const;
+    WordPressCliResult run_command(uint64_t site_id,
+                                   const std::string& operation_name,
+                                   const std::vector<std::string>& arguments,
+                                   bool writable) const;
     runtime::CommandResult execute_docker(const std::vector<std::string>& args,
                                           int timeout_seconds,
                                           std::size_t max_output_bytes) const;

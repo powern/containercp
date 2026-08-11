@@ -42,6 +42,8 @@ struct Job {
     std::string message;
     std::string created_at;
     std::string completed_at;
+    std::string cleanup_status = "not_started";
+    std::string cleanup_message;
     std::vector<JobStep> step_details;
     JobFailureDiagnostics failure;
 };

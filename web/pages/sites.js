@@ -324,7 +324,39 @@ async function loadWordPressCliCard(siteId) {
     const output = item.data.output || 'No output';
     return '<div class="details-field"><div class="details-label">' + esc(item.label) + '</div><div class="details-value"><span class="badge badge-ok">Completed</span><pre style="max-width:100%;max-height:160px;overflow:auto;margin:8px 0 0;padding:8px;background:var(--surface2);white-space:pre-wrap;">' + esc(output) + '</pre></div></div>';
   }).join('');
-  el.innerHTML = '<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px;"><div><h3 style="margin:0;">WordPress CLI</h3><div style="font-size:12px;color:var(--text3);margin-top:4px;">Read-only health, version, plugin, and theme inspection</div></div><button class="btn btn-sm btn-outline" onclick="loadWordPressCliCard(' + Number(siteId) + ')">Refresh</button></div><div class="details-grid" style="margin-top:12px;">' + items + '</div></div>';
+  const mutationButton = (operation, label, inputId) => '<button class="btn btn-sm btn-outline" onclick="submitWordPressCliMutation(' + Number(siteId) + ',\'' + operation + '\',\'' + inputId + '\')">' + label + '</button>';
+  const mutations = '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">'
+    + '<div style="font-size:12px;color:var(--text3);margin-bottom:8px;">Approved typed mutations run as isolated background jobs. No arbitrary commands are accepted.</div>'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;">'
+    + '<div><label class="details-label" for="wp-cli-plugin-' + Number(siteId) + '">Plugin slug</label><input class="input" id="wp-cli-plugin-' + Number(siteId) + '" placeholder="plugin-slug" autocomplete="off"><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">'
+    + mutationButton('plugin-install', 'Install', 'wp-cli-plugin-' + Number(siteId))
+    + mutationButton('plugin-activate', 'Activate', 'wp-cli-plugin-' + Number(siteId))
+    + mutationButton('plugin-deactivate', 'Deactivate', 'wp-cli-plugin-' + Number(siteId))
+    + mutationButton('plugin-update', 'Update', 'wp-cli-plugin-' + Number(siteId))
+    + mutationButton('plugin-delete', 'Delete', 'wp-cli-plugin-' + Number(siteId)) + '</div></div>'
+    + '<div><label class="details-label" for="wp-cli-theme-' + Number(siteId) + '">Theme slug</label><input class="input" id="wp-cli-theme-' + Number(siteId) + '" placeholder="theme-slug" autocomplete="off"><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">'
+    + mutationButton('theme-install', 'Install', 'wp-cli-theme-' + Number(siteId))
+    + mutationButton('theme-activate', 'Activate', 'wp-cli-theme-' + Number(siteId))
+    + mutationButton('theme-update', 'Update', 'wp-cli-theme-' + Number(siteId))
+    + mutationButton('theme-delete', 'Delete', 'wp-cli-theme-' + Number(siteId)) + '</div></div>'
+    + '<div><label class="details-label" for="wp-cli-language-' + Number(siteId) + '">Language locale</label><input class="input" id="wp-cli-language-' + Number(siteId) + '" placeholder="en_US" autocomplete="off"><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">'
+    + mutationButton('language-install', 'Install', 'wp-cli-language-' + Number(siteId))
+    + mutationButton('language-update', 'Update', '') + '</div></div>'
+    + '<div><div class="details-label">Core and cache</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">'
+    + mutationButton('core-update', 'Update core', '') + mutationButton('cache-flush', 'Flush cache', '') + '</div></div>'
+    + '</div></div>';
+  el.innerHTML = '<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px;"><div><h3 style="margin:0;">WordPress CLI</h3><div style="font-size:12px;color:var(--text3);margin-top:4px;">Read-only health, version, plugin, and theme inspection</div></div><button class="btn btn-sm btn-outline" onclick="loadWordPressCliCard(' + Number(siteId) + ')">Refresh</button></div><div class="details-grid" style="margin-top:12px;">' + items + '</div>' + mutations + '</div>';
+ }
+
+async function submitWordPressCliMutation(siteId, operation, inputId) {
+  const input = inputId ? $(inputId) : null;
+  const packageId = input ? input.value.trim() : '';
+  try {
+    const response = await apiPost('/api/wordpress/cli/' + Number(siteId) + '/mutation', {operation, package: packageId});
+    toast('WordPress ' + operation.replaceAll('-', ' ') + ' queued as job #' + response.data.job_id, 'success');
+  } catch (error) {
+    toast(error.message || 'WordPress mutation could not be queued', 'error');
+  }
 }
 
 /* ===== WORDPRESS DATABASE CREDENTIALS ===== */
@@ -667,4 +699,4 @@ function runRuntimeAction(siteId, domain, action) {
 const sitesPage = { mount: loadSites, unmount() { activeSitesLifecycle = null; } };
 const siteDetailPage = { mount: loadSiteDetail, unmount() { activeSitesLifecycle = null; } };
 export { loadSites, loadSiteDetail, sitesPage, siteDetailPage };
-Object.assign(window, { loadSites, removeSite, showCreateSiteWizard, renderSiteWizardTemplateOptions, startSiteWizard, showSiteTemplateModal, loadSiteDetail, loadWordPressCliCard, loadWordPressCredentialCard, renderWordPressCredentialCard, rotateWordPressDatabasePassword, pollWordPressRotationJob, loadPhpMailCard, renderPhpMailCard, enablePhpMail, disablePhpMail, loadRuntimeCard, refreshRuntimeCard, buildRuntimeActions, runRuntimeAction });
+Object.assign(window, { loadSites, removeSite, showCreateSiteWizard, renderSiteWizardTemplateOptions, startSiteWizard, showSiteTemplateModal, loadSiteDetail, loadWordPressCliCard, submitWordPressCliMutation, loadWordPressCredentialCard, renderWordPressCredentialCard, rotateWordPressDatabasePassword, pollWordPressRotationJob, loadPhpMailCard, renderPhpMailCard, enablePhpMail, disablePhpMail, loadRuntimeCard, refreshRuntimeCard, buildRuntimeActions, runRuntimeAction });

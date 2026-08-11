@@ -69,6 +69,16 @@ void JobManager::update_failure(uint64_t id, const JobFailureDiagnostics& failur
     }
 }
 
+void JobManager::update_cleanup(uint64_t id, const std::string& status, const std::string& message) {
+    for (auto& j : jobs_) {
+        if (j.id == id) {
+            j.cleanup_status = status;
+            j.cleanup_message = message;
+            return;
+        }
+    }
+}
+
 Job* JobManager::find(uint64_t id) {
     for (auto& j : jobs_) {
         if (j.id == id) return &j;

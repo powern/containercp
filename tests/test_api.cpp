@@ -578,17 +578,28 @@ TEST_CASE("WordPress read-only API exposes only typed operations and safe result
 
     CHECK(api.find("/api/wordpress/cli/") != std::string::npos);
     CHECK(api.find("parseWordPressCliOperation") != std::string::npos);
-    CHECK(api.find("WordPressRuntimeContextResolver") != std::string::npos);
-    CHECK(api.find("WordPressCliService service") != std::string::npos);
+    CHECK(api.find("parseWordPressCliMutation") != std::string::npos);
+    CHECK(api.find("wordpress_cli_jobs()") != std::string::npos);
+    CHECK(api.find("WordPressCliService service") == std::string::npos);
     CHECK(api.find("The typed WordPress operation could not be completed") != std::string::npos);
     const auto route_start = api.find("router_.add_prefix(\"GET\", \"/api/wordpress/cli/");
-    const auto route_end = api.find("router_.add(\"GET\", \"/api/settings\"", route_start);
+    const auto route_end = api.find("router_.add_prefix(\"POST\", \"/api/wordpress/cli/", route_start);
     REQUIRE(route_start != std::string::npos);
     REQUIRE(route_end != std::string::npos);
     const std::string route = api.substr(route_start, route_end - route_start);
     CHECK(route.find("context.private_network") == std::string::npos);
     CHECK(route.find("context.php_container") == std::string::npos);
     CHECK(route.find("req.body") == std::string::npos);
+
+    const auto mutation_route_end = api.find("router_.add(\"GET\", \"/api/settings\"", route_end);
+    REQUIRE(mutation_route_end != std::string::npos);
+    const std::string mutation_route = api.substr(route_end, mutation_route_end - route_end);
+    CHECK(mutation_route.find("validate_session") != std::string::npos);
+    CHECK(mutation_route.find("parseWordPressCliMutation") != std::string::npos);
+    CHECK(mutation_route.find("forbidden_runtime_fields") != std::string::npos);
+    CHECK(mutation_route.find("runtime_fields_forbidden") != std::string::npos);
+    CHECK(mutation_route.find("std::system") == std::string::npos);
+    CHECK(mutation_route.find("arbitrary") == std::string::npos);
 
     std::ifstream cli_in(std::string(TEST_SOURCE_DIR) + "/libs/wordpress/WordPressCliService.cpp");
     REQUIRE(cli_in.is_open());
@@ -599,6 +610,13 @@ TEST_CASE("WordPress read-only API exposes only typed operations and safe result
     CHECK(cli.find("--cap-drop=ALL") != std::string::npos);
     CHECK(cli.find("--security-opt=no-new-privileges") != std::string::npos);
     CHECK(cli.find("docker_executable_") != std::string::npos);
+    CHECK(cli.find("run_mutation") != std::string::npos);
+    CHECK(cli.find("valid_package_identifier") != std::string::npos);
+
+    std::ifstream registry_in(std::string(TEST_SOURCE_DIR) + "/libs/core/ServiceRegistry.cpp");
+    REQUIRE(registry_in.is_open());
+    std::string registry((std::istreambuf_iterator<char>(registry_in)), std::istreambuf_iterator<char>());
+    CHECK(registry.find("reconcile_stale_runners") != std::string::npos);
 }
 
 TEST_CASE("MariaDB service-account init script rejects missing variables without echoing secrets") {

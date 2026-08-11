@@ -15,6 +15,7 @@ public:
     void update(uint64_t id, const std::string& status, int progress, const std::string& message = "");
     void update_step_details(uint64_t id, const std::vector<JobStep>& steps);
     void update_failure(uint64_t id, const JobFailureDiagnostics& failure);
+    void update_cleanup(uint64_t id, const std::string& status, const std::string& message = "");
     Job* find(uint64_t id);
     const std::vector<Job>& list() const;
 

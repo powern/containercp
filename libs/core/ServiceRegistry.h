@@ -71,6 +71,9 @@
 #include "wordpress/WordPressConfigService.h"
 #include "wordpress/WordPressConfigUpdater.h"
 #include "wordpress/WordPressDatabaseCredentialResolver.h"
+#include "wordpress/WordPressCliJobService.h"
+#include "wordpress/WordPressCliService.h"
+#include "wordpress/WordPressRuntimeContext.h"
 #include "wordpress/WordPressRuntimeVerifier.h"
 
 #include <unordered_map>
@@ -147,6 +150,8 @@ public:
     storage::Storage& storage();
     wordpress::WordPressConfigService& wordpress_config();
     wordpress::WordPressDatabaseCredentialResolver& wordpress_database_credentials();
+    wordpress::WordPressCliService& wordpress_cli();
+    wordpress::WordPressCliJobService& wordpress_cli_jobs();
     core::RecoveryManager& recovery();
     // Detect Docker bridge gateway address for Web UI binding and proxy upstream.
     // Returns "host.docker.internal" if detection fails (works with --add-host flag).
@@ -215,9 +220,12 @@ private:
     wordpress::WordPressConfigUpdater wordpress_config_updater_;
     wordpress::WordPressRuntimeCommandExecutorRunner wordpress_runtime_runner_;
     wordpress::WordPressRuntimeVerifier wordpress_runtime_verifier_;
+    wordpress::WordPressRuntimeContextResolver wordpress_runtime_context_;
+    wordpress::WordPressCliService wordpress_cli_;
     database::DatabaseCredentialRotationAdapter database_credential_rotation_adapter_;
     database::DatabaseCredentialRotationService database_credential_rotation_;
     jobs::JobExecutor job_executor_;
+    wordpress::WordPressCliJobService wordpress_cli_jobs_;
     database::DatabaseCredentialRotationJobService database_credential_rotation_jobs_;
     ssl::RenewalScheduler renewal_scheduler_;
     auth::AuthUserManager auth_users_;

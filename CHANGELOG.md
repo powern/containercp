@@ -6,7 +6,44 @@ Format: date | commit | summary
 
 ---
 
-## 2026-08-11 | `pending` | feat: expose read-only WP-CLI management
+## 2026-08-11 | `pending` | feat: add job-backed WP-CLI mutations
+
+**Summary:** Added typed, administrator-authenticated WordPress mutations as
+bounded background jobs. Plugins, themes, core, languages, and cache flushes
+use only the approved mutation allowlist and reuse the canonical transient
+runtime context and isolated WP-CLI runner.
+
+**Files changed:** `libs/api/ApiServer.cpp`, `libs/core/ServiceRegistry.h`,
+`libs/core/ServiceRegistry.cpp`, `libs/jobs/Job.h`, `libs/jobs/JobManager.h`,
+`libs/jobs/JobManager.cpp`, `libs/wordpress/WordPressCliService.h`,
+`libs/wordpress/WordPressCliService.cpp`,
+`libs/wordpress/WordPressCliAudit.h`,
+`libs/wordpress/WordPressCliAudit.cpp`,
+`libs/wordpress/WordPressCliJobService.h`,
+`libs/wordpress/WordPressCliJobService.cpp`, `CMakeLists.txt`,
+`tests/CMakeLists.txt`, `tests/test_api.cpp`,
+`tests/test_wordpress_cli_service.cpp`, `web/pages/sites.js`, `CHANGELOG.md`
+
+**User-visible behavior:** Administrators can queue typed plugin, theme, core,
+language, and cache operations from Site Details. Mutation requests require an
+administrator session, validate package identifiers, return a job ID, expose
+bounded cleanup status through the existing jobs API, and record public-safe
+structured audit events. No raw command, raw argv, shell, password, or runtime
+identity input is accepted.
+
+**Validation:** The real disposable WordPress lifecycle passed with plugin and
+theme install/activate/deactivate/update/delete coverage, core/language/cache
+mutation coverage, non-root writable execution, and runner cleanup. Typed
+mutation/API/job tests passed, `node --check web/pages/sites.js` passed, and
+the frontend baseline passed. Full deterministic CTest is required before
+commit.
+
+**Known risks:** Apache/Nginx, multi-site, and multi-PHP lifecycle validation
+remain in Phase 5. Core and package mutations remain strictly allowlisted.
+
+---
+
+## 2026-08-11 | `95d8197` | feat: expose read-only WP-CLI management
 
 **Summary:** Added the typed read-only REST API surface
 `GET /api/wordpress/cli/<site_id>/<operation>` for the four approved WP-CLI

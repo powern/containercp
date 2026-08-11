@@ -73,6 +73,8 @@ ServiceRegistry::ServiceRegistry()
     , sql_console_sessions_(std::filesystem::path(config_.data_root()) / "sqlconsole" / "sessions.db")
     , wordpress_runtime_runner_(credential_command_executor_)
     , wordpress_runtime_verifier_(wordpress_runtime_runner_)
+    , wordpress_runtime_context_(credential_command_executor_, sites_, wordpress_config_, config_, logger_)
+    , wordpress_cli_(credential_command_executor_, wordpress_runtime_context_, config_, logger_)
     , database_credential_rotation_adapter_(
           sites_,
           databases_,
@@ -105,6 +107,7 @@ ServiceRegistry::ServiceRegistry()
           })
     , database_credential_rotation_(database_credential_rotation_adapter_)
     , job_executor_(jobs_, 2, 64)
+    , wordpress_cli_jobs_(jobs_, job_executor_, wordpress_cli_, logger_)
     , database_credential_rotation_jobs_(sites_, databases_, jobs_, job_executor_, database_credential_rotation_)
     , renewal_scheduler_(logger_, cert_store_, jobs_, job_executor_, cert_providers_)
     , auth_(*this)
@@ -695,6 +698,11 @@ void ServiceRegistry::start() {
         }
     }
 
+    const auto wpcli_reconciliation = wordpress_cli_.reconcile_stale_runners();
+    if (!wpcli_reconciliation.success) {
+        logger_.warning("WORDPRESS", "WP-CLI runner reconciliation failed closed: " +
+                                     wpcli_reconciliation.failure_code);
+    }
     job_executor_.start();
     backup_service_.cleanup_staging();
     renewal_scheduler_.start();
@@ -1344,6 +1352,14 @@ wordpress::WordPressConfigService& ServiceRegistry::wordpress_config() {
 
 wordpress::WordPressDatabaseCredentialResolver& ServiceRegistry::wordpress_database_credentials() {
     return wordpress_database_credentials_;
+}
+
+wordpress::WordPressCliService& ServiceRegistry::wordpress_cli() {
+    return wordpress_cli_;
+}
+
+wordpress::WordPressCliJobService& ServiceRegistry::wordpress_cli_jobs() {
+    return wordpress_cli_jobs_;
 }
 
 filesystem::Filesystem& ServiceRegistry::filesystem() {

@@ -158,6 +158,8 @@ set(CONTAINERCP_SOURCES
     libs/wordpress/WordPressConfigUpdater.cpp
     libs/wordpress/WordPressDatabaseCredentialResolver.cpp
     libs/wordpress/WordPressCliService.cpp
+    libs/wordpress/WordPressCliAudit.cpp
+    libs/wordpress/WordPressCliJobService.cpp
     libs/wordpress/WordPressRuntimeContext.cpp
     libs/wordpress/WordPressRuntimeVerifier.cpp
 )

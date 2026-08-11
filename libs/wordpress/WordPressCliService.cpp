@@ -38,6 +38,16 @@ bool valid_sha256(const std::string& value) {
     });
 }
 
+bool valid_package_identifier(const std::string& value) {
+    if (value.empty() || value.size() > 128 || value.front() == '-' || value.front() == '/' ||
+        value.back() == '/' || value.find("..") != std::string::npos || value.find("//") != std::string::npos) {
+        return false;
+    }
+    return std::all_of(value.begin(), value.end(), [](unsigned char c) {
+        return std::isalnum(c) != 0 || c == '_' || c == '-' || c == '.' || c == '/';
+    });
+}
+
 std::string sha256_file(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input.is_open()) return {};
@@ -131,6 +141,76 @@ bool parseWordPressCliOperation(const std::string& value,
     return false;
 }
 
+std::string wordPressCliMutationName(WordPressCliMutation mutation) {
+    switch (mutation) {
+        case WordPressCliMutation::PluginInstall: return "plugin-install";
+        case WordPressCliMutation::PluginActivate: return "plugin-activate";
+        case WordPressCliMutation::PluginDeactivate: return "plugin-deactivate";
+        case WordPressCliMutation::PluginUpdate: return "plugin-update";
+        case WordPressCliMutation::PluginDelete: return "plugin-delete";
+        case WordPressCliMutation::ThemeInstall: return "theme-install";
+        case WordPressCliMutation::ThemeActivate: return "theme-activate";
+        case WordPressCliMutation::ThemeUpdate: return "theme-update";
+        case WordPressCliMutation::ThemeDelete: return "theme-delete";
+        case WordPressCliMutation::CoreUpdate: return "core-update";
+        case WordPressCliMutation::LanguageInstall: return "language-install";
+        case WordPressCliMutation::LanguageUpdate: return "language-update";
+        case WordPressCliMutation::CacheFlush: return "cache-flush";
+    }
+    return "unknown";
+}
+
+bool parseWordPressCliMutation(const std::string& value,
+                               WordPressCliMutation& mutation) {
+    const std::array<std::pair<const char*, WordPressCliMutation>, 13> values{{
+        {"plugin-install", WordPressCliMutation::PluginInstall},
+        {"plugin-activate", WordPressCliMutation::PluginActivate},
+        {"plugin-deactivate", WordPressCliMutation::PluginDeactivate},
+        {"plugin-update", WordPressCliMutation::PluginUpdate},
+        {"plugin-delete", WordPressCliMutation::PluginDelete},
+        {"theme-install", WordPressCliMutation::ThemeInstall},
+        {"theme-activate", WordPressCliMutation::ThemeActivate},
+        {"theme-update", WordPressCliMutation::ThemeUpdate},
+        {"theme-delete", WordPressCliMutation::ThemeDelete},
+        {"core-update", WordPressCliMutation::CoreUpdate},
+        {"language-install", WordPressCliMutation::LanguageInstall},
+        {"language-update", WordPressCliMutation::LanguageUpdate},
+        {"cache-flush", WordPressCliMutation::CacheFlush},
+    }};
+    for (const auto& [name, value_mutation] : values) {
+        if (value == name) {
+            mutation = value_mutation;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool wordPressCliMutationRequiresPackage(WordPressCliMutation mutation) {
+    switch (mutation) {
+        case WordPressCliMutation::PluginInstall:
+        case WordPressCliMutation::PluginActivate:
+        case WordPressCliMutation::PluginDeactivate:
+        case WordPressCliMutation::PluginUpdate:
+        case WordPressCliMutation::PluginDelete:
+        case WordPressCliMutation::ThemeInstall:
+        case WordPressCliMutation::ThemeActivate:
+        case WordPressCliMutation::ThemeUpdate:
+        case WordPressCliMutation::ThemeDelete:
+        case WordPressCliMutation::LanguageInstall:
+            return true;
+        case WordPressCliMutation::CoreUpdate:
+        case WordPressCliMutation::LanguageUpdate:
+        case WordPressCliMutation::CacheFlush:
+            return false;
+    }
+    return false;
+}
+
+bool validWordPressCliPackageIdentifier(const std::string& value) {
+    return valid_package_identifier(value);
+}
+
 WordPressCliService::WordPressCliService(runtime::CommandExecutor& executor,
                                          WordPressRuntimeContextResolver& resolver,
                                          config::Config& config,
@@ -169,6 +249,26 @@ std::vector<std::string> WordPressCliService::operation_arguments(WordPressCliOp
             break;
     }
     return arguments;
+}
+
+std::vector<std::string> WordPressCliService::mutation_arguments(WordPressCliMutation mutation,
+                                                                  const std::string& package_id) {
+    switch (mutation) {
+        case WordPressCliMutation::PluginInstall: return {"--no-color", "plugin", "install", package_id};
+        case WordPressCliMutation::PluginActivate: return {"--no-color", "plugin", "activate", package_id};
+        case WordPressCliMutation::PluginDeactivate: return {"--no-color", "plugin", "deactivate", package_id};
+        case WordPressCliMutation::PluginUpdate: return {"--no-color", "plugin", "update", package_id};
+        case WordPressCliMutation::PluginDelete: return {"--no-color", "plugin", "delete", package_id};
+        case WordPressCliMutation::ThemeInstall: return {"--no-color", "theme", "install", package_id};
+        case WordPressCliMutation::ThemeActivate: return {"--no-color", "theme", "activate", package_id};
+        case WordPressCliMutation::ThemeUpdate: return {"--no-color", "theme", "update", package_id};
+        case WordPressCliMutation::ThemeDelete: return {"--no-color", "theme", "delete", package_id};
+        case WordPressCliMutation::CoreUpdate: return {"--no-color", "core", "update"};
+        case WordPressCliMutation::LanguageInstall: return {"--no-color", "language", "core", "install", package_id};
+        case WordPressCliMutation::LanguageUpdate: return {"--no-color", "language", "core", "update"};
+        case WordPressCliMutation::CacheFlush: return {"--no-color", "cache", "flush"};
+    }
+    return {};
 }
 
 WordPressCliArtifact WordPressCliService::validate_artifact() const {
@@ -280,9 +380,28 @@ WordPressCliResult WordPressCliService::cleanup_runner(const std::string& runner
 }
 
 WordPressCliResult WordPressCliService::run(uint64_t site_id,
-                                            WordPressCliOperation operation) const {
+                                             WordPressCliOperation operation) const {
+    return run_command(site_id, wordPressCliOperationName(operation), operation_arguments(operation), false);
+}
+
+WordPressCliResult WordPressCliService::run_mutation(uint64_t site_id,
+                                                     WordPressCliMutation mutation,
+                                                     const std::string& package_id) const {
+    if (wordPressCliMutationRequiresPackage(mutation) && !valid_package_identifier(package_id)) {
+        return failure("wordpress_cli_invalid_package", "Package identifier is invalid");
+    }
+    if (!wordPressCliMutationRequiresPackage(mutation) && !package_id.empty()) {
+        return failure("wordpress_cli_unexpected_package", "This typed mutation does not accept a package identifier");
+    }
+    return run_command(site_id, wordPressCliMutationName(mutation), mutation_arguments(mutation, package_id), true);
+}
+
+WordPressCliResult WordPressCliService::run_command(uint64_t site_id,
+                                                    const std::string& operation_name,
+                                                    const std::vector<std::string>& arguments,
+                                                    bool writable) const {
     const auto context = resolver_.resolve(site_id);
-    if (!context.ok || !context.read_only_capable) {
+    if (!context.ok || (writable ? !context.mutation_capable : !context.read_only_capable)) {
         return failure(context.failure_code.empty() ? "wordpress_runtime_unavailable" : context.failure_code,
                        "Managed WordPress runtime is unavailable");
     }
@@ -301,9 +420,9 @@ WordPressCliResult WordPressCliService::run(uint64_t site_id,
         "run", "--name", name,
         "--label", kRunnerLabel,
         "--label", "containercp.wpcli.site.id=" + std::to_string(site_id),
-        "--label", "containercp.wpcli.operation=" + wordPressCliOperationName(operation),
+        "--label", "containercp.wpcli.operation=" + operation_name,
         "--network", context.private_network,
-        "--mount", "type=bind,src=" + context.document_root.string() + ",dst=" + context.container_document_root + ",readonly",
+        "--mount", "type=bind,src=" + context.document_root.string() + ",dst=" + context.container_document_root + (writable ? "" : ",readonly"),
         "--mount", "type=bind,src=" + artifact.phar_path.string() + ",dst=/opt/containercp/wp-cli/wp-cli.phar,readonly",
         "--read-only",
         "--cap-drop=ALL",
@@ -319,8 +438,7 @@ WordPressCliResult WordPressCliService::run(uint64_t site_id,
         context.immutable_php_image_id,
         "php", "/opt/containercp/wp-cli/wp-cli.phar"
     };
-    const auto operation_args = operation_arguments(operation);
-    command.insert(command.end(), operation_args.begin(), operation_args.end());
+    command.insert(command.end(), arguments.begin(), arguments.end());
 
     const auto execution = execute_docker(command, kRunnerTimeoutSeconds, kMaxOutputBytes);
     auto cleanup = cleanup_runner(name);

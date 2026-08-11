@@ -1,9 +1,11 @@
 #include "config/Config.h"
+#include "jobs/JobManager.h"
 #include "logger/Logger.h"
 #include "runtime/CommandExecutor.h"
 #include "site/SiteManager.h"
 #include "storage/Verification.h"
 #include "wordpress/WordPressCliService.h"
+#include "wordpress/WordPressCliAudit.h"
 #include "wordpress/WordPressConfigService.h"
 #include "wordpress/WordPressRuntimeContext.h"
 
@@ -76,6 +78,59 @@ TEST_CASE("WordPressCliService maps only the typed read-only allowlist") {
     CHECK(parsed == containercp::wordpress::WordPressCliOperation::CoreVersion);
     CHECK_FALSE(containercp::wordpress::parseWordPressCliOperation("eval", parsed));
     CHECK_FALSE(containercp::wordpress::parseWordPressCliOperation("core version", parsed));
+}
+
+TEST_CASE("WordPressCliService maps typed mutations and rejects shell syntax") {
+    const std::vector<std::pair<std::string, containercp::wordpress::WordPressCliMutation>> mutations{
+        {"plugin-install", containercp::wordpress::WordPressCliMutation::PluginInstall},
+        {"plugin-activate", containercp::wordpress::WordPressCliMutation::PluginActivate},
+        {"plugin-deactivate", containercp::wordpress::WordPressCliMutation::PluginDeactivate},
+        {"plugin-update", containercp::wordpress::WordPressCliMutation::PluginUpdate},
+        {"plugin-delete", containercp::wordpress::WordPressCliMutation::PluginDelete},
+        {"theme-install", containercp::wordpress::WordPressCliMutation::ThemeInstall},
+        {"theme-activate", containercp::wordpress::WordPressCliMutation::ThemeActivate},
+        {"theme-update", containercp::wordpress::WordPressCliMutation::ThemeUpdate},
+        {"theme-delete", containercp::wordpress::WordPressCliMutation::ThemeDelete},
+        {"core-update", containercp::wordpress::WordPressCliMutation::CoreUpdate},
+        {"language-install", containercp::wordpress::WordPressCliMutation::LanguageInstall},
+        {"language-update", containercp::wordpress::WordPressCliMutation::LanguageUpdate},
+        {"cache-flush", containercp::wordpress::WordPressCliMutation::CacheFlush},
+    };
+    for (const auto& [name, mutation] : mutations) {
+        containercp::wordpress::WordPressCliMutation parsed;
+        CHECK(containercp::wordpress::parseWordPressCliMutation(name, parsed));
+        CHECK(parsed == mutation);
+    }
+    CHECK(containercp::wordpress::WordPressCliService::mutation_arguments(
+              containercp::wordpress::WordPressCliMutation::PluginInstall, "akismet") ==
+          std::vector<std::string>{"--no-color", "plugin", "install", "akismet"});
+    CHECK(containercp::wordpress::WordPressCliService::mutation_arguments(
+              containercp::wordpress::WordPressCliMutation::CoreUpdate, "") ==
+          std::vector<std::string>{"--no-color", "core", "update"});
+    CHECK(containercp::wordpress::validWordPressCliPackageIdentifier("vendor/plugin"));
+    CHECK_FALSE(containercp::wordpress::validWordPressCliPackageIdentifier("plugin;id"));
+    CHECK_FALSE(containercp::wordpress::validWordPressCliPackageIdentifier("../plugin"));
+    CHECK_FALSE(containercp::wordpress::validWordPressCliPackageIdentifier("/tmp/plugin.zip"));
+    containercp::wordpress::WordPressCliMutation rejected;
+    CHECK_FALSE(containercp::wordpress::parseWordPressCliMutation("eval", rejected));
+}
+
+TEST_CASE("WordPress CLI jobs expose cleanup state and safe audit fields") {
+    containercp::jobs::JobManager jobs;
+    const auto job_id = jobs.create("wordpress-cli-plugin-install", {"Validating typed mutation"});
+    jobs.update_cleanup(job_id, "succeeded", "Runner removed");
+    const auto* job = jobs.find(job_id);
+    REQUIRE(job != nullptr);
+    CHECK(job->cleanup_status == "succeeded");
+    CHECK(job->cleanup_message == "Runner removed");
+
+    const auto audit = containercp::wordpress::WordPressCliAuditLogger::format({
+        7, 4, "example.test", "admin\noperator", "plugin-install", "vendor/plugin",
+        "failure", "wordpress_cli_timeout", true, true,
+        containercp::wordpress::WordPressCliAuditEvent::Level::Error});
+    CHECK(audit.find("admin_operator") != std::string::npos);
+    CHECK(audit.find("wordpress_cli_timeout") != std::string::npos);
+    CHECK(audit.find("password") == std::string::npos);
 }
 
 TEST_CASE("WordPressCliService fails closed when the Phar is missing") {
@@ -255,6 +310,8 @@ TEST_CASE("WordPressCliService real disposable WordPress lifecycle") {
     CHECK(context.container_document_root == "/var/www/html");
     CHECK(context.php_fpm_uid > 0);
     CHECK(context.php_fpm_gid > 0);
+    CHECK(context.document_root_mount_read_write);
+    CHECK(context.mutation_capable);
 
     const auto installed = service.run(site_id, containercp::wordpress::WordPressCliOperation::CoreIsInstalled);
     CAPTURE(installed.failure_code);
@@ -271,6 +328,61 @@ TEST_CASE("WordPressCliService real disposable WordPress lifecycle") {
     const auto themes = service.run(site_id, containercp::wordpress::WordPressCliOperation::ThemeList);
     REQUIRE(themes.success);
     CHECK_FALSE(themes.output.empty());
+
+    const auto plugin_source = public_dir / "wpcli-test-plugin";
+    std::filesystem::create_directories(plugin_source);
+    std::ofstream(plugin_source / "wpcli-test-plugin.php")
+        << "<?php\n/* Plugin Name: ContainerCP WP-CLI Test Plugin */\n";
+    const auto plugin_archive = public_dir / "wpcli-test-plugin.zip";
+    REQUIRE(executor.run({"/usr/bin/zip", "-qr", plugin_archive.string(), plugin_source.filename().string()}, public_dir.string()).exit_code == 0);
+    REQUIRE(executor.run({"/usr/bin/chown", "-R",
+                          std::to_string(context.php_fpm_uid) + ":" + std::to_string(context.php_fpm_gid),
+                          (public_dir / "wp-content").string()}).exit_code == 0);
+    const auto plugin_install = service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::PluginInstall, "wpcli-test-plugin.zip");
+    CAPTURE(plugin_install.failure_code);
+    CAPTURE(plugin_install.message);
+    CAPTURE(plugin_install.output);
+    CAPTURE(plugin_install.diagnostic);
+    CAPTURE(plugin_install.exit_code);
+    REQUIRE(plugin_install.success);
+    CHECK(plugin_install.cleanup_succeeded);
+    CHECK(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::PluginActivate, "wpcli-test-plugin").success);
+    CHECK(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::PluginDeactivate, "wpcli-test-plugin").success);
+    CHECK(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::PluginUpdate, "wpcli-test-plugin").success);
+    CHECK(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::PluginDelete, "wpcli-test-plugin").success);
+
+    const auto theme_source = public_dir / "wpcli-test-theme";
+    std::filesystem::create_directories(theme_source);
+    std::ofstream(theme_source / "style.css")
+        << "/*\nTheme Name: ContainerCP WP-CLI Test Theme\n*/\n";
+    std::ofstream(theme_source / "index.php") << "<?php\n";
+    const auto theme_archive = public_dir / "wpcli-test-theme.zip";
+    REQUIRE(executor.run({"/usr/bin/zip", "-qr", theme_archive.string(), theme_source.filename().string()}, public_dir.string()).exit_code == 0);
+    const auto theme_install = service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::ThemeInstall, "wpcli-test-theme.zip");
+    CAPTURE(theme_install.failure_code);
+    REQUIRE(theme_install.success);
+    CHECK(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::ThemeActivate, "wpcli-test-theme").success);
+    CHECK(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::ThemeUpdate, "wpcli-test-theme").success);
+    CHECK(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::ThemeActivate, "twentytwentyfive").success);
+    CHECK(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::ThemeDelete, "wpcli-test-theme").success);
+
+    CHECK(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::CoreUpdate).success);
+    CHECK(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::LanguageInstall, "en_US").success);
+    const auto language_update = service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::LanguageUpdate);
+    CAPTURE(language_update.failure_code);
+    CAPTURE(language_update.message);
+    CAPTURE(language_update.output);
+    CAPTURE(language_update.diagnostic);
+    CHECK(language_update.success);
+    CHECK(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::CacheFlush).success);
+
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(public_dir / "wp-content")) {
+        struct stat metadata{};
+        if (std::filesystem::is_regular_file(entry.symlink_status()) &&
+            ::lstat(entry.path().c_str(), &metadata) == 0) {
+            CHECK(metadata.st_uid != 0);
+        }
+    }
 
     std::filesystem::create_directories(public_dir / "wp-content/plugins");
     std::ofstream(public_dir / "wp-content/plugins/broken.php")

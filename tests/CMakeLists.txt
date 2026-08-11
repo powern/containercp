@@ -171,6 +171,8 @@ add_executable(containercp_tests
     ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressConfigUpdater.cpp
     ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressDatabaseCredentialResolver.cpp
     ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressCliService.cpp
+    ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressCliAudit.cpp
+    ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressCliJobService.cpp
     ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressRuntimeContext.cpp
     ${CMAKE_SOURCE_DIR}/libs/wordpress/WordPressRuntimeVerifier.cpp
     ${CMAKE_SOURCE_DIR}/libs/mail/MailAliasManager.cpp
