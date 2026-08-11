@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-08-11 | `pending` | fix: reap all generic command children safely
+## 2026-08-11 | `29ce605` | fix: reap all generic command children safely
 
 **Summary:** Closed the final source-review gap in the non-timeout executor
 paths by making blocking child waits EINTR-safe and explicitly handling an
