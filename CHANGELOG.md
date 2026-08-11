@@ -6,6 +6,30 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-11 | `pending` | ci: provision WP-CLI before GitHub tests
+
+**Summary:** Fixed the GitHub Actions Build and Test workflow to provision the
+reviewed WP-CLI artifact before artifact validation tests and to use the current
+Node.js-compatible checkout action.
+
+**Files changed:** `.github/workflows/build-test.yml`, `CHANGELOG.md`
+
+**User-visible behavior:** GitHub Actions no longer fails the three reviewed
+WP-CLI artifact tests because `/srv/containercp/wp-cli/wp-cli.phar` is absent.
+The Node.js 20 deprecation warning from `actions/checkout@v4` is removed by
+using `actions/checkout@v5`. CI now builds the deterministic integration target
+and runs the complete CTest suite instead of only invoking the test binary.
+
+**Validation:** The failed run `31498698595` was inspected. Its Test step
+reported three failures at `tests/test_wordpress_cli_service.cpp:59` because
+`approved_copy` was missing. Workflow YAML and `git diff --check` are validated
+before commit.
+
+**Known risks:** Provisioning depends on the fixed official WP-CLI release URL
+and SHA during CI setup; runtime site operations remain offline and fail-closed.
+
+---
+
 ## 2026-08-11 | `29ce605` | fix: reap all generic command children safely
 
 **Summary:** Closed the final source-review gap in the non-timeout executor

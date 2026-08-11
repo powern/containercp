@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install dependencies
         run: |
@@ -30,6 +30,9 @@ jobs:
           sudo apt-get install -y docker-compose-v2 2>/dev/null || true
           sudo docker info
 
+      - name: Provision reviewed WP-CLI artifact
+        run: sudo env CONTAINERCP_DATA_DIR=/srv/containercp bash scripts/provision-wp-cli.sh
+
       - name: Build c-ares from source
         run: |
           curl -sL https://github.com/c-ares/c-ares/archive/refs/tags/v1.34.4.tar.gz | tar xz
@@ -42,7 +45,7 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: ninja -C build -j2 containercp_tests
+        run: ninja -C build -j2 containercp_tests arch009_linux_integration
 
       - name: Test
-        run: sudo ./build/tests/containercp_tests
+        run: sudo ctest --test-dir build --output-on-failure
