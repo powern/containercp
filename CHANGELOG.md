@@ -6,7 +6,7 @@ Format: date | commit | summary
 
 ---
 
-## 2026-08-11 | `pending` | fix: pin reviewed WP-CLI artifact version
+## 2026-08-11 | `0e0ede7` | fix: pin reviewed WP-CLI artifact version
 
 **Summary:** Closed the final artifact-integrity review gap by requiring the
 managed Phar metadata to identify the reviewed WP-CLI version `2.11.0`, in
