@@ -70,6 +70,12 @@ TEST_CASE("WordPressCliService maps only the typed read-only allowlist") {
     const auto themes = containercp::wordpress::WordPressCliService::operation_arguments(
         containercp::wordpress::WordPressCliOperation::ThemeList);
     CHECK(themes == std::vector<std::string>{"--no-color", "--skip-plugins", "--skip-themes", "theme", "list"});
+
+    containercp::wordpress::WordPressCliOperation parsed;
+    CHECK(containercp::wordpress::parseWordPressCliOperation("core-version", parsed));
+    CHECK(parsed == containercp::wordpress::WordPressCliOperation::CoreVersion);
+    CHECK_FALSE(containercp::wordpress::parseWordPressCliOperation("eval", parsed));
+    CHECK_FALSE(containercp::wordpress::parseWordPressCliOperation("core version", parsed));
 }
 
 TEST_CASE("WordPressCliService fails closed when the Phar is missing") {

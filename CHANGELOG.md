@@ -6,6 +6,35 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-11 | `pending` | feat: expose read-only WP-CLI management
+
+**Summary:** Added the typed read-only REST API surface
+`GET /api/wordpress/cli/<site_id>/<operation>` for the four approved WP-CLI
+operations and integrated a WordPress CLI status card into Site Details.
+
+**Files changed:** `libs/api/ApiServer.cpp`,
+`libs/wordpress/WordPressCliService.h`,
+`libs/wordpress/WordPressCliService.cpp`, `tests/test_api.cpp`,
+`tests/test_wordpress_cli_service.cpp`, `web/pages/sites.js`, `CHANGELOG.md`
+
+**User-visible behavior:** Administrators can view WordPress installation
+status, core version, plugin list, and theme list from managed Site Details.
+The API accepts only a numeric managed site ID and one allowlisted operation;
+it rejects raw command text, raw argv, runtime identity fields, and unknown
+operations. Responses omit host paths, container/network details, secrets, and
+raw unbounded diagnostics.
+
+**Validation:** API typed-boundary tests passed 18/18 assertions, operation
+parser tests passed 8/8 assertions, `node --check web/pages/sites.js` passed,
+and `node scripts/check-frontend-baseline.js` passed. Full deterministic CTest
+is required before commit.
+
+**Known risks:** Authentication remains governed by the repository's existing
+API auth middleware; this phase does not alter that separate subsystem. Job
+backed mutations, audit events, and arbitrary console remain unimplemented.
+
+---
+
 ## 2026-08-11 | `pending` | feat: add isolated read-only WP-CLI backend
 
 **Summary:** Added the typed `WordPressCliService` read-only backend for

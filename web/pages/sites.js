@@ -266,8 +266,9 @@ async function loadSiteDetail(p, siteId, lifecycle) {
         <div id="site-cols-right" style="display:grid;gap:12px;align-content:start;"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;" id="site-cols-bottom"></div>
-      <div style="margin-top:12px;" id="site-wordpress-db"></div>
-      <div style="margin-top:12px;" id="site-php-mail"></div>`}`;
+       <div style="margin-top:12px;" id="site-wordpress-db"></div>
+       <div style="margin-top:12px;" id="site-wordpress-cli"></div>
+       <div style="margin-top:12px;" id="site-php-mail"></div>`}`;
 
     if (isSystem) return;
 
@@ -291,9 +292,39 @@ async function loadSiteDetail(p, siteId, lifecycle) {
       makeCard('Proxy', (proxy.data||[]).filter(p=>p.site_id==site.id).map(p=>p.status), '#06b6d4') +
       makeCard('Backups', (backups.data||[]).filter(b=>b.site_id==site.id).map(b=>b.filename), '#f97316');
     loadWordPressCredentialCard(site.id, site.domain);
+    loadWordPressCliCard(site.id);
     loadPhpMailCard(site.id, site.domain);
     loadRuntimeCard(site.id, site.domain, site.web_server);
   } catch(e) { p.innerHTML = '<div class="empty-state">Failed to load site</div>'; }
+}
+
+/* ===== WORDPRESS READ-ONLY WP-CLI ===== */
+async function loadWordPressCliCard(siteId) {
+  const el = $('site-wordpress-cli');
+  if (!el) return;
+  const operations = [
+    ['Installation', 'core-is-installed'],
+    ['Core version', 'core-version'],
+    ['Plugins', 'plugin-list'],
+    ['Themes', 'theme-list']
+  ];
+  el.innerHTML = '<div class="card"><h3>WordPress CLI</h3><div style="font-size:12px;color:var(--text3)">Checking read-only WordPress operations...</div></div>';
+  const results = await Promise.all(operations.map(async ([label, operation]) => {
+    try {
+      const response = await api('/api/wordpress/cli/' + Number(siteId) + '/' + operation);
+      return {label, operation, data: response.data || {}, error: ''};
+    } catch (error) {
+      return {label, operation, data: {}, error: error.message || 'Operation unavailable'};
+    }
+  }));
+  const items = results.map(item => {
+    if (item.error) {
+      return '<div class="details-field"><div class="details-label">' + esc(item.label) + '</div><div class="details-value"><span class="badge badge-warn">Unavailable</span><div style="font-size:11px;color:var(--text3);margin-top:4px;">' + esc(item.error) + '</div></div></div>';
+    }
+    const output = item.data.output || 'No output';
+    return '<div class="details-field"><div class="details-label">' + esc(item.label) + '</div><div class="details-value"><span class="badge badge-ok">Completed</span><pre style="max-width:100%;max-height:160px;overflow:auto;margin:8px 0 0;padding:8px;background:var(--surface2);white-space:pre-wrap;">' + esc(output) + '</pre></div></div>';
+  }).join('');
+  el.innerHTML = '<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px;"><div><h3 style="margin:0;">WordPress CLI</h3><div style="font-size:12px;color:var(--text3);margin-top:4px;">Read-only health, version, plugin, and theme inspection</div></div><button class="btn btn-sm btn-outline" onclick="loadWordPressCliCard(' + Number(siteId) + ')">Refresh</button></div><div class="details-grid" style="margin-top:12px;">' + items + '</div></div>';
 }
 
 /* ===== WORDPRESS DATABASE CREDENTIALS ===== */
@@ -636,4 +667,4 @@ function runRuntimeAction(siteId, domain, action) {
 const sitesPage = { mount: loadSites, unmount() { activeSitesLifecycle = null; } };
 const siteDetailPage = { mount: loadSiteDetail, unmount() { activeSitesLifecycle = null; } };
 export { loadSites, loadSiteDetail, sitesPage, siteDetailPage };
-Object.assign(window, { loadSites, removeSite, showCreateSiteWizard, renderSiteWizardTemplateOptions, startSiteWizard, showSiteTemplateModal, loadSiteDetail, loadWordPressCredentialCard, renderWordPressCredentialCard, rotateWordPressDatabasePassword, pollWordPressRotationJob, loadPhpMailCard, renderPhpMailCard, enablePhpMail, disablePhpMail, loadRuntimeCard, refreshRuntimeCard, buildRuntimeActions, runRuntimeAction });
+Object.assign(window, { loadSites, removeSite, showCreateSiteWizard, renderSiteWizardTemplateOptions, startSiteWizard, showSiteTemplateModal, loadSiteDetail, loadWordPressCliCard, loadWordPressCredentialCard, renderWordPressCredentialCard, rotateWordPressDatabasePassword, pollWordPressRotationJob, loadPhpMailCard, renderPhpMailCard, enablePhpMail, disablePhpMail, loadRuntimeCard, refreshRuntimeCard, buildRuntimeActions, runRuntimeAction });

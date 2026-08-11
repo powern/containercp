@@ -110,6 +110,27 @@ std::string wordPressCliOperationName(WordPressCliOperation operation) {
     return "unknown";
 }
 
+bool parseWordPressCliOperation(const std::string& value,
+                                WordPressCliOperation& operation) {
+    if (value == "core-is-installed") {
+        operation = WordPressCliOperation::CoreIsInstalled;
+        return true;
+    }
+    if (value == "core-version") {
+        operation = WordPressCliOperation::CoreVersion;
+        return true;
+    }
+    if (value == "plugin-list") {
+        operation = WordPressCliOperation::PluginList;
+        return true;
+    }
+    if (value == "theme-list") {
+        operation = WordPressCliOperation::ThemeList;
+        return true;
+    }
+    return false;
+}
+
 WordPressCliService::WordPressCliService(runtime::CommandExecutor& executor,
                                          WordPressRuntimeContextResolver& resolver,
                                          config::Config& config,

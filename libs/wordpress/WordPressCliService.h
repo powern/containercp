@@ -21,6 +21,8 @@ enum class WordPressCliOperation {
 };
 
 std::string wordPressCliOperationName(WordPressCliOperation operation);
+bool parseWordPressCliOperation(const std::string& value,
+                                WordPressCliOperation& operation);
 
 struct WordPressCliArtifact {
     bool ok = false;

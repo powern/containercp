@@ -571,6 +571,36 @@ TEST_CASE("Database DB-4 API surface exposes job-backed transfer without paths o
     CHECK(view.find("supported_import_formats") != std::string::npos);
 }
 
+TEST_CASE("WordPress read-only API exposes only typed operations and safe results") {
+    std::ifstream api_in(std::string(TEST_SOURCE_DIR) + "/libs/api/ApiServer.cpp");
+    REQUIRE(api_in.is_open());
+    std::string api((std::istreambuf_iterator<char>(api_in)), std::istreambuf_iterator<char>());
+
+    CHECK(api.find("/api/wordpress/cli/") != std::string::npos);
+    CHECK(api.find("parseWordPressCliOperation") != std::string::npos);
+    CHECK(api.find("WordPressRuntimeContextResolver") != std::string::npos);
+    CHECK(api.find("WordPressCliService service") != std::string::npos);
+    CHECK(api.find("The typed WordPress operation could not be completed") != std::string::npos);
+    const auto route_start = api.find("router_.add_prefix(\"GET\", \"/api/wordpress/cli/");
+    const auto route_end = api.find("router_.add(\"GET\", \"/api/settings\"", route_start);
+    REQUIRE(route_start != std::string::npos);
+    REQUIRE(route_end != std::string::npos);
+    const std::string route = api.substr(route_start, route_end - route_start);
+    CHECK(route.find("context.private_network") == std::string::npos);
+    CHECK(route.find("context.php_container") == std::string::npos);
+    CHECK(route.find("req.body") == std::string::npos);
+
+    std::ifstream cli_in(std::string(TEST_SOURCE_DIR) + "/libs/wordpress/WordPressCliService.cpp");
+    REQUIRE(cli_in.is_open());
+    std::string cli((std::istreambuf_iterator<char>(cli_in)), std::istreambuf_iterator<char>());
+    CHECK(cli.find("wp eval") == std::string::npos);
+    CHECK(cli.find("std::system") == std::string::npos);
+    CHECK(cli.find("--read-only") != std::string::npos);
+    CHECK(cli.find("--cap-drop=ALL") != std::string::npos);
+    CHECK(cli.find("--security-opt=no-new-privileges") != std::string::npos);
+    CHECK(cli.find("docker_executable_") != std::string::npos);
+}
+
 TEST_CASE("MariaDB service-account init script rejects missing variables without echoing secrets") {
     std::ifstream in(std::string(TEST_SOURCE_DIR) + "/libs/provider/DockerComposeProvider.cpp");
     REQUIRE(in.is_open());

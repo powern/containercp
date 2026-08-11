@@ -26,8 +26,10 @@
 #include "migration/VestaSiteImporter.h"
 #include "provider/DockerComposeProvider.h"
 #include "utils/Validator.h"
+#include "wordpress/WordPressCliService.h"
 
 #include <arpa/inet.h>
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
@@ -927,6 +929,80 @@ bool ApiServer::start() {
                  << "\",\"message\":\"" << JsonFormatter::escape(issue.message) << "\"}";
         }
         json << "]}}";
+        r.body = json.str();
+        return r;
+    });
+
+    // GET /api/wordpress/cli/<site_id>/<typed-operation>
+    // The client supplies only the managed site and approved operation. Runtime
+    // identity, mounts, image, network, UID/GID, and Phar stay daemon-owned.
+    router_.add_prefix("GET", "/api/wordpress/cli/", [&s, &json_error](const Request& req) {
+        Response r;
+        const std::string prefix = "/api/wordpress/cli/";
+        const std::string remaining = req.path.substr(prefix.size());
+        const auto first_slash = remaining.find('/');
+        if (first_slash == std::string::npos || first_slash == 0 ||
+            first_slash + 1 >= remaining.size() ||
+            remaining.find('/', first_slash + 1) != std::string::npos) {
+            r.status_code = 400;
+            r.body = json_error("invalid_request", "Usage: GET /api/wordpress/cli/<site_id>/<operation>");
+            return r;
+        }
+
+        const std::string id_text = remaining.substr(0, first_slash);
+        if (!std::all_of(id_text.begin(), id_text.end(), [](unsigned char c) {
+                return std::isdigit(c) != 0;
+            })) {
+            r.status_code = 400;
+            r.body = json_error("invalid_identifier", "Site id must be numeric");
+            return r;
+        }
+        uint64_t site_id = 0;
+        try {
+            site_id = std::stoull(id_text);
+        } catch (...) {
+            site_id = 0;
+        }
+        if (site_id == 0) {
+            r.status_code = 400;
+            r.body = json_error("invalid_identifier", "Site id must be a positive numeric identifier");
+            return r;
+        }
+        if (s.sites().find_by_id(site_id) == nullptr) {
+            r.status_code = 404;
+            r.body = json_error("site_not_found", "Managed site was not found");
+            return r;
+        }
+
+        wordpress::WordPressCliOperation operation;
+        const std::string operation_text = remaining.substr(first_slash + 1);
+        if (!wordpress::parseWordPressCliOperation(operation_text, operation)) {
+            r.status_code = 400;
+            r.body = json_error("invalid_operation", "Operation is not in the read-only WP-CLI allowlist");
+            return r;
+        }
+
+        runtime::CommandExecutor executor;
+        wordpress::WordPressConfigService config_service(s.sites());
+        wordpress::WordPressRuntimeContextResolver resolver(
+            executor, s.sites(), config_service, s.config(), s.logger());
+        wordpress::WordPressCliService service(
+            executor, resolver, s.config(), s.logger());
+        const auto result = service.run(site_id, operation);
+        if (!result.success) {
+            r.status_code = result.failure_code == "site_not_found" ? 404 : 503;
+            r.body = json_error(result.failure_code.empty() ? "wordpress_cli_failed" : result.failure_code,
+                                "The typed WordPress operation could not be completed");
+            return r;
+        }
+
+        std::ostringstream json;
+        json << "{\"success\":true,\"data\":{";
+        json << "\"site_id\":" << site_id
+             << ",\"operation\":\"" << JsonFormatter::escape(operation_text) << "\""
+             << ",\"output\":\"" << JsonFormatter::escape(result.output) << "\""
+             << ",\"cleanup_succeeded\":" << (result.cleanup_succeeded ? "true" : "false")
+             << "}}";
         r.body = json.str();
         return r;
     });
