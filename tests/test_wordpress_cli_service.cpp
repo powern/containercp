@@ -400,9 +400,22 @@ TEST_CASE("WordPressCliService real disposable WordPress lifecycle") {
     } timeout_stub_cleanup{timeout_docker};
     std::ofstream(timeout_docker)
         << "#!/bin/sh\n"
-        << "if [ \"$1\" = \"run\" ]; then sleep 3; exit 124; fi\n"
-        << "if [ \"$1\" = \"rm\" ]; then exit 0; fi\n"
-        << "if [ \"$1\" = \"inspect\" ]; then exit 1; fi\n"
+        << "state=/tmp/containercp-wpcli-timeout-docker.state\n"
+        << "command=\"$1\"; shift\n"
+        << "if [ \"$command\" = \"run\" ]; then\n"
+        << "  runner=; site=; operation=; execution=\n"
+        << "  while [ $# -gt 0 ]; do\n"
+        << "    case \"$1\" in\n"
+        << "      --name) runner=\"$2\"; shift 2;;\n"
+        << "      --label) case \"$2\" in containercp.wpcli.site.id=*) site=\"${2#*=}\";; containercp.wpcli.operation=*) operation=\"${2#*=}\";; containercp.wpcli.execution.id=*) execution=\"${2#*=}\";; esac; shift 2;;\n"
+        << "      *) shift;;\n"
+        << "    esac\n"
+        << "  done\n"
+        << "  printf '%s|true|%s|%s|%s|%s\\n' \"/$runner\" \"$site\" \"$operation\" \"$execution\" \"$runner\" > \"$state\"\n"
+        << "  sleep 3; exit 124\n"
+        << "fi\n"
+        << "if [ \"$command\" = \"inspect\" ]; then [ -f \"$state\" ] && cat \"$state\" && exit 0; exit 1; fi\n"
+        << "if [ \"$command\" = \"rm\" ]; then /bin/rm -f \"$state\"; exit 0; fi\n"
         << "exit 1\n";
     REQUIRE(::chmod(timeout_docker.c_str(), 0555) == 0);
     containercp::wordpress::WordPressCliService timeout_service(
@@ -411,6 +424,134 @@ TEST_CASE("WordPressCliService real disposable WordPress lifecycle") {
     CHECK_FALSE(timed_out.success);
     CHECK(timed_out.failure_code == "wordpress_cli_timeout");
     CHECK(timed_out.cleanup_succeeded);
+
+    const auto run_ownership_case = [&](const std::string& mode,
+                                        const std::string& expected_code,
+                                        bool expect_cleanup,
+                                        bool expect_success) {
+        const auto stub = std::filesystem::path("/tmp/containercp-wpcli-ownership-" + mode + ".sh");
+        const auto state = std::filesystem::path("/tmp/containercp-wpcli-ownership-" + mode + ".state");
+        const auto marker = std::filesystem::path("/tmp/containercp-wpcli-ownership-" + mode + ".removed");
+        std::filesystem::remove(state);
+        std::filesystem::remove(marker);
+        struct OwnershipStubCleanup {
+            std::filesystem::path stub;
+            std::filesystem::path state;
+            std::filesystem::path marker;
+            ~OwnershipStubCleanup() {
+                std::filesystem::remove(stub);
+                std::filesystem::remove(state);
+                std::filesystem::remove(marker);
+            }
+        } cleanup{stub, state, marker};
+
+        std::ofstream(stub)
+            << "#!/bin/sh\n"
+            << "mode='" << mode << "'\n"
+            << "state='" << state.string() << "'\n"
+            << "marker='" << marker.string() << "'\n"
+            << "command=\"$1\"; shift\n"
+            << "if [ \"$command\" = \"run\" ]; then\n"
+            << "  runner=; site=; operation=; execution=\n"
+            << "  while [ $# -gt 0 ]; do\n"
+            << "    case \"$1\" in\n"
+            << "      --name) runner=\"$2\"; shift 2;;\n"
+            << "      --label) case \"$2\" in containercp.wpcli.site.id=*) site=\"${2#*=}\";; containercp.wpcli.operation=*) operation=\"${2#*=}\";; containercp.wpcli.execution.id=*) execution=\"${2#*=}\";; esac; shift 2;;\n"
+            << "      *) shift;;\n"
+            << "    esac\n"
+            << "  done\n"
+            << "  managed=true; [ \"$mode\" = missing-label ] || [ \"$mode\" = name-prefix-only ] || [ \"$mode\" = collision ] && managed=false\n"
+            << "  [ \"$mode\" = wrong-site ] && site=999999\n"
+            << "  [ \"$mode\" = wrong-execution ] && execution=wrong-execution\n"
+            << "  [ \"$mode\" = forged-partial ] && execution=\n"
+            << "  runner_label=\"$runner\"; [ \"$mode\" = forged-partial ] && runner_label=\n"
+            << "  printf '/%s|%s|%s|%s|%s|%s\\n' \"$runner\" \"$managed\" \"$site\" \"$operation\" \"$execution\" \"$runner_label\" > \"$state\"\n"
+            << "  [ \"$mode\" = collision ] && exit 125\n"
+            << "  exit 0\n"
+            << "fi\n"
+            << "if [ \"$command\" = \"inspect\" ]; then [ -f \"$state\" ] && cat \"$state\" && exit 0; exit 1; fi\n"
+            << "if [ \"$command\" = \"rm\" ]; then touch \"$marker\"; /bin/rm -f \"$state\"; exit 0; fi\n"
+            << "if [ \"$command\" = \"ps\" ]; then printf 'containercp-wpcli-stale\\n'; exit 0; fi\n"
+            << "exit 1\n";
+        REQUIRE(::chmod(stub.c_str(), 0555) == 0);
+        if (mode == "reconcile-managed" || mode == "reconcile-unmanaged") {
+            std::ofstream(state) << "/containercp-wpcli-stale|" << (mode == "reconcile-managed" ? "true" : "false")
+                                 << "|" << site_id << "|core-version|reconcile-execution|containercp-wpcli-stale\n";
+        }
+
+        containercp::wordpress::WordPressCliService ownership_service(
+            executor, resolver, config, containercp::logger::Logger::instance(), stub.string(), 5, 5);
+        const auto result = mode == "reconcile-managed" || mode == "reconcile-unmanaged"
+            ? ownership_service.reconcile_stale_runners()
+            : ownership_service.run(site_id, containercp::wordpress::WordPressCliOperation::CoreVersion);
+        CAPTURE(mode);
+        CAPTURE(result.success);
+        CAPTURE(result.failure_code);
+        CAPTURE(result.cleanup_succeeded);
+        CHECK(result.success == expect_success);
+        CHECK(result.cleanup_succeeded == expect_cleanup);
+        if (!expected_code.empty()) CHECK(result.failure_code == expected_code);
+        CHECK(std::filesystem::exists(marker) == expect_cleanup);
+        if (mode == "collision") CHECK(std::filesystem::exists(state));
+    };
+
+    run_ownership_case("normal", "", true, true);
+    run_ownership_case("wrong-execution", "wordpress_cli_runner_identity_mismatch", false, false);
+    run_ownership_case("wrong-site", "wordpress_cli_runner_identity_mismatch", false, false);
+    run_ownership_case("missing-label", "wordpress_cli_runner_identity_mismatch", false, false);
+    run_ownership_case("name-prefix-only", "wordpress_cli_runner_identity_mismatch", false, false);
+    run_ownership_case("forged-partial", "wordpress_cli_runner_identity_mismatch", false, false);
+    run_ownership_case("collision", "wordpress_cli_runner_identity_mismatch", false, false);
+    run_ownership_case("reconcile-managed", "", true, true);
+    run_ownership_case("reconcile-unmanaged", "wordpress_cli_reconciliation_rejected", false, false);
+
+    const auto collision_wrapper = std::filesystem::path("/tmp/containercp-wpcli-real-collision-docker.sh");
+    const auto collision_name_file = std::filesystem::path("/tmp/containercp-wpcli-real-collision-name");
+    struct CollisionCleanup {
+        containercp::runtime::CommandExecutor& executor;
+        std::filesystem::path wrapper;
+        std::filesystem::path name_file;
+        ~CollisionCleanup() {
+            std::ifstream input(name_file);
+            std::string name;
+            std::getline(input, name);
+            if (!name.empty()) (void)executor.run({"/usr/bin/docker", "rm", "-f", name});
+            std::filesystem::remove(wrapper);
+            std::filesystem::remove(name_file);
+        }
+    } collision_cleanup{executor, collision_wrapper, collision_name_file};
+    std::ofstream(collision_wrapper)
+        << "#!/bin/sh\n"
+        << "if [ \"$1\" = run ]; then\n"
+        << "  shift\n"
+        << "  previous=\"$@\"\n"
+        << "  set -- $previous\n"
+        << "  while [ $# -gt 0 ]; do\n"
+        << "    if [ \"$1\" = --name ]; then name=\"$2\"; break; fi\n"
+        << "    shift\n"
+        << "  done\n"
+        << "  printf '%s\\n' \"$name\" > '" << collision_name_file.string() << "'\n"
+        << "  /usr/bin/docker run -d --name \"$name\" alpine sleep 30 >/dev/null\n"
+        << "  set -- $previous\n"
+        << "  exec /usr/bin/docker \"$@\"\n"
+        << "fi\n"
+        << "exec /usr/bin/docker \"$@\"\n";
+    REQUIRE(::chmod(collision_wrapper.c_str(), 0555) == 0);
+    containercp::wordpress::WordPressCliService real_collision_service(
+        executor, resolver, config, containercp::logger::Logger::instance(), collision_wrapper.string(), 10, 5);
+    const auto collision_result = real_collision_service.run(
+        site_id, containercp::wordpress::WordPressCliOperation::CoreVersion);
+    CHECK_FALSE(collision_result.success);
+    CHECK(collision_result.failure_code == "wordpress_cli_runner_identity_mismatch");
+    CHECK_FALSE(collision_result.cleanup_succeeded);
+    std::ifstream collision_name_input(collision_name_file);
+    std::string collision_name;
+    std::getline(collision_name_input, collision_name);
+    REQUIRE(!collision_name.empty());
+    const auto collision_inspect = executor.run({"/usr/bin/docker", "inspect", collision_name,
+                                                 "--format", "{{.State.Status}}"});
+    REQUIRE(collision_inspect.exit_code == 0);
+    CHECK(collision_inspect.out.find("running") != std::string::npos);
 
     for (const auto& entry : std::filesystem::recursive_directory_iterator(public_dir / "wp-content")) {
         struct stat metadata{};

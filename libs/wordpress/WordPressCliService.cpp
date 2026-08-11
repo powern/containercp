@@ -19,6 +19,12 @@ constexpr std::size_t kMaxOutputBytes = 65536;
 constexpr const char* kExpectedWpCliVersion = "2.11.0";
 constexpr const char* kRunnerLabel = "containercp.wpcli.managed=true";
 constexpr const char* kRunnerPrefix = "containercp-wpcli-";
+constexpr const char* kRunnerInspectFormat =
+    "{{.Name}}|{{index .Config.Labels \"containercp.wpcli.managed\"}}|"
+    "{{index .Config.Labels \"containercp.wpcli.site.id\"}}|"
+    "{{index .Config.Labels \"containercp.wpcli.operation\"}}|"
+    "{{index .Config.Labels \"containercp.wpcli.execution.id\"}}|"
+    "{{index .Config.Labels \"containercp.wpcli.runner.id\"}}";
 
 std::string trim(std::string value) {
     while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())) != 0) {
@@ -344,10 +350,10 @@ bool WordPressCliService::trusted_docker_executable() const {
     return (metadata.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) != 0;
 }
 
-std::string WordPressCliService::runner_name(uint64_t site_id) const {
-    const auto suffix = security::SecureRandom::hex(8);
-    if (!suffix.has_value()) return {};
-    return std::string(kRunnerPrefix) + std::to_string(site_id) + "-" + *suffix;
+std::string WordPressCliService::runner_name(uint64_t site_id,
+                                             const std::string& execution_id) const {
+    if (execution_id.empty()) return {};
+    return std::string(kRunnerPrefix) + std::to_string(site_id) + "-" + execution_id;
 }
 
 runtime::CommandResult WordPressCliService::execute_docker(const std::vector<std::string>& args,
@@ -366,8 +372,23 @@ bool WordPressCliService::verify_runner_absent(const std::string& identifier) co
     return inspected.exit_code != 0;
 }
 
-WordPressCliResult WordPressCliService::cleanup_runner(const std::string& runner) const {
+WordPressCliResult WordPressCliService::cleanup_runner(const std::string& runner,
+                                                       uint64_t site_id,
+                                                       const std::string& operation_name,
+                                                       const std::string& execution_id) const {
     WordPressCliResult result;
+    const auto inspected = execute_docker({"inspect", runner, "--format", kRunnerInspectFormat},
+                                          cleanup_timeout_seconds_, 4096);
+    const auto fields = split_pipe(inspected.out);
+    const bool owned = inspected.exit_code == 0 && fields.size() == 6 &&
+                       fields[0] == "/" + runner && fields[1] == "true" &&
+                       fields[2] == std::to_string(site_id) && fields[3] == operation_name &&
+                       fields[4] == execution_id && fields[5] == runner;
+    if (!owned) {
+        result.failure_code = "wordpress_cli_runner_identity_mismatch";
+        result.message = "WP-CLI runner ownership could not be proven before cleanup";
+        return result;
+    }
     const auto removed = execute_docker({"rm", "-f", runner}, cleanup_timeout_seconds_, 4096);
     if (!verify_runner_absent(runner)) {
         result.failure_code = "wordpress_cli_runner_cleanup_failed";
@@ -416,7 +437,11 @@ WordPressCliResult WordPressCliService::run_command(uint64_t site_id,
     const auto artifact = validate_artifact();
     if (!artifact.ok) return failure(artifact.failure_code, artifact.message);
 
-    const auto name = runner_name(site_id);
+    const auto execution_id = security::SecureRandom::hex(16);
+    if (!execution_id.has_value()) {
+        return failure("wordpress_cli_execution_id_failed", "Could not generate an internal WP-CLI execution identity");
+    }
+    const auto name = runner_name(site_id, *execution_id);
     if (name.empty()) return failure("wordpress_cli_runner_name_failed", "Could not generate an internal runner name");
 
     std::vector<std::string> command{
@@ -424,6 +449,8 @@ WordPressCliResult WordPressCliService::run_command(uint64_t site_id,
         "--label", kRunnerLabel,
         "--label", "containercp.wpcli.site.id=" + std::to_string(site_id),
         "--label", "containercp.wpcli.operation=" + operation_name,
+        "--label", "containercp.wpcli.execution.id=" + *execution_id,
+        "--label", "containercp.wpcli.runner.id=" + name,
         "--network", context.private_network,
         "--mount", "type=bind,src=" + context.document_root.string() + ",dst=" + context.container_document_root + (writable ? "" : ",readonly"),
         "--mount", "type=bind,src=" + artifact.phar_path.string() + ",dst=/opt/containercp/wp-cli/wp-cli.phar,readonly",
@@ -444,7 +471,7 @@ WordPressCliResult WordPressCliService::run_command(uint64_t site_id,
     command.insert(command.end(), arguments.begin(), arguments.end());
 
     const auto execution = execute_docker(command, runner_timeout_seconds_, kMaxOutputBytes);
-    auto cleanup = cleanup_runner(name);
+    auto cleanup = cleanup_runner(name, site_id, operation_name, *execution_id);
     WordPressCliResult result;
     result.output = execution.out;
     result.diagnostic = execution.err;
@@ -468,14 +495,21 @@ WordPressCliResult WordPressCliService::run_command(uint64_t site_id,
 
 WordPressCliResult WordPressCliService::reconcile_runner(const std::string& identifier) const {
     const auto inspected = execute_docker({"inspect", identifier, "--format",
-        "{{.Name}}|{{index .Config.Labels \"containercp.wpcli.managed\"}}"},
+        kRunnerInspectFormat},
         cleanup_timeout_seconds_, 4096);
     const auto fields = split_pipe(inspected.out);
-    if (inspected.exit_code != 0 || fields.size() != 2 || fields[1] != "true" ||
-        fields[0].find("/" + std::string(kRunnerPrefix)) != 0) {
+    if (inspected.exit_code != 0 || fields.size() != 6 || fields[1] != "true" ||
+        fields[0] != "/" + identifier || fields[0].find("/" + std::string(kRunnerPrefix)) != 0 ||
+        fields[2].empty() || fields[3].empty() || fields[4].empty() || fields[5] != identifier) {
         return failure("wordpress_cli_reconciliation_rejected", "Unmanaged runner was not eligible for cleanup");
     }
-    auto cleanup = cleanup_runner(identifier);
+    uint64_t site_id = 0;
+    try {
+        site_id = std::stoull(fields[2]);
+    } catch (...) {
+        return failure("wordpress_cli_reconciliation_rejected", "Managed runner site identity is invalid");
+    }
+    auto cleanup = cleanup_runner(identifier, site_id, fields[3], fields[4]);
     if (!cleanup.success) return cleanup;
     return cleanup;
 }

@@ -6,6 +6,31 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-11 | `pending` | fix: prove WP-CLI runner ownership before cleanup
+
+**Summary:** Added execution-scoped WP-CLI runner identity labels and
+fail-closed ownership verification before destructive cleanup.
+
+**Files changed:** `libs/wordpress/WordPressCliService.h`,
+`libs/wordpress/WordPressCliService.cpp`,
+`tests/test_wordpress_cli_service.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Runner cleanup now requires the exact managed label,
+site ID, typed operation, unique execution ID, and runner ID to match the
+current operation. Name collisions, partial/forged labels, wrong sites, wrong
+executions, and unmanaged containers are not removed or reused.
+
+**Validation:** The real disposable lifecycle passed 1/1 case and 545/545
+assertions, including managed cleanup, stale reconciliation, partial-label
+rejection, collision protection, and an unrelated running Docker container
+that remained intact after a real name collision. Full deterministic CTest is
+required before commit.
+
+**Known risks:** Cleanup-state error classification is completed in the next
+corrective phase; ownership mismatch already fails closed.
+
+---
+
 ## 2026-08-11 | `548a97a` | test: prove WP-CLI timeout cleanup
 
 **Summary:** Added a deterministic timeout seam and real disposable timeout

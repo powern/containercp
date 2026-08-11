@@ -89,8 +89,11 @@ public:
 private:
     WordPressCliResult failure(std::string code, std::string message) const;
     bool trusted_docker_executable() const;
-    std::string runner_name(uint64_t site_id) const;
-    WordPressCliResult cleanup_runner(const std::string& runner) const;
+    std::string runner_name(uint64_t site_id, const std::string& execution_id) const;
+    WordPressCliResult cleanup_runner(const std::string& runner,
+                                     uint64_t site_id,
+                                     const std::string& operation_name,
+                                     const std::string& execution_id) const;
     bool verify_runner_absent(const std::string& identifier) const;
     WordPressCliResult reconcile_runner(const std::string& identifier) const;
     WordPressCliResult run_command(uint64_t site_id,
