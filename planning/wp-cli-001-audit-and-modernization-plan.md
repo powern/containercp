@@ -539,3 +539,176 @@ configuration remains configuration/code based.
 - No source files or tests were modified during the audit.
 - No commit was created during the audit.
 - Nothing was pushed during the audit.
+
+## WPCLI-002 Architectural Corrections
+
+The formal architecture proposal supersedes the modernization target and phase
+details above where they conflict:
+
+`planning/proposals/ARCH-012-WordPressCliExecution.md`
+
+The proposal is currently `Review`. No implementation phase may start until it
+is explicitly moved to `Approved`.
+
+### Corrected execution model
+
+```text
+Managed Site ID
+  -> canonical WordPressRuntimeContext
+  -> typed WordPressCliOperation
+  -> validated runner plan
+  -> bounded absolute-path CommandExecutor
+  -> ephemeral runner using actual selected PHP image ID
+  -> selected private network and document-root mount
+  -> proven PHP-FPM non-root UID/GID
+  -> redacted typed result and audit event
+  -> REST API in a later phase
+  -> GUI in a later phase
+```
+
+The actual PHP image is discovered from the selected site's running `php`
+container. `Domain.php_version`, the configured PHP default, and
+`PhpVersionManager::get_default()` are not authoritative for an existing
+site's WP-CLI runtime.
+
+The runner uses the selected container's immutable image ID and a separately
+pinned, read-only WP-CLI Phar. It does not use a generic PHP image,
+host-installed WP-CLI, or a permanent WP-CLI installation in every PHP image.
+
+The canonical mutation identity is the selected PHP container's proven,
+non-root PHP-FPM worker UID/GID. `Site.owner` and SFTP users/groups are not
+treated as that identity. If the identity cannot be proven, filesystem-
+mutating operations fail closed and no root fallback is allowed.
+
+### Corrected initial read-only allowlist
+
+Phase 2 is limited to:
+
+- `core is-installed`;
+- `core version`;
+- `plugin list`;
+- `theme list`.
+
+Phase 2 excludes config inspection, database checks, credentials, arbitrary
+options, arbitrary arguments, and arbitrary commands. Existing
+`WordPressConfigService`, `WordPressRuntimeVerifier`, and database credential
+rotation remain their current owners.
+
+### Revised phases
+
+#### Phase 0: Architecture Proposal and Contract
+
+Review and approve `ARCH-012-WordPressCliExecution.md`. This phase is
+documentation only and includes no runner, API, GUI, migration, or test
+implementation.
+
+#### Separate Migration Correctness Task
+
+Fix only the existing `VestaSiteImporter` issues found by WPCLI-001:
+
+- hard-coded `site-N-web` probing;
+- Apache/Nginx config validation mismatch;
+- centralized migration domain/path validation;
+- migration diagnostic redaction.
+
+This is a separate task, separate test scope, and separate logical commit. It
+is not WP-CLI implementation.
+
+#### Phase 1: Canonical Managed-Site Runtime Context
+
+Extend the existing WordPress/runtime boundaries only as needed to resolve:
+
+- selected managed site;
+- canonical site and document roots;
+- compose/runtime identity;
+- actual running PHP container;
+- actual immutable PHP image ID;
+- selected private network;
+- PHP service identity;
+- proven PHP-FPM worker UID/GID;
+- runtime capability and fail-closed status.
+
+Do not use configured PHP defaults as runtime truth. Do not add an API, GUI,
+mutation, or migration fix in this phase.
+
+#### Phase 2: Read-Only WP-CLI Backend and Early Integration Gate
+
+Add one narrow typed `WordPressCliService` using the selected actual PHP image,
+the pinned Phar, selected private network, selected document root, non-root
+identity, bounded execution, cleanup, redaction, and the four-operation
+allowlist.
+
+Real disposable WordPress integration is required before Phase 2 completion.
+It must prove the four operations, actual image use, network/mount isolation,
+cross-site rejection, bounded output, timeout cleanup, and no root-owned files.
+
+No API, GUI, mutation, config list/get, DB check, or arbitrary console belongs
+to this phase.
+
+#### Phase 3: Typed Read-Only REST API and GUI
+
+Expose only the four approved read-only operations through typed API endpoints
+and a thin Site Details UI. No raw argv, raw command field, arbitrary console,
+mutation, credential rotation change, or migration change is included.
+
+#### Phase 4: Approved Job-Backed Mutations
+
+Add only reviewed typed plugin/theme/core/language/cache operations. Require
+the proven PHP-FPM UID/GID, operation-specific write mounts, job execution,
+public-safe audit, timeout, cleanup, and ownership tests. Database credential
+rotation remains separate and never passes passwords through WP-CLI.
+
+#### Phase 5: Full Disposable Integration and Stabilization
+
+Validate Apache, Nginx, at least two actual PHP image/runtime versions,
+multiple sites, read-only operations, approved mutations, timeout/failure
+cleanup, ownership, audit, API, and GUI behavior.
+
+### Phase 2 integration gate
+
+The required disposable integration starts before API/UI implementation. It
+must prove:
+
+1. The correct managed site is selected.
+2. The actual running PHP image is used.
+3. The correct private network is used.
+4. Only the selected document root is mounted.
+5. `core is-installed` succeeds.
+6. `core version` succeeds.
+7. `plugin list` succeeds.
+8. `theme list` succeeds.
+9. Output and timeout bounds hold.
+10. Runner cleanup succeeds after success, failure, and timeout.
+11. No root-owned files are created.
+12. Cross-site execution is rejected.
+
+### Ownership and identity correction
+
+The former generic phrase `selected site UID/GID` is replaced by a concrete
+policy: the effective non-root PHP-FPM worker UID/GID of the selected running
+PHP container. It must be derived and proven. It must not be guessed, copied
+from `Site.owner`, or borrowed from the SFTP subsystem. Failure to prove it
+blocks WP-CLI execution and especially all mutations.
+
+### CommandExecutor correction
+
+The WP-CLI runner uses `CommandExecutor::run_safe()` only with a trusted
+absolute Docker executable path. The architecture does not add shell PATH
+lookup. A timeout must explicitly remove and verify removal of the runner
+container because terminating the local Docker CLI child is not sufficient.
+
+### Explicitly excluded from initial implementation
+
+- raw `config list`;
+- raw `config get`;
+- DB credentials;
+- database password operations;
+- `db check`;
+- arbitrary options;
+- arbitrary WP-CLI arguments;
+- arbitrary WP-CLI commands;
+- arbitrary PHP execution;
+- database reset/drop/repair/search-replace;
+- arbitrary WP-CLI console;
+- permanent WP-CLI installation in normal PHP images;
+- host-installed WP-CLI.

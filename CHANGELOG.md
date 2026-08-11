@@ -6,6 +6,33 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-11 | `pending` | docs: formalize WP-CLI execution architecture
+
+**Summary:** Added the WPCLI-002 Architecture Proposal and corrected the
+WPCLI-001 modernization plan. The architecture now requires actual running
+site PHP image discovery, immutable image-ID runner execution, pinned Phar
+integrity validation, proven PHP-FPM UID/GID, strict network/mount isolation,
+bounded cleanup, a four-operation read-only allowlist, and an early disposable
+WordPress integration gate.
+
+**Files changed:** `planning/proposals/ARCH-012-WordPressCliExecution.md`,
+`planning/wp-cli-001-audit-and-modernization-plan.md`, `CHANGELOG.md`
+
+**User-visible behavior:** No runtime behavior changes. WP-CLI remains
+unimplemented. No API endpoints, GUI controls, migration fixes, mutations, or
+arbitrary WP-CLI console were added.
+
+**Validation:** Proposal sections were checked against
+`planning/proposals/README.md`; the revised phase boundaries separate migration
+correctness from WP-CLI work; documentation-only diff validation and
+`git diff --check` are required before commit.
+
+**Known risks:** The proposal remains `Review` until explicitly approved.
+Actual PHP-FPM identity probing, runner artifact packaging, Docker cleanup, and
+multi-PHP disposable integration remain implementation blockers.
+
+---
+
 ## 2026-08-11 | `pending` | ui: redesign SFTP user management around a detail drawer
 
 **Summary:** Reworked the SFTP Access page to use the Databases inventory and detail-drawer interaction pattern instead of rendering the selected user's full detail inline on the page. Also fixed the users endpoint summary payload and preserved Apache traversal permissions when applying RW site access.
