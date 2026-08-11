@@ -20,6 +20,29 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-11 | `pending` | docs: audit existing WP-CLI path and modernization plan
+
+**Summary:** Documented the current ContainerCP WordPress execution paths and
+confirmed that WP-CLI is not yet implemented. Added an architecture-grounded,
+phased plan for introducing site-aware read-only and mutating WP-CLI support.
+
+**Files changed:** `planning/wp-cli-001-audit-and-modernization-plan.md`,
+`CHANGELOG.md`
+
+**User-visible behavior:** No runtime behavior changes. The repository now
+contains the WPCLI-001 audit baseline, current execution-flow evidence,
+security/isolation findings, test gaps, and reviewable modernization phases.
+
+**Validation:** Reviewed the current HEAD and worktree, confirmed `build2/`
+contains only local CMake/build artifacts, and ran `git diff --check` before
+commit. No source or test implementation was changed.
+
+**Known risks:** WP-CLI remains unavailable until the planned implementation
+phases are approved and implemented. The existing daemon/API root privilege and
+AllowAll authentication limitations remain unchanged.
+
+---
+
 ## 2026-08-11 | `pending` | bugfix: normalize SFTP bind-mount paths
 
 **Summary:** Fixed successful SFTP bind mounts being rejected by postcondition checks because Linux mountinfo omits the trailing slash from the source path while the provider expected one.
