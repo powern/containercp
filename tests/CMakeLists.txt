@@ -255,6 +255,8 @@ target_compile_options(arch009_linux_integration PRIVATE
 )
 
 add_test(NAME arch009_linux_integration COMMAND arch009_linux_integration)
+add_test(NAME wpcli_artifact_provisioning
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/test_wp_cli_provisioning.sh)
 set_tests_properties(arch009_linux_integration PROPERTIES
     LABELS arch009_linux_integration
     SKIP_RETURN_CODE 77

@@ -34,7 +34,11 @@ echo "[SYSTEM] Pulling latest code..."
 cd "$INSTALL_DIR"
 git pull
 
-# --- 2. Ensure build dependencies ---
+# --- 2. Provision reviewed WP-CLI artifact ---
+echo "[SYSTEM] Provisioning reviewed WP-CLI artifact..."
+bash "$INSTALL_DIR/scripts/provision-wp-cli.sh"
+
+# --- 3. Ensure build dependencies ---
 echo "[SYSTEM] Ensuring build dependencies..."
 if command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq
@@ -44,15 +48,15 @@ else
     echo "[WARN] apt-get not found; skipping automatic dependency installation."
 fi
 
-# --- 3. Configure ---
+# --- 4. Configure ---
 echo "[SYSTEM] Configuring build..."
 cmake -S "$INSTALL_DIR" -B "$INSTALL_DIR/build-release" -DCMAKE_BUILD_TYPE=Release
 
-# --- 4. Build ---
+# --- 5. Build ---
 echo "[SYSTEM] Building..."
 cmake --build "$INSTALL_DIR/build-release"
 
-# --- 5. Build ContainerCP PHP image if available ---
+# --- 6. Build ContainerCP PHP image if available ---
 PHP_IMAGE="ghcr.io/powern/containercp-php:8.4"
 if [ -f "$INSTALL_DIR/docker/php/Dockerfile" ]; then
     echo "[SYSTEM] Building ContainerCP PHP image..."
@@ -67,26 +71,26 @@ if [ -f "$INSTALL_DIR/docker/php/Dockerfile" ]; then
     echo "[SYSTEM] PHP image built: $PHP_IMAGE"
 fi
 
-# --- 6. Stop service before installing ---
+# --- 7. Stop service before installing ---
 echo "[SYSTEM] Stopping containercpd..."
 systemctl stop "$SERVICE" 2>/dev/null || true
 
-# --- 7. Install binaries ---
+# --- 8. Install binaries ---
 echo "[SYSTEM] Installing updated binaries..."
 cp "$INSTALL_DIR/build-release/containercpd" "$BIN_DIR/containercpd"
 cp "$INSTALL_DIR/build-release/containercp" "$BIN_DIR/containercp"
 chmod 755 "$BIN_DIR/containercpd" "$BIN_DIR/containercp"
 
-# --- 8. Update systemd service file ---
+# --- 9. Update systemd service file ---
 echo "[SYSTEM] Updating systemd service file..."
 cp "$INSTALL_DIR/packaging/containercpd.service" "/etc/systemd/system/containercpd.service"
 systemctl daemon-reload
 
-# --- 9. Start service ---
+# --- 10. Start service ---
 echo "[SYSTEM] Starting containercpd..."
 systemctl start "$SERVICE"
 
-# --- 9. Wait for daemon and verify health ---
+# --- 11. Wait for daemon and verify health ---
 echo "[SYSTEM] Waiting for daemon to become ready..."
 for i in $(seq 1 10); do
     sleep 1
@@ -100,7 +104,7 @@ for i in $(seq 1 10); do
     fi
 done
 
-# --- 10. Show status ---
+# --- 12. Show status ---
 if systemctl is-active --quiet "$SERVICE"; then
     echo "[SYSTEM] Update complete. containercpd is running."
     # Verify ReadWritePaths are applied (critical for SFTP provisioning)

@@ -79,28 +79,32 @@ mkdir -p "$LOG_DIR"
 # sshd managed include directory (created by OS package, safe to ensure)
 mkdir -p /etc/ssh/sshd_config.d
 
-# --- 7. Build ---
+# --- 8. Provision reviewed WP-CLI artifact ---
+echo "[SYSTEM] Provisioning reviewed WP-CLI artifact..."
+bash "$INSTALL_DIR/scripts/provision-wp-cli.sh"
+
+# --- 9. Build ---
 echo "[SYSTEM] Building ContainerCP (Release)..."
 cmake -S "$INSTALL_DIR" -B "$INSTALL_DIR/build-release" -DCMAKE_BUILD_TYPE=Release
 cmake --build "$INSTALL_DIR/build-release"
 
-# --- 8. Install binaries ---
+# --- 10. Install binaries ---
 echo "[SYSTEM] Installing binaries..."
 cp "$INSTALL_DIR/build-release/containercpd" "$BIN_DIR/containercpd"
 cp "$INSTALL_DIR/build-release/containercp" "$BIN_DIR/containercp"
 chmod 755 "$BIN_DIR/containercpd" "$BIN_DIR/containercp"
 
-# --- 9. Install systemd service ---
+# --- 11. Install systemd service ---
 echo "[SYSTEM] Installing systemd service..."
 cp "$INSTALL_DIR/packaging/containercpd.service" "$SERVICE_FILE"
 systemctl daemon-reload
 
-# --- 10. Enable and start service ---
+# --- 12. Enable and start service ---
 echo "[SYSTEM] Enabling and starting containercpd..."
 systemctl enable containercpd
 systemctl restart containercpd
 
-# --- 11. Wait and verify ---
+# --- 13. Wait and verify ---
 sleep 2
 if systemctl is-active --quiet containercpd; then
     echo "[SYSTEM] containercpd is running"
@@ -116,7 +120,7 @@ else
     echo "[WARN] containercpd may not have started. Check: systemctl status containercpd"
 fi
 
-# --- 12. Print URLs ---
+# --- 14. Print URLs ---
 HOST_IP=$(ip -4 addr show | grep -oP 'inet \K[\d.]+' | grep -v '127.0.0.1' | head -1 || echo "<server-ip>")
 echo ""
 echo "[SYSTEM] ========================================"

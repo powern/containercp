@@ -6,7 +6,33 @@ Format: date | commit | summary
 
 ---
 
-## 2026-08-11 | `pending` | fix: pin reviewed WP-CLI artifact policy
+## 2026-08-11 | `pending` | feat: provision pinned WP-CLI artifact
+
+**Summary:** Added idempotent install/update provisioning for the reviewed
+WP-CLI Phar and its root-owned read-only metadata.
+
+**Files changed:** `scripts/provision-wp-cli.sh`, `scripts/install.sh`,
+`scripts/update.sh`, `tests/test_wp_cli_provisioning.sh`,
+`tests/CMakeLists.txt`, `CHANGELOG.md`
+
+**User-visible behavior:** Clean installation and update paths provision the
+exact reviewed WP-CLI `2.11.0` artifact from its fixed release URL. Existing
+valid bundles are not replaced; missing, corrupt, wrong-version, wrong-SHA,
+symlinked, or writable bundles are repaired only after the downloaded artifact
+matches the reviewed SHA. Site operations never download WP-CLI.
+
+**Validation:** Provisioning regression passed clean install, ownership/mode,
+exact version/SHA, idempotence, corruption repair, wrong metadata repair,
+symlink replacement, writable-file repair, and floating-`latest` rejection.
+Full deterministic CTest is required before commit.
+
+**Known risks:** Provisioning requires network access during installation/update
+to retrieve the fixed official release artifact; runtime operations remain
+fail-closed if provisioning cannot complete.
+
+---
+
+## 2026-08-11 | `2bc3eda` | fix: pin reviewed WP-CLI artifact policy
 
 **Summary:** Added repository-controlled reviewed WP-CLI artifact metadata and
 required installed metadata plus the actual Phar to match the official
