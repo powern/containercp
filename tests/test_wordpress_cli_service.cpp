@@ -5,6 +5,7 @@
 #include "site/SiteManager.h"
 #include "storage/Verification.h"
 #include "wordpress/WordPressCliService.h"
+#include "wordpress/WordPressCliArtifactPolicy.h"
 #include "wordpress/WordPressCliAudit.h"
 #include "wordpress/WordPressConfigService.h"
 #include "wordpress/WordPressRuntimeContext.h"
@@ -26,9 +27,14 @@ namespace {
 
 struct ArtifactFixture {
     std::filesystem::path directory;
+    std::filesystem::path approved_copy = "/tmp/containercp-reviewed-wp-cli-test.phar";
 
     ArtifactFixture()
         : directory(containercp::config::Config::instance().data_root() + "/wp-cli") {
+        const auto installed = directory / "wp-cli.phar";
+        if (std::filesystem::exists(installed) && !std::filesystem::exists(approved_copy)) {
+            std::filesystem::copy_file(installed, approved_copy);
+        }
         std::filesystem::remove_all(directory);
         std::filesystem::create_directories(directory);
     }
@@ -44,6 +50,17 @@ struct ArtifactFixture {
         std::ofstream(directory / "version") << version << "\n";
         const auto checksum = sha.empty() ? containercp::storage::Verification::sha256(content) : sha;
         std::ofstream(directory / "sha256") << checksum << "\n";
+        ::chmod((directory / "wp-cli.phar").c_str(), 0444);
+        ::chmod((directory / "version").c_str(), 0444);
+        ::chmod((directory / "sha256").c_str(), 0444);
+    }
+
+    void write_approved() {
+        REQUIRE(std::filesystem::exists(approved_copy));
+        std::filesystem::copy_file(approved_copy, directory / "wp-cli.phar",
+                                   std::filesystem::copy_options::overwrite_existing);
+        std::ofstream(directory / "version") << containercp::wordpress::kReviewedWordPressCliVersion << "\n";
+        std::ofstream(directory / "sha256") << containercp::wordpress::kReviewedWordPressCliSha256 << "\n";
         ::chmod((directory / "wp-cli.phar").c_str(), 0444);
         ::chmod((directory / "version").c_str(), 0444);
         ::chmod((directory / "sha256").c_str(), 0444);
@@ -154,7 +171,7 @@ TEST_CASE("WordPressCliService fails closed when the Phar is missing") {
 
 TEST_CASE("WordPressCliService verifies pinned Phar metadata and SHA-256") {
     ArtifactFixture fixture;
-    fixture.write("stable-phar-content");
+    fixture.write_approved();
     auto& config = containercp::config::Config::instance();
     containercp::site::SiteManager sites;
     containercp::wordpress::WordPressConfigService config_service(sites);
@@ -166,12 +183,13 @@ TEST_CASE("WordPressCliService verifies pinned Phar metadata and SHA-256") {
     const auto artifact = service.validate_artifact();
     REQUIRE(artifact.ok);
     CHECK(artifact.version == "2.11.0");
-    CHECK(artifact.sha256 == containercp::storage::Verification::sha256("stable-phar-content"));
+    CHECK(artifact.sha256 == containercp::wordpress::kReviewedWordPressCliSha256);
 }
 
 TEST_CASE("WordPressCliService rejects a wrong Phar SHA-256") {
     ArtifactFixture fixture;
-    fixture.write("stable-phar-content", "2.11.0", std::string(64, '0'));
+    fixture.write_approved();
+    std::ofstream(fixture.directory / "sha256") << std::string(64, '0') << "\n";
     auto& config = containercp::config::Config::instance();
     containercp::site::SiteManager sites;
     containercp::wordpress::WordPressConfigService config_service(sites);
@@ -182,7 +200,7 @@ TEST_CASE("WordPressCliService rejects a wrong Phar SHA-256") {
 
     const auto artifact = service.validate_artifact();
     CHECK_FALSE(artifact.ok);
-    CHECK(artifact.failure_code == "wordpress_cli_artifact_integrity_failed");
+    CHECK(artifact.failure_code == "wordpress_cli_artifact_metadata_untrusted");
 }
 
 TEST_CASE("WordPressCliService rejects an unreviewed Phar version") {
@@ -198,7 +216,25 @@ TEST_CASE("WordPressCliService rejects an unreviewed Phar version") {
 
     const auto artifact = service.validate_artifact();
     CHECK_FALSE(artifact.ok);
-    CHECK(artifact.failure_code == "wordpress_cli_artifact_metadata_invalid");
+    CHECK(artifact.failure_code == "wordpress_cli_artifact_metadata_untrusted");
+}
+
+TEST_CASE("WordPressCliService rejects corruption after trusted metadata validation") {
+    ArtifactFixture fixture;
+    fixture.write_approved();
+    std::ofstream(fixture.directory / "wp-cli.phar", std::ios::binary | std::ios::trunc) << "corrupted";
+    ::chmod((fixture.directory / "wp-cli.phar").c_str(), 0444);
+    auto& config = containercp::config::Config::instance();
+    containercp::site::SiteManager sites;
+    containercp::wordpress::WordPressConfigService config_service(sites);
+    containercp::runtime::CommandExecutor executor;
+    containercp::wordpress::WordPressRuntimeContextResolver resolver(
+        executor, sites, config_service, config, containercp::logger::Logger::instance());
+    auto service = make_service(executor, resolver, config);
+
+    const auto artifact = service.validate_artifact();
+    CHECK_FALSE(artifact.ok);
+    CHECK(artifact.failure_code == "wordpress_cli_artifact_integrity_failed");
 }
 
 TEST_CASE("WordPressCliService rejects a symlink Phar") {

@@ -1,4 +1,5 @@
 #include "wordpress/WordPressCliService.h"
+#include "wordpress/WordPressCliArtifactPolicy.h"
 
 #include "security/SecureRandom.h"
 
@@ -16,7 +17,6 @@ namespace containercp::wordpress {
 namespace {
 
 constexpr std::size_t kMaxOutputBytes = 65536;
-constexpr const char* kExpectedWpCliVersion = "2.11.0";
 constexpr const char* kRunnerLabel = "containercp.wpcli.managed=true";
 constexpr const char* kRunnerPrefix = "containercp-wpcli-";
 constexpr const char* kRunnerInspectFormat =
@@ -319,16 +319,17 @@ WordPressCliArtifact WordPressCliService::validate_artifact() const {
     std::ostringstream sha_content;
     sha_content << sha_input.rdbuf();
     const std::string expected_sha = trim(sha_content.str());
-    if (artifact.version != kExpectedWpCliVersion || !valid_sha256(expected_sha)) {
-        artifact.failure_code = "wordpress_cli_artifact_metadata_invalid";
-        artifact.message = "Pinned WP-CLI version or SHA-256 metadata does not match the reviewed artifact";
+    if (artifact.version != kReviewedWordPressCliVersion ||
+        expected_sha != kReviewedWordPressCliSha256) {
+        artifact.failure_code = "wordpress_cli_artifact_metadata_untrusted";
+        artifact.message = "Installed WP-CLI metadata does not match the reviewed artifact policy";
         return artifact;
     }
 
     const std::string actual_sha = sha256_file(phar_path);
-    if (actual_sha.empty() || actual_sha != expected_sha) {
+    if (actual_sha.empty() || actual_sha != kReviewedWordPressCliSha256) {
         artifact.failure_code = "wordpress_cli_artifact_integrity_failed";
-        artifact.message = "Pinned WP-CLI Phar SHA-256 does not match its manifest";
+        artifact.message = "Pinned WP-CLI Phar SHA-256 does not match the reviewed artifact policy";
         return artifact;
     }
 

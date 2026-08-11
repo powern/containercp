@@ -6,7 +6,31 @@ Format: date | commit | summary
 
 ---
 
-## 2026-08-11 | `pending` | fix: prove WordPress mutation filesystem access
+## 2026-08-11 | `pending` | fix: pin reviewed WP-CLI artifact policy
+
+**Summary:** Added repository-controlled reviewed WP-CLI artifact metadata and
+required installed metadata plus the actual Phar to match the official
+`2.11.0` release SHA-256.
+
+**Files changed:** `libs/wordpress/WordPressCliArtifactPolicy.h`,
+`libs/wordpress/WordPressCliService.cpp`,
+`tests/test_wordpress_cli_service.cpp`,
+`docs/development/wp-cli-artifact.md`, `CHANGELOG.md`
+
+**User-visible behavior:** A root-owned bundle can no longer self-declare an
+arbitrary acceptable SHA. Wrong version, wrong metadata SHA, corruption,
+symlink, ownership, and writable-artifact mismatches fail closed.
+
+**Validation:** Five artifact-focused tests passed, including valid reviewed
+artifact validation, wrong SHA metadata, wrong version, post-policy corruption,
+and symlink rejection. Full deterministic CTest is required before commit.
+
+**Known risks:** Installation/update provisioning is completed in the next
+corrective phase; the runtime remains fail-closed while the artifact is absent.
+
+---
+
+## 2026-08-11 | `3c82484` | fix: prove WordPress mutation filesystem access
 
 **Summary:** Runtime context now probes filesystem access as the selected
 non-root PHP-FPM UID/GID before declaring mutation capability.
