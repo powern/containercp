@@ -6,7 +6,32 @@ Format: date | commit | summary
 
 ---
 
-## 2026-08-11 | `pending` | feat: provision pinned WP-CLI artifact
+## 2026-08-11 | `pending` | test: close WP-CLI production readiness gaps
+
+**Summary:** Expanded the real disposable matrix across Nginx/PHP 8.4 and
+Apache/PHP 8.3 with the complete approved mutation lifecycle and real Docker
+timeout cleanup.
+
+**Files changed:** `tests/test_wordpress_cli_matrix.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Both representative real managed sites now validate
+read-only operations, plugin/theme install/activation/deactivation/update/delete,
+core update, language install/update, cache flush, non-root file ownership,
+cross-site sentinels, immutable image selection, and managed-runner timeout
+cleanup with positive absence verification.
+
+**Validation:** The real two-site matrix passed 993/993 assertions, including
+Apache + PHP 8.3, Nginx + PHP 8.4, isolation, complete mutations, ownership,
+and a real managed Docker runner timeout. Full deterministic CTest is required
+before commit.
+
+**Known risks:** The core-update fixture uses the deterministic disposable
+WordPress source and remains dependent on the approved WP-CLI operation’s
+normal package/update behavior inside the disposable validation environment.
+
+---
+
+## 2026-08-11 | `e13985e` | feat: provision pinned WP-CLI artifact
 
 **Summary:** Added idempotent install/update provisioning for the reviewed
 WP-CLI Phar and its root-owned read-only metadata.

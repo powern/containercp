@@ -9,10 +9,14 @@
 #include "doctest/doctest.h"
 
 #include <chrono>
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
+#include <sys/stat.h>
 #include <thread>
 
 namespace {
@@ -125,6 +129,35 @@ MatrixSite create_matrix_site(containercp::runtime::CommandExecutor& executor,
     CAPTURE(install.out);
     CAPTURE(install.err);
     REQUIRE(install.exit_code == 0);
+
+    const auto php_container_result = compose({"ps", "-q", "php"});
+    REQUIRE(php_container_result.exit_code == 0);
+    const auto php_container = first_line(php_container_result.out);
+    REQUIRE(!php_container.empty());
+    const auto php_top = executor.run({"/usr/bin/docker", "top", php_container, "-eo", "pid,uid,gid,args"});
+    REQUIRE(php_top.exit_code == 0);
+    int64_t php_uid = -1;
+    int64_t php_gid = -1;
+    std::istringstream php_lines(php_top.out);
+    std::string php_line;
+    while (std::getline(php_lines, php_line)) {
+        if (php_line.find("php-fpm") == std::string::npos || php_line.find("pool") == std::string::npos) continue;
+        std::istringstream fields(php_line);
+        std::string pid_token;
+        std::string uid_token;
+        std::string gid_token;
+        if (fields >> pid_token >> uid_token >> gid_token &&
+            std::all_of(uid_token.begin(), uid_token.end(), [](unsigned char c) { return std::isdigit(c) != 0; }) &&
+            std::all_of(gid_token.begin(), gid_token.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
+            php_uid = std::stoll(uid_token);
+            php_gid = std::stoll(gid_token);
+            break;
+        }
+    }
+    REQUIRE(php_uid > 0);
+    REQUIRE(php_gid > 0);
+    REQUIRE(executor.run({"/usr/bin/chown", "-R", std::to_string(php_uid) + ":" + std::to_string(php_gid),
+                          public_dir.string()}).exit_code == 0);
     return {executor, root, compose_file};
 }
 
@@ -208,6 +241,114 @@ TEST_CASE("WordPressCliService disposable Apache Nginx multi-site multi-PHP matr
         CHECK(service.run(site_id, containercp::wordpress::WordPressCliOperation::ThemeList).success);
         CHECK(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::CacheFlush).success);
     }
+
+    const auto run_full_mutations = [&](uint64_t site_id, const std::filesystem::path& root) {
+        const auto public_dir = root / "public";
+        const auto plugin_source = public_dir / "matrix-plugin";
+        std::filesystem::create_directories(plugin_source);
+        std::ofstream(plugin_source / "matrix-plugin.php")
+            << "<?php\n/* Plugin Name: ContainerCP Matrix Plugin */\n";
+        REQUIRE(executor.run({"/usr/bin/zip", "-qr", (public_dir / "matrix-plugin.zip").string(),
+                              plugin_source.filename().string()}, public_dir.string()).exit_code == 0);
+        REQUIRE(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::PluginInstall,
+                                     "matrix-plugin.zip").success);
+        REQUIRE(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::PluginActivate,
+                                     "matrix-plugin").success);
+        REQUIRE(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::PluginDeactivate,
+                                     "matrix-plugin").success);
+        REQUIRE(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::PluginUpdate,
+                                     "matrix-plugin").success);
+        REQUIRE(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::PluginDelete,
+                                     "matrix-plugin").success);
+
+        const auto theme_source = public_dir / "matrix-theme";
+        std::filesystem::create_directories(theme_source);
+        std::ofstream(theme_source / "style.css") << "/*\nTheme Name: ContainerCP Matrix Theme\n*/\n";
+        std::ofstream(theme_source / "index.php") << "<?php\n";
+        REQUIRE(executor.run({"/usr/bin/zip", "-qr", (public_dir / "matrix-theme.zip").string(),
+                              theme_source.filename().string()}, public_dir.string()).exit_code == 0);
+        REQUIRE(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::ThemeInstall,
+                                     "matrix-theme.zip").success);
+        REQUIRE(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::ThemeActivate,
+                                     "matrix-theme").success);
+        REQUIRE(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::ThemeUpdate,
+                                     "matrix-theme").success);
+        REQUIRE(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::ThemeActivate,
+                                     "twentytwentyfive").success);
+        REQUIRE(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::ThemeDelete,
+                                     "matrix-theme").success);
+        REQUIRE(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::CoreUpdate).success);
+        REQUIRE(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::LanguageInstall,
+                                     "en_US").success);
+        REQUIRE(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::LanguageUpdate).success);
+        REQUIRE(service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::CacheFlush).success);
+
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(public_dir / "wp-content")) {
+            struct stat metadata{};
+            if (std::filesystem::is_regular_file(entry.symlink_status()) &&
+                ::lstat(entry.path().c_str(), &metadata) == 0) {
+                CHECK(metadata.st_uid != 0);
+            }
+        }
+    };
+
+    const std::filesystem::path sites_root = config.sites_dir();
+    run_full_mutations(nginx_id, sites_root / "wpcli-matrix-nginx.local");
+    run_full_mutations(apache_id, sites_root / "wpcli-matrix-apache.local");
+
+    const auto nginx_sentinel = sites_root / "wpcli-matrix-nginx.local/public/matrix-sentinel.txt";
+    const auto apache_sentinel = sites_root / "wpcli-matrix-apache.local/public/matrix-sentinel.txt";
+    std::ofstream(nginx_sentinel) << "nginx-only";
+    std::ofstream(apache_sentinel) << "apache-only";
+    CHECK(service.run(nginx_id, containercp::wordpress::WordPressCliOperation::CoreVersion).success);
+    CHECK(service.run(apache_id, containercp::wordpress::WordPressCliOperation::CoreVersion).success);
+    CHECK(std::filesystem::exists(nginx_sentinel));
+    CHECK(std::filesystem::exists(apache_sentinel));
+
+    const auto timeout_wrapper = std::filesystem::path("/tmp/containercp-wpcli-matrix-timeout-docker.sh");
+    const auto timeout_name_file = std::filesystem::path("/tmp/containercp-wpcli-matrix-timeout-name");
+    struct TimeoutCleanup {
+        containercp::runtime::CommandExecutor& executor;
+        std::filesystem::path wrapper;
+        std::filesystem::path name_file;
+        ~TimeoutCleanup() {
+            std::ifstream input(name_file);
+            std::string name;
+            std::getline(input, name);
+            if (!name.empty()) (void)executor.run({"/usr/bin/docker", "rm", "-f", name});
+            std::filesystem::remove(wrapper);
+            std::filesystem::remove(name_file);
+        }
+    } timeout_cleanup{executor, timeout_wrapper, timeout_name_file};
+    std::ofstream(timeout_wrapper)
+        << "#!/bin/sh\n"
+        << "if [ \"$1\" = run ]; then\n"
+        << "  shift; runner=; site=; operation=; execution=; runner_id=\n"
+        << "  while [ $# -gt 0 ]; do\n"
+        << "    case \"$1\" in\n"
+        << "      --name) runner=\"$2\"; shift 2;;\n"
+        << "      --label) case \"$2\" in containercp.wpcli.site.id=*) site=\"${2#*=}\";; containercp.wpcli.operation=*) operation=\"${2#*=}\";; containercp.wpcli.execution.id=*) execution=\"${2#*=}\";; containercp.wpcli.runner.id=*) runner_id=\"${2#*=}\";; esac; shift 2;;\n"
+        << "      *) shift;;\n"
+        << "    esac\n"
+        << "  done\n"
+        << "  printf '%s\\n' \"$runner\" > '" << timeout_name_file.string() << "'\n"
+        << "  /usr/bin/docker run -d --name \"$runner\" --label containercp.wpcli.managed=true --label containercp.wpcli.site.id=\"$site\" --label containercp.wpcli.operation=\"$operation\" --label containercp.wpcli.execution.id=\"$execution\" --label containercp.wpcli.runner.id=\"$runner_id\" alpine sleep 30 >/dev/null\n"
+        << "  sleep 10\n"
+        << "  exit 124\n"
+        << "fi\n"
+        << "exec /usr/bin/docker \"$@\"\n";
+    REQUIRE(::chmod(timeout_wrapper.c_str(), 0555) == 0);
+    containercp::wordpress::WordPressCliService real_timeout_service(
+        executor, resolver, config, logger, timeout_wrapper.string(), 1, 5);
+    const auto real_timeout = real_timeout_service.run(
+        nginx_id, containercp::wordpress::WordPressCliOperation::CoreVersion);
+    CHECK_FALSE(real_timeout.success);
+    CHECK(real_timeout.failure_code == "wordpress_cli_timeout");
+    CHECK(real_timeout.cleanup_succeeded);
+    const auto remaining_runners = executor.run({"/usr/bin/docker", "ps", "-a", "--filter",
+                                                 "label=containercp.wpcli.managed=true", "--format", "{{.Names}}"});
+    REQUIRE(remaining_runners.exit_code == 0);
+    CHECK(remaining_runners.out.empty());
 
     CHECK(service.run(nginx_id, containercp::wordpress::WordPressCliOperation::CoreVersion).success);
     CHECK(service.run(apache_id, containercp::wordpress::WordPressCliOperation::CoreVersion).success);
