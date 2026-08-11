@@ -46,6 +46,7 @@ add_executable(containercp_tests
     test_wordpress_runtime_verifier.cpp
     test_wordpress_runtime_context.cpp
     test_wordpress_cli_service.cpp
+    test_wordpress_cli_matrix.cpp
     test_rollback_integration.cpp
     ${CMAKE_SOURCE_DIR}/libs/migration/VestaSiteImporter.cpp
     ${CMAKE_SOURCE_DIR}/libs/config/Config.cpp

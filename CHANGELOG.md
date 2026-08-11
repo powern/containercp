@@ -6,7 +6,35 @@ Format: date | commit | summary
 
 ---
 
-## 2026-08-11 | `pending` | feat: add job-backed WP-CLI mutations
+## 2026-08-11 | `pending` | test: validate complete WP-CLI lifecycle
+
+**Summary:** Added the gated real disposable Phase 5 validation matrix for
+Apache and Nginx site layouts, two managed sites, separate private networks and
+document roots, and distinct PHP 8.3/8.4 runtime images.
+
+**Files changed:** `tests/test_wordpress_cli_matrix.cpp`,
+`tests/CMakeLists.txt`, `CHANGELOG.md`
+
+**User-visible behavior:** No production operation surface changed. The
+validation gate now proves that actual PHP image IDs, FPM identities, private
+networks, document-root mounts, and web-server images remain site-specific
+across the supported disposable matrix.
+
+**Validation:** With
+`CONTAINERCP_WPCLI_MATRIX=1 CONTAINERCP_WPCLI_WORDPRESS_ROOT=/tmp/wpcli-wordpress-src/wordpress`,
+the real matrix passed 1/1 test case and 51/51 assertions. It covered Apache
+(`httpd:alpine`), Nginx (`nginx:alpine`), PHP 8.3 and 8.4, two sites, separate
+immutable image IDs, separate private networks, separate document roots, all
+four read-only operations, cache mutation, and zero remaining managed runners.
+Full deterministic CTest is required before commit.
+
+**Known risks:** The matrix is opt-in because it requires Docker, disposable
+WordPress source, and the pinned Phar. The repository's privileged Linux test
+continues to use its existing skip contract.
+
+---
+
+## 2026-08-11 | `25db340` | feat: add job-backed WP-CLI mutations
 
 **Summary:** Added typed, administrator-authenticated WordPress mutations as
 bounded background jobs. Plugins, themes, core, languages, and cache flushes
