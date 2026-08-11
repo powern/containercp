@@ -42,6 +42,8 @@ struct WordPressRuntimeContext {
     bool runtime_capable = false;
     bool read_only_capable = false;
     bool mutation_capable = false;
+    bool filesystem_read_access_proven = false;
+    bool filesystem_mutation_access_proven = false;
 };
 
 class WordPressRuntimeContextResolver {
@@ -64,6 +66,7 @@ private:
     bool resolve_private_network(WordPressRuntimeContext& context) const;
     bool resolve_document_root_mount(WordPressRuntimeContext& context) const;
     bool resolve_php_fpm_identity(WordPressRuntimeContext& context) const;
+    bool resolve_filesystem_access(WordPressRuntimeContext& context) const;
     bool verify_image_identity(WordPressRuntimeContext& context) const;
 
     runtime::CommandExecutor& executor_;

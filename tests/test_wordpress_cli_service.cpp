@@ -12,8 +12,11 @@
 #include "doctest/doctest.h"
 
 #include <chrono>
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <cstdlib>
 #include <sys/stat.h>
 #include <thread>
@@ -313,6 +316,36 @@ TEST_CASE("WordPressCliService real disposable WordPress lifecycle") {
     CAPTURE(install.err);
     REQUIRE(install.exit_code == 0);
 
+    const auto php_container_result = compose({"ps", "-q", "php"});
+    REQUIRE(php_container_result.exit_code == 0);
+    std::string php_container = php_container_result.out;
+    while (!php_container.empty() && std::isspace(static_cast<unsigned char>(php_container.back())) != 0) php_container.pop_back();
+    REQUIRE(!php_container.empty());
+    const auto php_top = executor.run({"/usr/bin/docker", "top", php_container, "-eo", "pid,uid,gid,args"});
+    REQUIRE(php_top.exit_code == 0);
+    int64_t fixture_uid = -1;
+    int64_t fixture_gid = -1;
+    std::istringstream php_lines(php_top.out);
+    std::string php_line;
+    while (std::getline(php_lines, php_line)) {
+        if (php_line.find("php-fpm") == std::string::npos || php_line.find("pool") == std::string::npos) continue;
+        std::istringstream fields(php_line);
+        std::string pid_token;
+        std::string uid_token;
+        std::string gid_token;
+        if (fields >> pid_token >> uid_token >> gid_token &&
+            std::all_of(uid_token.begin(), uid_token.end(), [](unsigned char c) { return std::isdigit(c) != 0; }) &&
+            std::all_of(gid_token.begin(), gid_token.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
+            fixture_uid = std::stoll(uid_token);
+            fixture_gid = std::stoll(gid_token);
+            break;
+        }
+    }
+    REQUIRE(fixture_uid > 0);
+    REQUIRE(fixture_gid > 0);
+    REQUIRE(executor.run({"/usr/bin/chown", "-R", std::to_string(fixture_uid) + ":" + std::to_string(fixture_gid),
+                          public_dir.string()}).exit_code == 0);
+
     containercp::site::SiteManager sites;
     const auto site_id = sites.create(domain, "admin", 1, "nginx");
     containercp::wordpress::WordPressConfigService config_service(sites);
@@ -352,9 +385,6 @@ TEST_CASE("WordPressCliService real disposable WordPress lifecycle") {
         << "<?php\n/* Plugin Name: ContainerCP WP-CLI Test Plugin */\n";
     const auto plugin_archive = public_dir / "wpcli-test-plugin.zip";
     REQUIRE(executor.run({"/usr/bin/zip", "-qr", plugin_archive.string(), plugin_source.filename().string()}, public_dir.string()).exit_code == 0);
-    REQUIRE(executor.run({"/usr/bin/chown", "-R",
-                          std::to_string(context.php_fpm_uid) + ":" + std::to_string(context.php_fpm_gid),
-                          (public_dir / "wp-content").string()}).exit_code == 0);
     const auto plugin_install = service.run_mutation(site_id, containercp::wordpress::WordPressCliMutation::PluginInstall, "wpcli-test-plugin.zip");
     CAPTURE(plugin_install.failure_code);
     CAPTURE(plugin_install.message);

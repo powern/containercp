@@ -6,7 +6,33 @@ Format: date | commit | summary
 
 ---
 
-## 2026-08-11 | `pending` | fix: initialize canonical PHP site ownership
+## 2026-08-11 | `pending` | fix: prove WordPress mutation filesystem access
+
+**Summary:** Runtime context now probes filesystem access as the selected
+non-root PHP-FPM UID/GID before declaring mutation capability.
+
+**Files changed:** `libs/wordpress/WordPressRuntimeContext.h`,
+`libs/wordpress/WordPressRuntimeContext.cpp`,
+`tests/test_wordpress_runtime_context.cpp`,
+`tests/test_wordpress_cli_service.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Read-only and mutation capabilities are separated.
+Document root, `wp-content`, plugins, themes, and languages paths are tested
+inside the selected PHP container as the proven runtime identity. Broken or
+unknown access fails mutation closed without root fallback or WP-CLI chown.
+
+**Validation:** Runtime-context tests passed, including deliberately broken
+filesystem access with no root fallback. The real disposable WordPress lifecycle
+passed 560/560 assertions after canonical fixture ownership initialization, and
+newly created application files remained non-root-owned. Full deterministic
+CTest is required before commit.
+
+**Known risks:** Existing sites are not recursively repaired; they are audited
+at operation time and remain mutation-ineligible without positive access proof.
+
+---
+
+## 2026-08-11 | `d04d1d8` | fix: initialize canonical PHP site ownership
 
 **Summary:** Corrected new Docker Compose site provisioning to derive the live
 non-root PHP-FPM worker identity and initialize ownership for the newly created

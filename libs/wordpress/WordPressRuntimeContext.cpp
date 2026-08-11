@@ -144,18 +144,24 @@ WordPressRuntimeContext WordPressRuntimeContextResolver::resolve(uint64_t site_i
         !verify_image_identity(context) ||
         !resolve_private_network(context) ||
         !resolve_document_root_mount(context) ||
-        !resolve_php_fpm_identity(context)) {
+        !resolve_php_fpm_identity(context) ||
+        !resolve_filesystem_access(context)) {
         logger_.error("WORDPRESS", "Runtime context resolution failed: " + context.failure_code);
         return context;
     }
 
     context.ok = true;
     context.runtime_capable = true;
-    context.read_only_capable = true;
+    context.read_only_capable = context.filesystem_read_access_proven;
     context.mutation_capable = context.document_root_mount_read_write &&
-                               context.php_fpm_uid > 0 && context.php_fpm_gid > 0;
-    context.failure_code = "ok";
-    context.message = "Managed WordPress runtime context resolved";
+                               context.php_fpm_uid > 0 && context.php_fpm_gid > 0 &&
+                               context.filesystem_mutation_access_proven;
+    context.failure_code = context.mutation_capable || context.read_only_capable
+        ? (context.mutation_capable ? "ok" : "wordpress_filesystem_access_unproven")
+        : "wordpress_filesystem_access_unproven";
+    context.message = context.mutation_capable
+        ? "Managed WordPress runtime context resolved"
+        : "Managed WordPress runtime resolved without proven mutation access";
     return context;
 }
 
@@ -362,6 +368,63 @@ bool WordPressRuntimeContextResolver::resolve_php_fpm_identity(WordPressRuntimeC
     }
     context.php_fpm_uid = identities.begin()->first;
     context.php_fpm_gid = identities.begin()->second;
+    return true;
+}
+
+bool WordPressRuntimeContextResolver::resolve_filesystem_access(WordPressRuntimeContext& context) const {
+    const std::string identity = std::to_string(context.php_fpm_uid) + ":" +
+                                 std::to_string(context.php_fpm_gid);
+    const auto probe = [this, &context, &identity](const std::filesystem::path& path,
+                                                   const std::vector<const char*>& flags,
+                                                   bool require_existing) {
+        const auto exists = executor_.run({"docker", "exec", "--user", identity,
+                                           context.php_container, "/usr/bin/test", "-e", path.string()});
+        if (exists.exit_code != 0) {
+            if (!require_existing && exists.exit_code == 1) {
+                const auto parent = path.parent_path();
+                for (const auto* flag : flags) {
+                    const auto parent_access = executor_.run({"docker", "exec", "--user", identity,
+                                                              context.php_container, "/usr/bin/test", flag,
+                                                              parent.string()});
+                    if (parent_access.exit_code != 0) {
+                        context.failure_code = "wordpress_filesystem_access_unproven";
+                        context.message = "PHP-FPM identity cannot create " + path.string();
+                        return false;
+                    }
+                }
+                return true;
+            }
+            context.failure_code = "wordpress_filesystem_access_unproven";
+            context.message = "PHP-FPM identity could not prove access to " + path.string();
+            return false;
+        }
+        for (const auto* flag : flags) {
+            const auto access = executor_.run({"docker", "exec", "--user", identity,
+                                               context.php_container, "/usr/bin/test", flag, path.string()});
+            if (access.exit_code != 0) {
+                context.failure_code = "wordpress_filesystem_access_unproven";
+                context.message = "PHP-FPM identity lacks required access to " + path.string();
+                return false;
+            }
+        }
+        return true;
+    };
+
+    const std::filesystem::path document_root(context.container_document_root);
+    const auto wp_content = document_root / "wp-content";
+    const std::vector<const char*> read_flags{"-r", "-x"};
+    const std::vector<const char*> write_flags{"-r", "-x", "-w"};
+    context.filesystem_read_access_proven = probe(document_root, read_flags, true) &&
+                                            probe(wp_content, read_flags, false) &&
+                                            probe(wp_content / "plugins", read_flags, false) &&
+                                            probe(wp_content / "themes", read_flags, false) &&
+                                            probe(wp_content / "languages", read_flags, false);
+    context.filesystem_mutation_access_proven = context.filesystem_read_access_proven &&
+                                                probe(document_root, write_flags, true) &&
+                                                probe(wp_content, write_flags, true) &&
+                                                probe(wp_content / "plugins", write_flags, false) &&
+                                                probe(wp_content / "themes", write_flags, false) &&
+                                                probe(wp_content / "languages", write_flags, false);
     return true;
 }
 

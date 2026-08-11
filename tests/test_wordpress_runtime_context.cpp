@@ -61,6 +61,7 @@ ContextFixture make_fixture(const std::string& domain,
            << "site_id='" << fixture.site_id << "'\n"
            << "image_id='" << image_id << "'\n"
            << "other_image_id='" << other_image_id << "'\n"
+           << "if [ \"$1\" = exec ] && [ \"$mode\" = filesystem-broken ]; then exit 1; fi\n"
            << "if [ \"$1\" = compose ] && [ \"$4\" = ps ]; then\n"
            << "  if [ \"$8\" = php ]; then\n"
            << "    [ \"$mode\" = missing-php ] && exit 0\n"
@@ -221,6 +222,25 @@ TEST_CASE("WordPressRuntimeContext rejects PHP service identity failures") {
     expect_failure("stopped-php", "wordpress_php_identity_unproven");
     expect_failure("missing-image", "wordpress_php_image_unproven");
     expect_failure("wrong-image", "wordpress_php_image_mismatch");
+}
+
+TEST_CASE("WordPressRuntimeContext fails closed for unproven filesystem access without root fallback") {
+    auto fixture = make_fixture("context-filesystem-broken.local");
+    setenv("CONTAINERCP_CONTEXT_FAKE_MODE", "filesystem-broken", 1);
+    containercp::runtime::CommandExecutor executor;
+    containercp::wordpress::WordPressConfigService config_service(fixture.sites);
+    containercp::wordpress::WordPressRuntimeContextResolver resolver(
+        executor, fixture.sites, config_service, fixture.config, containercp::logger::Logger::instance());
+
+    const auto context = resolver.resolve(fixture.site_id);
+    CHECK(context.ok);
+    CHECK(context.runtime_capable);
+    CHECK_FALSE(context.read_only_capable);
+    CHECK_FALSE(context.mutation_capable);
+    CHECK_FALSE(context.filesystem_read_access_proven);
+    CHECK_FALSE(context.filesystem_mutation_access_proven);
+    CHECK(context.failure_code == "wordpress_filesystem_access_unproven");
+    fixture.cleanup();
 }
 
 TEST_CASE("WordPressRuntimeContext rejects network and mount isolation failures") {
