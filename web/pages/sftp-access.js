@@ -1,6 +1,5 @@
 import {
-  api, apiPost, badge, buildTable, esc, healthBadge, hideModal, loadingState,
-  pageHeader, showModal, statusBadge, summaryCards, tb, toast
+  api, apiPost, esc, hideModal, loadingState, pageHeader, showModal, statusBadge, toast
 } from '../core/context.js';
 
 let activeLifecycle = null;
@@ -149,7 +148,7 @@ function showSftpDrawer(content) {
     backdrop.addEventListener('click', e => { if (e.target === backdrop) closeSftpDrawer(); });
     document.body.appendChild(backdrop);
   }
-  backdrop.innerHTML = '<aside class="db-detail-drawer" role="dialog" aria-modal="true" aria-label="SFTP user detail" tabindex="-1">' + content + '</aside>';
+  backdrop.innerHTML = '<aside class="db-detail-drawer sftp-detail-drawer" role="dialog" aria-modal="true" aria-label="SFTP user detail" tabindex="-1">' + content + '</aside>';
   backdrop.style.display = 'flex';
   const later = activeLifecycle && activeLifecycle.setTimeout ? activeLifecycle.setTimeout.bind(activeLifecycle) : setTimeout;
   later(() => { const drawer = backdrop.querySelector('.db-detail-drawer'); if (drawer) drawer.focus(); }, 0);
@@ -176,16 +175,8 @@ async function renderKeys() {
   try {
     const res = await api('/api/access/sftp/users/' + state.selected + '/keys');
     const keys = res.data || [];
-    const html = '<div class="table-toolbar"><div style="font-weight:600;font-size:13px;">SSH Keys</div><div><button class="btn btn-sm btn-primary" onclick="showAddSftpKey()">+ Add Key</button>'
-      + '<button class="btn btn-sm" onclick="rebuildSftpKeys()" style="margin-left:4px;">Rebuild</button></div></div>'
-      + buildTable([
-        {label:'Type', html: k => esc(k.keyType || '-')},
-        {label:'Fingerprint', html: k => '<code style="font-size:11px;">' + esc(k.fingerprint || '') + '</code>'},
-        {label:'Comment', html: k => esc(k.comment || '-')},
-        {label:'Enabled', html: k => k.enabled ? '<span class="badge badge-ok">Yes</span>' : '<span class="badge badge-info">No</span>'},
-        {label:'Actions', html: k => '<button class="btn btn-sm" onclick="toggleSftpKey(' + k.id + ')">' + (k.enabled ? 'Disable' : 'Enable') + '</button><button class="btn btn-sm" style="margin-left:4px;color:var(--red);" onclick="deleteSftpKey(' + k.id + ')">Delete</button>'}
-      ], keys, 'No SSH keys');
-    p.innerHTML = html;
+    p.innerHTML = '<div class="sftp-resource-toolbar"><span>' + keys.length + ' key' + (keys.length === 1 ? '' : 's') + '</span><div><button class="btn btn-sm btn-primary" onclick="showAddSftpKey()">+ Add key</button><button class="btn btn-sm" onclick="rebuildSftpKeys()" style="margin-left:4px;">Rebuild</button></div></div>'
+      + (keys.length ? '<div class="sftp-resource-list">' + keys.map(k => '<article class="sftp-resource-card"><div class="sftp-resource-heading"><div><strong>' + esc(k.keyType || 'SSH key') + '</strong><div class="sftp-resource-comment">' + esc(k.comment || 'No comment') + '</div></div>' + (k.enabled ? '<span class="badge badge-ok">Enabled</span>' : '<span class="badge badge-info">Disabled</span>') + '</div><code class="sftp-fingerprint">' + esc(k.fingerprint || 'Fingerprint unavailable') + '</code><div class="sftp-resource-actions"><button class="btn btn-sm" onclick="toggleSftpKey(' + k.id + ')">' + (k.enabled ? 'Disable' : 'Enable') + '</button><button class="btn btn-sm sftp-danger-action" onclick="deleteSftpKey(' + k.id + ')">Delete</button></div></article>').join('') + '</div>' : '<div class="empty-state">No SSH keys</div>');
   } catch(e) {
     p.innerHTML = '<div class="empty-state" role="alert">Failed to load keys: ' + esc(e.message) + '</div>';
   }
@@ -214,13 +205,8 @@ async function renderGrants() {
       if (p === 'read_only') return '<span class="badge badge-info">RO</span>';
       return '<span class="badge badge-info">' + esc(p) + '</span>';
     };
-    const html = '<div class="table-toolbar"><div style="font-weight:600;font-size:13px;">Site Grants</div><div><button class="btn btn-sm btn-primary" onclick="showAddSftpGrant()">+ Add Grant</button></div></div>'
-      + buildTable([
-        {label:'Site', html: g => esc(g.domain || 'Site #' + g.siteId)},
-        {label:'Permission', html: g => permBadge(g.permission)},
-        {label:'Actions', html: g => '<button class="btn btn-sm" onclick="showChangeSftpGrantPermission(' + g.siteId + ')">Change</button><button class="btn btn-sm" style="margin-left:4px;color:var(--red);" onclick="revokeSftpGrant(' + g.siteId + ')">Revoke</button><button class="btn btn-sm" style="margin-left:4px;" onclick="retrySftpGrant(' + g.siteId + ')">Retry</button>'}
-      ], grants, 'No grants');
-    p.innerHTML = html;
+    p.innerHTML = '<div class="sftp-resource-toolbar"><span>' + grants.length + ' grant' + (grants.length === 1 ? '' : 's') + '</span><button class="btn btn-sm btn-primary" onclick="showAddSftpGrant()">+ Add grant</button></div>'
+      + (grants.length ? '<div class="sftp-resource-list">' + grants.map(g => '<article class="sftp-resource-card"><div class="sftp-resource-heading"><div><strong>' + esc(g.domain || 'Site #' + g.siteId) + '</strong><div class="sftp-resource-comment">Site ID ' + esc(g.siteId) + '</div></div>' + permBadge(g.permission) + '</div><div class="sftp-resource-actions"><button class="btn btn-sm" onclick="showChangeSftpGrantPermission(' + g.siteId + ')">Change</button><button class="btn btn-sm" onclick="retrySftpGrant(' + g.siteId + ')">Retry</button><button class="btn btn-sm sftp-danger-action" onclick="revokeSftpGrant(' + g.siteId + ')">Revoke</button></div></article>').join('') + '</div>' : '<div class="empty-state">No site grants</div>');
   } catch(e) {
     p.innerHTML = '<div class="empty-state" role="alert">Failed to load grants: ' + esc(e.message) + '</div>';
   }

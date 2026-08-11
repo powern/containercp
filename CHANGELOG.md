@@ -10,9 +10,9 @@ Format: date | commit | summary
 
 **Summary:** Reworked the SFTP Access page to use the Databases inventory and detail-drawer interaction pattern instead of rendering the selected user's full detail inline on the page.
 
-**Files changed:** `web/pages/sftp-access.js`, `web/styles/drawer.css`, `CHANGELOG.md`
+**Files changed:** `libs/api/ApiServer.cpp`, `tests/test_api.cpp`, `web/pages/sftp-access.js`, `web/styles/drawer.css`, `CHANGELOG.md`
 
-**User-visible behavior:** SFTP users now appear in a compact inventory table with responsive mobile cards. Selecting a user opens a modern right-side drawer containing overview, lifecycle actions, SSH keys, site grants, and setup checklist. The drawer supports backdrop click, Escape close, and full-screen mobile layout.
+**User-visible behavior:** SFTP users now appear in a compact inventory table with accurate Linux account, lifecycle, key, grant, and error summary fields, plus responsive mobile cards. Selecting a user opens a modern right-side drawer containing overview, lifecycle actions, SSH keys, site grants, and setup checklist. The drawer supports backdrop click, Escape close, and full-screen mobile layout without horizontal scrolling.
 
 **Validation:** `node --check web/pages/sftp-access.js`, frontend baseline check, and `git diff --check` passed.
 

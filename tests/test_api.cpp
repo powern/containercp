@@ -254,6 +254,21 @@ TEST_CASE("SFTP group retention counts active grants only") {
     CHECK(block.find("l.state != \"error\"") == std::string::npos);
 }
 
+TEST_CASE("SFTP user list includes management summary fields") {
+    std::ifstream in(std::string(TEST_SOURCE_DIR) + "/libs/api/ApiServer.cpp");
+    REQUIRE(in.is_open());
+    std::string source((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    const auto route = source.find("router_.add(\"GET\", \"/api/access/sftp/users\"");
+    REQUIRE(route != std::string::npos);
+    const auto block = source.substr(route, 1800);
+    CHECK(block.find("linuxUsername") != std::string::npos);
+    CHECK(block.find("lifecycleState") != std::string::npos);
+    CHECK(block.find("keyCount") != std::string::npos);
+    CHECK(block.find("grantCount") != std::string::npos);
+    CHECK(block.find("lastError") != std::string::npos);
+}
+
 TEST_CASE("API primitive JSON extractor accepts formatted string values") {
     std::ifstream in(std::string(TEST_SOURCE_DIR) + "/libs/api/ApiServer.cpp");
     REQUIRE(in.is_open());

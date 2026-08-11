@@ -4847,11 +4847,28 @@ bool ApiServer::start() {
     router_.add("GET", "/api/access/sftp/users", [&s, &api_success](const Request&) {
         Response r;
         auto users = s.access_users().list();
+        auto mappings = s.storage().sqlite().load_system_accounts();
         std::string arr = "[";
         bool f = true;
         for (const auto& u : users) {
             if (!f) arr += ","; f = false;
-            arr += "{\"id\":" + std::to_string(u.id) + ",\"username\":\"" + JsonFormatter::escape(u.username) + "\",\"enabled\":" + (u.enabled ? "true" : "false") + "}";
+            std::string linux_username, lifecycle = "none", home, last_error;
+            for (const auto& m : mappings) {
+                if (m.entity_type == "access_user" && m.entity_id == u.id) {
+                    linux_username = m.username; lifecycle = m.state; home = m.home; last_error = m.last_error; break;
+                }
+            }
+            int key_count = 0;
+            for (const auto& k : s.access_keys().list()) if (k.access_user_id == u.id) key_count++;
+            int grant_count = static_cast<int>(s.access_grants().find_by_user(u.id).size());
+            arr += "{\"id\":" + std::to_string(u.id) + ",\"username\":\"" + JsonFormatter::escape(u.username)
+                + "\",\"linuxUsername\":\"" + JsonFormatter::escape(linux_username)
+                + "\",\"lifecycleState\":\"" + JsonFormatter::escape(lifecycle)
+                + "\",\"home\":\"" + JsonFormatter::escape(home)
+                + "\",\"enabled\":" + (u.enabled ? "true" : "false")
+                + ",\"keyCount\":" + std::to_string(key_count)
+                + ",\"grantCount\":" + std::to_string(grant_count)
+                + ",\"lastError\":\"" + JsonFormatter::escape(last_error) + "\"}";
         }
         arr += "]";
         r.body = api_success(arr);
