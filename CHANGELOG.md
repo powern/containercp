@@ -6,6 +6,31 @@ Format: date | commit | summary
 
 ---
 
+## 2026-08-11 | `pending` | fix: enforce absolute safe-command deadlines
+
+**Summary:** Corrected `CommandExecutor::run_safe()` to enforce one monotonic
+wall-clock deadline and reliably terminate/reap timed-out process groups.
+
+**Files changed:** `libs/runtime/CommandExecutor.cpp`,
+`tests/test_runtime.cpp`, `CHANGELOG.md`
+
+**User-visible behavior:** Output activity cannot extend a safe command’s
+configured total timeout. Timeout handling sends SIGTERM, allows bounded grace,
+escalates to SIGKILL, reaps the child, and preserves bounded output and the
+existing timeout result contract.
+
+**Validation:** All 12 CommandExecutor tests passed, including silent,
+continuous stdout/stderr, alternating output, bounded output, normal completion,
+deadline timing, repeated timeout reaping, and no-zombie checks. The real WP-CLI
+disposable lifecycle passed 545/545 assertions. Full deterministic CTest is
+required before commit.
+
+**Known risks:** Existing unrelated repository compiler-warning baselines remain
+outside this corrective change; no new warning was emitted by the changed
+executor/test sources.
+
+---
+
 ## 2026-08-11 | `pending` | fix: prove WP-CLI runner ownership before cleanup
 
 **Summary:** Added execution-scoped WP-CLI runner identity labels and

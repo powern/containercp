@@ -5,8 +5,11 @@
 #include "logger/Logger.h"
 
 #include <cstdio>
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
+#include <cerrno>
+#include <signal.h>
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -33,6 +36,68 @@ TEST_CASE("CommandExecutor::run returns error for empty args") {
     auto r = exec.run({});
     CHECK(r.exit_code == -1);
     CHECK(!r.err.empty());
+}
+
+TEST_CASE("CommandExecutor::run_safe enforces an absolute deadline for silent and active processes") {
+    CommandExecutor exec;
+    const auto started = std::chrono::steady_clock::now();
+    const auto silent = exec.run_safe({"/bin/sh", "-c", "sleep 3"}, "", 1, 1024);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started);
+    CHECK(silent.exit_code == -1);
+    CHECK(silent.err == "command timed out");
+    CHECK(elapsed.count() >= 800);
+
+    const auto stdout_flood = exec.run_safe({"/bin/sh", "-c", "while :; do printf x; done"}, "", 1, 1024);
+    CHECK(stdout_flood.exit_code == -1);
+    CHECK(stdout_flood.err == "command timed out");
+    CHECK(stdout_flood.out.size() <= 1024);
+
+    const auto stderr_flood = exec.run_safe({"/bin/sh", "-c", "while :; do printf x >&2; done"}, "", 1, 1024);
+    CHECK(stderr_flood.exit_code == -1);
+    CHECK(stderr_flood.err == "command timed out");
+
+    const auto alternating = exec.run_safe({"/bin/sh", "-c", "while :; do printf x; printf y >&2; done"}, "", 1, 1024);
+    CHECK(alternating.exit_code == -1);
+    CHECK(alternating.out.size() <= 1024);
+}
+
+TEST_CASE("CommandExecutor::run_safe completes normal commands without early timeout") {
+    CommandExecutor exec;
+    const auto started = std::chrono::steady_clock::now();
+    const auto result = exec.run_safe({"/bin/sh", "-c", "sleep 0.2; printf done"}, "", 2, 1024);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started);
+    CHECK(result.exit_code == 0);
+    CHECK(result.out == "done");
+    CHECK(elapsed.count() >= 150);
+    CHECK(elapsed.count() < 1500);
+}
+
+TEST_CASE("CommandExecutor::run_safe reaps timed-out children") {
+    CommandExecutor exec;
+    const auto pid_path = write_command_executor_input("timeout-pid", "");
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        std::remove(pid_path.c_str());
+        const auto result = exec.run_safe({"/bin/sh", "-c",
+                                           "printf '%s' $$ > '" + pid_path + "'; while :; do :; done"},
+                                          "", 1, 1024);
+        CHECK(result.exit_code == -1);
+        std::ifstream input(pid_path);
+        pid_t child_pid = 0;
+        input >> child_pid;
+        REQUIRE(child_pid > 0);
+        bool gone = false;
+        for (int poll = 0; poll < 20; ++poll) {
+            if (::kill(child_pid, 0) != 0 && errno == ESRCH) {
+                gone = true;
+                break;
+            }
+            usleep(10000);
+        }
+        CHECK(gone);
+    }
+    std::remove(pid_path.c_str());
 }
 
 TEST_CASE("CommandExecutor::run captures stdout") {

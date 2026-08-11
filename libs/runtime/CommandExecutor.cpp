@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <cerrno>
 #include <vector>
@@ -252,6 +253,7 @@ CommandResult run_safe_capture(const std::vector<std::string>& args,
         dup2(stderr_pipe[1], STDERR_FILENO);
         close(stdout_pipe[1]);
         close(stderr_pipe[1]);
+        (void)setpgid(0, 0);
         if (!workdir.empty()) chdir(workdir.c_str());
         std::vector<char*> argv;
         for (const auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
@@ -262,11 +264,15 @@ CommandResult run_safe_capture(const std::vector<std::string>& args,
 
     close(stdout_pipe[1]);
     close(stderr_pipe[1]);
+    (void)setpgid(pid, pid);
 
-    int timeout_ms = timeout_seconds > 0 ? timeout_seconds * 1000 : -1;
     char buf[4096];
     bool out_done = false, err_done = false;
     bool timed_out = false;
+    bool poll_failed = false;
+    const auto deadline = timeout_seconds > 0
+        ? std::chrono::steady_clock::now() + std::chrono::seconds(timeout_seconds)
+        : std::chrono::steady_clock::time_point::max();
 
     while (!out_done || !err_done) {
         struct pollfd fds[2];
@@ -288,6 +294,16 @@ CommandResult run_safe_capture(const std::vector<std::string>& args,
             ++nfds;
         }
 
+        int timeout_ms = -1;
+        if (timeout_seconds > 0) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline) {
+                timed_out = true;
+                break;
+            }
+            const auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+            timeout_ms = static_cast<int>(remaining_ms.count() > 0 ? remaining_ms.count() : 1);
+        }
         int ret = poll(fds, nfds, timeout_ms);
         if (ret == 0) {
             timed_out = true;
@@ -295,6 +311,7 @@ CommandResult run_safe_capture(const std::vector<std::string>& args,
         }
         if (ret < 0) {
             if (errno == EINTR) continue;
+            poll_failed = true;
             break;
         }
 
@@ -325,20 +342,43 @@ CommandResult run_safe_capture(const std::vector<std::string>& args,
     close(stdout_pipe[0]);
     close(stderr_pipe[0]);
 
-    if (timed_out) {
-        kill(pid, SIGTERM);
-        usleep(500000);
-        kill(pid, SIGKILL);
-        result.err = "command timed out";
+    auto signal_process_group = [pid](int signal) {
+        if (kill(-pid, signal) != 0 && errno != ESRCH) {
+            (void)kill(pid, signal);
+        }
+    };
+    auto terminate_and_reap = [&]() {
+        signal_process_group(SIGTERM);
+        const auto grace_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        int status = 0;
+        while (std::chrono::steady_clock::now() < grace_deadline) {
+            const auto waited = waitpid(pid, &status, WNOHANG);
+            if (waited == pid || (waited < 0 && errno == ECHILD)) return;
+            if (waited < 0 && errno != EINTR) break;
+            usleep(10000);
+        }
+        signal_process_group(SIGKILL);
+        while (waitpid(pid, &status, 0) < 0) {
+            if (errno == EINTR) continue;
+            if (errno == ECHILD) break;
+            break;
+        }
+    };
+
+    if (timed_out || poll_failed) {
+        terminate_and_reap();
+        if (poll_failed) result.err = "poll failed";
+        else result.err = "command timed out";
         result.exit_code = -1;
     } else {
         int status;
-        waitpid(pid, &status, 0);
-        if (WIFEXITED(status)) {
-            result.exit_code = WEXITSTATUS(status);
-        } else if (WIFSIGNALED(status)) {
-            result.exit_code = -WTERMSIG(status);
+        while (waitpid(pid, &status, 0) < 0) {
+            if (errno == EINTR) continue;
+            result.err = "waitpid failed: " + std::string(strerror(errno));
+            return result;
         }
+        if (WIFEXITED(status)) result.exit_code = WEXITSTATUS(status);
+        else if (WIFSIGNALED(status)) result.exit_code = -WTERMSIG(status);
     }
 
     return result;
